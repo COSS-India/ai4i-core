@@ -13,7 +13,7 @@ import {
   METERING,
   type MeteringSubTab,
 } from "../../config/meteringConstants";
-import type { MeteringDayKey, MeteringPeriod, MeteringTopN } from "../../types/metering";
+import type { MeteringPeriod, MeteringTopN } from "../../types/metering";
 import { formatMeteringRefreshTime } from "../../utils/meteringFormatters";
 import CustomRangePicker from "./CustomRangePicker";
 import SegmentedTabBar from "./SegmentedTabBar";
@@ -22,8 +22,6 @@ interface MeteringControlsProps {
   /** Selected period; a custom one highlights no preset. */
   period: MeteringPeriod;
   onPeriodChange: (period: MeteringPeriod) => void;
-  /** Earliest day the custom range picker allows; null = no floor. */
-  firstPickableDay?: MeteringDayKey | null;
   topN?: MeteringTopN;
   onTopNChange?: (n: MeteringTopN) => void;
   showTopN?: boolean;
@@ -44,7 +42,6 @@ interface MeteringControlsProps {
 const MeteringControls: React.FC<MeteringControlsProps> = ({
   period,
   onPeriodChange,
-  firstPickableDay = null,
   topN,
   onTopNChange,
   showTopN = false,
@@ -96,7 +93,6 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
         appliedRange={period.key === "custom" ? period.range : null}
         onApply={(range) => onPeriodChange({ key: "custom", range })}
         onClear={() => onPeriodChange(METERING.DEFAULTS.PERIOD)}
-        minDay={firstPickableDay}
       />
     </HStack>
 

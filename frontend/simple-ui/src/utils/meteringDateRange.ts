@@ -1,4 +1,3 @@
-import { METERING } from "../config/meteringConstants";
 import type { MeteringDateRange, MeteringDayKey, MeteringPeriod } from "../types/metering";
 
 /**
@@ -20,11 +19,6 @@ export interface MeteringCalendarMonth {
   month: number;
 }
 
-function dayKeyToUtcMs(key: MeteringDayKey): number {
-  const [y, m, d] = key.split("-").map(Number);
-  return Date.UTC(y, m - 1, d);
-}
-
 function utcMsToDayKey(ms: number): MeteringDayKey {
   return new Date(ms).toISOString().slice(0, 10);
 }
@@ -34,31 +28,15 @@ export function istDayKey(ms: number): MeteringDayKey {
   return utcMsToDayKey(ms + IST_OFFSET_MS);
 }
 
-export function addDays(key: MeteringDayKey, days: number): MeteringDayKey {
-  return utcMsToDayKey(dayKeyToUtcMs(key) + days * DAY_MS);
-}
-
-/** Inclusive IST days a custom range may use; `max` is yesterday. */
+/** Inclusive IST days a custom range may use; `max` is today. */
 export interface PickableDays {
-  min: MeteringDayKey | null;
+  min: MeteringDayKey;
   max: MeteringDayKey;
 }
 
-/**
- * Whether the custom range picker lets a day be clicked. Only days in
- * [min, max] are — today is not, as the API serves it only as `period=today`.
- * While the end is being picked (a start but no end yet), days before the
- * start, or past the longest allowed range, are not either.
- */
-export function isPickableDay(
-  day: MeteringDayKey,
-  pickable: PickableDays,
-  start: MeteringDayKey | null,
-  end: MeteringDayKey | null,
-): boolean {
-  if (day > pickable.max || (pickable.min != null && day < pickable.min)) return false;
-  if (start == null || end != null) return true;
-  return day >= start && day <= addDays(start, METERING.CUSTOM_RANGE.MAX_DAYS - 1);
+/** Whether the custom range picker lets a day be clicked: any day in [min, max]. */
+export function isPickableDay(day: MeteringDayKey, pickable: PickableDays): boolean {
+  return day >= pickable.min && day <= pickable.max;
 }
 
 /** `period` query params; `from`/`to` (IST dates) are sent only for "custom". */
