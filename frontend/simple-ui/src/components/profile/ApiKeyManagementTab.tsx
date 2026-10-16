@@ -82,6 +82,14 @@ export interface ApiKeyManagementTabProps {
   onBindPageActions?: (actions: ApiKeyPageActions) => void;
 }
 
+/**
+ * API key rotation is live in the backend (POST /api-keys/{id}/rotate,
+ * DELETE /api-keys/{id}/rotated-key) but not yet exposed to users: the
+ * rotate and revoke-previous-value actions stay hidden until the frontend
+ * story for rotation (AI4IDS-3446) lands. Flip to true to show them.
+ */
+const SHOW_API_KEY_ROTATION_ACTIONS = false;
+
 export default function ApiKeyManagementTab({
   isActive = false,
   onRegisterRefresh,
@@ -258,8 +266,8 @@ export default function ApiKeyManagementTab({
         id: "actions",
         header: "Actions",
         align: "right",
-        width: "248px",
-        minWidth: "248px",
+        width: SHOW_API_KEY_ROTATION_ACTIONS ? "248px" : "176px",
+        minWidth: SHOW_API_KEY_ROTATION_ACTIONS ? "248px" : "176px",
         tdProps: { onClick: (e) => e.stopPropagation() },
         cell: (key) => (
           <DataTableActions
@@ -303,28 +311,32 @@ export default function ApiKeyManagementTab({
                   }
                 },
               },
-              {
-                id: "rotate",
-                label: "Rotate API key",
-                tooltip: mgmt.isKeyRotatable(key)
-                  ? "Rotate key"
-                  : mgmt.isRotationInProgress(key) && key.rotated_key_expires_at
-                    ? `The previous key works until ${new Date(key.rotated_key_expires_at).toLocaleString()}; rotate again after that.`
-                    : "Only effectively active API keys can be rotated.",
-                icon: <FiRefreshCw />,
-                disabled: !mgmt.isKeyRotatable(key),
-                onClick: () => mgmt.handleOpenRotateModal(key),
-              },
-              {
-                id: "stop-previous",
-                label: "Revoke previous key value",
-                tooltip: mgmt.isRotationInProgress(key)
-                  ? "Stop the previous key value now; the current key keeps working"
-                  : "No previous key value is active for this key.",
-                icon: <FiStopCircle />,
-                disabled: !mgmt.isRotationInProgress(key),
-                onClick: () => mgmt.handleOpenStopPreviousModal(key),
-              },
+              ...(SHOW_API_KEY_ROTATION_ACTIONS
+                ? [
+                    {
+                      id: "rotate",
+                      label: "Rotate API key",
+                      tooltip: mgmt.isKeyRotatable(key)
+                        ? "Rotate key"
+                        : mgmt.isRotationInProgress(key) && key.rotated_key_expires_at
+                          ? `The previous key works until ${new Date(key.rotated_key_expires_at).toLocaleString()}; rotate again after that.`
+                          : "Only effectively active API keys can be rotated.",
+                      icon: <FiRefreshCw />,
+                      disabled: !mgmt.isKeyRotatable(key),
+                      onClick: () => mgmt.handleOpenRotateModal(key),
+                    },
+                    {
+                      id: "stop-previous",
+                      label: "Revoke previous key value",
+                      tooltip: mgmt.isRotationInProgress(key)
+                        ? "Stop the previous key value now; the current key keeps working"
+                        : "No previous key value is active for this key.",
+                      icon: <FiStopCircle />,
+                      disabled: !mgmt.isRotationInProgress(key),
+                      onClick: () => mgmt.handleOpenStopPreviousModal(key),
+                    },
+                  ]
+                : []),
               {
                 id: "revoke",
                 label: "Revoke API key",
