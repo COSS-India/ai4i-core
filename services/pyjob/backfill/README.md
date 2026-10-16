@@ -18,11 +18,13 @@ scheduled job.
 
 ```bash
 cd services/pyjob
-PROMETHEUS_URL=http://prometheus:9090 \
-BACKFILL_FROM=2026-10-01 \
-BACKFILL_TO=2026-10-07 \
+cp backfill/env.template backfill/.env      # then fill in the DB, Prometheus and days
 python -m backfill
 ```
+
+The backfill reads `backfill/.env` and the environment (which overrides it). **Fill in every
+database variable**: one left out (or commented out) can still be taken from
+`services/pyjob/.env`, if there is one, since the connection goes through pyjob's own settings.
 
 | Variable | Meaning |
 |---|---|
@@ -32,8 +34,10 @@ python -m backfill
 | `PROMETHEUS_API_PATH_LABEL` | Label carrying the request path: `exported_endpoint` on k8s (default), `endpoint` on local docker-compose. |
 | `PROMETHEUS_TIMEOUT_SECONDS` | Per-query timeout (default 60). |
 
-The database connection comes from pyjob's own settings (`bootstrap.config`); set them as for
-any other job.
+The database variables (`PLATFORM_CORE_DB_*`, `AUTH_DB_*`, `AUTH_SERVICE_DB_NAME`, falling back
+to `POSTGRES_*`; `DB_POOL_SIZE`, `DB_MAX_OVERFLOW`) have the same names as pyjob's, and are in
+`backfill/env.template` too; `backfill/.env` is loaded into the environment before the databases
+open, so these are the ones used.
 
 ## What it does
 

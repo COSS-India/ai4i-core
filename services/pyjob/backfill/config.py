@@ -1,17 +1,21 @@
-"""Settings for the one-off backfill, read from the environment (or a .env in
-the current directory).
+"""Settings for the one-off backfill, read from the environment or
+backfill/.env (copied from backfill/env.template) — not pyjob's own .env.
 
-The database connection comes from pyjob's own settings (bootstrap.config);
-these are only what the backfill adds.
+The database connection comes from pyjob's settings (bootstrap.config):
+__main__ loads backfill/.env into the environment first, so the DB
+variables in it are the ones used.
 """
 from __future__ import annotations
 
 from datetime import date
 from functools import lru_cache
+from pathlib import Path
 from typing import Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings
+
+ENV_FILE = Path(__file__).resolve().with_name(".env")
 
 
 class BackfillSettings(BaseSettings):
@@ -29,7 +33,8 @@ class BackfillSettings(BaseSettings):
     BACKFILL_TO: Optional[date] = None
 
     class Config:
-        env_file = ".env"
+        # Absolute, so it is backfill/.env whatever the current directory.
+        env_file = ENV_FILE
         env_file_encoding = "utf-8"
         extra = "ignore"
 
