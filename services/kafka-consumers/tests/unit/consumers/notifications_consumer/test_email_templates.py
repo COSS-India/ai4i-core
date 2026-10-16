@@ -398,11 +398,18 @@ def test_relative_logo_url_is_ignored(monkeypatch):
 
 
 
-@pytest.mark.parametrize("blank", [None, "", "   "])
+@pytest.mark.parametrize("blank", [None, "", "   ", "​", "﻿", " ​‌‍⁠ ", " "])
 def test_empty_detail_renders_as_na(blank):
     message = _render("TIER_CHANGED", ["Silver", "Gold", blank, ["LLM: 1,000 tokens"]])
     assert "<strong>New Tier Description:</strong> NA" in message.html_body
     assert "New Tier Description: NA" in message.text_body
+
+
+@pytest.mark.parametrize("text", ["0", "स्वर्ण स्तर", "Gold​ tier"])
+def test_visible_detail_is_kept(text):
+    message = _render("TIER_CHANGED", ["Silver", "Gold", text, ["LLM: 1,000 tokens"]])
+    assert f"New Tier Description: {text}" in message.text_body
+    assert "New Tier Description: NA" not in message.text_body
 
 
 def test_empty_list_detail_renders_as_na():

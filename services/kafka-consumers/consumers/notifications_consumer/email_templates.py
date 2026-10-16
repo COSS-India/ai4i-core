@@ -27,11 +27,18 @@ _renderer = TemplateRenderer([_TEMPLATE_DIR])
 NO_VALUE = "NA"
 
 
+def _is_blank(text: str) -> bool:
+    """True when ``text`` has no visible character. strip() alone misses
+    zero-width characters (U+200B, U+FEFF, ...), which are neither
+    printable nor whitespace."""
+    return not any(c.isprintable() and not c.isspace() for c in text)
+
+
 def _or_na(value: Any) -> Any:
     """``value`` with every empty field replaced by NO_VALUE, through nested
     lists. A list stays a list (an empty one becomes [NO_VALUE]) so a
     template that iterates it still can. Numbers, including 0, are kept."""
-    if value is None or (isinstance(value, str) and not value.strip()):
+    if value is None or (isinstance(value, str) and _is_blank(value)):
         return NO_VALUE
     if isinstance(value, (list, tuple)):
         return [_or_na(v) for v in value] or [NO_VALUE]
