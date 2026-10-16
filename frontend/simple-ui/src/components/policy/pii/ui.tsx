@@ -1,5 +1,6 @@
 import { AddIcon, LockIcon } from "@chakra-ui/icons";
 import {
+  Badge,
   Box,
   Button,
   Flex,
@@ -10,6 +11,7 @@ import {
   SimpleGrid,
   Switch,
   Text,
+  Tooltip,
 } from "@chakra-ui/react";
 import React from "react";
 import { FiShield } from "react-icons/fi";
@@ -37,6 +39,50 @@ export function ShieldMark({ boxSize = 9 }: { boxSize?: number }) {
     >
       <Icon as={FiShield} boxSize={boxSize > 8 ? 4 : 3.5} />
     </Flex>
+  );
+}
+
+/** Shared Status and Actions widths for every Policy Management table. */
+export const POLICY_COL_STATUS = {
+  width: "160px",
+  minWidth: "160px",
+  truncate: false as const,
+};
+
+export const POLICY_COL_ACTIONS = {
+  width: "148px",
+  minWidth: "148px",
+};
+
+const VISIBLE_TAGS = 4;
+
+/** Gray tags, matching the Institution and Service Registry tier badges. */
+export function RecordTags({ labels }: { labels: string[] }) {
+  const items = labels.map((label) => label.trim()).filter(Boolean);
+  if (items.length === 0) {
+    return (
+      <Text fontSize="sm" color="ink.400">
+        —
+      </Text>
+    );
+  }
+  const shown = items.slice(0, VISIBLE_TAGS);
+  const hidden = items.length - shown.length;
+  return (
+    <HStack spacing={1} flexWrap="wrap">
+      {shown.map((label, index) => (
+        <Badge key={`${label}-${index}`} colorScheme="gray" fontSize="xs" px={2} py={0.5}>
+          {label}
+        </Badge>
+      ))}
+      {hidden > 0 ? (
+        <Tooltip label={items.join(", ")} placement="top" hasArrow openDelay={300}>
+          <Badge colorScheme="gray" fontSize="xs" px={2} py={0.5}>
+            +{hidden}
+          </Badge>
+        </Tooltip>
+      ) : null}
+    </HStack>
   );
 }
 

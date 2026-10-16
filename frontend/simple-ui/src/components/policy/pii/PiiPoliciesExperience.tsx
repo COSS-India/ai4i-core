@@ -1,4 +1,4 @@
-import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon } from "@chakra-ui/icons";
+import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, EditIcon } from "@chakra-ui/icons";
 import {
   Alert,
   AlertIcon,
@@ -23,7 +23,7 @@ import {
 } from "@chakra-ui/react";
 import React, { useMemo, useState } from "react";
 import type { IconType } from "react-icons";
-import { FiDatabase, FiFileText, FiFolder, FiLayers, FiSettings, FiShield, FiUsers } from "react-icons/fi";
+import { FiDatabase, FiFileText, FiFolder, FiLayers, FiList, FiSettings, FiShield, FiUsers } from "react-icons/fi";
 import ConfirmDialog from "../../common/ConfirmDialog";
 import CreateButton from "../../common/CreateButton";
 import LoadingSpinner from "../../common/LoadingSpinner";
@@ -48,7 +48,7 @@ import {
   type RecordStatus,
 } from "./model";
 import { PiiDrawers } from "./drawers";
-import { HierarchyNameForm } from "./hierarchyForms";
+import { HierarchyDetail, HierarchyNameForm } from "./hierarchyForms";
 import { ConfigurationPanel, PlaygroundPanel, PolicyList } from "./panels";
 import {
   PiiPoliciesProvider,
@@ -56,11 +56,11 @@ import {
   type ConfirmState,
   type PiiTab,
 } from "./PiiPoliciesProvider";
-import { FlaskIcon, StatusToggle } from "./ui";
+import { FlaskIcon, POLICY_COL_ACTIONS, POLICY_COL_STATUS, StatusToggle } from "./ui";
 
 const ADOPTER_TABS: { id: PiiTab; label: string }[] = [
-  { id: "categories", label: "Categories" },
   { id: "policies", label: "Policies" },
+  { id: "categories", label: "Categories" },
   { id: "configuration", label: "Configuration" },
   { id: "playground", label: "Playground" },
 ];
@@ -160,16 +160,6 @@ function SubcategoryPolicies({ policies }: { policies: Policy[] }) {
   const columns = useMemo<DataTableColumn<Policy>[]>(
     () => [
       {
-        id: "policyId",
-        header: "Policy ID",
-        width: "160px",
-        cell: (row) => (
-          <Badge fontFamily="mono" textTransform="none">
-            {row.policyId}
-          </Badge>
-        ),
-      },
-      {
         id: "name",
         header: "Policy Name",
         cell: (row) => (
@@ -181,7 +171,7 @@ function SubcategoryPolicies({ policies }: { policies: Policy[] }) {
       {
         id: "status",
         header: "Status",
-        width: "120px",
+        ...POLICY_COL_STATUS,
         cell: (row) => (
           <StatusBadge status={policyEffective(row, policyParentActive(row, subcategories, categories))} />
         ),
@@ -211,10 +201,14 @@ function SubcategoryTable({
   category,
   subcategories,
   policiesBySubcategory,
+  onView,
+  onEdit,
 }: {
   category: PolicyCategory;
   subcategories: PolicySubcategory[];
   policiesBySubcategory: Map<string, Policy[]>;
+  onView: (sub: PolicySubcategory) => void;
+  onEdit: (sub: PolicySubcategory) => void;
 }) {
   const { categories, role, askConfirm, setSubcategoryStatus, showSubcategoryPolicies } = usePiiPolicies();
   const canManage = role === "adopter";
@@ -236,11 +230,23 @@ function SubcategoryTable({
         header: `Sub-categories (${subcategories.length})`,
         cell: (sub) => (
           <HStack spacing={3} minW={0}>
-            <ChevronRightIcon
-              boxSize={4}
+            <IconButton
+              aria-label={expanded.has(sub.id) ? `Hide policies in ${sub.name}` : `Show policies in ${sub.name}`}
+              aria-expanded={expanded.has(sub.id)}
+              icon={
+                <ChevronRightIcon
+                  boxSize={4}
+                  transform={expanded.has(sub.id) ? "rotate(90deg)" : undefined}
+                  transition="transform 0.15s"
+                />
+              }
+              size="xs"
+              variant="ghost"
               color="ink.500"
-              transform={expanded.has(sub.id) ? "rotate(90deg)" : undefined}
-              transition="transform 0.15s"
+              onClick={(event) => {
+                event.stopPropagation();
+                toggle(sub.id);
+              }}
             />
             <Flex
               w={8}
@@ -279,7 +285,7 @@ function SubcategoryTable({
       {
         id: "status",
         header: "Status",
-        width: "140px",
+        ...POLICY_COL_STATUS,
         cell: (sub) =>
           canManage ? (
             <StatusToggle
@@ -307,11 +313,17 @@ function SubcategoryTable({
           ),
       },
       createActionsColumn<PolicySubcategory>({
-        width: "100px",
-        minWidth: "100px",
-        align: "center",
+        ...POLICY_COL_ACTIONS,
         getActions: (sub) => [
-          { id: "view", label: "View policies", onClick: () => showSubcategoryPolicies(sub.id) },
+          ...(canManage
+            ? [{ id: "edit" as const, label: "Edit", icon: <EditIcon />, onClick: () => onEdit(sub) }]
+            : []),
+          {
+            id: "view-policies",
+            label: "View policies",
+            icon: <Icon as={FiList} boxSize={3.5} />,
+            onClick: () => showSubcategoryPolicies(sub.id),
+          },
         ],
       }),
     ],
@@ -326,6 +338,7 @@ function SubcategoryTable({
       askConfirm,
       setSubcategoryStatus,
       showSubcategoryPolicies,
+      onEdit,
     ],
   );
 
@@ -339,8 +352,9 @@ function SubcategoryTable({
       isEmpty={subcategories.length === 0}
       emptyMessage="No sub-categories yet."
       asyncStateHeight="64px"
-      onRowClick={(sub) => toggle(sub.id)}
-      rowAriaLabel={(sub) => `${expanded.has(sub.id) ? "Hide" : "Show"} policies in ${sub.name}`}
+      onRowClick={onView}
+      rowAriaLabel={(sub) => `View ${sub.name}`}
+      showRowChevron={false}
       renderAfterRow={(sub) =>
         expanded.has(sub.id) ? (
           <Tr>
@@ -363,10 +377,25 @@ function CategoriesPanel({
   statusFilter: StatusFilter;
   onClearFilters: () => void;
 }) {
-  const { categories, subcategories, policies, role, createSubCategory, askConfirm, setCategoryStatus } =
-    usePiiPolicies();
+  const {
+    categories,
+    subcategories,
+    policies,
+    role,
+    createSubCategory,
+    updateCategory,
+    updateSubCategory,
+    askConfirm,
+    setCategoryStatus,
+    showCategoryPolicies,
+    showSubcategoryPolicies,
+  } = usePiiPolicies();
   const canManage = role === "adopter";
   const [subcategoryFormFor, setSubcategoryFormFor] = useState<PolicyCategory | null>(null);
+  const [viewCategory, setViewCategory] = useState<PolicyCategory | null>(null);
+  const [editCategory, setEditCategory] = useState<PolicyCategory | null>(null);
+  const [viewSubcategory, setViewSubcategory] = useState<PolicySubcategory | null>(null);
+  const [editSubcategory, setEditSubcategory] = useState<PolicySubcategory | null>(null);
   // The first category starts open, as in the reference layout.
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(categories[0] ? [categories[0].id] : []));
 
@@ -415,6 +444,14 @@ function CategoriesPanel({
     );
   }
 
+  const viewedCategory = viewCategory ? categories.find((c) => c.id === viewCategory.id) ?? viewCategory : null;
+  const viewedSubcategory = viewSubcategory
+    ? subcategories.find((s) => s.id === viewSubcategory.id) ?? viewSubcategory
+    : null;
+  const viewedSubParent = viewedSubcategory
+    ? categories.find((c) => c.id === viewedSubcategory.categoryId)
+    : undefined;
+
   return (
     <Stack spacing={3}>
       {visible.map((cat) => {
@@ -433,14 +470,7 @@ function CategoriesPanel({
             borderColor="ink.200"
             borderRadius="14px"
           >
-            <Flex
-              align="center"
-              gap={4}
-              px={5}
-              py={4}
-              cursor="pointer"
-              onClick={() => toggleExpanded(cat.id)}
-            >
+            <Flex align="center" gap={4} px={5} py={4}>
               <Flex
                 w={10}
                 h={10}
@@ -453,7 +483,21 @@ function CategoriesPanel({
               >
                 <Icon as={mark.icon} boxSize={4} />
               </Flex>
-              <Box flex="1" minW={0}>
+              <Box
+                flex="1"
+                minW={0}
+                cursor="pointer"
+                onClick={() => setViewCategory(cat)}
+                role="button"
+                tabIndex={0}
+                aria-label={`View ${cat.name}`}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    setViewCategory(cat);
+                  }
+                }}
+              >
                 <Text fontSize="md" fontWeight="semibold" color="ink.800">
                   {cat.name}
                 </Text>
@@ -466,7 +510,7 @@ function CategoriesPanel({
                   <Text>{plural(total, "policy", "policies")}</Text>
                 </HStack>
               </Box>
-              <HStack spacing={4} flexShrink={0}>
+              <HStack spacing={3} flexShrink={0}>
                 {canManage ? (
                   <StatusToggle
                     status={cat.status}
@@ -486,6 +530,21 @@ function CategoriesPanel({
                 ) : (
                   <StatusBadge status={categoryEffective(cat)} />
                 )}
+                {canManage ? (
+                  <CreateButton size="xs" onClick={() => setSubcategoryFormFor(cat)}>
+                    Add sub-category
+                  </CreateButton>
+                ) : null}
+                {canManage ? (
+                  <IconButton
+                    aria-label={`Edit ${cat.name}`}
+                    icon={<EditIcon />}
+                    size="sm"
+                    variant="ghost"
+                    color="ink.600"
+                    onClick={() => setEditCategory(cat)}
+                  />
+                ) : null}
                 <IconButton
                   aria-label={isOpen ? `Collapse ${cat.name}` : `Expand ${cat.name}`}
                   aria-expanded={isOpen}
@@ -493,32 +552,115 @@ function CategoriesPanel({
                   size="sm"
                   variant="ghost"
                   color="ink.500"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleExpanded(cat.id);
-                  }}
+                  onClick={() => toggleExpanded(cat.id)}
                 />
               </HStack>
             </Flex>
             <Collapse in={isOpen} animateOpacity unmountOnExit>
               <Stack spacing={3} px={5} pb={5}>
-                {canManage ? (
-                  <Flex justify="flex-end">
-                    <CreateButton onClick={() => setSubcategoryFormFor(cat)}>
-                      Add sub-category
-                    </CreateButton>
-                  </Flex>
-                ) : null}
                 <SubcategoryTable
                   category={cat}
                   subcategories={children}
                   policiesBySubcategory={policiesBySubcategory}
+                  onView={setViewSubcategory}
+                  onEdit={setEditSubcategory}
                 />
               </Stack>
             </Collapse>
           </Box>
         );
       })}
+
+      {viewedCategory ? (
+        <HierarchyDetail
+          title={`View ${viewedCategory.name}`}
+          rows={[
+            { label: "Name", value: viewedCategory.name },
+            { label: "Description", value: viewedCategory.description || "—" },
+            {
+              label: "Status",
+              value: <StatusBadge status={categoryEffective(viewedCategory)} />,
+            },
+            {
+              label: "Sub-categories",
+              value: String(subcategories.filter((s) => s.categoryId === viewedCategory.id).length),
+            },
+          ]}
+          onClose={() => setViewCategory(null)}
+          onEdit={
+            canManage
+              ? () => {
+                  setViewCategory(null);
+                  setEditCategory(viewedCategory);
+                }
+              : undefined
+          }
+          onViewPolicies={() => {
+            setViewCategory(null);
+            showCategoryPolicies(viewedCategory.id);
+          }}
+        />
+      ) : null}
+
+      {viewedSubcategory ? (
+        <HierarchyDetail
+          title={`View ${viewedSubcategory.name}`}
+          rows={[
+            { label: "Name", value: viewedSubcategory.name },
+            { label: "Description", value: viewedSubcategory.description || "—" },
+            { label: "Category", value: viewedSubParent?.name || "—" },
+            {
+              label: "Status",
+              value: <StatusBadge status={subcategoryEffective(viewedSubcategory, categories)} />,
+            },
+            {
+              label: "Policies",
+              value: String(policiesBySubcategory.get(viewedSubcategory.id)?.length ?? 0),
+            },
+          ]}
+          onClose={() => setViewSubcategory(null)}
+          onEdit={
+            canManage
+              ? () => {
+                  setViewSubcategory(null);
+                  setEditSubcategory(viewedSubcategory);
+                }
+              : undefined
+          }
+          onViewPolicies={() => {
+            setViewSubcategory(null);
+            showSubcategoryPolicies(viewedSubcategory.id);
+          }}
+        />
+      ) : null}
+
+      {editCategory ? (
+        <HierarchyNameForm
+          key={`edit-category-${editCategory.id}`}
+          title={`Edit ${editCategory.name}`}
+          submitLabel="Save"
+          namePlaceholder="e.g. Service Routing"
+          descriptionPlaceholder="What kind of policies live under this category?"
+          initialName={editCategory.name}
+          initialDescription={editCategory.description}
+          onClose={() => setEditCategory(null)}
+          onSave={(name, description) => updateCategory(editCategory.id, name, description)}
+        />
+      ) : null}
+
+      {editSubcategory ? (
+        <HierarchyNameForm
+          key={`edit-subcategory-${editSubcategory.id}`}
+          title={`Edit ${editSubcategory.name}`}
+          submitLabel="Save"
+          namePlaceholder="e.g. Rate Limiting"
+          descriptionPlaceholder="What does this sub-category cover?"
+          initialName={editSubcategory.name}
+          initialDescription={editSubcategory.description}
+          onClose={() => setEditSubcategory(null)}
+          onSave={(name, description) => updateSubCategory(editSubcategory.id, name, description)}
+        />
+      ) : null}
 
       {subcategoryFormFor ? (
         <HierarchyNameForm
@@ -542,9 +684,11 @@ function ExperienceBody() {
     role,
     tab,
     setTab,
+    configTab,
     confirm,
     closeConfirm,
     createCategory,
+    openDrawer,
   } = usePiiPolicies();
   const canManage = role === "adopter";
   const tabs = canManage ? ADOPTER_TABS : INSTITUTION_TABS;
@@ -556,6 +700,22 @@ function ExperienceBody() {
     setCategorySearch("");
     setCategoryStatusFilter("all");
   };
+  const headerAction = (() => {
+    if (!canManage || hierarchyStatus !== "ready") return undefined;
+    if (tab === "policies") {
+      return <CreateButton onClick={() => openDrawer({ kind: "create-policy" })}>Create Policy</CreateButton>;
+    }
+    if (tab === "categories") {
+      return <CreateButton onClick={() => setCategoryFormOpen(true)}>Add category</CreateButton>;
+    }
+    if (tab === "configuration" && configTab === "types") {
+      return <CreateButton onClick={() => openDrawer({ kind: "add-type" })}>Add Policy Type</CreateButton>;
+    }
+    if (tab === "configuration" && configTab === "domain") {
+      return <CreateButton onClick={() => openDrawer({ kind: "add-domain" })}>Create Domain</CreateButton>;
+    }
+    return undefined;
+  })();
 
   return (
     <Box>
@@ -566,11 +726,7 @@ function ExperienceBody() {
             ? "Manage policy categories, sub-categories, and the policies under them."
             : "View the policies configured under every category."
         }
-        actions={
-          onCategories ? (
-            <CreateButton onClick={() => setCategoryFormOpen(true)}>Add category</CreateButton>
-          ) : undefined
-        }
+        actions={headerAction}
       />
 
       {hierarchyStatus === "loading" ? (
@@ -629,14 +785,14 @@ function ExperienceBody() {
           {canManage ? (
             <TabPanels>
               <TabPanel px={0} pt={6}>
+                <PolicyList />
+              </TabPanel>
+              <TabPanel px={0} pt={6}>
                 <CategoriesPanel
                   search={categorySearch}
                   statusFilter={categoryStatusFilter}
                   onClearFilters={clearCategoryFilters}
                 />
-              </TabPanel>
-              <TabPanel px={0} pt={6}>
-                <PolicyList />
               </TabPanel>
               <TabPanel px={0} pt={6}>
                 <ConfigurationPanel />

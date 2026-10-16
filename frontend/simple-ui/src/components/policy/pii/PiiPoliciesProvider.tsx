@@ -103,6 +103,10 @@ interface PiiPoliciesContextValue {
     name: string,
     description: string,
   ) => Promise<string | null>;
+  /** Returns an error message, or null on success. */
+  updateCategory: (id: string, name: string, description: string) => Promise<string | null>;
+  /** Returns an error message, or null on success. */
+  updateSubCategory: (id: string, name: string, description: string) => Promise<string | null>;
   subscriptions: Record<string, string[]>;
   role: PortalRole;
   institutionId: string;
@@ -194,7 +198,7 @@ export function PiiPoliciesProvider({
   const [policiesError, setPoliciesError] = useState("");
   const [subscriptions, setSubscriptions] = useState<Record<string, string[]>>({});
 
-  const [tab, setTab] = useState<PiiTab>(canManage ? "categories" : "policies");
+  const [tab, setTab] = useState<PiiTab>("policies");
   const [configTab, setConfigTab] = useState<ConfigTab>("types");
   const [catalogScope, setCatalogScope] = useState<CatalogScope>("all");
   const [policySearch, setPolicySearch] = useState("");
@@ -447,6 +451,38 @@ export function PiiPoliciesProvider({
         } catch (error: unknown) {
           return apiErrorMessage(error, "Couldn't create the sub-category.");
         }
+      },
+      updateCategory: async (id, name, description) => {
+        const trimmed = name.trim();
+        if (!trimmed) return "Enter a name.";
+        if (duplicateName(categories, trimmed, id)) {
+          return "A category with this name already exists.";
+        }
+        const category = categories.find((item) => item.id === id);
+        if (!category) return "Couldn't update the category.";
+        setCategories((prev) =>
+          prev.map((item) =>
+            item.id === id ? { ...item, name: trimmed, description: description.trim() } : item,
+          ),
+        );
+        toast("Category updated.");
+        return null;
+      },
+      updateSubCategory: async (id, name, description) => {
+        const trimmed = name.trim();
+        if (!trimmed) return "Enter a name.";
+        if (duplicateName(subcategories, trimmed, id)) {
+          return "A sub-category with this name already exists.";
+        }
+        const subcategory = subcategories.find((item) => item.id === id);
+        if (!subcategory) return "Couldn't update the sub-category.";
+        setSubcategories((prev) =>
+          prev.map((item) =>
+            item.id === id ? { ...item, name: trimmed, description: description.trim() } : item,
+          ),
+        );
+        toast("Sub-category updated.");
+        return null;
       },
       subscriptions,
       role,
