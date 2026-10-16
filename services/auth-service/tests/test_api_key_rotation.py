@@ -639,3 +639,46 @@ class TestRevokePreviousValueOnADeadKey:
         assert "api_key.is_active IS true" in sql
         assert "api_key.expires_at IS NULL OR api_key.expires_at >" in sql
         assert "api_key.rotated_key = " in sql
+
+
+class TestResponsesShowThePreviousValueMasked:
+    """Both values are visible after a rotation: the list/admin items and the
+    rotate response carry the previous value masked, like api_key, only while
+    it still works."""
+
+    def test_list_item_carries_the_live_previous_value_masked(self) -> None:
+        from app.routes.api_key import _key_item
+        from app.utils.masking import mask_api_key
+
+        item = _key_item(_rotated_key(), permission_names=["nmt.inference"])
+        assert item.api_key == mask_api_key(_NEW)
+        assert item.rotated_key == mask_api_key(_OLD)
+        assert item.rotated_key != _OLD                       # never the raw value
+        assert item.rotated_key_expires_at is not None
+
+    @pytest.mark.parametrize("key", [_key(), _rotated_key(days_left=-1)], ids=["never rotated", "window ended"])
+    def test_list_item_hides_a_previous_value_that_no_longer_works(self, key) -> None:
+        from app.routes.api_key import _key_item
+
+        item = _key_item(key, permission_names=[])
+        assert (item.rotated_key, item.rotated_key_expires_at) == (None, None)
+
+    @pytest.mark.asyncio
+    async def test_rotate_response_returns_new_in_full_and_previous_masked(self) -> None:
+        from types import SimpleNamespace
+        from uuid import uuid4
+        from app.routes.api_key import rotate_api_key
+        from app.utils.masking import mask_api_key
+
+        key = _rotated_key()
+        svc = AsyncMock()
+        svc.get_by_id_for_scope = AsyncMock(return_value=key)
+        svc.rotate_by_obj = AsyncMock(return_value=(_NEW, key))
+        request = MagicMock()
+        request.state.user_roles = ["ADMIN"]
+        response = await rotate_api_key(
+            key_id=key.id, request=request, current_user=SimpleNamespace(id=uuid4(), tenant_id=None), svc=svc,
+        )
+        assert response.data.api_key == _NEW
+        assert response.data.rotated_key == mask_api_key(_OLD)
+        assert response.data.rotated_key_expires_at == key.rotated_key_expires_at

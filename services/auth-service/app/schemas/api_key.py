@@ -154,6 +154,13 @@ class APIKeyItem(BaseSchema):
             "previous value is live (never rotated, window ended, or the key is revoked or expired)."
         ),
     )
+    rotated_key: Optional[str] = Field(
+        None,
+        description=(
+            "The key's previous value, masked like api_key, while it still works "
+            "(until rotated_key_expires_at); null otherwise."
+        ),
+    )
     is_active: bool
     created_by: Optional[str] = None
     created_at: Optional[datetime] = None
@@ -167,6 +174,10 @@ class RotateAPIKeyData(BaseSchema):
     expires_at: Optional[datetime] = None
     rotated_key_expires_at: datetime = Field(
         ..., description="When the previous value stops working. Until then both values work."
+    )
+    rotated_key: str = Field(
+        ...,
+        description="The previous value, masked (first 4 and last 4 characters); it was shown in full once, at creation.",
     )
 
 
@@ -202,6 +213,7 @@ class APIKeyAdminItem(BaseSchema):
     permissions: list[str]
     expires_at: Optional[datetime] = None
     rotated_key_expires_at: Optional[datetime] = None
+    rotated_key: Optional[str] = None
     is_active: bool
     created_by: Optional[str] = None
     created_at: Optional[datetime] = None
