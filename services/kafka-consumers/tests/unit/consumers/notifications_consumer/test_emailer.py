@@ -55,7 +55,7 @@ async def test_monitoring_alert_send(client):
     assert await _send(event_name="LATENCY_P95", details=["5", "2026-09-28 10:00 IST", "7.3"]) is None
     [message] = client.sent
     assert message.subject == "P95 Latency — Threshold 5s"
-    for body in (message.html_body, message.text_body):
+    for body in (message.html_body.replace("<strong>", "").replace("</strong>", ""), message.text_body):
         assert "Current Value: 7.3s" in body
         assert "IIT Madras" not in body
 
