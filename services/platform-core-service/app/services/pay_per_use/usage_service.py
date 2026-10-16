@@ -4,7 +4,7 @@
 basis: budget (all-time, budget_usage) and quota (a billing month,
 quota_usage). /usage-tenants and /usage-tenant
 report the selected period: spend and usage from usage_events or
-daily_usage (see period_usage.period_source), next to the all-time budget balance
+daily_usage (see period_usage.period_sources), next to the all-time budget balance
 (budget_usage) and the current billing month's quota (quota_usage).
 """
 from __future__ import annotations
@@ -477,7 +477,7 @@ class UsageService:
         offset: int = 0,
         task_type_ids: list[int] | None = None,
     ) -> TenantHierarchicalListResponse:
-        """Institutions with usage in ``period`` (see period_usage.period_source),
+        """Institutions with usage in ``period`` (see period_usage.period_sources),
         sorted by spend in the period (tenant id as the tie-break, so pages
         stay stable) and paginated; ``total`` is the count before limit/offset.
 

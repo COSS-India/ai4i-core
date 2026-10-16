@@ -136,9 +136,48 @@ class TestValidation:
     def test_from_before_2000(self):
         _assert_invalid("from must be on or after 2000-01-01.", "custom", "1999-12-31", "2000-01-05")
 
-    def test_range_longer_than_366_days(self):
-        _assert_invalid("The custom range must not exceed 366 days.", "custom", "2025-10-01", "2026-10-02")
-        assert _resolve("custom", "2025-10-03", "2026-10-03").days == 366
+    def test_range_has_no_length_limit(self):
+        period = _resolve("custom", "2000-01-01", "2026-10-08")
+        assert period.days == (date(2026, 10, 8) - date(2000, 1, 1)).days + 1
+        assert period.absolute_range.previous_shift_seconds == period.days * 86_400
+
+
+class TestDashboardIncludesToday:
+    """period_from_request: the dashboard's filter. Last 7 days and a custom
+    range may end today, up to now (floored to the minute); yesterday is
+    unchanged. resolve_period without include_today (the usage report)
+    keeps ending them yesterday."""
+
+    def _dashboard(self, period=None, from_=None, to=None):
+        return period_from_request(SimpleNamespace(query_params={}), period, from_, to, now=_NOW)
+
+    def test_last_7_days_ends_now(self):
+        p = self._dashboard("last_7_days")
+        # _NOW: 9 Oct 2026 14:20:37 IST, floored to 14:20.
+        assert (p.from_date, p.to_date) == (date(2026, 10, 3), date(2026, 10, 9))
+        assert (p.start, p.end) == (datetime(2026, 10, 2, 18, 30, tzinfo=timezone.utc),
+                                    datetime(2026, 10, 9, 8, 50, tzinfo=timezone.utc))
+        assert p.days == 7
+
+    def test_custom_range_ending_today_ends_now(self):
+        p = self._dashboard("custom", "2026-10-01", "2026-10-09")
+        assert (p.to_date, p.end) == (date(2026, 10, 9), datetime(2026, 10, 9, 8, 50, tzinfo=timezone.utc))
+
+    def test_custom_range_ending_before_today_is_whole_days(self):
+        p = self._dashboard("custom", "2026-10-01", "2026-10-08")
+        assert p.end == datetime(2026, 10, 8, 18, 30, tzinfo=timezone.utc)
+
+    def test_yesterday_is_unchanged(self):
+        assert self._dashboard("yesterday") == _resolve("yesterday")
+
+    def test_a_future_day_is_refused(self):
+        with pytest.raises(HTTPException) as exc_info:
+            self._dashboard("custom", "2026-10-01", "2026-10-10")
+        assert exc_info.value.detail == {"code": "INVALID_PERIOD", "message": "to must be today or earlier."}
+
+    def test_without_include_today_the_earlier_rule_holds(self):
+        assert _resolve("last_7_days").to_date == date(2026, 10, 8)
+        _assert_invalid("to must be yesterday or earlier; use period=today for today.", "custom", "2026-10-01", "2026-10-09")
 
 
 class TestRemovedParams:

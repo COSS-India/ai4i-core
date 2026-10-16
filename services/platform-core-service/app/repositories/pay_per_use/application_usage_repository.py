@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.pay_per_use.budget_usage import BudgetUsage
-from app.repositories.pay_per_use.period_usage import period_source, usage_data_from
+from app.repositories.pay_per_use.period_usage import period_sources, usage_data_from
 from app.utils.usage_period import UsagePeriod
 
 
@@ -45,16 +45,18 @@ class ApplicationUsageRepository:
         self, period: UsagePeriod, api_key_ids: list[int],
     ) -> dict[int, Decimal]:
         """{api_key_id: spend in ``period``} for the given keys, from
-        usage_events or daily_usage (see period_source). A key with no usage
-        in the period is absent (spend 0)."""
+        usage_events and / or daily_usage (see period_sources), added up. A
+        key with no usage in the period is absent (spend 0)."""
         if not api_key_ids:
             return {}
-        source = period_source(period)
-        m = source.model
-        stmt = (
-            select(m.api_key_id, func.sum(source.total_cost).label("spend"))
-            .where(source.in_period, m.api_key_id.in_(api_key_ids))
-            .group_by(m.api_key_id)
-        )
-        result = await self._db.execute(stmt)
-        return {row.api_key_id: row.spend or Decimal("0") for row in result.all()}
+        spend: dict[int, Decimal] = {}
+        for source in period_sources(period):
+            m = source.model
+            stmt = (
+                select(m.api_key_id, func.sum(source.total_cost).label("spend"))
+                .where(source.in_period, m.api_key_id.in_(api_key_ids))
+                .group_by(m.api_key_id)
+            )
+            for row in (await self._db.execute(stmt)).all():
+                spend[row.api_key_id] = spend.get(row.api_key_id, Decimal("0")) + (row.spend or Decimal("0"))
+        return spend
