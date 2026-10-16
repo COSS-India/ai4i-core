@@ -13,17 +13,20 @@ The flow:
 
     1. Check the dates, and that usage_events has no rows before the end of
        BACKFILL_TO (those days would be counted twice).
-    2. Create the daily_usage month partitions the dates need.
-    3. Load once into memory the few details the rows need: institutions,
+    2. Load once into memory the few details the rows need: institutions,
        applications, single-key applications, tiers, LLM services and their
        prices, the LLM inference type.
-    4. For each day:
+    3. For each day:
          a. ask Prometheus for the day's LLM requests, successful requests and
             prompt / completion tokens, per institution, application and service
             (the same queries the Prometheus-backed dashboard used, release-2.8);
          b. build one row per institution, application and service, with cost =
             tokens x the service's price (today's price);
          c. write the day's rows (replacing that day's earlier backfill rows).
+
+Rows for a month without its own daily_usage partition (past months: the
+migration and the monthly job only create current and future ones) land in
+daily_usage's DEFAULT partition; the dashboard and undo read them the same.
 
 The rows are estimates: Prometheus' daily counter growth, today's prices, the
 institution's current tier, and an API key only when the application has just
@@ -44,7 +47,6 @@ from sqlalchemy import text
 
 from backfill.config import get_settings
 from bootstrap.database import auth_session, platform_core_session
-from jobs.monthly_partition_rollover import _create_months, _partitions
 
 logger = get_logger(__name__)
 
@@ -293,22 +295,6 @@ async def check_no_recorded_usage_before(end: datetime) -> None:
         )
 
 
-async def create_partitions(first: date, last: date) -> None:
-    """daily_usage is partitioned by month; the migration and the monthly job
-    only create current and future months. Create the past ones the days need."""
-    days = [first + timedelta(days=n) for n in range((last - first).days + 1)]
-    months = sorted({date(d.year, d.month, 1) for d in days})
-    async with platform_core_session() as session:
-        async with session.begin():
-            existing, default = await _partitions(session)
-            missing = [m for m in months if m not in existing]
-            if missing:
-                await session.execute(text("SET LOCAL lock_timeout = '30s'"))
-                await session.execute(text("LOCK TABLE daily_usage IN ACCESS EXCLUSIVE MODE"))
-                await _create_months(session, default, missing)
-                logger.info("Created daily_usage partitions | months=%s", [f"{m:%Y-%m}" for m in missing])
-
-
 # ── Entry point ────────────────────────────────────────────────────────────
 
 
@@ -323,7 +309,6 @@ async def run() -> None:
         raise BackfillError(f"BACKFILL_TO ({last}) must be a past day")
 
     await check_no_recorded_usage_before(_ist_midnight(last + timedelta(days=1)))
-    await create_partitions(first, last)
     lookups = await load_lookups()
     logger.info(
         "Starting usage backfill | days=%s..%s tenants=%d applications=%d llm_services=%d",

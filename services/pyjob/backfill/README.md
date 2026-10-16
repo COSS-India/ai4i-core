@@ -38,11 +38,10 @@ any other job.
 ## What it does
 
 1. Checks the dates, and that `usage_events` has no rows before the end of `BACKFILL_TO`.
-2. Creates the `daily_usage` month partitions the dates need.
-3. Loads into memory, once, what the rows need: institutions (name, budget, current tier),
+2. Loads into memory, once, what the rows need: institutions (name, budget, current tier),
    applications, single-key applications, tiers, LLM services with their model and prices, and
    the LLM inference type.
-4. For each day, in order:
+3. For each day, in order:
    1. asks Prometheus for the day's LLM requests, successful requests and prompt / completion
       tokens, per institution, application and service: the queries the Prometheus-backed
       dashboard used (release-2.8), evaluated at the day's end;
@@ -50,7 +49,9 @@ any other job.
       service's input price + completion tokens × its output price;
    3. replaces that day's backfill rows with them, in one transaction.
 
-Re-running is safe: each day's earlier backfill rows are replaced.
+Re-running is safe: each day's earlier backfill rows are replaced. Rows for a past month without its
+own `daily_usage` partition land in the table's DEFAULT partition; the dashboard and undo read them
+the same.
 
 ## Undo
 
