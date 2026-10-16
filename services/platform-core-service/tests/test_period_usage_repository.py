@@ -159,7 +159,8 @@ class TestGetPeriodUsage:
 
         (row,) = await UsageRepository(session).get_period_usage(yesterday, tenant_ids=[str(_TENANT)])
         assert (row.task_type, row.total_units, row.cost) == ("nmt", 1900, Decimal("0.080000"))
-        assert row.first_seen == row.last_seen == yesterday.from_date
+        # A daily_usage day comes back as its IST midnight.
+        assert row.first_seen == row.last_seen == yesterday.start
 
     async def test_past_periods_read_usage_events_until_the_rollup_is_on(self, session, rollup_off):
         """Without the rollup daily_usage stays empty, so reading it would turn
@@ -172,6 +173,27 @@ class TestGetPeriodUsage:
 
         (row,) = await UsageRepository(session).get_period_usage(yesterday, tenant_ids=[str(_TENANT)])
         assert (row.task_type, row.total_units) == ("nmt", 40)
+
+    async def test_a_period_ending_today_adds_daily_usage_and_todays_events(self, session, rollup_on):
+        """Last 7 days with today (the dashboard's filter): the past days from
+        daily_usage plus today up to now from usage_events, one row from each
+        for the same group; callers add them up."""
+        last_7 = resolve_period("last_7_days", None, None, include_today=True)
+        today_start = resolve_period("today", None, None).start
+        nmt = await _type_id(session, "nmt")
+        await _daily(session, usage_date=last_7.from_date, type_id=nmt, units=1900, cost=Decimal("0.08"))
+        await _daily(session, usage_date=last_7.from_date - timedelta(days=1), type_id=nmt, units=50)
+        inside = today_start + timedelta(seconds=1)
+        await _event(session, span="today", occurred_at=inside, type_id=nmt, units=7, costs=(Decimal("0.5"), 0, 0))
+        # A past day's events are read from daily_usage, not usage_events.
+        await _event(session, span="past", occurred_at=today_start - timedelta(seconds=1), type_id=nmt, units=999)
+
+        rows = await UsageRepository(session).get_period_usage(last_7, tenant_ids=[str(_TENANT)])
+        assert {r.task_type for r in rows} == {"nmt"} and len(rows) == 2
+        assert sum(r.total_units for r in rows) == 1907
+        assert sum(r.cost for r in rows) == Decimal("0.580000")
+        assert min(r.first_seen for r in rows) == last_7.start
+        assert max(r.last_seen for r in rows) == inside
 
     async def test_task_type_filter(self, session):
         today = resolve_period("today", None, None)
@@ -225,6 +247,20 @@ class TestGetPeriodSpendByApiKeyIds:
 
         spend = await ApplicationUsageRepository(session).get_period_spend_by_api_key_ids(last_7, [_KEY, _OTHER_KEY])
         assert spend == {_KEY: Decimal("5.000000")}
+
+    async def test_a_period_ending_today_adds_daily_usage_and_todays_events(self, session, rollup_on):
+        last_7 = resolve_period("last_7_days", None, None, include_today=True)
+        today_start = resolve_period("today", None, None).start
+        await _daily(session, usage_date=last_7.from_date, cost=Decimal("2"))
+        await _daily(session, usage_date=last_7.from_date - timedelta(days=1), cost=Decimal("100"))
+        await _event(session, span="t1", occurred_at=today_start + timedelta(seconds=1), costs=(Decimal("1"), 0, Decimal("2")))
+        await _event(session, span="t2", occurred_at=today_start + timedelta(seconds=1), key=_OTHER_KEY,
+                     costs=(Decimal("4"), 0, 0))
+        # Already in daily_usage once rolled up: not read from usage_events.
+        await _event(session, span="past", occurred_at=today_start - timedelta(seconds=1), costs=(Decimal("100"), 0, 0))
+
+        spend = await ApplicationUsageRepository(session).get_period_spend_by_api_key_ids(last_7, [_KEY, _OTHER_KEY])
+        assert spend == {_KEY: Decimal("5.000000"), _OTHER_KEY: Decimal("4.000000")}
 
     async def test_past_period_from_usage_events_without_the_rollup(self, session, rollup_off):
         last_7 = resolve_period("last_7_days", None, None)
