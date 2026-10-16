@@ -150,21 +150,22 @@ class SupportedEntitiesResponse(BaseModel):
 
 
 @router.get("/entities", response_model=SupportedEntitiesResponse)
-def supported_entities(language: str = "en"):
+def supported_entities(language: str = "en", country: Optional[str] = None):
     """Return entity types detectable by Presidio for the given language.
 
     English uses the en_core_web_lg spaCy model; all other languages use
     xx_ent_wiki_sm.  Languages without NER coverage in xx_ent_wiki_sm (e.g.
     hi, zh) will only include pattern-based entities such as EMAIL_ADDRESS.
+
+    Pass country (e.g. "IN", "US") to restrict results to universal entities
+    plus those specific to that country.  Omit it to get all entities.
     """
-
-
     engine = get_engine()
     lang_code = get_spacy_lang_code(language)
     model_name = (
         settings.PII_SPACY_EN_MODEL if lang_code == "en" else settings.PII_SPACY_MULTILINGUAL_MODEL
     )
-    entities = sorted(engine.detectable_entities(language))
+    entities = sorted(engine.detectable_entities(language, country))
     return SupportedEntitiesResponse(language=language, model=model_name, entities=entities)
 
 

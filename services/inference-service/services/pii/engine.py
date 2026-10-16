@@ -29,6 +29,15 @@ _engine: Optional["PresidioEngine"] = None
 # non-English language it finds almost no names, places or organisations.
 MULTILINGUAL_NER_LANGUAGES = {"de", "es", "fr", "it", "nl", "pl", "pt", "ru"}
 
+# Entity name prefixes that belong to a specific country.  Any entity whose
+# name starts with one of these prefixes is considered country-specific and
+# will be excluded when a different country is requested.
+COUNTRY_ENTITY_PREFIXES: Dict[str, str] = {
+    "IN": "IN_",
+    "US": "US_",
+    "UK": "UK_",
+}
+
 
 class PresidioEngine:
     def __init__(self) -> None:
@@ -77,23 +86,36 @@ class PresidioEngine:
             entities=entities,
         )
 
-    def detectable_entities(self, source_language: str) -> Set[str]:
+    def detectable_entities(self, source_language: str, country: Optional[str] = None) -> Set[str]:
         """Entities Presidio can detect in text of this language.
 
         Asking for any other entity raises "No matching recognizers" (or
         silently finds nothing). Entities served only by spaCy NER (PERSON,
         LOCATION, ...) are left out where the loaded model has no NER for the
         language.
+
+        When country is given (e.g. "IN", "US"), only universal entities and
+        entities belonging to that country are returned.
         """
         recognizers = self._analyzer.registry.get_recognizers(
             language=get_spacy_lang_code(source_language), all_fields=True
         )
         ner_works = source_language == "en" or source_language in MULTILINGUAL_NER_LANGUAGES
-        return {
+        all_entities = {
             entity
             for recognizer in recognizers
             if ner_works or not isinstance(recognizer, SpacyRecognizer)
             for entity in recognizer.supported_entities
+        }
+        if country is None:
+            return all_entities
+        country_upper = country.upper()
+        selected_prefix = COUNTRY_ENTITY_PREFIXES.get(country_upper)
+        all_prefixes = set(COUNTRY_ENTITY_PREFIXES.values())
+        return {
+            entity for entity in all_entities
+            if not any(entity.startswith(p) for p in all_prefixes)
+            or (selected_prefix is not None and entity.startswith(selected_prefix))
         }
 
     def anonymize(
