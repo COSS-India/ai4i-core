@@ -3,12 +3,19 @@ IST-day range every dashboard endpoint reports on.
 
     today        IST midnight → now (now floored to the response-cache step)
     yesterday    the previous IST day
-    last_7_days  the 7 IST days ending yesterday (today excluded)
-    custom       IST days ``from`` … ``to`` inclusive, ``to`` at most yesterday
+    last_7_days  the 7 IST days ending today: the 6 before it, and today up to now
+    custom       IST days ``from`` … ``to`` inclusive, ``to`` at most today
+                 (a range ending today runs up to now)
+
+That's the dashboard's filter (period_from_request). Other callers of
+resolve_period (the usage report) keep the earlier rule unless they pass
+include_today: last_7_days ends yesterday, and a custom ``to`` must be
+yesterday or earlier.
 
 Prometheus / OpenSearch figures query the range as an AbsoluteRange.
-Postgres figures come from usage_events, or from daily_usage for past
-periods once the rollup is on (see period_usage.period_source).
+Postgres figures come from usage_events, or, once the rollup is on, from
+daily_usage for the whole past days and usage_events for today up to now
+(see period_usage.period_sources).
 """
 from __future__ import annotations
 
@@ -30,15 +37,15 @@ MAX_CUSTOM_DAYS = 366
 # Earliest accepted `from`: the platform has no data before it, and it keeps
 # previous-period arithmetic (from − range length) well inside datetime's range.
 EARLIEST_FROM = date(2000, 1, 1)
-# "now" is floored to this step for `today`, so callers within the same
-# minute share one cache entry (and one set of backend queries).
+# "now" is floored to this step for a period ending today, so callers within
+# the same minute share one cache entry (and one set of backend queries).
 NOW_STEP_SECONDS = 60
 # Query params the period filter replaced; still sending one is a 422.
 REMOVED_PARAMS = ("window", "billing_period")
 
 PERIOD_DESCRIPTION = "today | yesterday | last_7_days | custom (IST days). Default today."
 FROM_DESCRIPTION = "First IST day, YYYY-MM-DD, inclusive. Only with period=custom."
-TO_DESCRIPTION = "Last IST day, YYYY-MM-DD, inclusive; yesterday or earlier. Only with period=custom."
+TO_DESCRIPTION = "Last IST day, YYYY-MM-DD, inclusive; today or earlier (today counts up to now). Only with period=custom."
 
 
 def invalid_period(message: str) -> HTTPException:
@@ -72,8 +79,9 @@ class UsagePeriod:
 
     @property
     def uses_daily_usage(self) -> bool:
-        """Whole past days, which daily_usage can serve once the rollup is on
-        (period_usage.period_source decides; today is always usage_events)."""
+        """Whether daily_usage can serve the period's whole past days once the
+        rollup is on (period_usage.period_sources decides; today, up to now,
+        always comes from usage_events)."""
         return self.key != "today"
 
     @property
@@ -137,9 +145,12 @@ def resolve_period(
     to: Optional[str],
     *,
     now: Optional[datetime] = None,
+    include_today: bool = False,
 ) -> UsagePeriod:
     """Validate the period params and resolve them to IST days and UTC bounds.
-    Every failure is a 422 ``INVALID_PERIOD``."""
+    Every failure is a 422 ``INVALID_PERIOD``. ``include_today`` (the
+    dashboard's filter) lets last_7_days and a custom range end today, up to
+    now; without it they end yesterday at the latest."""
     key = (period or DEFAULT_PERIOD).strip()
     if key not in PERIOD_KEYS:
         raise invalid_period("period must be one of: today, yesterday, last_7_days, custom.")
@@ -151,20 +162,22 @@ def resolve_period(
         if from_ is not None or to is not None:
             raise invalid_period("from and to are only allowed when period is custom.")
         if key == "today":
-            start = ist_midnight(today)
-            floored = datetime.fromtimestamp(
-                int(now.timestamp()) // NOW_STEP_SECONDS * NOW_STEP_SECONDS, tz=timezone.utc,
-            )
-            # In the first minute after midnight the floor would empty the range.
-            end = floored if floored > start else now
-            return UsagePeriod(key, today, today, start, end)
-        first = yesterday if key == "yesterday" else today - timedelta(days=7)
-        return UsagePeriod(key, first, yesterday, ist_midnight(first), ist_midnight(today))
+            return UsagePeriod(key, today, today, ist_midnight(today), _floored_now(now, today))
+        if key == "yesterday":
+            return UsagePeriod(key, yesterday, yesterday, ist_midnight(yesterday), ist_midnight(today))
+        if not include_today:
+            first = today - timedelta(days=7)
+            return UsagePeriod(key, first, yesterday, ist_midnight(first), ist_midnight(today))
+        first = today - timedelta(days=6)
+        return UsagePeriod(key, first, today, ist_midnight(first), _floored_now(now, today))
 
     if from_ is None or to is None:
         raise invalid_period("from and to are required when period is custom.")
     first, last = _parse_date("from", from_), _parse_date("to", to)
-    if last >= today:
+    if include_today:
+        if last > today:
+            raise invalid_period("to must be today or earlier.")
+    elif last >= today:
         raise invalid_period("to must be yesterday or earlier; use period=today for today.")
     if first > last:
         raise invalid_period("from must not be after to.")
@@ -172,7 +185,16 @@ def resolve_period(
         raise invalid_period(f"from must be on or after {EARLIEST_FROM.isoformat()}.")
     if (last - first).days + 1 > MAX_CUSTOM_DAYS:
         raise invalid_period(f"The custom range must not exceed {MAX_CUSTOM_DAYS} days.")
-    return UsagePeriod(key, first, last, ist_midnight(first), ist_midnight(last + timedelta(days=1)))
+    end = _floored_now(now, today) if last == today else ist_midnight(last + timedelta(days=1))
+    return UsagePeriod(key, first, last, ist_midnight(first), end)
+
+
+def _floored_now(now: datetime, today: date) -> datetime:
+    """The end of a period running up to now: now floored to NOW_STEP_SECONDS,
+    so requests within the same step share one cache entry. In the first step
+    after midnight the floor would empty today, so it's now itself then."""
+    floored = datetime.fromtimestamp(int(now.timestamp()) // NOW_STEP_SECONDS * NOW_STEP_SECONDS, tz=timezone.utc)
+    return floored if floored > ist_midnight(today) else now
 
 
 def reject_removed_params(request: Request) -> None:
@@ -195,4 +217,4 @@ def period_from_request(
     """The period filter for one dashboard request: rejects the removed
     params, then resolves period/from/to (422 INVALID_PERIOD on bad input)."""
     reject_removed_params(request)
-    return resolve_period(period, from_, to, now=now)
+    return resolve_period(period, from_, to, now=now, include_today=True)

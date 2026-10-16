@@ -513,14 +513,24 @@ class TestOverviewPeriod:
         response = await _call_overview(svc, period="custom", from_="2026-09-20", to="2026-09-22")
         assert (response.scope.period.dataFrom, response.scope.period.partial) == (None, True)
 
-    async def test_last_7_days_excludes_today(self):
+    async def test_last_7_days_includes_today_up_to_now(self):
+        """The 6 days before today, and today up to now (29 Sep 17:30 IST)."""
         svc = _overview_svc()
         response = await _call_overview(svc, period="last_7_days")
         assert svc.request_total.call_args.kwargs["time_range"] == AbsoluteRange(
-            start=_utc(2026, 9, 21, 18, 30), end=_utc(2026, 9, 28, 18, 30),
+            start=_utc(2026, 9, 22, 18, 30), end=_utc(2026, 9, 29, 12, 0),
             previous_shift_seconds=7 * 86_400,
         )
-        assert (response.scope.period.from_, response.scope.period.to) == ("2026-09-22", "2026-09-28")
+        assert (response.scope.period.from_, response.scope.period.to) == ("2026-09-23", "2026-09-29")
+
+    async def test_custom_range_may_end_today(self):
+        svc = _overview_svc()
+        response = await _call_overview(svc, period="custom", from_="2026-09-27", to="2026-09-29")
+        assert svc.request_total.call_args.kwargs["time_range"] == AbsoluteRange(
+            start=_utc(2026, 9, 26, 18, 30), end=_utc(2026, 9, 29, 12, 0),
+            previous_shift_seconds=3 * 86_400,
+        )
+        assert (response.scope.period.from_, response.scope.period.to) == ("2026-09-27", "2026-09-29")
 
     async def test_cached_payload_round_trips_the_period(self):
         """What _cache_set stores must validate back with the period intact —

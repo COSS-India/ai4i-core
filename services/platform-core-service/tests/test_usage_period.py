@@ -141,6 +141,44 @@ class TestValidation:
         assert _resolve("custom", "2025-10-03", "2026-10-03").days == 366
 
 
+class TestDashboardIncludesToday:
+    """period_from_request: the dashboard's filter. Last 7 days and a custom
+    range may end today, up to now (floored to the minute); yesterday is
+    unchanged. resolve_period without include_today (the usage report)
+    keeps ending them yesterday."""
+
+    def _dashboard(self, period=None, from_=None, to=None):
+        return period_from_request(SimpleNamespace(query_params={}), period, from_, to, now=_NOW)
+
+    def test_last_7_days_ends_now(self):
+        p = self._dashboard("last_7_days")
+        # _NOW: 9 Oct 2026 14:20:37 IST, floored to 14:20.
+        assert (p.from_date, p.to_date) == (date(2026, 10, 3), date(2026, 10, 9))
+        assert (p.start, p.end) == (datetime(2026, 10, 2, 18, 30, tzinfo=timezone.utc),
+                                    datetime(2026, 10, 9, 8, 50, tzinfo=timezone.utc))
+        assert p.days == 7
+
+    def test_custom_range_ending_today_ends_now(self):
+        p = self._dashboard("custom", "2026-10-01", "2026-10-09")
+        assert (p.to_date, p.end) == (date(2026, 10, 9), datetime(2026, 10, 9, 8, 50, tzinfo=timezone.utc))
+
+    def test_custom_range_ending_before_today_is_whole_days(self):
+        p = self._dashboard("custom", "2026-10-01", "2026-10-08")
+        assert p.end == datetime(2026, 10, 8, 18, 30, tzinfo=timezone.utc)
+
+    def test_yesterday_is_unchanged(self):
+        assert self._dashboard("yesterday") == _resolve("yesterday")
+
+    def test_a_future_day_is_refused(self):
+        with pytest.raises(HTTPException) as exc_info:
+            self._dashboard("custom", "2026-10-01", "2026-10-10")
+        assert exc_info.value.detail == {"code": "INVALID_PERIOD", "message": "to must be today or earlier."}
+
+    def test_without_include_today_the_earlier_rule_holds(self):
+        assert _resolve("last_7_days").to_date == date(2026, 10, 8)
+        _assert_invalid("to must be yesterday or earlier; use period=today for today.", "custom", "2026-10-01", "2026-10-09")
+
+
 class TestRemovedParams:
     @pytest.mark.parametrize("name", ["window", "billing_period"])
     def test_removed_param_is_422(self, name):

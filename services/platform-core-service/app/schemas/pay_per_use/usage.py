@@ -90,7 +90,7 @@ class CostShare(BaseModel):
 
 class PeriodUsage(BaseModel):
     """A task type's usage in the selected period (usage_events or
-    daily_usage; see period_usage.period_source)."""
+    daily_usage; see period_usage.period_sources)."""
     units: float
     cost: float
     # LLM only (null otherwise): uncached input, cached input and output,
