@@ -39,7 +39,7 @@ export const piiService = {
 
   /** Entity types inference-service can detect for this language (GET /pii/entities). */
   getSupportedEntities: async (language: string): Promise<string[]> => {
-    const response = await apiService.get(apiEndpoints.pii.entities, {
+    const response = await apiService.get(apiEndpoints.pii.entities +"?country=in", {
       params: { language },
       responseSchema: piiSupportedEntitiesSchema,
       suppressErrorAlert: true,

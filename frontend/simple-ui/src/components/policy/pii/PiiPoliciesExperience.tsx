@@ -480,8 +480,6 @@ function CategoriesPanel({
                 align="center"
                 justify="center"
                 flexShrink={0}
-                cursor="pointer"
-                onClick={() => setViewCategory(cat)}
               >
                 <Icon as={mark.icon} boxSize={4} />
               </Flex>
@@ -533,13 +531,7 @@ function CategoriesPanel({
                   <StatusBadge status={categoryEffective(cat)} />
                 )}
                 {canManage ? (
-                  <CreateButton
-                    size="xs"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setSubcategoryFormFor(cat);
-                    }}
-                  >
+                  <CreateButton size="xs" onClick={() => setSubcategoryFormFor(cat)}>
                     Add sub-category
                   </CreateButton>
                 ) : null}
@@ -550,10 +542,7 @@ function CategoriesPanel({
                     size="sm"
                     variant="ghost"
                     color="ink.600"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setEditCategory(cat);
-                    }}
+                    onClick={() => setEditCategory(cat)}
                   />
                 ) : null}
                 <IconButton
