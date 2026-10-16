@@ -372,6 +372,30 @@ def test_relative_logo_url_is_ignored(monkeypatch):
     assert "<img" not in message.html_body
 
 
+
+@pytest.mark.parametrize("blank", [None, "", "   "])
+def test_empty_detail_renders_as_na(blank):
+    message = _render("TIER_CHANGED", ["Silver", "Gold", blank, ["LLM: 1,000 tokens"]])
+    for body in (message.html_body, message.text_body):
+        assert "New Tier Description: NA" in body
+
+
+def test_empty_list_detail_renders_as_na():
+    message = _render("TIER_ASSIGNED", ["Gold", "desc", []])
+    assert "Quota Limits:\n NA\n" in message.text_body
+
+
+def test_empty_value_inside_list_renders_as_na_and_zero_is_kept():
+    message = _render("QUOTA_LIMIT_UPDATED", ["Gold", ["", "ASR: changed from 0 to 10"], None])
+    assert "Tier: Gold\nNA\nASR: changed from 0 to 10\n" in message.text_body
+    assert "Effective Date: NA" in message.text_body
+
+
+def test_missing_tenant_name_renders_as_na():
+    message = _render("TIER_ASSIGNED", ["Gold", "desc", ["LLM: 1 tokens"]], tenant_name=None)
+    assert message.subject == "Tier Assigned — NA"
+
+
 class TestResolveSmtpFromName:
     """EMAIL_FROM_NAME stays independent of PLATFORM_NAME; it only inherits it when blank."""
 

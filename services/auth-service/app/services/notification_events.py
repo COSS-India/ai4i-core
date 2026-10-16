@@ -33,9 +33,6 @@ logger = logging.getLogger(__name__)
 # Tenant budgets are INR-only today; no per-tenant currency column exists yet.
 BUDGET_CURRENCY = "INR"
 
-# Shown in the email when a tier has no description, rather than a blank line.
-NO_DESCRIPTION = "NA"
-
 # Q-D1 — name, description and monthly quotas of the old and new tier, in one query.
 # Each quota carries its billing unit from the inference_types catalogue, the
 # same column PPU usage reads (UsageRepository selects InferenceType.unit).
@@ -111,7 +108,7 @@ def publish_tier_event(
     async def details() -> list:
         tiers = await _load_tier_details(new_tier_id, old_tier_id)
         new = tiers.get(str(new_tier_id), {})
-        description = (new.get("description") or "").strip() or NO_DESCRIPTION
+        description = new.get("description") or ""
         quota_lines = _quota_lines(new.get("quotas"))
         if old_tier_id is None:
             return [new_tier_name, description, quota_lines]
@@ -119,9 +116,7 @@ def publish_tier_event(
         return [old_name, new_tier_name, description, quota_lines]
 
     fallback = (
-        [new_tier_name, NO_DESCRIPTION, []]
-        if old_tier_id is None
-        else [str(old_tier_id), new_tier_name, NO_DESCRIPTION, []]
+        [new_tier_name, "", []] if old_tier_id is None else [str(old_tier_id), new_tier_name, "", []]
     )
     run_in_background(
         emit_state(name, str(tenant_id), new_state, details=details, fallback_details=fallback)

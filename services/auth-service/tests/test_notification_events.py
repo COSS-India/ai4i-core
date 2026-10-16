@@ -39,7 +39,7 @@ async def test_tier_events(monkeypatch):
     assert assigned["new_state"] == {
         "from_tier_id": None, "to_tier_id": str(new_tier), "revised_at": "2026-09-29T10:00:00+00:00",
     }
-    assert assigned["fallback_details"] == ["Gold", "NA", []]
+    assert assigned["fallback_details"] == ["Gold", "", []]
     assert changed["name"] is NotificationName.TIER_CHANGED
     assert changed["new_state"] == {
         "from_tier_id": str(old_tier), "to_tier_id": str(new_tier), "revised_at": "2026-09-29T10:00:00+00:00",
@@ -58,12 +58,6 @@ async def test_tier_events(monkeypatch):
     lines = ["ASR: 10,000 audio minutes", "LLM: 1,000,000 tokens", "CUSTOM: 5 custom"]
     assert await assigned["details"]() == ["Gold", "High volume", lines]
     assert await changed["details"]() == ["Silver", "Gold", "High volume", lines]
-
-    # A tier with no (or blank) description shows "NA" rather than an empty line.
-    for blank in (None, "", "   "):
-        tiers[str(new_tier)]["description"] = blank
-        assert await assigned["details"]() == ["Gold", "NA", lines]
-        assert await changed["details"]() == ["Silver", "Gold", "NA", lines]
 
 
 @pytest.mark.asyncio
