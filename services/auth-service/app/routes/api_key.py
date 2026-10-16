@@ -96,6 +96,7 @@ def _key_item(k, *, permission_names: list[str]) -> APIKeyItem:
         # null unless the previous value really still works (a revoked or
         # expired key keeps the column set, but nothing authenticates).
         rotated_key_expires_at=k.live_rotated_key_expires_at(),
+        rotated_key=mask_api_key(k.live_rotated_key()),
         is_active=k.is_active,
         created_by=str(k.created_by) if k.created_by else None,
         created_at=k.created_at,
@@ -359,6 +360,7 @@ async def rotate_api_key(
             key_name=db_key.key_name,
             expires_at=db_key.expires_at,
             rotated_key_expires_at=db_key.rotated_key_expires_at,
+            rotated_key=mask_api_key(db_key.rotated_key),
         )
     )
 
