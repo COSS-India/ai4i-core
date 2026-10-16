@@ -48,16 +48,16 @@ def _render(event_name, details, *, tenant_name=TENANT, recipient_name="Priya"):
 # (event_name, details, subject, substrings expected in BOTH html and text)
 CASES = [
     (
-        "TIER_ASSIGNED", ["Gold", "High-volume tier", ["ASR: 10,000 req/mo", "NMT: 5,000 req/mo"]],
+        "TIER_ASSIGNED", ["Gold", "High-volume tier", ["ASR: 10,000 audio minutes", "LLM: 5,000 tokens"]],
         f"Tier Assigned — {TENANT}",
         [f"A Tier has been assigned to {TENANT}.", "Tier: Gold", "Description: High-volume tier",
-         "Quota Limits:", "ASR: 10,000 req/mo", "NMT: 5,000 req/mo"],
+         "Quota Limits:", "ASR: 10,000 audio minutes", "LLM: 5,000 tokens"],
     ),
     (
-        "TIER_CHANGED", ["Silver", "Gold", "High-volume tier", ["ASR: 10,000 req/mo"]],
+        "TIER_CHANGED", ["Silver", "Gold", "High-volume tier", ["ASR: 10,000 audio minutes"]],
         f"Tier Reassignment — {TENANT}",
         [f"The Tier for {TENANT} has been reassigned.", "Current Tier: Silver → New Tier: Gold",
-         "New Tier Description: High-volume tier", "New Tier Quota Limits:", "ASR: 10,000 req/mo"],
+         "New Tier Description: High-volume tier", "New Tier Quota Limits:", "ASR: 10,000 audio minutes"],
     ),
     (
         "BUDGET_ASSIGNED", ["INR", "50000"],
@@ -247,9 +247,9 @@ def test_a_one_service_list_renders_the_single_service_lines():
 
 
 def test_list_detail_renders_as_indented_lines_in_text():
-    message = _render("TIER_ASSIGNED", ["Gold", "desc", ["ASR: 1 req/mo", "NMT: 2 req/mo"]])
+    message = _render("TIER_ASSIGNED", ["Gold", "desc", ["ASR: 1 audio minutes", "LLM: 2 tokens"]])
 
-    assert "Quota Limits:\n ASR: 1 req/mo\n NMT: 2 req/mo\n" in message.text_body
+    assert "Quota Limits:\n ASR: 1 audio minutes\n LLM: 2 tokens\n" in message.text_body
 
 
 def test_missing_recipient_name_greets_generically():
