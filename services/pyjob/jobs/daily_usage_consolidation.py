@@ -304,7 +304,12 @@ _UPSERT = text(
 
 # now() is the transaction start, which every row upserted by this
 # transaction carries in updated_at; anything older wasn't written by it.
-_DELETE_STALE = text("DELETE FROM daily_usage WHERE usage_date = :usage_date AND updated_at < now()")
+# source = 'rollup' only: the backfill's source = 'backfill' rows
+# (services/pyjob/backfill) sit on days before usage_events began and must
+# never be swept by the rollup.
+_DELETE_STALE = text(
+    "DELETE FROM daily_usage WHERE usage_date = :usage_date AND source = 'rollup' AND updated_at < now()"
+)
 
 
 async def _auth_names(

@@ -22,7 +22,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from jobs.daily_usage_consolidation import _AGGREGATE  # noqa: E402
+from jobs.daily_usage_consolidation import _AGGREGATE, _DELETE_STALE  # noqa: E402
 
 _DAY = date(2026, 10, 13)
 _START = datetime.combine(_DAY, time(), tzinfo=ZoneInfo("Asia/Kolkata")).astimezone(timezone.utc)
@@ -56,7 +56,8 @@ async def conn():
         if await connection.scalar(text("SELECT to_regclass('usage_events')")) is None:
             pytest.skip("usage_events doesn't exist; migrate the DB to head first")
         await connection.execute(
-            text("INSERT INTO tiers (id, name) VALUES (:a, 'rollup-test-a'), (:b, 'rollup-test-b')"),
+            text("INSERT INTO tiers (id, name, status) VALUES"
+                 " (:a, 'rollup-test-a', 'ACTIVE'), (:b, 'rollup-test-b', 'ACTIVE')"),
             {"a": _TIER_A, "b": _TIER_B},
         )
         yield connection
@@ -109,3 +110,29 @@ async def test_request_counts_in_its_own_group_only(conn):
     await _row(conn, "rollup-split", 1, status=200, tier=_TIER_A)
     await _row(conn, "rollup-split", 0, units=100, tier=_TIER_B)
     assert await _groups(conn) == {_TIER_A: (1, 0, 1, 0), _TIER_B: (0, 0, 0, 100)}
+
+
+async def _daily_usage_row(conn, tenant_id, source):
+    # updated_at in the past so it is "stale" relative to the rollup's now()
+    # (the transaction start); distinct tenant_id so the two rows don't share
+    # the (source-less) unique dimension key.
+    await conn.execute(text(
+        "INSERT INTO daily_usage (usage_date, tenant_id, billing_month, source,"
+        " request_count, success_count, failed_count, updated_at)"
+        " VALUES (:d, :t, '2026-10', :src, 1, 1, 0, now() - interval '1 hour')"
+    ), {"d": _DAY, "t": tenant_id, "src": source})
+
+
+@pytest.mark.asyncio
+async def test_delete_stale_removes_rollup_rows_but_spares_backfill(conn):
+    # The source = 'rollup' filter in _DELETE_STALE is the only thing stopping
+    # the nightly rollup from deleting backfilled estimates: a stale rollup row
+    # is swept, a backfill row on the same day is kept.
+    await _daily_usage_row(conn, _TENANT, "rollup")
+    await _daily_usage_row(conn, _TENANT + 1, "backfill")
+    await conn.execute(_DELETE_STALE, {"usage_date": _DAY})
+    rows = (await conn.execute(text(
+        "SELECT source::text AS source, count(*) AS n FROM daily_usage"
+        " WHERE usage_date = :d AND tenant_id IN (:a, :b) GROUP BY source"
+    ), {"d": _DAY, "a": _TENANT, "b": _TENANT + 1})).mappings().all()
+    assert {r["source"]: r["n"] for r in rows} == {"backfill": 1}

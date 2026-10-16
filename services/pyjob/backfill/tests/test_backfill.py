@@ -1,0 +1,100 @@
+"""backfill: the day's PromQL, LLM pricing, and the rows built from a day's
+Prometheus results. No database or Prometheus needed."""
+import sys
+from datetime import date
+from decimal import Decimal
+from pathlib import Path
+
+# services/pyjob on the path, so `backfill`, `bootstrap` and `jobs` import.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from backfill.engine import LlmService, Lookups, build_day_rows, day_queries, token_rates  # noqa: E402
+
+TIER = "5ab0c0de-0000-4000-8000-00000000000a"
+DAY = date(2026, 10, 6)
+
+
+def test_day_queries_are_the_dashboards_llm_api_key_queries():
+    q = day_queries("exported_endpoint")
+    for promql in q.values():
+        assert 'tenant!="unknown"' in promql and 'auth_type=~"api_key|"' in promql
+        assert "unless" in promql and "offset 86400s" in promql and "increase(" in promql
+    assert 'exported_endpoint=~"/api/v1/chat(/completions)?"' in q["requests"]
+    assert 'status_code=~"2.."' in q["successful"] and 'status_code' not in q["requests"]
+    assert 'token_type=~"prompt|completion"' in q["tokens"]
+    assert q["tokens"].startswith("sum by(tenant_id, application_id, service_id, token_type)")
+
+
+def test_token_rates_as_the_consumer_prices_llm():
+    # ₹1 per 1000 input tokens, ₹3 per 1000 output tokens.
+    assert token_rates(None, 1, 1000, 3) == (Decimal("0.001"), Decimal("0.003"))
+    # unit_rate wins for input; no output price → output priced like input.
+    assert token_rates(Decimal("0.002"), 1, 1000, None) == (Decimal("0.002"), Decimal("0.002"))
+    # No price at all.
+    assert token_rates(None, None, None, None) == (Decimal(0), Decimal(0))
+
+
+def _lookups() -> Lookups:
+    return Lookups(
+        tenants={7: ("Org A", Decimal("5000.00"), TIER)},
+        applications={11: "App single", 12: "App multi"},
+        single_keys={11: 101},
+        tiers={TIER: "Gold"},
+        services={"llm-svc": LlmService("Chat", "Model X", Decimal("0.001"), Decimal("0.003"))},
+        llm_type_id=1,
+        llm_unit="tokens",
+    )
+
+
+def _series(value, **labels):
+    return {"metric": labels, "value": [0, str(value)]}
+
+
+def test_one_row_per_institution_application_and_service():
+    results = {
+        "requests": [_series(10.6, tenant_id="7", application_id="11", service_id="llm-svc"),
+                     _series(4, tenant_id="7", application_id="12", service_id="llm-svc")],
+        "successful": [_series(9.4, tenant_id="7", application_id="11", service_id="llm-svc"),
+                       _series(4, tenant_id="7", application_id="12", service_id="llm-svc")],
+        "tokens": [_series(8000.4, tenant_id="7", application_id="11", service_id="llm-svc", token_type="prompt"),
+                   _series(2000, tenant_id="7", application_id="11", service_id="llm-svc", token_type="completion")],
+    }
+    rows = {r["application_id"]: r for r in build_day_rows(DAY, results, _lookups())}
+
+    single = rows[11]
+    assert {k: single[k] for k in (
+        "usage_date", "billing_month", "tenant_id", "tenant_name", "application_name", "api_key_id",
+        "tier_id", "tier_name", "service_id", "service_name", "model_name", "inference_type_id",
+        "task_type", "unit", "request_count", "success_count", "failed_count",
+    )} == {
+        "usage_date": DAY, "billing_month": "2026-10", "tenant_id": 7, "tenant_name": "Org A",
+        "application_name": "App single", "api_key_id": 101, "tier_id": TIER, "tier_name": "Gold",
+        "service_id": "llm-svc", "service_name": "Chat", "model_name": "Model X", "inference_type_id": 1,
+        "task_type": "llm", "unit": "tokens", "request_count": 11, "success_count": 9, "failed_count": 2,
+    }
+    # 8000 input tokens at ₹0.001 and 2000 output tokens at ₹0.003.
+    assert (single["total_units"], single["output_units"]) == (10000, 2000)
+    assert (single["input_units_cost"], single["output_units_cost"]) == (8, 6)
+
+    # Several keys on the application: no API key on the row.
+    assert (rows[12]["api_key_id"], rows[12]["request_count"], rows[12]["total_units"]) == (None, 4, 0)
+
+
+def test_unknown_application_service_and_tenant():
+    results = {
+        "requests": [_series(3, tenant_id="7", application_id="555", service_id="gone"),
+                     _series(5, tenant_id="", application_id="11", service_id="llm-svc")],   # no tenant: skipped
+        "successful": [],
+        "tokens": [_series(100, tenant_id="7", application_id="555", service_id="gone", token_type="prompt")],
+    }
+    (row,) = build_day_rows(DAY, results, _lookups())
+    assert {k: row[k] for k in ("application_id", "api_key_id", "service_id", "service_name")} == {
+        "application_id": None, "api_key_id": None, "service_id": None, "service_name": None,
+    }
+    # Not an LLM service in mm_services: tokens kept, no price.
+    assert (row["total_units"], row["input_units_cost"], row["failed_count"]) == (100, 0, 3)
+
+
+def test_rows_that_round_to_nothing_are_dropped():
+    results = {"requests": [_series(0.3, tenant_id="7", application_id="11", service_id="llm-svc")],
+               "successful": [], "tokens": []}
+    assert build_day_rows(DAY, results, _lookups()) == []
