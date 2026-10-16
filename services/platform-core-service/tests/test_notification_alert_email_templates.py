@@ -82,10 +82,10 @@ CASES = [
         dict(
             to="a@b.com", recipient_name="Priya", institution_name="Acme Bank",
             tier_name="Gold", tier_description="High-volume tier",
-            quota_lines=["ASR: 10,000 req/mo", "MT: 5,000 req/mo"],
+            quota_lines=["ASR: 10,000 audio minutes", "LLM: 5,000 tokens"],
             rate_limit_value="1000", effective_from="2026-09-10", effective_to="2027-09-09",
         ),
-        ["Gold", "High-volume tier", "ASR: 10,000 req/mo", "MT: 5,000 req/mo", "1000", "2026-09-10", "2027-09-09"],
+        ["Gold", "High-volume tier", "ASR: 10,000 audio minutes", "LLM: 5,000 tokens", "1000", "2026-09-10", "2027-09-09"],
     ),
     (
         templates.render_budget_assigned_email,
@@ -97,10 +97,10 @@ CASES = [
         dict(
             to="a@b.com", recipient_name="Priya", institution_name="Acme Bank",
             current_tier_name="Gold", new_tier_name="Platinum", new_tier_description="Premium tier",
-            quota_lines=["ASR: 20,000 req/mo"], new_rate_limit_value="2000",
+            quota_lines=["ASR: 20,000 audio minutes"], new_rate_limit_value="2000",
             effective_from="2026-09-10", effective_to="2027-09-09",
         ),
-        ["Gold", "Platinum", "Premium tier", "ASR: 20,000 req/mo", "2000"],
+        ["Gold", "Platinum", "Premium tier", "ASR: 20,000 audio minutes", "2000"],
     ),
     (
         templates.render_quota_limit_updated_email,
