@@ -652,6 +652,8 @@ class TestRenderEmail:
         for body in (msg.html_body, msg.text_body):
             assert "AI4I-Orchestrate_Programme-Report_India-AI-Mission_2026-09.pdf" in body
             assert "https://portal.gov.in/usage-dashboard" in body
+        assert 'href="https://portal.gov.in/usage-dashboard"' in msg.html_body
+        assert "Portal</a> for more details." in msg.html_body
 
     def test_no_untracked_or_dummy_figures_in_the_email(self, portal):
         # Availability, P95, providers, financial-year totals and the budget line
