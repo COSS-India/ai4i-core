@@ -8,7 +8,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [2.9.0] - 2026-10-16
 
-> PII guardrail, policy management, API key rotation and usage metering release, 82 PRs merged
+> PII guardrail, policy management, API key rotation and usage metering release, 76 PRs merged
 
 ### Added
 - PII policy management. Categories, sub-categories, policy types and policies, each with create, read, update and status APIs under `/api/v1/policies`, audit fields on every policy table, a default category seed, and an application link through `applications.policy_id` (AI4IDS-3172, AI4IDS-3174, AI4IDS-3176, AI4IDS-3178, AI4IDS-3179, AI4IDS-3181, AI4IDS-3312)
