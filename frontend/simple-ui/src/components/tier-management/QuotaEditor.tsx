@@ -99,7 +99,7 @@ export function QuotaEditor({
   const removeQuota = (idx: number) =>
     onChange(quotas.filter((_, i) => i !== idx));
 
-  // "Add Quota" only makes sense when there's more than one model task type
+  // "Add Quota" only makes sense when there's more than one task type
   // to choose from, and only while there's an unused type left to add.
   const canAddQuota =
     taskTypeNames.length > 1 && quotas.length < taskTypeNames.length;
@@ -147,7 +147,7 @@ export function QuotaEditor({
                 >
                   <FormControl isRequired isDisabled={isEditMode} minW={0}>
                     <FieldLabel formLabelProps={{ fontSize: "xs", mb: 1 }}>
-                      Model Task Type
+                      Task Type
                     </FieldLabel>
                     <Select
                       size="sm"
@@ -157,7 +157,7 @@ export function QuotaEditor({
                       }
                     >
                       <option value="" disabled>
-                        Select model task type
+                        Select task type
                       </option>
                       {taskTypeNames
                         ?.filter((t) => {

@@ -299,7 +299,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
             <FormSection title="Select Model">
             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
               {isView ? (
-                <ReadOnlyField label="Model Task Type">
+                <ReadOnlyField label="Task Type">
                   <Badge
                     colorScheme={getTaskColorScheme(formData.task_type)}
                     fontSize="sm"
@@ -313,7 +313,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 </ReadOnlyField>
               ) : (
               <FormControl isRequired>
-                <FieldLabel>Model Task Type</FieldLabel>
+                <FieldLabel>Task Type</FieldLabel>
                 {editingService ? (
                   <Input
                     value={formatModelTaskTypeLabel(formData.task_type || "")}

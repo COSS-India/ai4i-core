@@ -97,7 +97,7 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
         },
         {
           id: "taskType",
-          label: "Model Task Type",
+          label: "Task Type",
           type: "select",
           param: "model_task_type",
           value: filterTaskType,

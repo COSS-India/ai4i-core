@@ -7,8 +7,7 @@ import {
 import { ChevronRightIcon } from "@chakra-ui/icons";
 import NextLink from "next/link";
 import React from "react";
-import { getServiceTitle, PATH_TO_SERVICE_ID } from "../../config/serviceMetadata";
-import { APP_HOME_PATH, USAGE_DASHBOARD_PATH } from "../../utils/navigation";
+import { getServiceTitle } from "../../config/serviceMetadata";
 
 export type Crumb = {
   label: string;
@@ -21,46 +20,35 @@ export type Crumb = {
   onClick?: (event: React.MouseEvent) => void;
 };
 
-function homeCrumb(homePath: string): Crumb {
-  const path = homePath.split("?")[0];
-  if (path === USAGE_DASHBOARD_PATH) {
-    return { label: "Usage Dashboard", href: homePath };
-  }
-  return { label: "Explore", href: APP_HOME_PATH };
-}
-
 /**
- * Trail for inner pages. Home and auth are omitted (no useful parent).
+ * Breadcrumb rules:
+ * - Top-level sidebar pages (e.g. Logs Dashboard, Platform Settings,
+ *   Institution Management) show no breadcrumb.
+ * - The landing page (Usage Dashboard / Explore) is never prepended to
+ *   another section's breadcrumb.
+ * - Only detail/nested pages show a trail: parent section, then current page.
  * Labels come from the page title / service metadata — never raw URL segments.
  */
 export function getPageBreadcrumbs(
   pathname: string,
   pageTitle: string,
-  homePath: string = APP_HOME_PATH,
 ): Crumb[] | null {
   if (!pathname || pathname.startsWith("/auth")) return null;
-
-  const home = homeCrumb(homePath);
-  const homePathname = (home.href ?? APP_HOME_PATH).split("?")[0];
-  if (pathname === homePathname) return null;
 
   const title = pageTitle.trim();
   if (!title) return null;
 
+  // Nested under the Pipeline service page: Pipeline -> current page.
   if (pathname === "/pipeline-builder") {
     return [
-      home,
       { label: getServiceTitle("pipeline"), href: "/pipeline" },
       { label: title },
     ];
   }
 
-  const serviceId = PATH_TO_SERVICE_ID[pathname];
-  if (serviceId) {
-    return [home, { label: title }];
-  }
-
-  return [home, { label: title }];
+  // Every other route rendered through the page header is a top-level
+  // page, so there is no parent section to show.
+  return null;
 }
 
 type ManageParent = {
@@ -71,18 +59,17 @@ type ManageParent = {
 };
 
 /**
- * Home (Usage Dashboard when the role can open it) → Manage list (link) →
- * current record/page (not a link).
- * The parent always targets the list route, never history back.
+ * Manage list (link) → current record/page (not a link), e.g.
+ * Institution Management → 365works. No landing page is prepended, and
+ * the trail follows the page hierarchy regardless of how the user
+ * reached the page. The parent always targets the list route, never
+ * history back.
  */
 export function buildManageCrumbs(
   parent: ManageParent,
   currentLabel: string,
-  homePath: string = APP_HOME_PATH,
 ): Crumb[] {
-  const trail = getPageBreadcrumbs(parent.href, parent.label, homePath) ?? [];
   return [
-    ...trail.slice(0, -1),
     { label: parent.label, href: parent.href, onClick: parent.onNavigate },
     { label: currentLabel },
   ];
@@ -94,6 +81,7 @@ type PageBreadcrumbProps = {
 
 /** Compact, muted trail. Parent levels are links; the current page is stronger. */
 export default function PageBreadcrumb({ items, ...rest }: PageBreadcrumbProps) {
+  // A lone crumb is a top-level page, which shows no breadcrumb.
   if (items.length < 2) return null;
 
   return (

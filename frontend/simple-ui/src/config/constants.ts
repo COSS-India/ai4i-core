@@ -1467,7 +1467,7 @@ export const MODEL_FIELD_LIMITS = {
 
 /**
  * Tier filter sentinels for the Service Registry; every other value is a tier
- * UUID. ALL is "", matching the Status / Model Task Type filters beside it.
+ * UUID. ALL is "", matching the Status / Task Type filters beside it.
  */
 export const SERVICE_TIER = {
   FILTER: {

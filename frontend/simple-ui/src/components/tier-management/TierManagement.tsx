@@ -131,7 +131,7 @@ const TIER_TASK_TYPES_VISIBLE_COUNT = 4;
 
 const TIER_TASK_TYPES_COLUMN: DataTableColumn<Tier> = {
   id: "taskTypes",
-  header: "Model Task Types",
+  header: "Task Types",
   cell: (tier) => (
     <HStack spacing={1} flexWrap="wrap">
       {(tier.quotas ?? []).slice(0, TIER_TASK_TYPES_VISIBLE_COUNT).map((q) => (
@@ -618,7 +618,7 @@ const TierManagement: React.FC = () => {
         filterDefs={[
           {
             id: "taskType",
-            label: "Model Task Type",
+            label: "Task Type",
             type: "select",
             param: "model_task_type",
             value: filterTaskType,

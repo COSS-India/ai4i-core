@@ -72,7 +72,7 @@ const SpendByTaskTypeTable: React.FC<SpendByTaskTypeTableProps> = ({
     const cols: DataTableColumn<TaskUsageRow>[] = [
       {
         id: "taskType",
-        header: "Model Task Type",
+        header: "Task Type",
         sortable: true,
         sortAccessor: (row) => row.task.taskType,
         width: multiTier ? "22%" : "28%",
