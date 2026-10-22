@@ -114,7 +114,7 @@ class TierOut(BaseModel):
 
 
 class TierStatusUpdate(BaseModel):
-    status: TierStatus = Field(..., description="Target status. Allowed transitions: INACTIVE→ACTIVE, ACTIVE→DEACTIVATED, DEACTIVATED→ACTIVE.")
+    status: TierStatus = Field(..., description="Target status. Allowed transitions: INACTIVE→ACTIVE, ACTIVE→DEACTIVATED, DEACTIVATED→ACTIVE. DELETED is refused here; delete with DELETE /pay-per-use/tier/{tier_id}.")
 
 
 class DeleteTierResponse(SuccessResponseWithMeta):

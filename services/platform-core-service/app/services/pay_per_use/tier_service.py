@@ -263,7 +263,14 @@ async def _resolve_tier_for_update(body: TierUpdate, session: AsyncSession) -> T
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid tier_id format")
 
-    result = await session.execute(select(Tier).where(Tier.id == uid, Tier.status != TierStatus.DELETED))
+    # Locked for the same reason as _get_tier_or_404: an edit waiting behind a
+    # delete must 404, not write onto the deleted row.
+    result = await session.execute(
+        select(Tier)
+        .where(Tier.id == uid, Tier.status != TierStatus.DELETED)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     tier = result.scalar_one_or_none()
     if not tier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tier '{body.tier_id}' not found")
@@ -478,11 +485,20 @@ async def apply_pending_quotas(session: AsyncSession) -> int:
 
 
 async def _get_tier_or_404(tier_id: str, session: AsyncSession) -> Tier:
+    """Row-locked until commit, so two status changes cannot both pass their
+    checks on the same read: a reactivate waiting behind a delete re-reads the
+    row once the delete commits, the DELETED filter drops it, and it 404s
+    instead of resurrecting the tier."""
     try:
         uid = UUID(tier_id)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid tier_id format")
-    result = await session.execute(select(Tier).where(Tier.id == uid, Tier.status != TierStatus.DELETED))
+    result = await session.execute(
+        select(Tier)
+        .where(Tier.id == uid, Tier.status != TierStatus.DELETED)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     tier = result.scalar_one_or_none()
     if not tier:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Tier '{tier_id}' not found")
@@ -498,7 +514,37 @@ async def update_tier_status(
     auth_db: Optional[AsyncSession] = None,
     updated_by: Optional[str] = None,
 ) -> TierOut:
-    """Single entry point for all tier status transitions.
+    """PATCH /tier/{tier_id}/status — publish, deactivate and reactivate.
+
+    DELETED is refused: deletion goes through delete_tier (DELETE
+    /tier/{tier_id}) only, so it has a single entry point.
+    """
+    if target_status == TierStatus.DELETED:
+        raise ValidationError(
+            message="Use DELETE /pay-per-use/tier/{tier_id} to delete a tier.",
+            code="USE_DELETE_ENDPOINT",
+        )
+    return await _apply_tier_status(
+        tier_id,
+        target_status,
+        session,
+        auth_service_url=auth_service_url,
+        http_client=http_client,
+        auth_db=auth_db,
+        updated_by=updated_by,
+    )
+
+
+async def _apply_tier_status(
+    tier_id: str,
+    target_status: TierStatus,
+    session: AsyncSession,
+    auth_service_url: str = "",
+    http_client: Optional[httpx.AsyncClient] = None,
+    auth_db: Optional[AsyncSession] = None,
+    updated_by: Optional[str] = None,
+) -> TierOut:
+    """Every tier status transition, shared by update_tier_status and delete_tier.
 
     Allowed edges (enforced by assert_valid_tier_status_transition):
       INACTIVE    → ACTIVE       (Publish)
@@ -554,6 +600,14 @@ async def update_tier_status(
     update_tier_cache(tier.id, tier.name)
     await tier_redis.write_tier(tier)
 
+    if target_status == TierStatus.DELETED:
+        # Logged after commit so only a delete that landed is audited.
+        # tiers.updated_by / updated_at hold the same facts on the row.
+        logger.info(
+            "AUDIT tier deleted: tier_id=%s tier_name=%r deleted_by=%s deleted_at=%s",
+            tier.id, tier.name, updated_by, tier.updated_at.isoformat() if tier.updated_at else None,
+        )
+
     # Post-commit notifications (best-effort).
     if target_status == TierStatus.ACTIVE and previous_status == TierStatus.DEACTIVATED:
         await _notify_tier_reactivated(tier, auth_service_url, http_client, auth_db)
@@ -585,15 +639,9 @@ async def delete_tier(
             code="TIER_NOT_DEACTIVATED",
         )
 
-    out = await update_tier_status(
+    return await _apply_tier_status(
         tier_id, TierStatus.DELETED, session, auth_db=auth_db, updated_by=deleted_by
     )
-    # Audit trail: tiers.updated_by / updated_at hold the same facts on the row.
-    logger.info(
-        "AUDIT tier deleted: tier_id=%s tier_name=%r deleted_by=%s deleted_at=%s",
-        out.id, out.name, deleted_by, (out.updatedAt or datetime.now(timezone.utc)).isoformat(),
-    )
-    return out
 
 
 async def _notify_tier_reactivated(
