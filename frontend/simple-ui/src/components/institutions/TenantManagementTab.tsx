@@ -313,9 +313,6 @@ export default function TenantManagementTab({
   const [originalTierId, setOriginalTierId] = useState("");
   const [manageBudget, setManageBudget] = useState(0);
   const [isSavingPlan, setIsSavingPlan] = useState(false);
-  const [budgetAction, setBudgetAction] = useState<"topup" | "topdown">(
-    "topup",
-  );
   const [isEditingTier, setIsEditingTier] = useState(false);
   const [budgetAmount, setBudgetAmount] = useState("");
   const [manageEffectiveFrom, setManageEffectiveFrom] = useState("");
@@ -373,7 +370,6 @@ export default function TenantManagementTab({
     setIsEditingTier(!tierId);
     setManageBudget(tenantBudgetNumber(tenant) ?? 0);
     setBudgetAmount("");
-    setBudgetAction("topup");
     // From is read-only here, so whatever is seeded is what gets sent.
     // Manage Tier always shows the stored From, lapsed window included — a
     // reassignment keeps its original start date. Only Assign Tier, which
@@ -399,7 +395,6 @@ export default function TenantManagementTab({
     setIsEditingTier(false);
 
     setBudgetAmount("");
-    setBudgetAction("topup");
     setManageEffectiveFrom("");
     setManageEffectiveTo("");
     setOriginalEffectiveTo("");
@@ -524,7 +519,7 @@ export default function TenantManagementTab({
     const windowChanged = toChanged || !windowActive;
     if (!amountEntered && !windowChanged) return;
     if (amountEntered && !(amount > 0)) {
-      setWindowError("Enter a top-up or top-down amount greater than ₹0.");
+      setWindowError("Enter a top-up amount greater than ₹0.");
       return;
     }
 
@@ -533,7 +528,7 @@ export default function TenantManagementTab({
         tenant_id: String(manageTenant.tenant_id),
         ...(amountEntered
           ? {
-              action: budgetAction === "topup" ? "top-up" : "top-down",
+              action: "top-up",
               amount,
             }
           : {}),
@@ -572,7 +567,7 @@ export default function TenantManagementTab({
       // untouched.
       const apps = res.applications_recomputed;
       let description = amountEntered
-        ? `Budget ${budgetAction === "topup" ? "increased" : "decreased"} by ${formatRupees(amount)}.`
+        ? `Budget increased by ${formatRupees(amount)}.`
         : "Budget window updated.";
       if (apps) {
         description += ` ${apps} Application(s)' Budget % ${apps === 1 ? "was" : "were"} recalculated to reflect the new total — their ₹ allocations were not changed.`;
@@ -819,8 +814,6 @@ export default function TenantManagementTab({
         setManageEffectiveTo={setManageEffectiveTo}
         setWindowError={setWindowError}
         windowError={windowError}
-        budgetAction={budgetAction}
-        setBudgetAction={setBudgetAction}
         budgetAmount={budgetAmount}
         setBudgetAmount={setBudgetAmount}
         onApplyBudget={handleApplyBudget}

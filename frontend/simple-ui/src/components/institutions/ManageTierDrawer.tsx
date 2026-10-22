@@ -50,8 +50,6 @@ type ManageTierDrawerProps = {
   setManageEffectiveTo: (value: string) => void;
   setWindowError: (value: string | null) => void;
   windowError: string | null;
-  budgetAction: "topup" | "topdown";
-  setBudgetAction: (action: "topup" | "topdown") => void;
   budgetAmount: string;
   setBudgetAmount: (value: string) => void;
   onApplyBudget: () => void;
@@ -84,8 +82,6 @@ export default function ManageTierDrawer({
   setManageEffectiveTo,
   setWindowError,
   windowError,
-  budgetAction,
-  setBudgetAction,
   budgetAmount,
   setBudgetAmount,
   onApplyBudget,
@@ -264,47 +260,18 @@ export default function ManageTierDrawer({
                   p={3}
                   bg="ink.50"
                 >
-                  <HStack justify="space-between" mb={3}>
-                    <Text
-                      fontSize="sm"
-                      fontWeight="medium"
-                      color={windowNeedsExtension ? "ink.400" : undefined}
-                    >
-                      Adjust Budget
-                    </Text>
-
-                    <HStack spacing={0}>
-                      <Button
-                        size="xs"
-                        variant={
-                          budgetAction === "topup" ? "solid" : "outline"
-                        }
-                        colorScheme="green"
-                        borderRightRadius={0}
-                        isDisabled={windowNeedsExtension}
-                        onClick={() => setBudgetAction("topup")}
-                      >
-                        + Top-up
-                      </Button>
-
-                      <Button
-                        size="xs"
-                        variant={
-                          budgetAction === "topdown" ? "solid" : "outline"
-                        }
-                        colorScheme="red"
-                        borderLeftRadius={0}
-                        isDisabled={windowNeedsExtension}
-                        onClick={() => setBudgetAction("topdown")}
-                      >
-                        - Top-down
-                      </Button>
-                    </HStack>
-                  </HStack>
+                  <Text
+                    fontSize="sm"
+                    fontWeight="medium"
+                    mb={3}
+                    color={windowNeedsExtension ? "ink.400" : undefined}
+                  >
+                    Top-up Budget
+                  </Text>
 
                   <HStack>
                     <Input
-                      placeholder="Amount in ₹"
+                      placeholder="Amount to add in ₹"
                       type="number"
                       value={budgetAmount}
                       isDisabled={windowNeedsExtension}
