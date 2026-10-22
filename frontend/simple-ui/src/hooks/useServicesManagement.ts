@@ -155,6 +155,38 @@ const formatModelSubmissionDate = (value?: string | number | null): string => {
   return new Date(timestampMs).toISOString().slice(0, 10);
 };
 
+/** Whether the edit form changed the stored Hardware Description; false on create. */
+const isHardwareDescriptionEdited = (
+  form: Partial<Service>,
+  editing: Service | null,
+): boolean =>
+  !!editing &&
+  (form.hardwareDescription || "").trim() !==
+    (editing.hardwareDescription || "").trim();
+
+/**
+ * Hardware Description is editable on edit too, but only validated there
+ * once changed — a stored value that predates the length rule must not
+ * block an unrelated edit.
+ */
+const shouldValidateHardwareDescription = (
+  form: Partial<Service>,
+  editing: Service | null,
+): boolean => !editing || isHardwareDescriptionEdited(form, editing);
+
+/**
+ * PATCH field for Hardware Description, sent only when changed. A cleared
+ * field goes as null, not "": the backend treats null as "clear" but 422s
+ * on "" alongside an endpoint change.
+ */
+const hardwareDescriptionUpdate = (
+  form: Partial<Service>,
+  editing: Service,
+): Partial<Service> =>
+  isHardwareDescriptionEdited(form, editing)
+    ? { hardwareDescription: form.hardwareDescription?.trim() || null }
+    : {};
+
 export function useServicesManagement() {
   const [services, setServices] = useState<Service[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -899,11 +931,6 @@ export function useServicesManagement() {
         }
       : {};
 
-  const hardwareDescriptionChanged =
-    !!editingService &&
-    (formData.hardwareDescription || "").trim() !==
-      (editingService.hardwareDescription || "").trim();
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -928,6 +955,7 @@ export function useServicesManagement() {
           task_type: formData.task_type,
           costPerUnit: parsePricePerUnit(pricePerUnit),
           ...llmPrices(),
+          ...hardwareDescriptionUpdate(formData, editingService),
           unitSize: unitSize ? Number(unitSize) : undefined,
           tierIds: selectedTiers,
         };
@@ -935,13 +963,6 @@ export function useServicesManagement() {
           editingService.endpoint || editingService.endpoint_url || "";
         if (formData.endpoint !== storedEndpoint) {
           updateData.endpoint = formData.endpoint;
-        }
-        // Sent only when changed. A cleared field goes as null, not "": the
-        // backend treats null as "clear" but 422s on "" alongside an
-        // endpoint change.
-        if (hardwareDescriptionChanged) {
-          updateData.hardwareDescription =
-            formData.hardwareDescription?.trim() || null;
         }
         const trimmedToken = authToken.trim();
         // An untouched field still holds the backend's mask ("***"); sending
@@ -1163,12 +1184,12 @@ export function useServicesManagement() {
   // field only exists — and only needs validating — for non-LLM tasks.
   const serviceNameError =
     isCreateMode && !isLlmTaskType ? validateServiceName(formData.name) : null;
-  // Editable on edit too, but only validated there once changed — a stored
-  // value that predates the length rule must not block an unrelated edit.
-  const hardwareDescriptionError =
-    isCreateMode || hardwareDescriptionChanged
-      ? validateHardwareDescription(formData.hardwareDescription)
-      : null;
+  const hardwareDescriptionError = shouldValidateHardwareDescription(
+    formData,
+    editingService,
+  )
+    ? validateHardwareDescription(formData.hardwareDescription)
+    : null;
   /**
    * Service ID length, plus the tighter name cap when the ID doubles as the
    * Service Name. Kept apart from `serviceIdError` so the duplicate clash
