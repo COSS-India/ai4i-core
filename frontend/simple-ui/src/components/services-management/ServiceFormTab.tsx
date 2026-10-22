@@ -491,10 +491,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 {formData.serviceDescription || "—"}
               </ReadOnlyField>
             ) : (
-            <FormControl
-              isRequired={!editingService}
-              isInvalid={!!descriptionError}
-            >
+            <FormControl isInvalid={!!descriptionError}>
               <FieldLabel>Service Description</FieldLabel>
               <Textarea
                 value={formData.serviceDescription || ""}
@@ -605,7 +602,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 {formData.hardwareDescription || "—"}
               </ReadOnlyField>
             ) : (
-            <FormControl isRequired={!editingService} isInvalid={!!infraError}>
+            <FormControl isInvalid={!!infraError}>
               <FieldLabel>Hardware Description</FieldLabel>
               <Input
                 value={formData.hardwareDescription || ""}
@@ -614,14 +611,13 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 }
                 onBlur={() => markBlurred("hardwareDescription")}
                 placeholder={FIELD_HINTS.service.hardware.placeholder}
-                bg={editingService ? "ink.50" : "white"}
-                isReadOnly={!!editingService}
+                bg="white"
                 maxLength={INFRA_DESCRIPTION_MAX_LEN}
               />
               {infraError ? (
                 <FormErrorMessage>{infraError}</FormErrorMessage>
               ) : (
-                <FieldHint show={!editingService}>
+                <FieldHint>
                   {FIELD_HINTS.service.hardware.helper(
                     INFRA_DESCRIPTION_MIN_LEN,
                     INFRA_DESCRIPTION_MAX_LEN,

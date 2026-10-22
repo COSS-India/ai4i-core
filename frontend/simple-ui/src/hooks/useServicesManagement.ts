@@ -899,6 +899,11 @@ export function useServicesManagement() {
         }
       : {};
 
+  const hardwareDescriptionChanged =
+    !!editingService &&
+    (formData.hardwareDescription || "").trim() !==
+      (editingService.hardwareDescription || "").trim();
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -930,6 +935,13 @@ export function useServicesManagement() {
           editingService.endpoint || editingService.endpoint_url || "";
         if (formData.endpoint !== storedEndpoint) {
           updateData.endpoint = formData.endpoint;
+        }
+        // Sent only when changed. A cleared field goes as null, not "": the
+        // backend treats null as "clear" but 422s on "" alongside an
+        // endpoint change.
+        if (hardwareDescriptionChanged) {
+          updateData.hardwareDescription =
+            formData.hardwareDescription?.trim() || null;
         }
         const trimmedToken = authToken.trim();
         // An untouched field still holds the backend's mask ("***"); sending
@@ -981,9 +993,10 @@ export function useServicesManagement() {
           serviceId: serviceId,
           publishedOn: Math.floor(Date.now() / 1000),
           // Trimmed so the length the user was validated against is the
-          // length the backend measures.
-          serviceDescription: formData.serviceDescription?.trim() || "",
-          hardwareDescription: formData.hardwareDescription?.trim() || "",
+          // length the backend measures. Both are optional: a blank field is
+          // omitted from the payload rather than sent as "".
+          serviceDescription: formData.serviceDescription?.trim() || undefined,
+          hardwareDescription: formData.hardwareDescription?.trim() || undefined,
           api_key: "",
           status: "active",
           costPerUnit: parsePricePerUnit(pricePerUnit),
@@ -1150,9 +1163,12 @@ export function useServicesManagement() {
   // field only exists — and only needs validating — for non-LLM tasks.
   const serviceNameError =
     isCreateMode && !isLlmTaskType ? validateServiceName(formData.name) : null;
-  const hardwareDescriptionError = isCreateMode
-    ? validateHardwareDescription(formData.hardwareDescription)
-    : null;
+  // Editable on edit too, but only validated there once changed — a stored
+  // value that predates the length rule must not block an unrelated edit.
+  const hardwareDescriptionError =
+    isCreateMode || hardwareDescriptionChanged
+      ? validateHardwareDescription(formData.hardwareDescription)
+      : null;
   /**
    * Service ID length, plus the tighter name cap when the ID doubles as the
    * Service Name. Kept apart from `serviceIdError` so the duplicate clash

@@ -469,8 +469,8 @@ export type Service = ServiceListItem & ServiceLegacyFields;
 
 export interface ServiceCreateRequest {
   name: string;
-  description: string;
-  hardwareDescription: string;
+  description?: string;
+  hardwareDescription?: string;
   modelId: string;
   modelVersion: string;
   endpoint: string;
