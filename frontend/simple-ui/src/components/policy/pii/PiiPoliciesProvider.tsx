@@ -15,6 +15,8 @@ import {
   createPolicySubCategory,
   createPolicyType,
   deletePolicy,
+  deletePolicyCategory,
+  deletePolicySubCategory,
   deletePolicyType,
   listPolicies,
   listPolicyCategories,
@@ -22,7 +24,9 @@ import {
   listPolicyTypes,
   simulatePolicy,
   updatePolicy,
+  updatePolicyCategory,
   updatePolicyCategoryStatus,
+  updatePolicySubCategory,
   updatePolicySubCategoryStatus,
   updatePolicyType,
 } from "../../../services/policyHierarchyService";
@@ -107,6 +111,10 @@ interface PiiPoliciesContextValue {
   updateCategory: (id: string, name: string, description: string) => Promise<string | null>;
   /** Returns an error message, or null on success. */
   updateSubCategory: (id: string, name: string, description: string) => Promise<string | null>;
+  /** True after the category is removed. A 409 leaves it in place and shows the API message. */
+  deleteCategory: (id: string) => Promise<boolean>;
+  /** True after the sub-category is removed. A 409 leaves it in place and shows the API message. */
+  deleteSubCategory: (id: string) => Promise<boolean>;
   subscriptions: Record<string, string[]>;
   role: PortalRole;
   institutionId: string;
@@ -458,15 +466,20 @@ export function PiiPoliciesProvider({
         if (duplicateName(categories, trimmed, id)) {
           return "A category with this name already exists.";
         }
-        const category = categories.find((item) => item.id === id);
-        if (!category) return "Couldn't update the category.";
-        setCategories((prev) =>
-          prev.map((item) =>
-            item.id === id ? { ...item, name: trimmed, description: description.trim() } : item,
-          ),
-        );
-        toast("Category updated.");
-        return null;
+        const categoryId = numericId(id);
+        if (categoryId == null) return "Couldn't update the category.";
+        try {
+          const saved = await updatePolicyCategory(categoryId, {
+            name: trimmed,
+            description: blankToNull(description),
+          });
+          const next = toCategory(saved);
+          setCategories((prev) => prev.map((item) => (item.id === id ? next : item)));
+          toast("Category updated.");
+          return null;
+        } catch (error: unknown) {
+          return apiErrorMessage(error, "Couldn't update the category.");
+        }
       },
       updateSubCategory: async (id, name, description) => {
         const trimmed = name.trim();
@@ -474,15 +487,69 @@ export function PiiPoliciesProvider({
         if (duplicateName(subcategories, trimmed, id)) {
           return "A sub-category with this name already exists.";
         }
-        const subcategory = subcategories.find((item) => item.id === id);
-        if (!subcategory) return "Couldn't update the sub-category.";
-        setSubcategories((prev) =>
-          prev.map((item) =>
-            item.id === id ? { ...item, name: trimmed, description: description.trim() } : item,
-          ),
-        );
-        toast("Sub-category updated.");
-        return null;
+        const subCategoryId = numericId(id);
+        if (subCategoryId == null) return "Couldn't update the sub-category.";
+        try {
+          const saved = await updatePolicySubCategory(subCategoryId, {
+            name: trimmed,
+            description: blankToNull(description),
+          });
+          const next = toSubcategory(saved);
+          setSubcategories((prev) => prev.map((item) => (item.id === id ? next : item)));
+          toast("Sub-category updated.");
+          return null;
+        } catch (error: unknown) {
+          return apiErrorMessage(error, "Couldn't update the sub-category.");
+        }
+      },
+      deleteCategory: async (id) => {
+        const categoryId = numericId(id);
+        if (categoryId == null) {
+          showToast({ type: "error", message: "Couldn't delete the category.", messageOnly: true });
+          return false;
+        }
+        try {
+          await deletePolicyCategory(categoryId);
+          const childIds = new Set(
+            subcategories.filter((item) => item.categoryId === id).map((item) => item.id),
+          );
+          setCategories((prev) => prev.filter((item) => item.id !== id));
+          setSubcategories((prev) => prev.filter((item) => item.categoryId !== id));
+          setPolicies((prev) => prev.filter((item) => !childIds.has(item.subcategoryId)));
+          setPolicyCategoryFilter((current) => (current === id ? "" : current));
+          setPolicySubcategoryFilter((current) => (childIds.has(current) ? "" : current));
+          toast("Category deleted.");
+          return true;
+        } catch (error: unknown) {
+          showToast({
+            type: "error",
+            message: apiErrorMessage(error, "Couldn't delete the category."),
+            messageOnly: true,
+          });
+          return false;
+        }
+      },
+      deleteSubCategory: async (id) => {
+        const subCategoryId = numericId(id);
+        if (subCategoryId == null) {
+          showToast({ type: "error", message: "Couldn't delete the sub-category.", messageOnly: true });
+          return false;
+        }
+        try {
+          await deletePolicySubCategory(subCategoryId);
+          setSubcategories((prev) => prev.filter((item) => item.id !== id));
+          setPolicies((prev) => prev.filter((item) => item.subcategoryId !== id));
+          setPolicySubcategoryFilter((current) => (current === id ? "" : current));
+          toast("Sub-category deleted.");
+          return true;
+        } catch (error: unknown) {
+          showToast({
+            type: "error",
+            message: apiErrorMessage(error, "Couldn't delete the sub-category."),
+            messageOnly: true,
+          });
+          return false;
+        }
       },
       subscriptions,
       role,
