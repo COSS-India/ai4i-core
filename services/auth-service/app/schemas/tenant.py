@@ -412,15 +412,15 @@ class TenantBudgetRequest(BaseSchema):
     # Both optional — a pure window edit (e.g. extending budget_effective_to
     # on a lapsed window to reactivate it without touching the ₹ amount)
     # sends neither. When one is given, the other becomes required (see
-    # _validate_action_amount_pair below), since a top-up/top-down without
-    # a direction or size is meaningless.
-    action: Optional[Literal["top-up", "top-down"]] = None
+    # _validate_action_amount_pair below), since a top-up without a size
+    # is meaningless. Top-down is no longer supported.
+    action: Optional[Literal["top-up"]] = None
     amount: Optional[Decimal] = Field(None, gt=0, max_digits=15, decimal_places=2)
     # Both optional here — whether either is actually required depends on
     # tenant state TenantService.revise_tenant_budget alone can see (does
     # this tenant already have a LIVE window?), not something this schema
-    # can express. Omitting both is the common case: a plain amount top-up/
-    # top-down that doesn't touch the window at all (what the shipped UI
+    # can express. Omitting both is the common case: a plain amount top-up
+    # that doesn't touch the window at all (what the shipped UI
     # already sends). See revise_tenant_budget's own docstring for the full
     # required-ness matrix and the 422s it can raise
     # (effective_from_locked / effective_window_required /
