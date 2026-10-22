@@ -15,7 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_auth_db_optional, get_db
 from app.core.constants import TierStatus
-from app.schemas.pay_per_use.tier import ListTiersResponse, TierCreate, TierOut, TierStatusUpdate, TierUpdate
+from app.schemas.common import MessageMeta
+from app.schemas.pay_per_use.tier import DeleteTierResponse, ListTiersResponse, TierCreate, TierOut, TierStatusUpdate, TierUpdate
 from app.services.pay_per_use import tier_service
 from app.core.config import settings
 
@@ -96,4 +97,24 @@ async def update_tier_status(
         http_client=request.app.state.http_client,
         auth_db=auth_db,
         updated_by=updated_by,
+    )
+
+
+@router.delete("/tier/{tier_id}", response_model=DeleteTierResponse)
+async def delete_tier(
+    request: Request,
+    tier_id: str,
+    session: AsyncSession = Depends(get_db),
+    auth_db: Optional[AsyncSession] = Depends(get_auth_db_optional),
+):
+    """Soft-delete a DEACTIVATED tier (status → DELETED; the row is kept for
+    historical usage and reporting). Refused with 422 unless the tier is
+    DEACTIVATED, and with 409 while it is assigned to a tenant or mapped to a
+    service."""
+    deleted_by = request.headers.get("X-User-Id")
+    tier = await tier_service.delete_tier(tier_id, session, auth_db=auth_db, deleted_by=deleted_by)
+    return DeleteTierResponse(
+        success=True,
+        data=tier,
+        meta=MessageMeta(message=f"Tier '{tier.name}' deleted successfully"),
     )
