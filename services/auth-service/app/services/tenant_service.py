@@ -1270,8 +1270,8 @@ class TenantService:
         result onto this tenant's cached API keys — the write-through the
         old revise_budget endpoint did via its budget-exhausted webhook to
         auth-service. Without this, a top-up moves tenants.allocated_budget
-        but a key already flagged budget-exhausted=1 from a prior top-down
-        has no path back to 0.
+        but a key already flagged budget-exhausted=1 (e.g. after its spend
+        caught up with the tenant's budget) has no path back to 0.
 
         Asymmetric on purpose, NOT a blanket set-or-clear of every key:
           * Tenant pool genuinely depleted (exhausted=True) -> every key
