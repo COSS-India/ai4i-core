@@ -4,8 +4,9 @@ Covers:
 - `task`/`inferenceEndPoint` as real nested ULCA-shaped objects, accepted
   alongside the deprecated flat aliases (`taskType`/`endpoint`/
   `hardwareDescription`/`api_key`/`serviceDescription`).
-- `description` required on create (25-1000 chars); `inferenceEndPoint`
-  required on create (callbackUrl, infraDescription, schema).
+- `description` optional on create (25-1000 chars when supplied);
+  `inferenceEndPoint` required on create (callbackUrl, schema);
+  `infraDescription` optional.
 - `serviceId` minimum length of 5 enforced on create only — not on the
   shared `validate_service_id` used for existing-ID lookups.
 - `schema` (InferenceSchemaArray) shallow shape validation.
@@ -190,14 +191,14 @@ class TestNestedTaskAndInferenceEndPoint:
             ServiceCreateRequest(serviceId="svc-1", **base)
 
 
-# ── description required on create (25-1000 chars) ──────────────────────────
+# ── description optional on create (25-1000 chars when supplied) ─────────────
 
 
-class TestDescriptionRequired:
-    def test_missing_description_and_service_description_rejected(self) -> None:
+class TestDescriptionOptional:
+    def test_missing_description_and_service_description_accepted(self) -> None:
         base = {k: v for k, v in _ULCA_BASE.items() if k != "description"}
-        with pytest.raises(PydanticValidationError, match="description is required"):
-            ServiceCreateRequest(serviceId="svc-1", **base)
+        req = ServiceCreateRequest(serviceId="svc-1", **base)
+        assert req.description is None
 
     def test_too_short_description_rejected(self) -> None:
         base = {**_ULCA_BASE, "description": "too short"}
@@ -237,7 +238,7 @@ class TestDescriptionRequired:
         assert req.description is None
 
 
-# ── inferenceEndPoint required on create (callbackUrl, infraDescription, schema) ──
+# ── inferenceEndPoint required on create (callbackUrl, schema) ──
 
 
 class TestInferenceEndPointRequired:
@@ -262,13 +263,14 @@ class TestInferenceEndPointRequired:
         with pytest.raises(PydanticValidationError, match="callbackUrl"):
             ServiceCreateRequest(serviceId="svc-1", **base)
 
-    def test_missing_infra_description_and_hardware_description_rejected(self) -> None:
+    def test_missing_infra_description_and_hardware_description_accepted(self) -> None:
         base = {**_ULCA_BASE, "inferenceEndPoint": {
             "callbackUrl": "http://localhost:8080",
             "schema": _SCHEMA_ENTRY,
         }}
-        with pytest.raises(PydanticValidationError, match="infraDescription"):
-            ServiceCreateRequest(serviceId="svc-1", **base)
+        req = ServiceCreateRequest(serviceId="svc-1", **base)
+        assert req.inferenceEndPoint.infraDescription is None
+        assert req.hardwareDescription is None
 
     def test_short_infra_description_via_legacy_alias_still_enforces_min_length(self) -> None:
         """The legacy `hardwareDescription` alias must not bypass the
