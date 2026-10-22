@@ -234,9 +234,7 @@ class TestDeleteTier:
     @pytest.mark.asyncio
     async def test_invalid_uuid_rejected(self):
         with pytest.raises(HTTPException) as exc_info:
-            await tier_service.update_tier_status(
-                "not-a-uuid", TierStatus.DELETED, AsyncMock(), auth_db=AsyncMock()
-            )
+            await tier_service.delete_tier("not-a-uuid", AsyncMock(), auth_db=AsyncMock())
         assert exc_info.value.status_code == 400
 
     @pytest.mark.asyncio
@@ -244,9 +242,7 @@ class TestDeleteTier:
         session = AsyncMock()
         session.execute = AsyncMock(return_value=_mock_result(scalar=None))
         with pytest.raises(HTTPException) as exc_info:
-            await tier_service.update_tier_status(
-                str(uuid4()), TierStatus.DELETED, session, auth_db=AsyncMock()
-            )
+            await tier_service.delete_tier(str(uuid4()), session, auth_db=AsyncMock())
         assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
@@ -261,9 +257,7 @@ class TestDeleteTier:
         session.execute = AsyncMock(return_value=_mock_result(scalar=tier))
 
         with pytest.raises(ValidationError) as exc_info:
-            await tier_service.update_tier_status(
-                str(tier_id), TierStatus.DELETED, session, auth_db=None
-            )
+            await tier_service.delete_tier(str(tier_id), session, auth_db=None)
 
         assert exc_info.value.code == "AUTH_DB_NOT_CONFIGURED"
         session.commit.assert_not_awaited()
@@ -279,9 +273,7 @@ class TestDeleteTier:
         auth_db.execute = AsyncMock(return_value=_mock_result(first=(1,)))
 
         with pytest.raises(HTTPException) as exc_info:
-            await tier_service.update_tier_status(
-                str(tier_id), TierStatus.DELETED, session, auth_db=auth_db
-            )
+            await tier_service.delete_tier(str(tier_id), session, auth_db=auth_db)
 
         assert exc_info.value.status_code == 409
         session.commit.assert_not_awaited()
@@ -299,9 +291,7 @@ class TestDeleteTier:
         auth_db = AsyncMock()
         auth_db.execute = AsyncMock(return_value=_mock_result(first=None))
 
-        await tier_service.update_tier_status(
-            str(tier_id), TierStatus.DELETED, session, auth_db=auth_db
-        )
+        await tier_service.delete_tier(str(tier_id), session, auth_db=auth_db)
 
         assert tier.status == TierStatus.DELETED
         session.commit.assert_awaited_once()
@@ -323,17 +313,6 @@ class TestDeleteTier:
         session.commit.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_delete_tier_already_deleted_is_404(self):
-        # _get_tier_or_404 filters DELETED out, so a second delete finds nothing.
-        session = AsyncMock()
-        session.execute = AsyncMock(return_value=_mock_result(scalar=None))
-
-        with pytest.raises(HTTPException) as exc_info:
-            await tier_service.delete_tier(str(uuid4()), session, auth_db=AsyncMock())
-
-        assert exc_info.value.status_code == 404
-
-    @pytest.mark.asyncio
     async def test_delete_tier_soft_deletes_and_records_user(self):
         tier_id = uuid4()
         tier = _tier(tier_id=tier_id, name="Bronze", status=TierStatus.DEACTIVATED)
@@ -353,6 +332,49 @@ class TestDeleteTier:
         assert out.name == "Bronze"
         session.commit.assert_awaited_once()
         session.delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_is_audited(self, caplog):
+        tier_id = uuid4()
+        tier = _tier(tier_id=tier_id, name="Bronze", status=TierStatus.DEACTIVATED)
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_mock_result(scalar=tier))
+        auth_db = AsyncMock()
+        auth_db.execute = AsyncMock(return_value=_mock_result(first=None))
+
+        with caplog.at_level("INFO", logger=tier_service.logger.name):
+            await tier_service.delete_tier(
+                str(tier_id), session, auth_db=auth_db, deleted_by="user-42"
+            )
+
+        audit = [r.getMessage() for r in caplog.records if r.getMessage().startswith("AUDIT tier deleted")]
+        assert len(audit) == 1
+        assert str(tier_id) in audit[0] and "'Bronze'" in audit[0] and "deleted_by=user-42" in audit[0]
+
+    @pytest.mark.asyncio
+    async def test_status_change_locks_the_tier_row(self):
+        tier_id = uuid4()
+        tier = _tier(tier_id=tier_id, status=TierStatus.DEACTIVATED)
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_mock_result(scalar=tier))
+
+        await tier_service.update_tier_status(str(tier_id), TierStatus.ACTIVE, session)
+
+        first_stmt = session.execute.await_args_list[0].args[0]
+        assert first_stmt._for_update_arg is not None
+
+    @pytest.mark.asyncio
+    async def test_status_patch_refuses_deleted(self):
+        session = AsyncMock()
+
+        with pytest.raises(ValidationError) as exc_info:
+            await tier_service.update_tier_status(
+                str(uuid4()), TierStatus.DELETED, session, auth_db=AsyncMock()
+            )
+
+        assert exc_info.value.code == "USE_DELETE_ENDPOINT"
+        session.execute.assert_not_awaited()
+        session.commit.assert_not_awaited()
 
 
 class TestNotifyTierReactivated:

@@ -86,7 +86,8 @@ async def update_tier_status(
     - INACTIVE → ACTIVE (Publish)
     - ACTIVE → DEACTIVATED (Deactivate — tenants stay assigned, requests blocked)
     - DEACTIVATED → ACTIVE (Reactivate — resets monthly quota, clears Redis flags)
-    - DEACTIVATED → DELETED (Delete — only if no tenants are assigned)
+
+    DELETED is refused with 422 USE_DELETE_ENDPOINT; use DELETE /tier/{tier_id}.
     """
     updated_by = request.headers.get("X-User-Id")
     return await tier_service.update_tier_status(
