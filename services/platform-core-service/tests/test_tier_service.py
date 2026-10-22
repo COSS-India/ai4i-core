@@ -306,6 +306,54 @@ class TestDeleteTier:
         assert tier.status == TierStatus.DELETED
         session.commit.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("current", [TierStatus.ACTIVE, TierStatus.INACTIVE])
+    async def test_delete_tier_requires_deactivated(self, current):
+        tier_id = uuid4()
+        tier = _tier(tier_id=tier_id, status=current)
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_mock_result(scalar=tier))
+
+        with pytest.raises(ValidationError) as exc_info:
+            await tier_service.delete_tier(str(tier_id), session, auth_db=AsyncMock())
+
+        assert exc_info.value.code == "TIER_NOT_DEACTIVATED"
+        assert "Deactivate the Tier before deleting it." in str(exc_info.value.message)
+        assert tier.status == current
+        session.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_delete_tier_already_deleted_is_404(self):
+        # _get_tier_or_404 filters DELETED out, so a second delete finds nothing.
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_mock_result(scalar=None))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await tier_service.delete_tier(str(uuid4()), session, auth_db=AsyncMock())
+
+        assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_tier_soft_deletes_and_records_user(self):
+        tier_id = uuid4()
+        tier = _tier(tier_id=tier_id, name="Bronze", status=TierStatus.DEACTIVATED)
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_mock_result(scalar=tier))
+        session.commit = AsyncMock()
+        session.delete = AsyncMock()
+        auth_db = AsyncMock()
+        auth_db.execute = AsyncMock(return_value=_mock_result(first=None))
+
+        out = await tier_service.delete_tier(
+            str(tier_id), session, auth_db=auth_db, deleted_by="user-42"
+        )
+
+        assert tier.status == TierStatus.DELETED
+        assert tier.updated_by == "user-42"
+        assert out.name == "Bronze"
+        session.commit.assert_awaited_once()
+        session.delete.assert_not_called()
+
 
 class TestNotifyTierReactivated:
     @pytest.mark.asyncio

@@ -563,6 +563,39 @@ async def update_tier_status(
     return _build_out(tier, list(q_result.scalars().all()), names)
 
 
+async def delete_tier(
+    tier_id: str,
+    session: AsyncSession,
+    auth_db: Optional[AsyncSession] = None,
+    deleted_by: Optional[str] = None,
+) -> TierOut:
+    """Soft delete: DEACTIVATED → DELETED. The row stays so usage, metering and
+    report lookups keep resolving the tier's name; every read path already
+    filters DELETED out, and DELETED has no outgoing transition, so the tier
+    cannot be edited or reactivated afterwards.
+
+    Checked here rather than left to assert_valid_tier_status_transition so an
+    ACTIVE/INACTIVE tier gets the actionable message instead of the generic
+    "allowed targets" one.
+    """
+    tier = await _get_tier_or_404(tier_id, session)
+    if tier.status != TierStatus.DEACTIVATED:
+        raise ValidationError(
+            message="Deactivate the Tier before deleting it.",
+            code="TIER_NOT_DEACTIVATED",
+        )
+
+    out = await update_tier_status(
+        tier_id, TierStatus.DELETED, session, auth_db=auth_db, updated_by=deleted_by
+    )
+    # Audit trail: tiers.updated_by / updated_at hold the same facts on the row.
+    logger.info(
+        "AUDIT tier deleted: tier_id=%s tier_name=%r deleted_by=%s deleted_at=%s",
+        out.id, out.name, deleted_by, (out.updatedAt or datetime.now(timezone.utc)).isoformat(),
+    )
+    return out
+
+
 async def _notify_tier_reactivated(
     tier: Tier,
     auth_service_url: str,

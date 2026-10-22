@@ -4,6 +4,7 @@ from typing import Any, List, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.constants import TierStatus
+from app.schemas.common import MessageMeta, SuccessResponseWithMeta
 
 
 class TierQuotaIn(BaseModel):
@@ -114,6 +115,13 @@ class TierOut(BaseModel):
 
 class TierStatusUpdate(BaseModel):
     status: TierStatus = Field(..., description="Target status. Allowed transitions: INACTIVE→ACTIVE, ACTIVE→DEACTIVATED, DEACTIVATED→ACTIVE.")
+
+
+class DeleteTierResponse(SuccessResponseWithMeta):
+    """DELETE /pay-per-use/tier/{tier_id} — the soft-deleted tier, status DELETED."""
+
+    data: TierOut
+    meta: MessageMeta
 
 
 class ListTiersResponse(BaseModel):
