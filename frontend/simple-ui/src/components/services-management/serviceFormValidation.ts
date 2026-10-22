@@ -11,7 +11,7 @@
  * to create and edit alike.
  */
 
-/** `description` — 25-1000 chars, required (alias: `serviceDescription`). */
+/** `description` — optional; 25-1000 chars when provided (alias: `serviceDescription`). */
 export const SERVICE_DESCRIPTION_MIN_LEN = 25;
 export const SERVICE_DESCRIPTION_MAX_LEN = 1000;
 
@@ -39,7 +39,7 @@ export const sanitizeServiceId = (value: string, isLlm: boolean): string =>
     ? sanitizeServiceName(value)
     : value.replaceAll(/[^a-zA-Z0-9/_-]/g, "");
 
-/** `inferenceEndPoint.infraDescription` — 5-100 chars (alias: `hardwareDescription`). */
+/** `inferenceEndPoint.infraDescription` — optional; 5-100 chars when provided (alias: `hardwareDescription`). */
 export const INFRA_DESCRIPTION_MIN_LEN = 5;
 export const INFRA_DESCRIPTION_MAX_LEN = 100;
 
@@ -83,7 +83,7 @@ export const validateServiceDescription = (
     value,
     SERVICE_DESCRIPTION_MIN_LEN,
     SERVICE_DESCRIPTION_MAX_LEN,
-    { required: true },
+    { required: false },
   );
 
 export const validateServiceName = (
@@ -111,7 +111,7 @@ export const validateHardwareDescription = (
     value,
     INFRA_DESCRIPTION_MIN_LEN,
     INFRA_DESCRIPTION_MAX_LEN,
-    { required: true },
+    { required: false },
   );
 
 /**

@@ -97,7 +97,7 @@ export const FIELD_HINTS = {
     description: {
       placeholder: "Provide a brief description of what this service does",
       helper: (entered: number, min: number, max: number) =>
-        `Required. ${min}–${max} characters — ${entered}/${max} entered.`,
+        `Optional. ${min}–${max} characters — ${entered}/${max} entered.`,
     },
     endpoint: {
       placeholder: "Enter full endpoint URL",
@@ -117,7 +117,7 @@ export const FIELD_HINTS = {
     hardware: {
       placeholder: "e.g. Auto-scalable deployment, using T4 GPUs",
       helper: (min: number, max: number) =>
-        `${min}–${max} characters. Describes the infrastructure this service runs on.`,
+        `Optional. ${min}–${max} characters. Describes the infrastructure this service runs on.`,
     },
     unitType: { helper: "Auto-set based on the task type", needTaskType: "Select a task type first" },
     unitSize: {
