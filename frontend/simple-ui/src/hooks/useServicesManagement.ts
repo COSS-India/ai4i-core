@@ -1131,7 +1131,7 @@ export function useServicesManagement() {
 
   /**
    * Price bounds hold on PATCH as well as POST, so this one is not gated on
-   * create mode the way the length rules below are.
+   * create mode the way most of the length rules below are.
    */
   const pricePerUnitError = validatePricePerUnit(
     pricePerUnit,
@@ -1158,18 +1158,18 @@ export function useServicesManagement() {
     existingServiceIds.has(formData.serviceId.trim());
 
   /**
-   * ULCA length rules — create only. PATCH does not carry them, so an edit
-   * of a pre-existing service that predates these limits stays submittable.
-   */
-  /**
    * Registry-state clash — surfaced immediately, since unlike the length
    * rules it cannot be stated up-front in hint text.
    */
   const serviceIdError = serviceIdExists ? "Service Id already exists" : null;
 
   /**
-   * ULCA length/charset rules — create only. PATCH carries none of them, so
-   * editing a service that predates these limits stays submittable.
+   * ULCA length/charset rules. Description, Name and Service ID length are
+   * create only — PATCH carries none of them, so editing a service that
+   * predates these limits stays submittable. Hardware Description is the
+   * exception: it is editable and PATCH enforces its 5-100 length, so it is
+   * also checked on edit, but only once changed (see
+   * `shouldValidateHardwareDescription`).
    *
    * Each value doubles as the field's error message (the form reveals it
    * once that field has been blurred) and as a Create-button gate. A short
