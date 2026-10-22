@@ -292,7 +292,8 @@ async def revise_tenant_budget(
     no longer exists. Response is unwrapped (no success/data envelope),
     matching the endpoint it replaces.
 
-    ``action``/``amount`` are also both optional now — a pure window edit
+    ``action`` only accepts ``"top-up"``. ``action``/``amount`` are both
+    optional — a pure window edit
     (e.g. extending ``budget_effective_to`` to reactivate a lapsed window)
     sends neither; the two are otherwise only ever accepted together (422
     on a schema validation error if only one is given), and at least one of
@@ -327,9 +328,8 @@ async def revise_tenant_budget(
     different share of a different-sized total (``applications_recomputed``
     reports how many actually changed; ``keys_recomputed`` is always 0 —
     no Application's ₹ moving means nothing forces its Keys to react
-    either). Top-down is no longer supported (422 if ``action`` is
-    ``"top-down"``). Once a revision commits, it best-effort recomputes and
-    syncs the cached budget-exhausted flag on this tenant's API keys too (see
+    either). Once a revision commits, it best-effort recomputes and syncs
+    the cached budget-exhausted flag on this tenant's API keys too (see
     TenantService._sync_ppu_wallet_and_exhaustion).
     """
     tenant, applications_recomputed, keys_recomputed, snapshot_write_failed = (
