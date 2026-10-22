@@ -285,7 +285,7 @@ async def revise_tenant_budget(
     svc: TenantService = Depends(get_tenant_service),
     platform_core_db: Optional[AsyncSession] = Depends(get_platform_core_db),
 ):
-    """Top-up or top-down a tenant's budget by an amount, effective immediately. ADMIN-only.
+    """Top-up a tenant's budget by an amount, effective immediately. ADMIN-only.
 
     Replaces platform-core-service's PATCH /pay-per-use/tenant/budget —
     budget now lives on tenants.allocated_budget directly; available_balance
@@ -300,7 +300,7 @@ async def revise_tenant_budget(
     present.
 
     ``budget_effective_from``/``budget_effective_to`` are both optional —
-    both omitted is a plain amount top-up/top-down that leaves an existing
+    both omitted is a plain amount top-up that leaves an existing
     window untouched. Whether either is actually required depends on
     whether this tenant currently has a LIVE window:
       * Active: ``budget_effective_from`` is locked (422
@@ -327,18 +327,9 @@ async def revise_tenant_budget(
     different share of a different-sized total (``applications_recomputed``
     reports how many actually changed; ``keys_recomputed`` is always 0 —
     no Application's ₹ moving means nothing forces its Keys to react
-    either). A decrease that would leave the new total unable to cover
-    what's already allocated across every Application (nobody auto-shrinks
-    to make room) rejects the WHOLE revision, including the Tenant's own
-    allocated_budget change — see TenantService.revise_tenant_budget /
-    AllocationService.cascade_tenant_budget_revision.
-
-    A top-down is rejected outright (409 budget_below_consumed) if it would
-    drop the budget below this tenant's total spend across its API keys, or
-    refused (503 spend_verification_unavailable) if that spend — or the
-    cascade above — can't be verified/applied right now. Once a revision
-    (either direction) commits, it best-effort recomputes and syncs the
-    cached budget-exhausted flag on this tenant's API keys too (see
+    either). Top-down is no longer supported (422 if ``action`` is
+    ``"top-down"``). Once a revision commits, it best-effort recomputes and
+    syncs the cached budget-exhausted flag on this tenant's API keys too (see
     TenantService._sync_ppu_wallet_and_exhaustion).
     """
     tenant, applications_recomputed, keys_recomputed, snapshot_write_failed = (

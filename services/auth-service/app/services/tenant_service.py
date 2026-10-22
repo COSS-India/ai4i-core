@@ -1340,13 +1340,13 @@ class TenantService:
         self,
         current_user: User,
         tenant_id: int,
-        action: Optional[Literal["top-up", "top-down"]],
+        action: Optional[Literal["top-up"]],
         amount: Optional[Decimal],
         budget_effective_from: Optional[datetime] = None,
         budget_effective_to: Optional[datetime] = None,
         platform_core_db: Optional[AsyncSession] = None,
     ) -> tuple[Tenant, int, int, bool]:
-        """Top-up or top-down a tenant's budget — PATCH /auth/tenants/{id}/budget.
+        """Top-up a tenant's budget — PATCH /auth/tenants/{id}/budget.
 
         Restricted to ADMIN, same as assign_tenant_tier. Unlike the old
         platform-core endpoint this replaces, there is no available_balance
@@ -1363,7 +1363,7 @@ class TenantService:
             can never move once the window it belongs to is live, so
             supplying it here raises 422 ``effective_from_locked``.
             ``budget_effective_to`` is optional: omitted means "leave
-            unchanged" (a plain amount top-up/top-down untouches the
+            unchanged" (a plain amount top-up untouches the
             window entirely — this is what the shipped UI already does,
             since it only ever sends action+amount); given, it's validated
             against the *stored* From (never a client-supplied one, since
@@ -1386,8 +1386,8 @@ class TenantService:
             20 — nothing resets. ``action``/``amount`` are independent of
             this and may be omitted entirely for a pure window edit (both
             are optional; the two are only ever required together — see
-            ``TenantBudgetRequest``), or given alongside it to top-up/
-            top-down at the same time.
+            ``TenantBudgetRequest``), or given alongside it to top-up at
+            the same time.
           * No window on file at all (``tenants.budget_effective_from`` is
             None — never assigned before): both ``budget_effective_from``
             and ``budget_effective_to`` become REQUIRED (422
@@ -1419,25 +1419,10 @@ class TenantService:
         ₹ didn't move. This is genuinely atomic with the Tenant's own row
         change: the cascade is resolved and staged (not committed) BEFORE
         ``self._tenants.update`` below, and everything commits together in
-        one transaction — a top-down that would leave the new total unable
-        to cover what's already allocated across every Application (nobody
-        auto-shrinks to make room any more) raises ALLOCATION_TOTAL_EXCEEDED
-        before anything here is persisted, and the session rollback on that
-        exception undoes the Tenant's own allocated_budget change too. A
-        top-up can never fail this way — it only ever grows what's
-        available, becoming additional unallocated headroom.
+        one transaction. Top-down is no longer offered — a revision only
+        ever grows the budget, so the new headroom simply becomes
+        additional unallocated budget.
 
-        A top-down is REJECTED even earlier than that (409
-        budget_below_consumed) when it would drop the budget below this
-        tenant's total spend to date (restores the check the old
-        platform-core endpoint had, which this rebuild had dropped for lack
-        of a spend figure to check against; see budget_usage) — this
-        catches the aggregate case cheaply before the per-Application/
-        per-Key cascade even runs. This needs platform_core_db to verify: a
-        top-down is refused outright (503 spend_verification_unavailable)
-        rather than allowed unverified, unlike _sync_ppu_wallet_and_exhaustion's
-        own read below, which is best-effort because ITS write already
-        happened by the time it runs — this check gates the write itself.
         No optimistic-locking (expected_version) either — deemed
         unnecessary for this release.
 
@@ -1520,8 +1505,8 @@ class TenantService:
                     _validate_new_effective_to_not_in_past(budget_effective_to)
                     new_effective_to = budget_effective_to
                 else:
-                    # No window change requested — a plain amount top-up/
-                    # top-down on a tenant whose window is still lapsed; it
+                    # No window change requested — a plain amount top-up
+                    # on a tenant whose window is still lapsed; it
                     # stays lapsed (still blocked) until effective_to is
                     # given.
                     new_effective_to = tenant.budget_effective_to
@@ -1563,8 +1548,7 @@ class TenantService:
             # also None here, since the two are only ever given together.
             new_budget = current_budget
         else:
-            delta = amount if action == "top-up" else -amount
-            new_budget = current_budget + delta
+            new_budget = current_budget + amount
 
         if action == "top-up" and new_budget > MAX_TENANT_BUDGET:
             raise HTTPException(
@@ -1577,67 +1561,13 @@ class TenantService:
                     ),
                 },
             )
-        if action == "top-down" and new_budget < 0:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={
-                    "error": "budget_negative",
-                    "message": f"Top-down amount exceeds the current budget ({current_budget})",
-                },
-            )
-
-        if action == "top-down":
-            # Cheaper, purely-local checks (above) run first; only reach for
-            # platform-core once a top-down has already passed those.
-            if self._api_keys is None or platform_core_db is None:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail={
-                        "error": "spend_verification_unavailable",
-                        "message": "Cannot verify this tenant's current spend right now — "
-                        "refusing an unverified top-down rather than risking pushing it "
-                        "below what's already been spent.",
-                    },
-                )
-            try:
-                key_ids = await self._api_keys.list_key_ids_for_tenant(tenant_id)
-                usage = await fetch_budget_usage(key_ids, platform_core_db, raise_on_error=True)
-            except Exception:
-                logger.exception(
-                    "Failed to verify spend for tenant_id=%s ahead of a top-down; refusing it.",
-                    tenant_id,
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail={
-                        "error": "spend_verification_unavailable",
-                        "message": "Cannot verify this tenant's current spend right now — "
-                        "refusing an unverified top-down rather than risking pushing it "
-                        "below what's already been spent.",
-                    },
-                )
-            total_spent = sum((used for used, _snap in usage.values()), Decimal("0"))
-            if new_budget < total_spent:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "error": "budget_below_consumed",
-                        "message": (
-                            f"Top-down would drop the budget to {new_budget}, below this "
-                            f"tenant's total spend to date ({total_spent}) across its API keys."
-                        ),
-                    },
-                )
-
         applications_recomputed = 0
         keys_recomputed = 0
         snapshot_writes: dict[int, Decimal] = {}
         if self._allocations is None:
-            # Fail closed, same reasoning as the top-down spend gate above:
-            # an unverified/un-cascaded revision could silently leave
-            # Applications or Keys out of sync with the Tenant's new total,
-            # or (on a decrease) leave one of them over-committed relative
-            # to what it's actually allowed now. Refuse rather than guess.
+            # Fail closed: an un-cascaded revision could silently leave
+            # Applications or Keys out of sync with the Tenant's new total.
+            # Refuse rather than guess.
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={
@@ -1668,7 +1598,7 @@ class TenantService:
         await self._tenants.commit()
         await self._tenants.refresh(tenant)
 
-        # A top-up or top-down (not a pure window-date edit) is the budget
+        # A top-up (not a pure window-date edit) is the budget
         # change BUDGET_ASSIGNED / BUDGET_UPDATED report.
         if action is not None:
             publish_budget_event(
