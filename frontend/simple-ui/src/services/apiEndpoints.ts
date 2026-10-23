@@ -136,6 +136,7 @@ export const apiEndpoints = {
     logsAggregate: `${API_V1}/telemetry/logs/aggregate`,
     logsServices: `${API_V1}/telemetry/logs/services`,
     tracesSearch: `${API_V1}/telemetry/traces/search`,
+    tracesColumns: `${API_V1}/telemetry/traces/columns`,
     traceById: (traceId: string) => `${API_V1}/telemetry/traces/${traceId}`,
     tracesServices: `${API_V1}/telemetry/traces/services`,
     traceServiceOperations: (serviceName: string) =>

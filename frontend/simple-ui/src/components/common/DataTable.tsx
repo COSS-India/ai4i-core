@@ -247,11 +247,17 @@ function buildSortAccessors<T>(columns: DataTableColumn<T>[]): Record<string, (r
 type DataTableFilterContextValue = {
   resetPage: () => void;
   inputBg: string;
+  /**
+   * When true (Search applies on submit), changing a filter must not reset the
+   * page or trigger a refetch — only Search / Enter / Clear apply.
+   */
+  deferApply: boolean;
 };
 
 const DataTableFilterContext = createContext<DataTableFilterContextValue>({
   resetPage: () => {},
   inputBg: "white",
+  deferApply: false,
 });
 
 function useDataTableFilterContext() {
@@ -263,8 +269,10 @@ export function TableSearchField({
   label = "Search",
   value,
   onChange,
+  onSubmit,
   placeholder,
   helper,
+  error,
   hint,
   hideLabel = false,
   debounceMs,
@@ -275,8 +283,10 @@ export function TableSearchField({
   label?: string;
   value: string;
   onChange: (value: string) => void;
+  onSubmit?: () => void;
   placeholder?: string;
   helper?: string;
+  error?: string;
   hint?: string;
   hideLabel?: boolean;
   debounceMs?: number;
@@ -301,9 +311,10 @@ export function TableSearchField({
   const emitChange = useCallback(
     (next: string) => {
       onChange(next);
-      resetPage();
+      // When submit is explicit (Search / Enter), typing alone must not reset the page.
+      if (!onSubmit) resetPage();
     },
-    [onChange, resetPage],
+    [onChange, onSubmit, resetPage],
   );
 
   const handleChange = (next: string) => {
@@ -317,7 +328,11 @@ export function TableSearchField({
   };
 
   return (
-    <FormControl w={{ base: "full", md: "320px" }} {...formControlProps}>
+    <FormControl
+      w={{ base: "full", md: "320px" }}
+      isInvalid={Boolean(error)}
+      {...formControlProps}
+    >
       <FieldLabel hint={hint} formLabelProps={hideLabel ? { srOnly: true, mb: 0 } : undefined}>
         {label}
       </FieldLabel>
@@ -332,10 +347,26 @@ export function TableSearchField({
           bg={inputBg}
           pl={9}
           aria-label={label}
+          aria-invalid={Boolean(error) || undefined}
           {...inputProps}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && onSubmit) {
+              e.preventDefault();
+              if (debounceRef.current) clearTimeout(debounceRef.current);
+              onChange(localValue);
+              onSubmit();
+            }
+            inputProps?.onKeyDown?.(e);
+          }}
         />
       </InputGroup>
-      <FieldHint>{helper}</FieldHint>
+      {error ? (
+        <FormErrorMessage fontSize="xs" m={0} mt={1}>
+          {error}
+        </FormErrorMessage>
+      ) : (
+        <FieldHint>{helper}</FieldHint>
+      )}
     </FormControl>
   );
 }
@@ -365,7 +396,7 @@ export function TableTextField({
   formControlProps?: FormControlProps;
   inputProps?: Omit<InputProps, "value" | "onChange" | "placeholder" | "type">;
 }) {
-  const { resetPage, inputBg } = useDataTableFilterContext();
+  const { resetPage, inputBg, deferApply } = useDataTableFilterContext();
 
   return (
     <FormControl w={{ base: "full", sm: "200px" }} isInvalid={!!error} {...formControlProps}>
@@ -376,7 +407,7 @@ export function TableTextField({
         value={value}
         onChange={(e) => {
           onChange(e.target.value);
-          resetPage();
+          if (!deferApply) resetPage();
         }}
         placeholder={placeholder}
         bg={inputBg}
@@ -414,7 +445,7 @@ export function TableDateField({
   formControlProps?: FormControlProps;
   inputProps?: Omit<InputProps, "value" | "onChange" | "type">;
 }) {
-  const { resetPage, inputBg } = useDataTableFilterContext();
+  const { resetPage, inputBg, deferApply } = useDataTableFilterContext();
 
   return (
     <FormControl w={{ base: "full", sm: "220px" }} {...formControlProps}>
@@ -425,7 +456,7 @@ export function TableDateField({
         value={value}
         onChange={(e) => {
           onChange(e.target.value);
-          resetPage();
+          if (!deferApply) resetPage();
         }}
         bg={inputBg}
         aria-label={label}
@@ -458,7 +489,7 @@ export function TableSelectField({
   selectProps?: Omit<SelectProps, "value" | "onChange" | "children">;
   hideLabel?: boolean;
 }) {
-  const { resetPage, inputBg } = useDataTableFilterContext();
+  const { resetPage, inputBg, deferApply } = useDataTableFilterContext();
   return (
     <FormControl w={{ base: "full", sm: "200px" }} {...formControlProps}>
       <FieldLabel hint={hint} formLabelProps={hideLabel ? { srOnly: true, mb: 0 } : undefined}>
@@ -469,7 +500,7 @@ export function TableSelectField({
         value={value}
         onChange={(e) => {
           onChange(e.target.value);
-          resetPage();
+          if (!deferApply) resetPage();
         }}
         bg={inputBg}
         aria-label={label}
@@ -496,8 +527,10 @@ function ConfigDrivenFilters({
           label={search.label ?? "Search"}
           value={search.value}
           onChange={search.onChange}
+          onSubmit={search.onSubmit}
           placeholder={search.placeholder}
           helper={search.helper}
+          error={search.error}
           hideLabel={search.hideLabel}
           debounceMs={search.debounceMs}
         />
@@ -914,12 +947,15 @@ function AdminLayoutDataTable<T>({
     pagination?.resetPage();
   }, [onClearFilters, pagination?.resetPage]);
 
+  const deferApply = Boolean(search?.onSubmit);
+
   const filterContextValue = useMemo(
     () => ({
       resetPage: pagination?.resetPage ?? (() => {}),
       inputBg: cardBg,
+      deferApply,
     }),
-    [pagination?.resetPage, cardBg],
+    [pagination?.resetPage, cardBg, deferApply],
   );
 
   const showEmpty =

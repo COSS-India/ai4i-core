@@ -85,6 +85,30 @@ export const telemetryTraceRecordSchema = z.object({
   tenant_id: z.string().nullable().optional(),
   timestamp: z.string().nullable().optional(),
   service: z.string().nullable().optional(),
+  status_code: z.number().nullable().optional(),
+  error: z.string().nullable().optional(),
+  service_id: z.string().nullable().optional(),
+  model_name: z.string().nullable().optional(),
+  latency_ms: z.number().nullable().optional(),
+  app_id: z.string().nullable().optional(),
+  api_key_id: z.string().nullable().optional(),
+  end_user: z.string().nullable().optional(),
+  metadata: z.array(z.string()).nullable().optional(),
+  method: z.string().nullable().optional(),
+});
+
+export const telemetryTraceColumnDefSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  default: z.boolean(),
+  filter: z.string().nullable().optional().default(null),
+  keyword: z.boolean(),
+  sort: z.boolean(),
+  admin_only: z.boolean(),
+});
+
+export const telemetryTraceColumnsResponseSchema = z.object({
+  columns: z.array(telemetryTraceColumnDefSchema),
 });
 
 const telemetryByLevelSchema = z.preprocess((raw: unknown) => {

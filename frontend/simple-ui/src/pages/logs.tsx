@@ -1,15 +1,17 @@
 // Logs Dashboard - View telemetry traces via unified traces/search API
+// AI4IDS-3527: keyword + filters apply on Search/Enter; sort/page hit the API;
+// nothing is searched, filtered or sorted in the browser.
 
 import {
   Box,
   Button,
+  Checkbox,
   FormControl,
   HStack,
   Switch,
   Text,
   Tooltip,
   VStack,
-  Badge,
   Flex,
   IconButton,
   Card,
@@ -21,11 +23,24 @@ import {
   Alert,
   AlertIcon,
   AlertDescription,
+  Menu,
+  MenuButton,
+  MenuList,
+  MenuItem,
+  MenuDivider,
+  Portal,
 } from "@chakra-ui/react";
 import Head from "next/head";
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { RepeatIcon, ViewIcon } from "@chakra-ui/icons";
+import {
+  RepeatIcon,
+  ViewIcon,
+  CheckIcon,
+  CloseIcon,
+  ChevronDownIcon,
+  SettingsIcon,
+} from "@chakra-ui/icons";
 import ContentLayout from "../components/common/ContentLayout";
 import ManagementPageHeader from "../components/common/ManagementPageHeader";
 import { useAuth, forceFrontendSessionEnd } from "../hooks/useAuth";
@@ -33,143 +48,137 @@ import { useRouter } from "next/router";
 import { getTenantIdFromToken } from "../utils/helpers";
 import {
   searchTelemetryTraces,
+  getTelemetryTraceColumns,
   resolveTelemetryTenantId,
   TelemetryTraceRecord,
+  TelemetryTraceSortBy,
 } from "../services/observabilityService";
 import { showToast } from "../utils/toast";
-import { INSTITUTION, INSTITUTIONS, INSTITUTION_ARTICLE, isTenantStatus, TENANT, formatModelTaskTypeLabel } from "../config/constants";
+import {
+  INSTITUTION,
+  INSTITUTIONS,
+  INSTITUTION_ARTICLE,
+  isTenantStatus,
+  TENANT,
+  formatModelTaskTypeLabel,
+} from "../config/constants";
 import { useInferenceTypes } from "../hooks/useInferenceTypes";
 import { useTenantsList } from "../hooks/useTenantsList";
 import DataTable, {
   useAdminTableSurface,
   type DataTableColumn,
+  type DataTableSortState,
 } from "../components/common/table";
-import { useDeferredColumnSort } from "../utils/tableSort";
 import TelemetryTraceDetailModal from "@/components/observability/TelemetryTraceDetailModal";
 import { getPlatformName } from "../config/runtimeConfig";
 import { FIELD_HINTS } from "../config/fieldHints";
 import FieldHint from "../components/common/FieldHint";
 import FieldLabel from "../components/common/FieldLabel";
 import { isPlatformAdminUser, isTenantAdminUser, userHasRole } from "../utils/rbac";
+import {
+  AUTO_REFRESH_MS,
+  DEFAULT_COLUMN_KEYS,
+  FALLBACK_COLUMN_DEFS,
+  SORTABLE_API_KEYS,
+  buildColumnsQueryParam,
+  convertToISOFormat,
+  defaultTimeRange,
+  formatDateTimeLocal,
+  isFailureStatus,
+  isLiveEndTime,
+  isSuccessStatus,
+  KEYWORD_MAX_LENGTH,
+  END_USER_MAX_LENGTH,
+  parseMetadataFilter,
+  parseStatusCodeFilter,
+  readStoredColumns,
+  writeStoredColumns,
+} from "../utils/logsDashboard";
 
-/** Auto-refresh interval when enabled (within 30–45s range). */
-const AUTO_REFRESH_MS = 37_000;
-
-/** Caller-tag filter limits; mirror the traces/search query param limits. */
-const END_USER_MAX_LENGTH = 256;
-const METADATA_KEY_MAX_LENGTH = 64;
-const METADATA_VALUE_MAX_LENGTH = 512;
-
-/** Wait for typing to pause before a caller-tag filter triggers a search. */
-const TAG_FILTER_DEBOUNCE_MS = 400;
-
-/**
- * Parse the Metadata filter's "key=value" text, the same form spans store in
- * metadata_kv. Splits at the first "=" (keys can't contain one). Returns null
- * when empty, or an error hint when the API would reject the pair.
- */
-const parseMetadataFilter = (
-  raw: string
-): { key: string; value: string } | { error: string } | null => {
-  const text = raw.trim();
-  if (!text) return null;
-  const hints = FIELD_HINTS.logs.metadata;
-  const separator = text.indexOf("=");
-  if (separator === -1) return { error: hints.missingSeparator };
-  const key = text.slice(0, separator).trim();
-  const value = text.slice(separator + 1).trim();
-  if (!key) return { error: hints.missingKey };
-  if (!value) return { error: hints.missingValue };
-  if (key.length > METADATA_KEY_MAX_LENGTH) return { error: hints.keyTooLong };
-  if (value.length > METADATA_VALUE_MAX_LENGTH) return { error: hints.valueTooLong };
-  return { key, value };
+type DraftFilters = {
+  q: string;
+  taskType: string;
+  level: string;
+  serviceId: string;
+  statusCode: string;
+  endUser: string;
+  metadata: string;
+  startTime: string;
+  endTime: string;
+  selectedTenantId: string;
 };
 
-/**
- * Convert datetime-local format (YYYY-MM-DDTHH:mm) to ISO format (YYYY-MM-DDTHH:mm:ss.sssZ)
- * This ensures the timestamp is properly formatted for OpenSearch queries
- */
-const convertToISOFormat = (datetimeLocal: string): string => {
-  if (!datetimeLocal || datetimeLocal.trim() === "") {
-    return "";
-  }
-
-  // Parse the datetime-local string (YYYY-MM-DDTHH:mm)
-  // Treat it as local time and convert to ISO format
-  try {
-    // If the string doesn't have seconds, add :00
-    let normalized = datetimeLocal;
-    if (!normalized.includes(":")) {
-      return ""; // Invalid format
-    }
-
-    // Count colons to determine format
-    const colonCount = (normalized.match(/:/g) || []).length;
-    if (colonCount === 1) {
-      // Format: YYYY-MM-DDTHH:mm - add seconds
-      normalized = normalized + ":00";
-    }
-
-    // Parse as local time and convert to ISO (UTC)
-    const date = new Date(normalized);
-    if (Number.isNaN(date.getTime())) {
-      console.warn(`Invalid datetime format: ${datetimeLocal}`);
-      return "";
-    }
-
-    // Return ISO format string
-    return date.toISOString();
-  } catch (error) {
-    console.error(`Error converting datetime to ISO: ${datetimeLocal}`, error);
-    return "";
-  }
+type AppliedFilters = {
+  q: string;
+  taskType: string;
+  level: string;
+  serviceId: string;
+  statusCode: string;
+  user: string;
+  metadataKey: string;
+  metadataValue: string;
+  startTime: string;
+  endTime: string;
+  selectedTenantId: string;
 };
 
 const LogsPage: React.FC = () => {
   const router = useRouter();
   const { isAuthenticated, isLoading: authLoading, user } = useAuth();
-  // Task-type filter options come from the enabled set (ENABLED_TASK_TYPES),
-  // not a hardcoded list, so disabled types don't appear here either.
   const { taskTypeNames, isLoading: isLoadingTaskTypes } = useInferenceTypes();
 
-  const [taskType, setTaskType] = useState<string>("");
-  const didInitTaskTypeFilter = useRef(false);
-  const [taskTypeFilterReady, setTaskTypeFilterReady] = useState(false);
-  useEffect(() => {
-    if (didInitTaskTypeFilter.current || isLoadingTaskTypes) return;
-    didInitTaskTypeFilter.current = true;
-    if (taskTypeNames.length > 0) setTaskType(taskTypeNames[0]);
-    setTaskTypeFilterReady(true);
-  }, [isLoadingTaskTypes, taskTypeNames]);
-  const [level, setLevel] = useState<string>("");
-  const [searchQuery, setSearchQuery] = useState<string>("");
-  const [debouncedSearch, setDebouncedSearch] = useState<string>("");
-  // Caller-tag filters (OpenAI `user` / `metadata`) — searched server-side
-  // across all pages, unlike the Search box which filters the loaded page.
-  const [endUser, setEndUser] = useState<string>("");
-  const [metadata, setMetadata] = useState<string>("");
-  // The tag filters the table is currently filtered by (sent to the API).
-  const [appliedTags, setAppliedTags] = useState({
+  const initialRange = useMemo(() => defaultTimeRange(), []);
+
+  const [draft, setDraft] = useState<DraftFilters>({
+    q: "",
+    taskType: "",
+    level: "",
+    serviceId: "",
+    statusCode: "",
+    endUser: "",
+    metadata: "",
+    startTime: initialRange.startTime,
+    endTime: initialRange.endTime,
+    selectedTenantId: "",
+  });
+
+  const [applied, setApplied] = useState<AppliedFilters>({
+    q: "",
+    taskType: "",
+    level: "",
+    serviceId: "",
+    statusCode: "",
     user: "",
     metadataKey: "",
     metadataValue: "",
+    startTime: initialRange.startTime,
+    endTime: initialRange.endTime,
+    selectedTenantId: "",
   });
-  const [startTime, setStartTime] = useState<string>("");
-  const [endTime, setEndTime] = useState<string>("");
-  const [selectedTenantId, setSelectedTenantId] = useState<string>("");
+
+  const [taskTypeFilterReady, setTaskTypeFilterReady] = useState(false);
+  const didInitTaskTypes = useRef(false);
+  useEffect(() => {
+    if (didInitTaskTypes.current || isLoadingTaskTypes) return;
+    didInitTaskTypes.current = true;
+    // Default task type is All (omit task_types) — do not auto-select the first type.
+    setTaskTypeFilterReady(true);
+  }, [isLoadingTaskTypes]);
+
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(15);
   const [autoRefresh, setAutoRefresh] = useState(false);
+  const [sort, setSort] = useState<DataTableSortState>({
+    key: "timestamp",
+    direction: "desc",
+  });
+  const [selectedColumns, setSelectedColumns] = useState<string[]>(DEFAULT_COLUMN_KEYS);
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
   const [isTraceModalOpen, setIsTraceModalOpen] = useState(false);
 
-  // Check if user is admin (full ADMIN role — sees all tenants)
   const isAdmin = isPlatformAdminUser(user?.roles);
-  // Check if user has USER role - hide logs UI for them
   const isUser = userHasRole(user?.roles, "USER");
-  // Check if user has GUEST role - hide logs UI for them
   const isGuest = userHasRole(user?.roles, "GUEST");
-  // Check if user is a TENANT ADMIN — scoped to their own tenant only
   const isTenantAdmin = isTenantAdminUser(user?.roles);
   const canPickTenant = isAdmin && !isTenantAdmin;
   const { cardBg, borderColor } = useAdminTableSurface();
@@ -184,54 +193,45 @@ const LogsPage: React.FC = () => {
       resolveTelemetryTenantId({
         isAdmin,
         isTenantAdmin,
-        selectedTenantId,
+        selectedTenantId: applied.selectedTenantId,
         authTenantId,
       }),
-    [isAdmin, isTenantAdmin, selectedTenantId, authTenantId]
+    [isAdmin, isTenantAdmin, applied.selectedTenantId, authTenantId]
   );
 
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedSearch(searchQuery.trim()), 300);
-    return () => clearTimeout(timer);
-  }, [searchQuery]);
+  const keywordError =
+    draft.q.trim().length > KEYWORD_MAX_LENGTH
+      ? FIELD_HINTS.logs.search.tooLong
+      : undefined;
 
-  // Only valid values are sent; the API rejects anything else (400/422).
-  // An invalid entry keeps the last valid filter applied, so the results never
-  // silently widen to every log while the field still shows text.
-  const trimmedEndUser = endUser.trim();
+  const trimmedEndUser = draft.endUser.trim();
   const endUserError =
-    trimmedEndUser.length > END_USER_MAX_LENGTH ? FIELD_HINTS.logs.endUser.tooLong : undefined;
-  const metadataFilter = useMemo(() => parseMetadataFilter(metadata), [metadata]);
+    trimmedEndUser.length > END_USER_MAX_LENGTH
+      ? FIELD_HINTS.logs.endUser.tooLong
+      : undefined;
+  const metadataFilter = useMemo(
+    () => parseMetadataFilter(draft.metadata),
+    [draft.metadata]
+  );
   const metadataError =
     metadataFilter && "error" in metadataFilter ? metadataFilter.error : undefined;
-  const metadataPair = metadataFilter && "key" in metadataFilter ? metadataFilter : null;
+  const statusCodeFilter = useMemo(
+    () => parseStatusCodeFilter(draft.statusCode),
+    [draft.statusCode]
+  );
+  const statusCodeError =
+    statusCodeFilter && "error" in statusCodeFilter
+      ? statusCodeFilter.error
+      : undefined;
 
-  const nextUser = endUserError ? appliedTags.user : trimmedEndUser;
-  const nextMetadataKey = metadataError ? appliedTags.metadataKey : metadataPair?.key ?? "";
-  const nextMetadataValue = metadataError ? appliedTags.metadataValue : metadataPair?.value ?? "";
-  // True while a typed tag change is waiting out the debounce. The query is
-  // paused meanwhile, so the immediate page-1 reset from typing doesn't fire
-  // its own request with the old tags.
-  const tagsPending =
-    nextUser !== appliedTags.user ||
-    nextMetadataKey !== appliedTags.metadataKey ||
-    nextMetadataValue !== appliedTags.metadataValue;
+  const liveRange = isLiveEndTime(draft.endTime);
 
   useEffect(() => {
-    if (!tagsPending) return;
-    const timer = setTimeout(
-      () =>
-        setAppliedTags({
-          user: nextUser,
-          metadataKey: nextMetadataKey,
-          metadataValue: nextMetadataValue,
-        }),
-      TAG_FILTER_DEBOUNCE_MS
-    );
-    return () => clearTimeout(timer);
-  }, [tagsPending, nextUser, nextMetadataKey, nextMetadataValue]);
+    if (!liveRange && autoRefresh) {
+      setAutoRefresh(false);
+    }
+  }, [liveRange, autoRefresh]);
 
-  // Redirect to login if not authenticated
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
       showToast({
@@ -242,10 +242,8 @@ const LogsPage: React.FC = () => {
     }
   }, [isAuthenticated, authLoading, router]);
 
-  // Redirect if user has USER or GUEST role or doesn't have tenant_id (but allow admins)
   useEffect(() => {
     if (!authLoading && isAuthenticated) {
-      // Hide logs for users with USER or GUEST role
       if (isUser || isGuest) {
         showToast({
           type: "error",
@@ -270,15 +268,23 @@ const LogsPage: React.FC = () => {
         router.push("/");
       }
     }
-  }, [isAuthenticated, authLoading, user, isUser, isGuest, isAdmin, isTenantAdmin, authTenantId, router]);
+  }, [
+    isAuthenticated,
+    authLoading,
+    user,
+    isUser,
+    isGuest,
+    isAdmin,
+    isTenantAdmin,
+    authTenantId,
+    router,
+  ]);
 
-  // Fetch tenants list (for all admins - ADMIN or SUPER_ADMIN role)
-  const { data: tenantsData, isLoading: tenantsLoading, error: tenantsError } = useTenantsList({
-    enabled: isAuthenticated && canPickTenant,
-  });
+  const { data: tenantsData, isLoading: tenantsLoading, error: tenantsError } =
+    useTenantsList({
+      enabled: isAuthenticated && canPickTenant,
+    });
 
-  // Fetch the current tenant's detail (subscriptions) for TENANT ADMIN role
-  // Filter tenants to only show active tenants
   const activeTenants = useMemo(() => {
     if (!tenantsData?.tenants || !Array.isArray(tenantsData.tenants)) {
       return [];
@@ -302,7 +308,179 @@ const LogsPage: React.FC = () => {
     [tenantById]
   );
 
-  // Unified traces/search (list + aggregations in one response)
+  const {
+    data: columnsResponse,
+  } = useQuery({
+    queryKey: ["telemetry-traces-columns"],
+    queryFn: async () => {
+      try {
+        return await getTelemetryTraceColumns();
+      } catch {
+        // Endpoint may not be deployed yet (AI4IDS-3529); use contract fallback.
+        return { columns: FALLBACK_COLUMN_DEFS };
+      }
+    },
+    enabled: isAuthenticated && !isUser && !isGuest,
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+
+  const columnDefs = useMemo(() => {
+    const fromApi = columnsResponse?.columns;
+    if (fromApi && fromApi.length > 0) {
+      return isAdmin ? fromApi : fromApi.filter((c) => !c.admin_only);
+    }
+    return isAdmin
+      ? FALLBACK_COLUMN_DEFS
+      : FALLBACK_COLUMN_DEFS.filter((c) => !c.admin_only);
+  }, [columnsResponse, isAdmin]);
+
+  const columnDefByKey = useMemo(
+    () => new Map(columnDefs.map((c) => [c.key, c])),
+    [columnDefs]
+  );
+
+  // Hydrate column selection once catalogue is known.
+  const didHydrateColumns = useRef(false);
+  useEffect(() => {
+    if (didHydrateColumns.current || columnDefs.length === 0) return;
+    didHydrateColumns.current = true;
+    const allowed = new Set(columnDefs.map((c) => c.key));
+    const stored = readStoredColumns();
+    const defaults = columnDefs.filter((c) => c.default).map((c) => c.key);
+    const next =
+      stored && stored.length > 0
+        ? stored.filter((k) => allowed.has(k))
+        : defaults;
+    setSelectedColumns(next.length > 0 ? next : defaults);
+  }, [columnDefs]);
+
+  const updateDraft = useCallback(
+    <K extends keyof DraftFilters>(key: K, value: DraftFilters[K]) => {
+      setDraft((prev) => ({ ...prev, [key]: value }));
+    },
+    []
+  );
+
+  const applyFilters = useCallback(() => {
+    if (keywordError || endUserError || metadataError || statusCodeError) {
+      return;
+    }
+    const meta =
+      metadataFilter && "key" in metadataFilter ? metadataFilter : null;
+    const codes =
+      statusCodeFilter && "value" in statusCodeFilter
+        ? statusCodeFilter.value
+        : "";
+
+    setApplied({
+      q: draft.q.trim(),
+      taskType: draft.taskType,
+      level: draft.level,
+      serviceId: draft.serviceId.trim(),
+      statusCode: codes,
+      user: endUserError ? "" : trimmedEndUser,
+      metadataKey: meta?.key ?? "",
+      metadataValue: meta?.value ?? "",
+      startTime: draft.startTime,
+      endTime: draft.endTime,
+      selectedTenantId: draft.selectedTenantId,
+    });
+    setPage(1);
+  }, [
+    keywordError,
+    endUserError,
+    metadataError,
+    statusCodeError,
+    metadataFilter,
+    statusCodeFilter,
+    draft,
+    trimmedEndUser,
+  ]);
+
+  const clearAllFilters = useCallback(() => {
+    const range = defaultTimeRange();
+    const clearedDraft: DraftFilters = {
+      q: "",
+      taskType: "",
+      level: "",
+      serviceId: "",
+      statusCode: "",
+      endUser: "",
+      metadata: "",
+      startTime: range.startTime,
+      endTime: range.endTime,
+      selectedTenantId: "",
+    };
+    setDraft(clearedDraft);
+    setApplied({
+      q: "",
+      taskType: "",
+      level: "",
+      serviceId: "",
+      statusCode: "",
+      user: "",
+      metadataKey: "",
+      metadataValue: "",
+      startTime: range.startTime,
+      endTime: range.endTime,
+      selectedTenantId: "",
+    });
+    setSort({ key: "timestamp", direction: "desc" });
+    setPage(1);
+  }, []);
+
+  const sortBy: TelemetryTraceSortBy =
+    SORTABLE_API_KEYS[sort.key] ?? "timestamp";
+  const sortOrder = sort.direction;
+
+  // Always request status_code so the status cell can show it on failures (AC-6).
+  const columnsParam = useMemo(
+    () =>
+      buildColumnsQueryParam(
+        selectedColumns,
+        columnDefs.map((c) => c.key),
+        { includeError: isAdmin }
+      ),
+    [selectedColumns, isAdmin, columnDefs]
+  );
+
+  const filtersDirty = useMemo(() => {
+    const appliedMeta =
+      applied.metadataKey && applied.metadataValue
+        ? `${applied.metadataKey}=${applied.metadataValue}`
+        : "";
+    const draftMeta =
+      metadataFilter && "key" in metadataFilter
+        ? `${metadataFilter.key}=${metadataFilter.value}`
+        : draft.metadata.trim() === ""
+          ? ""
+          : draft.metadata.trim();
+    const draftCodes =
+      statusCodeFilter && "value" in statusCodeFilter
+        ? statusCodeFilter.value
+        : draft.statusCode.trim();
+
+    return (
+      draft.q.trim() !== applied.q ||
+      draft.taskType !== applied.taskType ||
+      draft.level !== applied.level ||
+      draft.serviceId.trim() !== applied.serviceId ||
+      draftCodes !== applied.statusCode ||
+      trimmedEndUser !== applied.user ||
+      draftMeta !== appliedMeta ||
+      draft.startTime !== applied.startTime ||
+      draft.endTime !== applied.endTime ||
+      draft.selectedTenantId !== applied.selectedTenantId
+    );
+  }, [
+    draft,
+    applied,
+    metadataFilter,
+    statusCodeFilter,
+    trimmedEndUser,
+  ]);
+
   const {
     data: tracesData,
     isLoading: tracesLoading,
@@ -310,55 +488,71 @@ const LogsPage: React.FC = () => {
   } = useQuery({
     queryKey: [
       "telemetry-traces-search",
-      taskType,
-      level,
-      startTime,
-      endTime,
+      applied,
       apiTenantId,
       isAdmin,
       isTenantAdmin,
       page,
       pageSize,
-      appliedTags.user,
-      appliedTags.metadataKey,
-      appliedTags.metadataValue,
+      sortBy,
+      sortOrder,
+      columnsParam,
     ],
     queryFn: () => {
       const apiStartDate =
-        startTime && startTime.trim() !== "" ? convertToISOFormat(startTime) : undefined;
+        applied.startTime && applied.startTime.trim() !== ""
+          ? convertToISOFormat(applied.startTime)
+          : undefined;
       const apiEndDate =
-        endTime && endTime.trim() !== "" ? convertToISOFormat(endTime) : undefined;
+        applied.endTime && applied.endTime.trim() !== ""
+          ? convertToISOFormat(applied.endTime)
+          : undefined;
 
       return searchTelemetryTraces({
-        taskType: taskType && taskType.trim() !== "" ? taskType : undefined,
-        level: level && level.trim() !== "" ? level : undefined,
+        taskType:
+          applied.taskType && applied.taskType.trim() !== ""
+            ? applied.taskType
+            : undefined,
+        level:
+          applied.level && applied.level.trim() !== ""
+            ? applied.level
+            : undefined,
         startDate: apiStartDate,
         endDate: apiEndDate,
         page,
         pageSize,
         tenant_id: apiTenantId,
-        user: appliedTags.user || undefined,
-        metadataKey: appliedTags.metadataKey || undefined,
-        metadataValue: appliedTags.metadataValue || undefined,
+        user: applied.user || undefined,
+        metadataKey: applied.metadataKey || undefined,
+        metadataValue: applied.metadataValue || undefined,
+        q: applied.q || undefined,
+        serviceId: applied.serviceId || undefined,
+        statusCode: applied.statusCode || undefined,
+        sortBy,
+        sortOrder,
+        columns: columnsParam || undefined,
       });
     },
     enabled:
-      isAuthenticated && (!isTenantAdmin || !!apiTenantId) && taskTypeFilterReady && !tagsPending,
-    // Keep the current rows on screen while a tag change is pending instead of
-    // flashing the loading state on every keystroke.
-    placeholderData: (previous) => (tagsPending ? previous : undefined),
+      isAuthenticated &&
+      (!isTenantAdmin || !!apiTenantId) &&
+      taskTypeFilterReady,
     staleTime: 30 * 1000,
   });
 
-  // Handle traces error
   useEffect(() => {
     if (tracesError) {
       const error = tracesError as { message?: string };
       const message = error?.message || "Failed to load traces";
-      if (message.toLowerCase().includes("unauthorized") || message.toLowerCase().includes("forbidden")) {
+      if (
+        message.toLowerCase().includes("unauthorized") ||
+        message.toLowerCase().includes("forbidden")
+      ) {
         forceFrontendSessionEnd();
         return;
       }
+      // Narrow-range 400 is shown in the page Alert — skip a duplicate toast.
+      if (message.toLowerCase().includes("narrow")) return;
       showToast({
         type: "error",
         message,
@@ -366,106 +560,63 @@ const LogsPage: React.FC = () => {
     }
   }, [tracesError]);
 
-  // Set default time range (last 1 hour) on initial load
-  useEffect(() => {
-    if (!startTime && !endTime) {
-      const now = new Date();
-      const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-      // Format as YYYY-MM-DDTHH:mm for datetime-local input
-      const formatDateTime = (date: Date) => {
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        const hours = String(date.getHours()).padStart(2, '0');
-        const minutes = String(date.getMinutes()).padStart(2, '0');
-        return `${year}-${month}-${day}T${hours}:${minutes}`;
-      };
-      const formattedNow = formatDateTime(now);
-      const formattedOneHourAgo = formatDateTime(oneHourAgo);
-      setEndTime(formattedNow);
-      setStartTime(formattedOneHourAgo);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const handleRefresh = useCallback(() => {
-    // Update time range to include latest logs
     const now = new Date();
-    const formatDateTime = (date: Date) => {
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      const day = String(date.getDate()).padStart(2, '0');
-      const hours = String(date.getHours()).padStart(2, '0');
-      const minutes = String(date.getMinutes()).padStart(2, '0');
-      return `${year}-${month}-${day}T${hours}:${minutes}`;
-    };
+    const endSrc = applied.endTime || draft.endTime;
+    const startSrc = applied.startTime || draft.startTime;
 
-    if (startTime && endTime) {
+    if (startSrc && endSrc) {
       try {
-        const startDate = new Date(startTime);
-        const endDate = new Date(endTime);
+        const startDate = new Date(startSrc);
+        const endDate = new Date(endSrc);
         const timeRangeMs = endDate.getTime() - startDate.getTime();
-        setEndTime(formatDateTime(now));
-        setStartTime(formatDateTime(new Date(now.getTime() - timeRangeMs)));
+        const nextEnd = formatDateTimeLocal(now);
+        const nextStart = formatDateTimeLocal(
+          new Date(now.getTime() - timeRangeMs)
+        );
+        setDraft((prev) => ({
+          ...prev,
+          startTime: nextStart,
+          endTime: nextEnd,
+        }));
+        setApplied((prev) => ({
+          ...prev,
+          startTime: nextStart,
+          endTime: nextEnd,
+        }));
       } catch (error) {
         console.warn("Error parsing time range, updating endTime only:", error);
-        setEndTime(formatDateTime(now));
+        const nextEnd = formatDateTimeLocal(now);
+        setDraft((prev) => ({ ...prev, endTime: nextEnd }));
+        setApplied((prev) => ({ ...prev, endTime: nextEnd }));
       }
     } else {
-      const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-      setEndTime(formatDateTime(now));
-      setStartTime(formatDateTime(oneHourAgo));
+      const range = defaultTimeRange();
+      setDraft((prev) => ({
+        ...prev,
+        startTime: range.startTime,
+        endTime: range.endTime,
+      }));
+      setApplied((prev) => ({
+        ...prev,
+        startTime: range.startTime,
+        endTime: range.endTime,
+      }));
     }
-  }, [startTime, endTime]);
+  }, [applied.endTime, applied.startTime, draft.endTime, draft.startTime]);
 
   const handleRefreshRef = useRef(handleRefresh);
   useEffect(() => {
     handleRefreshRef.current = handleRefresh;
   }, [handleRefresh]);
 
-  // Auto-refresh: shift time window and refetch on the same interval as manual Refresh
   useEffect(() => {
-    if (!autoRefresh) return;
+    if (!autoRefresh || !liveRange) return;
     const refreshTimer = setInterval(() => {
       handleRefreshRef.current();
     }, AUTO_REFRESH_MS);
     return () => clearInterval(refreshTimer);
-  }, [autoRefresh]);
-
-  const clearAllFilters = () => {
-    if (taskTypeNames.length > 0) setTaskType(taskTypeNames[0]);
-    setLevel("");
-    setSearchQuery("");
-    setSelectedTenantId("");
-    setEndUser("");
-    setMetadata("");
-    // Apply the cleared tags now (not after the debounce) so Clear makes one
-    // request, without the old tags.
-    setAppliedTags({ user: "", metadataKey: "", metadataValue: "" });
-    const now = new Date();
-    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-    const formatDateTime = (date: Date) => {
-      const year = date.getFullYear();
-      const month = String(date.getMonth() + 1).padStart(2, "0");
-      const day = String(date.getDate()).padStart(2, "0");
-      const hours = String(date.getHours()).padStart(2, "0");
-      const minutes = String(date.getMinutes()).padStart(2, "0");
-      return `${year}-${month}-${day}T${hours}:${minutes}`;
-    };
-    setEndTime(formatDateTime(now));
-    setStartTime(formatDateTime(oneHourAgo));
-    setPage(1);
-  };
-
-  const getStatusColor = (status: string) => {
-    const statusLower = status.toLowerCase();
-    if (statusLower === "fail" || statusLower === "failure" || statusLower === "error") {
-      return "red";
-    }
-    if (statusLower === "success") return "green";
-    if (statusLower === "unknown") return "orange";
-    return "gray";
-  };
+  }, [autoRefresh, liveRange]);
 
   const formatTimestamp = (timestamp: string) => {
     try {
@@ -476,32 +627,6 @@ const LogsPage: React.FC = () => {
   };
 
   const traceRows = tracesData?.data ?? [];
-
-  const logsSortAccessors = useMemo(
-    () => ({
-      timestamp: (row: TelemetryTraceRecord) =>
-        row.timestamp ? new Date(row.timestamp).getTime() : 0,
-      url: (row: TelemetryTraceRecord) => row.url ?? "",
-    }),
-    [],
-  );
-  const logsSort = useDeferredColumnSort("timestamp", logsSortAccessors);
-
-  const displayedTraceRows = useMemo(() => {
-    const filtered = (() => {
-      if (!debouncedSearch) return traceRows;
-      const q = debouncedSearch.toLowerCase();
-      return traceRows.filter(
-        (row) =>
-          row.trace_id.toLowerCase().includes(q) ||
-          (row.url ?? "").toLowerCase().includes(q) ||
-          (row.task_type ?? "").toLowerCase().includes(q) ||
-          row.status.toLowerCase().includes(q)
-      );
-    })();
-    return logsSort.apply(filtered);
-  }, [traceRows, debouncedSearch, logsSort]);
-
   const aggregationStats = tracesData?.aggregations;
 
   const openTraceDetail = useCallback((traceId: string) => {
@@ -515,115 +640,267 @@ const LogsPage: React.FC = () => {
     setSelectedTraceId(null);
   }, []);
 
-  const traceColumns = useMemo((): DataTableColumn<TelemetryTraceRecord>[] => {
-    return [
-      {
-        id: "timestamp",
-        header: "Timestamp",
-        sortable: true,
-        sortAccessor: (row) =>
-          row.timestamp ? new Date(row.timestamp).getTime() : 0,
-        cell: (row) => (
-          <Text fontSize="sm" color="ink.600">
-            {formatTimestamp(row.timestamp)}
-          </Text>
-        ),
-      },
-      {
-        id: "status",
-        header: "Status",
-        cell: (row) => (
-          <Badge
-            colorScheme={getStatusColor(row.status)}
-            fontSize="xs"
-            px={2}
-            py={1}
-            borderRadius="md"
-            fontWeight="semibold"
+  const toggleColumn = useCallback(
+    (key: string, checked: boolean) => {
+      if (!columnDefByKey.has(key)) return;
+
+      setSelectedColumns((prev) => {
+        let next: string[];
+        if (checked) {
+          next = prev.includes(key) ? prev : [...prev, key];
+        } else {
+          const remaining = prev.filter((k) => k !== key);
+          // Never leave the table with zero data columns.
+          if (remaining.length === 0) return prev;
+          next = remaining;
+        }
+        writeStoredColumns(next);
+        return next;
+      });
+    },
+    [columnDefByKey]
+  );
+
+  const resetColumns = useCallback(() => {
+    const defaults = columnDefs.filter((c) => c.default).map((c) => c.key);
+    setSelectedColumns(defaults);
+    writeStoredColumns(defaults);
+  }, [columnDefs]);
+
+  const handleSortChange = useCallback((next: DataTableSortState) => {
+    // Only API-supported sorts; ignore non-sortable clicks.
+    if (!SORTABLE_API_KEYS[next.key]) return;
+    setSort(next);
+    setPage(1);
+  }, []);
+
+  const renderStatusCell = useCallback((row: TelemetryTraceRecord) => {
+    const failed = isFailureStatus(row.status);
+    const ok = isSuccessStatus(row.status);
+    const label =
+      failed && row.status_code != null
+        ? `${row.status} (${row.status_code})`
+        : row.status;
+    const icon = failed ? (
+      <CloseIcon boxSize={2.5} color="red.500" aria-hidden />
+    ) : ok ? (
+      <CheckIcon boxSize={3} color="green.500" aria-hidden />
+    ) : (
+      <Box as="span" w={2} h={2} borderRadius="full" bg="orange.400" aria-hidden />
+    );
+
+    return (
+      <HStack spacing={2} align="center">
+        <Tooltip label={label} placement="top" hasArrow>
+          <Flex
+            align="center"
+            justify="center"
+            w={5}
+            h={5}
+            aria-label={label}
+            role="img"
           >
-            {row.status}
-          </Badge>
-        ),
-      },
-      {
-        id: "task_type",
-        header: "Task Type",
-        cell: (row) => (
-          <Text fontSize="sm" fontWeight="medium" color="ink.700">
-            {row.task_type || "—"}
+            {icon}
+          </Flex>
+        </Tooltip>
+        {failed && row.status_code != null && (
+          <Text fontSize="sm" color="red.600" fontWeight="medium">
+            {row.status_code}
           </Text>
-        ),
-      },
-      {
-        id: "url",
-        header: "URL",
-        sortable: true,
-        sortAccessor: (row) => row.url ?? "",
-        cell: (row) => (
-          <Text noOfLines={2} maxW="400px" fontSize="sm" color="ink.700" fontFamily="mono">
-            {row.url}
-          </Text>
-        ),
-      },
-      {
-        id: "tenant_id",
-        header: INSTITUTION,
-        cell: (row) => (
-          <Text fontSize="sm" color="ink.600">
-            {resolveTenantName(row.tenant_id)}
-          </Text>
-        ),
-      },
-      {
-        id: "actions",
-        header: "Actions",
-        cell: (row) =>
-          row.trace_id ? (
-            <Tooltip label="View trace" placement="top" hasArrow>
-              <IconButton
-                aria-label="View trace"
-                icon={<ViewIcon />}
-                size="sm"
-                variant="ghost"
-                color="ink.700"
-                _hover={{ color: "blue.500", bg: "blue.50" }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openTraceDetail(row.trace_id);
-                }}
-              />
-            </Tooltip>
-          ) : (
-            <Text color="ink.400" fontSize="sm">
+        )}
+      </HStack>
+    );
+  }, []);
+
+  const cellForColumn = useCallback(
+    (key: string, row: TelemetryTraceRecord): React.ReactNode => {
+      switch (key) {
+        case "timestamp":
+          return (
+            <Text fontSize="sm" color="ink.600">
+              {row.timestamp ? formatTimestamp(row.timestamp) : "—"}
+            </Text>
+          );
+        case "status":
+          return renderStatusCell(row);
+        case "task_type":
+          return (
+            <Text fontSize="sm" fontWeight="medium" color="ink.700">
+              {row.task_type || "—"}
+            </Text>
+          );
+        case "url":
+          return (
+            <Text
+              noOfLines={2}
+              maxW="400px"
+              fontSize="sm"
+              color="ink.700"
+              fontFamily="mono"
+            >
+              {row.url || "—"}
+            </Text>
+          );
+        case "institution":
+          return (
+            <Text fontSize="sm" color="ink.600">
+              {resolveTenantName(row.tenant_id)}
+            </Text>
+          );
+        case "status_code":
+          return (
+            <Text fontSize="sm" color="ink.700">
+              {row.status_code ?? "—"}
+            </Text>
+          );
+        case "error":
+          return (
+            <Text fontSize="sm" color="red.600" noOfLines={2} maxW="280px">
+              {row.error || "—"}
+            </Text>
+          );
+        case "service":
+          return (
+            <Text fontSize="sm" color="ink.700">
+              {row.service || row.service_id || "—"}
+            </Text>
+          );
+        case "model":
+          return (
+            <Text fontSize="sm" color="ink.700">
+              {row.model_name || "—"}
+            </Text>
+          );
+        case "latency":
+          return (
+            <Text fontSize="sm" color="ink.700">
+              {row.latency_ms != null ? row.latency_ms : "—"}
+            </Text>
+          );
+        case "app_id":
+          return (
+            <Text fontSize="sm" color="ink.700" fontFamily="mono">
+              {row.app_id || "—"}
+            </Text>
+          );
+        case "api_key":
+          return (
+            <Text fontSize="sm" color="ink.700" fontFamily="mono">
+              {row.api_key_id || "—"}
+            </Text>
+          );
+        case "end_user":
+          return (
+            <Text fontSize="sm" color="ink.700">
+              {row.end_user || "—"}
+            </Text>
+          );
+        case "metadata":
+          return (
+            <Text fontSize="sm" color="ink.700" noOfLines={2} maxW="240px">
+              {row.metadata?.length ? row.metadata.join(", ") : "—"}
+            </Text>
+          );
+        case "method":
+          return (
+            <Text fontSize="sm" color="ink.700">
+              {row.method || "—"}
+            </Text>
+          );
+        default:
+          return (
+            <Text fontSize="sm" color="ink.500">
               —
             </Text>
-          ),
-      },
-    ];
-  }, [openTraceDetail, resolveTenantName]);
+          );
+      }
+    },
+    [renderStatusCell, resolveTenantName]
+  );
+
+  const traceColumns = useMemo((): DataTableColumn<TelemetryTraceRecord>[] => {
+    const visible = columnDefs.filter((c) => selectedColumns.includes(c.key));
+    const cols: DataTableColumn<TelemetryTraceRecord>[] = visible.map((def) => ({
+      id: def.key,
+      header: def.label,
+      sortable: Boolean(SORTABLE_API_KEYS[def.key]),
+      cell: (row) => cellForColumn(def.key, row),
+    }));
+
+    cols.push({
+      id: "actions",
+      header: "Actions",
+      cell: (row) =>
+        row.trace_id ? (
+          <Tooltip label="View trace" placement="top" hasArrow>
+            <IconButton
+              aria-label="View trace"
+              icon={<ViewIcon />}
+              size="sm"
+              variant="ghost"
+              color="ink.700"
+              _hover={{ color: "blue.500", bg: "blue.50" }}
+              onClick={(e) => {
+                e.stopPropagation();
+                openTraceDetail(row.trace_id);
+              }}
+            />
+          </Tooltip>
+        ) : (
+          <Text color="ink.400" fontSize="sm">
+            —
+          </Text>
+        ),
+    });
+
+    return cols;
+  }, [columnDefs, selectedColumns, cellForColumn, openTraceDetail]);
 
   const hasAppliedFilters =
-    level !== "" ||
-    (canPickTenant && selectedTenantId !== "") ||
-    searchQuery.trim() !== "" ||
-    trimmedEndUser !== "" ||
-    metadata.trim() !== "";
+    applied.level !== "" ||
+    (canPickTenant && applied.selectedTenantId !== "") ||
+    applied.q !== "" ||
+    applied.user !== "" ||
+    applied.metadataKey !== "" ||
+    applied.serviceId !== "" ||
+    applied.statusCode !== "" ||
+    applied.taskType !== "";
+
+  const narrowRangeMessage =
+    tracesError &&
+    typeof (tracesError as Error).message === "string" &&
+    (tracesError as Error).message.toLowerCase().includes("narrow")
+      ? (tracesError as Error).message
+      : null;
 
   return (
     <>
       <Head>
         <title>{`Logs Dashboard - ${getPlatformName()}`}</title>
-        <meta name="description" content="View telemetry traces and request outcomes" />
+        <meta
+          name="description"
+          content="View telemetry traces and request outcomes"
+        />
       </Head>
 
       <ContentLayout>
         <VStack spacing={6} w="full" align="stretch">
-          {/* Hide logs UI for users with USER or GUEST role */}
           {!authLoading && isAuthenticated && (isUser || isGuest) ? (
-            <Card bg={cardBg} border="1px" borderColor={borderColor} boxShadow="sm" w="full">
+            <Card
+              bg={cardBg}
+              border="1px"
+              borderColor={borderColor}
+              boxShadow="sm"
+              w="full"
+            >
               <CardBody>
                 <Flex direction="column" align="center" justify="center" py={12}>
-                  <Text fontSize="lg" color="ink.500" fontWeight="medium" mb={2}>
+                  <Text
+                    fontSize="lg"
+                    color="ink.500"
+                    fontWeight="medium"
+                    mb={2}
+                  >
                     Access Denied
                   </Text>
                   <Text fontSize="sm" color="ink.400" textAlign="center">
@@ -639,12 +916,12 @@ const LogsPage: React.FC = () => {
                 description="View telemetry traces and request outcomes"
               />
 
-              {/* Show auth warning if not authenticated */}
               {!authLoading && !isAuthenticated && (
                 <Alert status="warning">
                   <AlertIcon />
                   <AlertDescription>
-                    Please log in to view logs. <Button
+                    Please log in to view logs.{" "}
+                    <Button
                       size="sm"
                       colorScheme="blue"
                       ml={4}
@@ -660,249 +937,424 @@ const LogsPage: React.FC = () => {
                 <Alert status="error">
                   <AlertIcon />
                   <AlertDescription>
-                    {((tracesError as Error)?.message) || "Error loading traces"}
+                    {narrowRangeMessage ||
+                      (tracesError as Error)?.message ||
+                      "Error loading traces"}
                   </AlertDescription>
                 </Alert>
               )}
 
               {aggregationStats && (
-            <SimpleGrid columns={{ base: 2, md: 3 }} spacing={4}>
-              <Card
-                bg={cardBg}
-                border="1px"
-                borderColor={borderColor}
-                boxShadow="sm"
-              >
-                <CardBody>
-                  <Stat>
-                    <StatLabel fontSize="sm" color="ink.600" fontWeight="medium">Total Requests</StatLabel>
-                    <StatNumber fontSize="2xl" fontWeight="bold" color="ink.800">
-                      {aggregationStats.total.toLocaleString()}
-                    </StatNumber>
-                  </Stat>
-                </CardBody>
-              </Card>
-              <Card
-                bg={cardBg}
-                border="1px"
-                borderColor="green.200"
-                boxShadow="sm"
-              >
-                <CardBody>
-                  <Stat>
-                    <StatLabel fontSize="sm" color="ink.600" fontWeight="medium">Success</StatLabel>
-                    <StatNumber fontSize="2xl" fontWeight="bold" color="green.500">
-                      {aggregationStats.by_level.success.toLocaleString()}
-                    </StatNumber>
-                  </Stat>
-                </CardBody>
-              </Card>
-              <Card
-                bg={cardBg}
-                border="1px"
-                borderColor="red.200"
-                boxShadow="sm"
-              >
-                <CardBody>
-                  <Stat>
-                    <StatLabel fontSize="sm" color="ink.600" fontWeight="medium">Failures</StatLabel>
-                    <StatNumber fontSize="2xl" fontWeight="bold" color="red.500">
-                      {aggregationStats.by_level.failure.toLocaleString()}
-                    </StatNumber>
-                  </Stat>
-                </CardBody>
-              </Card>
-            </SimpleGrid>
+                <SimpleGrid columns={{ base: 2, md: 3 }} spacing={4}>
+                  <Card
+                    bg={cardBg}
+                    border="1px"
+                    borderColor={borderColor}
+                    boxShadow="sm"
+                  >
+                    <CardBody>
+                      <Stat>
+                        <StatLabel
+                          fontSize="sm"
+                          color="ink.600"
+                          fontWeight="medium"
+                        >
+                          Total Requests
+                        </StatLabel>
+                        <StatNumber
+                          fontSize="2xl"
+                          fontWeight="bold"
+                          color="ink.800"
+                        >
+                          {aggregationStats.total.toLocaleString()}
+                        </StatNumber>
+                      </Stat>
+                    </CardBody>
+                  </Card>
+                  <Card
+                    bg={cardBg}
+                    border="1px"
+                    borderColor="green.200"
+                    boxShadow="sm"
+                  >
+                    <CardBody>
+                      <Stat>
+                        <StatLabel
+                          fontSize="sm"
+                          color="ink.600"
+                          fontWeight="medium"
+                        >
+                          Success
+                        </StatLabel>
+                        <StatNumber
+                          fontSize="2xl"
+                          fontWeight="bold"
+                          color="green.500"
+                        >
+                          {aggregationStats.by_level.success.toLocaleString()}
+                        </StatNumber>
+                      </Stat>
+                    </CardBody>
+                  </Card>
+                  <Card
+                    bg={cardBg}
+                    border="1px"
+                    borderColor="red.200"
+                    boxShadow="sm"
+                  >
+                    <CardBody>
+                      <Stat>
+                        <StatLabel
+                          fontSize="sm"
+                          color="ink.600"
+                          fontWeight="medium"
+                        >
+                          Failures
+                        </StatLabel>
+                        <StatNumber
+                          fontSize="2xl"
+                          fontWeight="bold"
+                          color="red.500"
+                        >
+                          {aggregationStats.by_level.failure.toLocaleString()}
+                        </StatNumber>
+                      </Stat>
+                    </CardBody>
+                  </Card>
+                </SimpleGrid>
               )}
 
-              {!tracesError && (
-                <>
-                  <DataTable
-                    layout="admin"
-                    items={displayedTraceRows}
-                    columns={traceColumns}
-                    getRowKey={(row) =>
-                      `${row.trace_id}-${row.timestamp}-${row.task_type}-${row.url}`
-                    }
-                    sort={logsSort.sort}
-                    onSortChange={logsSort.onSortChange}
-                    onRowClick={(row) => {
-                      if (row.trace_id) openTraceDetail(row.trace_id);
-                    }}
-                    paginate="server"
-                    paginationPosition="bottom"
-                    serverPagination={{
-                      page,
-                      pageSize,
-                      totalItems: tracesData?.total ?? 0,
-                      onPageChange: setPage,
-                      onPageSizeChange: (size) => {
-                        setPageSize(size);
-                        setPage(1);
-                      },
-                      pageSizeOptions: [10, 15, 25, 50, 100],
-                    }}
-                    isLoading={tracesLoading}
-                    loadingMessage="Loading traces..."
-                    emptyMessage="No traces found for the selected filters. Try adjusting the time range or removing filters."
-                    noResultsMessage="No traces match the current filters."
-                    hasActiveFilters={hasAppliedFilters}
-                    onClearFilters={clearAllFilters}
-                    search={{
-                      label: "Search",
-                      value: searchQuery,
-                      onChange: setSearchQuery,
-                      placeholder: FIELD_HINTS.logs.search.placeholder,
-                      fields: ["trace_id", "service", "operation"],
-                    }}
-                    filterDefs={[
-                      ...(canPickTenant
-                        ? [
-                            {
-                              id: "tenant",
-                              label: INSTITUTION,
-                              type: "select" as const,
-                              param: "tenant_id",
-                              value: selectedTenantId,
-                              onChange: setSelectedTenantId,
-                              helper: FIELD_HINTS.logs.tenant.helper,
-                              width: { base: "full", sm: "200px" },
-                              options: [
-                                { label: `All ${INSTITUTIONS}`, value: "" },
-                                ...(tenantsLoading
-                                  ? []
-                                  : tenantsError
-                                    ? []
-                                    : activeTenants.map(
-                                        (tenant: {
-                                          tenant_id: string;
-                                          organisation?: string;
-                                        }) => ({
-                                          label:
-                                            tenant.organisation ||
-                                            tenant.tenant_id,
-                                          value: tenant.tenant_id,
-                                        }),
-                                      )),
-                              ],
-                            },
-                          ]
-                        : []),
-                      {
-                        id: "taskType",
-                        label: "Task Type",
-                        type: "select",
-                        param: "task_type",
-                        value: taskType,
-                        onChange: setTaskType,
-                        width: { base: "full", sm: "160px" },
-                        options: taskTypeNames.map((tt) => ({
-                          label: formatModelTaskTypeLabel(tt),
-                          value: tt,
-                        })),
-                      },
-                      {
-                        id: "status",
-                        label: "Status",
-                        type: "select",
-                        param: "level",
-                        value: level,
-                        onChange: setLevel,
-                        width: { base: "full", sm: "140px" },
-                        options: [
-                          { label: "All Statuses", value: "" },
-                          { label: "Success", value: "success" },
-                          { label: "Failure", value: "failure" },
-                        ],
-                      },
-                      {
-                        id: "endUser",
-                        label: "End User",
-                        type: "text",
-                        param: "user",
-                        value: endUser,
-                        onChange: setEndUser,
-                        placeholder: FIELD_HINTS.logs.endUser.placeholder,
-                        helper: FIELD_HINTS.logs.endUser.helper,
-                        error: endUserError,
-                        width: { base: "full", sm: "200px" },
-                      },
-                      {
-                        id: "metadata",
-                        label: "Metadata",
-                        type: "text",
-                        param: "metadata_key, metadata_value",
-                        value: metadata,
-                        onChange: setMetadata,
-                        placeholder: FIELD_HINTS.logs.metadata.placeholder,
-                        helper: FIELD_HINTS.logs.metadata.helper,
-                        error: metadataError,
-                        width: { base: "full", sm: "220px" },
-                      },
-                      {
-                        id: "startTime",
-                        label: "Start Time",
-                        type: "date",
-                        param: "start_time",
-                        value: startTime,
-                        onChange: setStartTime,
-                        inputType: "datetime-local",
-                        helper: FIELD_HINTS.logs.startTime.helper,
-                        width: { base: "full", sm: "220px" },
-                      },
-                      {
-                        id: "endTime",
-                        label: "End Time",
-                        type: "date",
-                        param: "end_time",
-                        value: endTime,
-                        onChange: setEndTime,
-                        inputType: "datetime-local",
-                        helper: FIELD_HINTS.logs.endTime.helper,
-                        width: { base: "full", sm: "220px" },
-                      },
-                    ]}
-                    filterToolbarRightContent={
-                      <HStack spacing={3} flexWrap="wrap">
-                        <FormControl display="flex" alignItems="center" w="auto">
-                          <FieldLabel
-                            formLabelProps={{
-                              htmlFor: "auto-refresh-toggle",
-                              mb: 0,
-                              fontSize: "sm",
-                              fontWeight: "medium",
-                              mr: 2,
-                              whiteSpace: "nowrap",
-                            }}
+              <DataTable
+                layout="admin"
+                items={traceRows}
+                columns={traceColumns}
+                getRowKey={(row) =>
+                  `${row.trace_id}-${row.timestamp}-${row.task_type}-${row.url}`
+                }
+                sort={sort}
+                onSortChange={handleSortChange}
+                onRowClick={(row) => {
+                  if (row.trace_id) openTraceDetail(row.trace_id);
+                }}
+                paginate="server"
+                paginationPosition="bottom"
+                serverPagination={{
+                  page,
+                  pageSize,
+                  totalItems: tracesData?.total ?? 0,
+                  onPageChange: setPage,
+                  onPageSizeChange: (size) => {
+                    setPageSize(size);
+                    setPage(1);
+                  },
+                  pageSizeOptions: [10, 15, 25, 50, 100],
+                }}
+                isLoading={tracesLoading}
+                loadingMessage="Loading traces..."
+                emptyMessage="No traces found for the selected filters. Try adjusting the time range or removing filters."
+                noResultsMessage="No traces match the current filters."
+                hasActiveFilters={hasAppliedFilters}
+                onClearFilters={clearAllFilters}
+                search={{
+                  label: "Search",
+                  value: draft.q,
+                  onChange: (v) => updateDraft("q", v),
+                  onSubmit: applyFilters,
+                  placeholder: FIELD_HINTS.logs.search.placeholder,
+                  helper: FIELD_HINTS.logs.search.helper,
+                  error: keywordError,
+                }}
+                filterDefs={[
+                  ...(canPickTenant
+                    ? [
+                        {
+                          id: "tenant",
+                          label: INSTITUTION,
+                          type: "select" as const,
+                          param: "tenant_id",
+                          value: draft.selectedTenantId,
+                          onChange: (v: string) =>
+                            updateDraft("selectedTenantId", v),
+                          helper: FIELD_HINTS.logs.tenant.helper,
+                          width: { base: "full", sm: "200px" },
+                          options: [
+                            { label: `All ${INSTITUTIONS}`, value: "" },
+                            ...(tenantsLoading
+                              ? []
+                              : tenantsError
+                                ? []
+                                : activeTenants.map(
+                                    (tenant: {
+                                      tenant_id: string;
+                                      organisation?: string;
+                                    }) => ({
+                                      label:
+                                        tenant.organisation ||
+                                        tenant.tenant_id,
+                                      value: tenant.tenant_id,
+                                    })
+                                  )),
+                          ],
+                        },
+                      ]
+                    : []),
+                  {
+                    id: "taskType",
+                    label: "Task Type",
+                    type: "select",
+                    param: "task_type",
+                    value: draft.taskType,
+                    onChange: (v) => updateDraft("taskType", v),
+                    width: { base: "full", sm: "160px" },
+                    options: [
+                      { label: "All", value: "" },
+                      ...taskTypeNames.map((tt) => ({
+                        label: formatModelTaskTypeLabel(tt),
+                        value: tt,
+                      })),
+                    ],
+                  },
+                  {
+                    id: "status",
+                    label: "Status",
+                    type: "select",
+                    param: "level",
+                    value: draft.level,
+                    onChange: (v) => updateDraft("level", v),
+                    width: { base: "full", sm: "140px" },
+                    options: [
+                      { label: "All Statuses", value: "" },
+                      { label: "Success", value: "success" },
+                      { label: "Failure", value: "failure" },
+                    ],
+                  },
+                  {
+                    id: "service",
+                    label: "Service",
+                    type: "text",
+                    param: "service_id",
+                    value: draft.serviceId,
+                    onChange: (v) => updateDraft("serviceId", v),
+                    placeholder: FIELD_HINTS.logs.service.placeholder,
+                    helper: FIELD_HINTS.logs.service.helper,
+                    width: { base: "full", sm: "200px" },
+                  },
+                  {
+                    id: "statusCode",
+                    label: "Status Code",
+                    type: "text",
+                    param: "status_code",
+                    value: draft.statusCode,
+                    onChange: (v) => updateDraft("statusCode", v),
+                    placeholder: FIELD_HINTS.logs.statusCode.placeholder,
+                    helper: FIELD_HINTS.logs.statusCode.helper,
+                    error: statusCodeError,
+                    width: { base: "full", sm: "180px" },
+                  },
+                  {
+                    id: "endUser",
+                    label: "End User",
+                    type: "text",
+                    param: "user",
+                    value: draft.endUser,
+                    onChange: (v) => updateDraft("endUser", v),
+                    placeholder: FIELD_HINTS.logs.endUser.placeholder,
+                    helper: FIELD_HINTS.logs.endUser.helper,
+                    error: endUserError,
+                    width: { base: "full", sm: "200px" },
+                  },
+                  {
+                    id: "metadata",
+                    label: "Metadata",
+                    type: "text",
+                    param: "metadata_key, metadata_value",
+                    value: draft.metadata,
+                    onChange: (v) => updateDraft("metadata", v),
+                    placeholder: FIELD_HINTS.logs.metadata.placeholder,
+                    helper: FIELD_HINTS.logs.metadata.helper,
+                    error: metadataError,
+                    width: { base: "full", sm: "220px" },
+                  },
+                  {
+                    id: "startTime",
+                    label: "Start Time",
+                    type: "date",
+                    param: "start_time",
+                    value: draft.startTime,
+                    onChange: (v) => updateDraft("startTime", v),
+                    inputType: "datetime-local",
+                    helper: FIELD_HINTS.logs.startTime.helper,
+                    width: { base: "full", sm: "220px" },
+                  },
+                  {
+                    id: "endTime",
+                    label: "End Time",
+                    type: "date",
+                    param: "end_time",
+                    value: draft.endTime,
+                    onChange: (v) => updateDraft("endTime", v),
+                    inputType: "datetime-local",
+                    helper: FIELD_HINTS.logs.endTime.helper,
+                    width: { base: "full", sm: "220px" },
+                  },
+                ]}
+                filterToolbarRightContent={
+                  <HStack spacing={3} flexWrap="wrap" align="center">
+                    <Tooltip
+                      label={
+                        keywordError ||
+                        endUserError ||
+                        metadataError ||
+                        statusCodeError
+                          ? "Fix validation errors before searching"
+                          : filtersDirty
+                            ? "Apply keyword and filters"
+                            : "No changes to apply"
+                      }
+                      placement="top"
+                      hasArrow
+                    >
+                      <Box as="span" display="inline-block">
+                        <Button
+                          size="sm"
+                          colorScheme="blue"
+                          variant={filtersDirty ? "solid" : "outline"}
+                          onClick={applyFilters}
+                          isDisabled={Boolean(
+                            keywordError ||
+                              endUserError ||
+                              metadataError ||
+                              statusCodeError
+                          )}
+                        >
+                          Search
+                        </Button>
+                      </Box>
+                    </Tooltip>
+                    {filtersDirty && (
+                      <Text fontSize="xs" color="ink.500" whiteSpace="nowrap">
+                        Unapplied changes
+                      </Text>
+                    )}
+                    <Menu closeOnSelect={false}>
+                      <Tooltip
+                        label={FIELD_HINTS.logs.columns.helper}
+                        placement="top"
+                        hasArrow
+                      >
+                        <Box as="span" display="inline-block">
+                          <MenuButton
+                            as={Button}
+                            size="sm"
+                            variant="outline"
+                            leftIcon={<SettingsIcon />}
+                            rightIcon={<ChevronDownIcon />}
                           >
-                            Auto-refresh
-                          </FieldLabel>
+                            Columns
+                          </MenuButton>
+                        </Box>
+                      </Tooltip>
+                      <Portal>
+                        <MenuList maxH="320px" overflowY="auto" minW="240px" py={2}>
+                          <Text
+                            px={3}
+                            pb={1}
+                            fontSize="xs"
+                            color="ink.500"
+                            fontWeight="medium"
+                          >
+                            {FIELD_HINTS.logs.columns.helper}
+                          </Text>
+                          {columnDefs.map((col) => {
+                            const checked = selectedColumns.includes(col.key);
+                            const onlyOne = selectedColumns.length === 1 && checked;
+                            return (
+                              <MenuItem
+                                key={col.key}
+                                closeOnSelect={false}
+                                onClick={(e) => e.preventDefault()}
+                                py={1.5}
+                              >
+                                <Checkbox
+                                  isChecked={checked}
+                                  isDisabled={onlyOne}
+                                  onChange={(e) =>
+                                    toggleColumn(col.key, e.target.checked)
+                                  }
+                                >
+                                  <Text as="span" fontSize="sm">
+                                    {col.label}
+                                    {col.default ? (
+                                      <Text as="span" color="ink.400" ml={1}>
+                                        (default)
+                                      </Text>
+                                    ) : null}
+                                  </Text>
+                                </Checkbox>
+                              </MenuItem>
+                            );
+                          })}
+                          <MenuDivider />
+                          <MenuItem
+                            onClick={resetColumns}
+                            fontSize="sm"
+                            color="blue.600"
+                          >
+                            Reset to default
+                          </MenuItem>
+                        </MenuList>
+                      </Portal>
+                    </Menu>
+                    <FormControl display="flex" alignItems="center" w="auto">
+                      <FieldLabel
+                        formLabelProps={{
+                          htmlFor: "auto-refresh-toggle",
+                          mb: 0,
+                          fontSize: "sm",
+                          fontWeight: "medium",
+                          mr: 2,
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        Auto-refresh
+                      </FieldLabel>
+                      <Tooltip
+                        label={
+                          liveRange
+                            ? FIELD_HINTS.logs.autoRefresh.helper
+                            : "Available only while End Time is the present"
+                        }
+                        placement="top"
+                        hasArrow
+                      >
+                        <Box display="inline-flex" alignItems="center">
                           <Switch
                             id="auto-refresh-toggle"
                             colorScheme="green"
                             isChecked={autoRefresh}
+                            isDisabled={!liveRange}
                             onChange={(e) => setAutoRefresh(e.target.checked)}
                           />
-                          <FieldHint ml={2} mt={0}>
-                            {FIELD_HINTS.logs.autoRefresh.helper}
-                          </FieldHint>
-                        </FormControl>
-                        <Tooltip label="Refresh now" placement="top" hasArrow>
-                          <IconButton
-                            aria-label="Refresh"
-                            icon={<RepeatIcon />}
-                            onClick={handleRefresh}
-                            isLoading={tracesLoading}
-                            size="sm"
-                            variant="outline"
-                          />
-                        </Tooltip>
-                      </HStack>
-                    }
-                    tableContainerProps={{ overflowX: "auto" }}
-                  />
-                </>
-              )}
+                        </Box>
+                      </Tooltip>
+                      <FieldHint ml={2} mt={0}>
+                        {FIELD_HINTS.logs.autoRefresh.helper}
+                      </FieldHint>
+                    </FormControl>
+                    <Tooltip label="Refresh now" placement="top" hasArrow>
+                      <IconButton
+                        aria-label="Refresh"
+                        icon={<RepeatIcon />}
+                        onClick={handleRefresh}
+                        isLoading={tracesLoading}
+                        size="sm"
+                        variant="outline"
+                      />
+                    </Tooltip>
+                  </HStack>
+                }
+                tableContainerProps={{ overflowX: "auto" }}
+              />
 
               <TelemetryTraceDetailModal
                 traceId={selectedTraceId}
