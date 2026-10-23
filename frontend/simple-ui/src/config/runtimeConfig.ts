@@ -38,6 +38,8 @@ export type RuntimeConfig = {
   platformName: string;
   /** Raw ConfigMap ADOPTER_LOGO_URL; empty ⇒ default SVG via getAdopterLogoSrc. */
   adopterLogoUrl: string;
+  /** Raw ROTATED_API_KEY_DEFAULT_GRACE_DAYS; parsed by getDefaultRotationGraceDays. */
+  rotationGraceDays: string;
 };
 
 export const EMPTY_RUNTIME_CONFIG: RuntimeConfig = {
@@ -46,6 +48,7 @@ export const EMPTY_RUNTIME_CONFIG: RuntimeConfig = {
   enabledTaskTypes: "",
   platformName: DEFAULT_PLATFORM_NAME,
   adopterLogoUrl: "",
+  rotationGraceDays: "",
 };
 
 let cached: RuntimeConfig = { ...EMPTY_RUNTIME_CONFIG };
@@ -76,6 +79,7 @@ export function getServerRuntimeConfig(): RuntimeConfig {
       firstEnv("PLATFORM_NAME", "NEXT_PUBLIC_PLATFORM_NAME"),
     ),
     adopterLogoUrl: firstEnv("ADOPTER_LOGO_URL", "NEXT_PUBLIC_ADOPTER_LOGO_URL"),
+    rotationGraceDays: firstEnv("ROTATED_API_KEY_DEFAULT_GRACE_DAYS"),
   };
 }
 
@@ -90,6 +94,7 @@ export function applyRuntimeConfig(config: RuntimeConfig): void {
     enabledTaskTypes: (config.enabledTaskTypes ?? "").trim(),
     platformName: resolvePlatformName(config.platformName),
     adopterLogoUrl: (config.adopterLogoUrl ?? "").trim(),
+    rotationGraceDays: (config.rotationGraceDays ?? "").trim(),
   };
   if (typeof window !== "undefined") {
     window.__RUNTIME_CONFIG__ = cached;
@@ -120,6 +125,17 @@ export function getBranding(): BrandingConfig {
     name: getPlatformName(),
     logoSrc: getAdopterLogoSrc(),
   };
+}
+
+/**
+ * Grace period prefilled in the rotate dialog, in whole days; null when
+ * ROTATED_API_KEY_DEFAULT_GRACE_DAYS is unset or invalid (the field then
+ * starts blank and the admin must enter one — the rotate API requires it).
+ */
+export function getDefaultRotationGraceDays(): number | null {
+  const raw = cached.rotationGraceDays;
+  if (!/^\d+$/.test(raw)) return null;
+  return Number(raw);
 }
 
 /** Parsed allowlist; empty array ⇒ no filter (full catalog). */

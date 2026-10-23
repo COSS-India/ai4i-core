@@ -592,14 +592,45 @@ class AuthService {
 
 
   /**
-   * POST `/api-keys/{keyId}/rotate` — issues a new key value, returned once.
-   * The previous value keeps working until `rotated_key_expires_at`.
+   * PATCH `/api-keys/{keyId}/rotated-key` — moves the previous value's
+   * window end later. Only while it still works; never past the key's expiry.
    */
-  async rotateApiKey(keyId: number): Promise<RotateAPIKeyResponse> {
+  async extendPreviousApiKeyValue(
+    keyId: number,
+    rotatedKeyExpiresAt: string,
+  ): Promise<APIKeyResponse> {
+    return this.validatedRequest(
+      `${authPath.apiKeys}/${keyId}/rotated-key`,
+      authUnwrappedSchema(apiKeyResponseSchema),
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ rotated_key_expires_at: rotatedKeyExpiresAt }),
+      }
+    );
+  }
+
+  /**
+   * DELETE `/api-keys/{keyId}/current-key` — stops the current value now, during a
+   * rotation. The previous value keeps working until its window ends.
+   */
+  async revokeCurrentApiKeyValue(keyId: number): Promise<{ message: string }> {
+    return this.validatedRequest(
+      `${authPath.apiKeys}/${keyId}/current-key`,
+      authUnwrappedSchema(messageResponseSchema),
+      { method: 'DELETE' }
+    );
+  }
+
+  /**
+   * POST `/api-keys/{keyId}/rotate` — issues a new key value, returned once.
+   * The previous value keeps working until `rotated_key_expires_at`:
+   * `graceDays` from now (required), never past the key's expiry.
+   */
+  async rotateApiKey(keyId: number, graceDays: number): Promise<RotateAPIKeyResponse> {
     return this.validatedRequest(
       `${authPath.apiKeys}/${keyId}/rotate`,
       authUnwrappedSchema(rotateApiKeyResponseSchema),
-      { method: 'POST' }
+      { method: 'POST', body: JSON.stringify({ grace_days: graceDays }) }
     );
   }
 

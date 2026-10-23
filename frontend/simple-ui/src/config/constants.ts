@@ -1246,7 +1246,19 @@ export type ApiKeyStatusSource = {
   is_active?: boolean;
   is_revoked?: boolean;
   expires_at?: string | null;
+  /** Set when the current value alone was revoked during a rotation. */
+  api_key_revoked_at?: string | null;
+  /** End of the previous value's window; absent once it stopped working. */
+  rotated_key_expires_at?: string | null;
 };
+
+/** Current value revoked during a rotation, and the previous value's window has ended. */
+export function isApiKeyWithoutLiveValue(key: ApiKeyStatusSource): boolean {
+  if (!key.api_key_revoked_at) return false;
+  if (!key.rotated_key_expires_at) return true;
+  const until = new Date(key.rotated_key_expires_at).getTime();
+  return !Number.isFinite(until) || until <= Date.now();
+}
 
 export function isApiKeyExpired(expiresAt?: string | null): boolean {
   if (!expiresAt) return false;
@@ -1273,7 +1285,7 @@ export function resolveApiKeyDisplayStatus(
   key: ApiKeyStatusSource,
   context: ApiKeyAccessContext = {}
 ): ApiKeyDisplayStatusValue {
-  if (key.is_active === false || key.is_revoked === true) {
+  if (key.is_active === false || key.is_revoked === true || isApiKeyWithoutLiveValue(key)) {
     return API_KEY.DISPLAY_STATUS.REVOKED;
   }
   if (isTenantStatus(context.tenantStatus, TENANT.STATUS.DEACTIVATED)) {
