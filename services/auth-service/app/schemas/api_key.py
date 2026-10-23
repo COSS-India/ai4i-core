@@ -9,7 +9,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import ConfigDict, Field
+from pydantic import AwareDatetime, ConfigDict, Field
 
 from app.schemas.base import BaseSchema
 from app.schemas.common import MessageData, SuccessResponse
@@ -107,6 +107,30 @@ class UpdateAPIKeyRequest(BaseSchema):
     expires_days: Optional[int] = Field(None, ge=1)
 
 
+class RotateAPIKeyRequest(BaseSchema):
+    grace_days: int = Field(
+        ...,
+        ge=0,
+        # Bound only so the end date stays representable; the key's own
+        # expires_at is the real cap.
+        le=36500,
+        description=(
+            "Days the previous value keeps working. Never past the key's own expiry. "
+            "0 stops it immediately."
+        ),
+    )
+
+
+class ExtendRotationRequest(BaseSchema):
+    rotated_key_expires_at: AwareDatetime = Field(
+        ...,
+        description=(
+            "New end of the previous value's window, with a timezone. Must be later than "
+            "the current end and not past the key's own expiry."
+        ),
+    )
+
+
 # ── Response payloads (the ``data`` field) ──
 
 class CreateAPIKeyData(BaseSchema):
@@ -161,6 +185,16 @@ class APIKeyItem(BaseSchema):
             "(until rotated_key_expires_at); null otherwise."
         ),
     )
+    api_key_revoked_at: Optional[datetime] = Field(
+        None,
+        description=(
+            "When the current value alone was revoked during a rotation; null while it works. "
+            "Once set, only the previous value works, until rotated_key_expires_at."
+        ),
+    )
+    rotated_at: Optional[datetime] = Field(
+        None, description="When the key was last rotated, i.e. when its current value was issued; null if never."
+    )
     is_active: bool
     created_by: Optional[str] = None
     created_at: Optional[datetime] = None
@@ -214,6 +248,8 @@ class APIKeyAdminItem(BaseSchema):
     expires_at: Optional[datetime] = None
     rotated_key_expires_at: Optional[datetime] = None
     rotated_key: Optional[str] = None
+    api_key_revoked_at: Optional[datetime] = None
+    rotated_at: Optional[datetime] = None
     is_active: bool
     created_by: Optional[str] = None
     created_at: Optional[datetime] = None
@@ -254,6 +290,18 @@ class RotateAPIKeyResponse(SuccessResponse):
 
 class RevokePreviousKeyResponse(SuccessResponse):
     """DELETE /auth/api-keys/{key_id}/rotated-key"""
+
+    data: MessageData
+
+
+class ExtendRotationResponse(SuccessResponse):
+    """PATCH /auth/api-keys/{key_id}/rotated-key"""
+
+    data: APIKeyItem
+
+
+class RevokeCurrentKeyResponse(SuccessResponse):
+    """DELETE /auth/api-keys/{key_id}/current-key"""
 
     data: MessageData
 

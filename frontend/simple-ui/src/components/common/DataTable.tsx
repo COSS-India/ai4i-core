@@ -218,6 +218,13 @@ export interface DataTableAdminProps<T> extends DataTableSharedProps<T> {
   paginationPosition?: "top" | "bottom";
   /** Match card-layout drill-down affordance when rows are clickable. Default: true when `onRowClick` is set. */
   showRowChevron?: boolean;
+  /**
+   * Rows rendered directly under `row`, with the same columns and a tinted
+   * background; return none to show it collapsed. They follow their parent
+   * through sort and pagination and don't count as items. `getRowKey` must
+   * give each one its own key.
+   */
+  getSubRows?: (row: T) => readonly T[];
 }
 
 export type DataTableProps<T> = DataTableCardProps<T> | DataTableAdminProps<T>;
@@ -840,6 +847,7 @@ function AdminLayoutDataTable<T>({
   size = "sm",
   paginationPosition = "bottom",
   showRowChevron,
+  getSubRows,
 }: DataTableAdminProps<T>) {
   const { cardBg } = useAdminTableSurface();
   const rowChevron = showRowChevron ?? Boolean(onRowClick);
@@ -1047,11 +1055,16 @@ function AdminLayoutDataTable<T>({
                 )}
               </Td>
             </Tr>
-          ) : displayItems.map((row, index) => (
+          ) : displayItems.flatMap((parent, parentIndex) =>
+            [parent, ...(getSubRows?.(parent) ?? [])].map((row, subIndex) => {
+            const isSubRow = subIndex > 0;
+            const index = parentIndex;
+            return (
             <Tr
               key={getRowKey(row)}
               onClick={onRowClick ? () => onRowClick(row) : undefined}
               cursor={onRowClick ? "pointer" : undefined}
+              bg={isSubRow ? "ink.50" : undefined}
               _hover={{
                 bg: "#FAFBFE",
                 ...(rowChevron ? { "& .data-table-chevron": { color: "ink.600" } } : {}),
@@ -1095,7 +1108,9 @@ function AdminLayoutDataTable<T>({
                 </Td>
               ) : null}
             </Tr>
-          ))}
+            );
+            }),
+          )}
         </Tbody>
       </Table>
     </TableContainer>

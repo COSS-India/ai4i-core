@@ -155,6 +155,12 @@ export interface APIKeyResponse {
   created_by?: string;
   /** When the key's previous value stops working after a rotation; absent if never rotated. */
   rotated_key_expires_at?: string;
+  /** The previous value, masked, while it still works; absent otherwise. */
+  rotated_key?: string;
+  /** When the current value alone was revoked during a rotation; absent while it works. */
+  api_key_revoked_at?: string;
+  /** When the key was last rotated (its current value issued); absent if never. */
+  rotated_at?: string;
 }
 
 /** POST /api-keys/{id}/rotate — the new raw key, shown once. */
@@ -165,6 +171,8 @@ export interface RotateAPIKeyResponse {
   expires_at?: string;
   /** Until then the previous value keeps working as the same key. */
   rotated_key_expires_at: string;
+  /** The previous value, masked. */
+  rotated_key?: string;
 }
 
 export interface AdminAPIKeyWithUserResponse extends APIKeyResponse {

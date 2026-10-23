@@ -135,11 +135,13 @@ export const rotateApiKeyResponseSchema = z
     key_name: z.string(),
     expires_at: z.string().nullable().optional(),
     rotated_key_expires_at: z.string(),
+    rotated_key: z.string().nullable().optional(),
   })
   .passthrough()
   .transform((d) => ({
     ...d,
     expires_at: d.expires_at ?? undefined,
+    rotated_key: d.rotated_key ?? undefined,
   }));
 
 const apiKeyResponseRawSchema = z
@@ -152,7 +154,7 @@ const apiKeyResponseRawSchema = z
     application_id: z.coerce.string().optional(),
     allocated_percentage: z.coerce.number().nullable().optional(),
     allocated_budget: z.coerce.number().nullable().optional(),
-    created_by: z.string().optional(),
+    created_by: z.string().nullable().optional(),
     permissions: z.preprocess(
       (value) => (value == null ? [] : value),
       z.array(z.string()),
@@ -162,6 +164,9 @@ const apiKeyResponseRawSchema = z
     created_at: z.string().nullable().optional(),
     expires_at: z.string().nullable().optional(),
     rotated_key_expires_at: z.string().nullable().optional(),
+    rotated_key: z.string().nullable().optional(),
+    api_key_revoked_at: z.string().nullable().optional(),
+    rotated_at: z.string().nullable().optional(),
   })
   .passthrough();
 
@@ -172,9 +177,13 @@ function normalizeApiKeyResponse<T extends z.infer<typeof apiKeyResponseRawSchem
     id: d.id,
     is_active: isActive,
     is_revoked: d.is_revoked ?? !isActive,
+    created_by: d.created_by ?? undefined,
     created_at: d.created_at ?? undefined,
     expires_at: d.expires_at ?? undefined,
     rotated_key_expires_at: d.rotated_key_expires_at ?? undefined,
+    rotated_key: d.rotated_key ?? undefined,
+    api_key_revoked_at: d.api_key_revoked_at ?? undefined,
+    rotated_at: d.rotated_at ?? undefined,
   };
 }
 
