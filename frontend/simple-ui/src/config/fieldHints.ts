@@ -30,7 +30,8 @@ export const FIELD_HINTS = {
     emailChecking: "Checking if email exists…",
     emailAvailable: EMAIL_AVAILABLE_MSG,
     emailVerifyOnChange:
-      "If you change the contact email, the update takes effect only after the new address is verified.",
+      "Changing to a new address takes effect only after verification. An existing Institution Admin email for this organisation applies immediately.",
+    /** Kept for callers that still lock email on edit; Update Institution always allows edit (AI4IDS-3401). */
     emailPendingOnly: `The contact email can only be corrected while the ${org} is pending verification.`,
     planAppliesImmediately: "Tier and Budget changes apply immediately.",
   },
@@ -146,10 +147,23 @@ export const FIELD_HINTS = {
     tierSearch: { placeholder: "Search tiers..." },
   },
   logs: {
-    search: { placeholder: "Search by trace ID, URL, task type, or status" },
+    search: {
+      placeholder: "Search keyword across log fields",
+      helper: "Applies with filters when you click Search or press Enter",
+      tooLong: "Keyword must be at most 256 characters",
+    },
     startTime: { helper: "Filter logs from this date & time" },
     endTime: { helper: "Filter logs up to this date & time; must be after Start Time" },
     tenant: { helper: `Filter logs by ${org}.` },
+    service: {
+      placeholder: "e.g. openai-service",
+      helper: "Exact service id on the request",
+    },
+    statusCode: {
+      placeholder: "e.g. 500,503",
+      helper: "Comma-separated codes (100–599), up to 10",
+      invalid: "Use up to 10 comma-separated integers between 100 and 599",
+    },
     endUser: {
       placeholder: "e.g. customer-8812",
       helper: "end-user ID sent as user",
@@ -164,7 +178,12 @@ export const FIELD_HINTS = {
       keyTooLong: "Key must be at most 64 characters",
       valueTooLong: "Value must be at most 512 characters",
     },
-    autoRefresh: { helper: "Automatically refresh this list at regular intervals." },
+    autoRefresh: {
+      helper: "Refresh while the end time is the present. Disabled for past ranges.",
+    },
+    narrowDateRange:
+      "Too many results. Please narrow your date range or refine your search.",
+    columns: { helper: "Choose which fields appear as columns" },
   },
   profile: {
     fullName: {

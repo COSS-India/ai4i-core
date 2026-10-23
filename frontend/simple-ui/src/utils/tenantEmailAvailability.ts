@@ -4,6 +4,7 @@ import authService from "../services/authService";
 import {
   EMAIL_ALREADY_EXISTS_MSG,
   EMAIL_USER_ALREADY_EXISTS_MSG,
+  emailSetHas,
   normalizeEmail,
   validateEmailFormatOnly,
   validateTenantContactEmail,
@@ -83,15 +84,16 @@ export async function runEmailAvailabilityCheck(
     return { status: "available" };
   }
 
+  const lower = normalizeEmail(email);
+  const skipUserCollision =
+    (Boolean(exclusions?.excludeUserEmail) &&
+      lower === normalizeEmail(exclusions?.excludeUserEmail ?? "")) ||
+    emailSetHas(exclusions?.allowedUserEmails, lower);
+
   try {
     const exists = await authService.checkEmailExists(email);
-    if (exists) {
-      const skip = exclusions
-        ? normalizeEmail(email) === normalizeEmail(exclusions.excludeUserEmail ?? "")
-        : false;
-      if (!skip) {
-        return { error: userExistsMessage(mode), status: "idle" };
-      }
+    if (exists && !skipUserCollision) {
+      return { error: userExistsMessage(mode), status: "idle" };
     }
   } catch {
     const clientError = clientCollisionError(
@@ -104,11 +106,7 @@ export async function runEmailAvailabilityCheck(
     if (clientError) return { error: clientError, status: "idle" };
   }
 
-  const lower = normalizeEmail(email);
-  const skipUser =
-    exclusions?.excludeUserEmail &&
-    lower === normalizeEmail(exclusions.excludeUserEmail);
-  if (userEmails.has(lower) && !skipUser) {
+  if (userEmails.has(lower) && !skipUserCollision) {
     return { error: userExistsMessage(mode), status: "idle" };
   }
 

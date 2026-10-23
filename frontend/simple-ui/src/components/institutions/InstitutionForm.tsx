@@ -29,7 +29,7 @@ type InstitutionFormProps = {
   mode: InstitutionFormMode;
   values: InstitutionFormValues;
   errors?: InstitutionFormErrors;
-  /** Edit only. Pending institutions can change the contact email. */
+  /** Edit only. Contact email is editable when updating an institution (AI4IDS-3401). */
   emailEditable?: boolean;
   emailStatus?: string;
   onOrganisationChange?: (value: string) => void;

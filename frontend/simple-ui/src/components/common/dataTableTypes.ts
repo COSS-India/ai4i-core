@@ -12,11 +12,18 @@ export type {
 export type DataTableSearchConfig = {
   value: string;
   onChange: (value: string) => void;
+  /**
+   * When set, Enter in the search box calls this instead of treating typing
+   * as the apply action. Use with an explicit Search button for server search.
+   */
+  onSubmit?: () => void;
   placeholder?: string;
   label?: string;
   /** Keep the label for screen readers and drop it from the toolbar layout. */
   hideLabel?: boolean;
   helper?: string;
+  /** Validation message shown under the search input. */
+  error?: string;
   /**
    * Fields the parent should search (documentation / client helpers).
    * DataTable does not filter rows itself.
