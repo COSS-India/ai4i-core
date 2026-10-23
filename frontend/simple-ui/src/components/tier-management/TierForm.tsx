@@ -102,7 +102,7 @@ export function TierForm({
 
   return (
     <VStack align="stretch" spacing={0}>
-      <FormSection title="Basic information">
+      <VStack align="stretch" spacing={4}>
       <FormControl isRequired>
         <FieldLabel>Tier Name</FieldLabel>
         <Input
@@ -125,7 +125,7 @@ export function TierForm({
         />
         <FieldHint>{FIELD_HINTS.tier.description.helper}</FieldHint>
       </FormControl>
-      </FormSection>
+      </VStack>
 
       <FormSection title="Usage limits">
       <FormControl isInvalid={!!rateLimitError}>
