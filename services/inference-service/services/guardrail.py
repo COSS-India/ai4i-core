@@ -511,14 +511,17 @@ async def _write_audit_log(
     guardrail_info: Dict,
     created_by: Optional[str],
     policy_types: List[PolicyType],
+    scopes: Optional[List[str]] = None,
 ) -> None:
     if not settings.PLATFORM_CORE_URL:
         return
+    output_only = "output" in (scopes or []) and "both" not in (scopes or [])
     try:
         if policy_types:
             try:
-                model_request = await asyncio.to_thread(_mask_for_audit_payload, model_request, policy_types)
-                response = await asyncio.to_thread(_mask_for_audit_response, response, policy_types)
+                if not output_only:
+                    model_request = await asyncio.to_thread(_mask_for_audit_payload, model_request, policy_types)
+                    response = await asyncio.to_thread(_mask_for_audit_response, response, policy_types)
             except Exception as exc:
                 logger.warning("Audit masking failed, redacting content from audit row (policy_ids=%s): %s", policy_ids, exc)
                 model_request = {}
@@ -565,6 +568,7 @@ def schedule_audit_log(
             },
             created_by=app_id,
             policy_types=ctx.policy_types,
+            scopes=ctx.scopes,
         )
     )
     _background_tasks.add(task)
