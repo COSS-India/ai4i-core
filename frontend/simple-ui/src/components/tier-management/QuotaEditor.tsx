@@ -17,7 +17,6 @@ import {
 import { AddIcon, DeleteIcon, SmallCloseIcon } from "@chakra-ui/icons";
 import { FiCalendar } from "react-icons/fi";
 import { FORM_LABEL_TO_INPUT_PT } from "../common/FormFieldsRow";
-import FieldHint from "../common/FieldHint";
 import FieldLabel from "../common/FieldLabel";
 import { formatModelTaskTypeLabel } from "../../config/constants";
 import { FIELD_HINTS } from "../../config/fieldHints";
@@ -183,7 +182,10 @@ export function QuotaEditor({
                     isDisabled={isEditMode}
                     minW={0}
                   >
-                    <FieldLabel formLabelProps={{ fontSize: "xs", mb: 1 }}>
+                    <FieldLabel
+                      hint={FIELD_HINTS.tier.quotaUnit.helper}
+                      formLabelProps={{ fontSize: "xs", mb: 1 }}
+                    >
                       Unit
                     </FieldLabel>
                     <Input
@@ -197,9 +199,6 @@ export function QuotaEditor({
                     <FormErrorMessage fontSize="xs">
                       Unit is required.
                     </FormErrorMessage>
-                    <FieldHint show={!(showErrors && isUnitInvalid(quota))}>
-                      {FIELD_HINTS.tier.quotaUnit.helper}
-                    </FieldHint>
                   </FormControl>
 
                   <FormControl
@@ -208,7 +207,10 @@ export function QuotaEditor({
                     isDisabled={isEditMode}
                     minW={0}
                   >
-                    <FieldLabel formLabelProps={{ fontSize: "xs", mb: 1 }}>
+                    <FieldLabel
+                      hint={FIELD_HINTS.tier.quotaLimit.helper}
+                      formLabelProps={{ fontSize: "xs", mb: 1 }}
+                    >
                       Limit
                     </FieldLabel>
                     <NumberInput
@@ -229,9 +231,6 @@ export function QuotaEditor({
                     <FormErrorMessage fontSize="xs">
                       {limitError(quota)}
                     </FormErrorMessage>
-                    <FieldHint show={!showLimitError(quota, showErrors)}>
-                      {FIELD_HINTS.tier.quotaLimit.helper}
-                    </FieldHint>
                   </FormControl>
                 </Grid>
 

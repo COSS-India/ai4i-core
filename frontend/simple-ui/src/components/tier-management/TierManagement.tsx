@@ -543,7 +543,7 @@ const TierManagement: React.FC = () => {
       size="wide"
       lockDismiss={isSubmitting}
       title="Create Tier"
-      description={`Configure access and usage limits for ${INSTITUTIONS.toLowerCase()}.`}
+      description="Define the rate limit and quotas for this tier."
       footer={
         <FormActions
           cancelLabel="Cancel"
@@ -659,6 +659,7 @@ const TierManagement: React.FC = () => {
         size="wide"
         lockDismiss={isSubmitting}
         title={editingTier?.name ? `Edit Tier: ${editingTier.name}` : "Edit Tier"}
+        description="Define the rate limit and quotas for this tier."
         footer={
           <FormActions
             submitLabel="Save Changes"
