@@ -4,8 +4,10 @@ Categories are the top level of the policy hierarchy; a category is created
 before any sub-categories or policies exist under it. Each sub-category
 belongs to exactly one category.
 
-Categories and sub-categories are enabled/disabled via PATCH .../status
-rather than deleted, so their policies and history survive a disable.
+Categories and sub-categories are enabled/disabled via PATCH .../status,
+so their policies and history survive a disable. PATCH on the item itself
+edits its name and description; DELETE removes
+it only once nothing sits under it.
 A toggle changes only that row: children keep their own is_active, and a
 sub-category or policy is in effect only when it and every ancestor are
 enabled, so re-enabling a parent restores each child's own state.
@@ -28,8 +30,10 @@ from app.schemas.policy_management.category import (
     CategoryCreate,
     CategoryListData,
     CategoryStatusUpdate,
+    CategoryUpdate,
     CreateCategoryResponse,
     ListCategoryResponse,
+    UpdateCategoryResponse,
     UpdateCategoryStatusResponse,
 )
 from app.schemas.policy_management.sub_category import (
@@ -135,6 +139,52 @@ async def update_category_status(
     return UpdateCategoryStatusResponse(
         success=True, data=item, meta=MessageMeta(message=f"Category '{item.name}' {state}.")
     )
+
+
+@router.patch(
+    "/categories/{category_id}",
+    response_model=UpdateCategoryResponse,
+    responses=error_responses(403, 404, 409),
+)
+async def update_category(
+    payload: CategoryUpdate,
+    request: Request,
+    category_id: int = Path(..., gt=0, le=ID_MAX),
+    session: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis),
+) -> UpdateCategoryResponse:
+    """Update a category's name and/or description; only the fields sent
+    change. 404 if the category does not exist, 409 if another category
+    already has the name (case-insensitive). Status changes go through
+    PATCH .../status. Adopter Admin only."""
+    if not is_admin(request):
+        raise InsufficientPermissionsError()
+    user_id = request.headers.get("X-User-Id")
+    item = await category_service.update_category(
+        session, category_id, payload, updated_by=user_id, redis=redis
+    )
+    return UpdateCategoryResponse(
+        success=True, data=item, meta=MessageMeta(message=f"Category '{item.name}' updated.")
+    )
+
+
+@router.delete(
+    "/categories/{category_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    responses=error_responses(403, 404, 409),
+)
+async def delete_category(
+    request: Request,
+    category_id: int = Path(..., gt=0, le=ID_MAX),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    """Delete a category. 404 if it does not exist, 409 if it still has
+    sub-categories. Adopter Admin only."""
+    if not is_admin(request):
+        raise InsufficientPermissionsError()
+    await category_service.delete_category(session, category_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(
