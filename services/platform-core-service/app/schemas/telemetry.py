@@ -75,6 +75,12 @@ class SearchTraceAggregations(BaseModel):
     partial: bool = False
 
 
+class SearchTraceSummary(BaseModel):
+    """Success/failure counts for the full matching result set."""
+    success: int = 0
+    failure: int = 0
+
+
 class SearchTracesResponse(BaseModel):
     """Paginated search traces response."""
     data: List[SearchTraceItem]
@@ -82,3 +88,4 @@ class SearchTracesResponse(BaseModel):
     page: int
     pageSize: int
     aggregations: SearchTraceAggregations
+    summary: SearchTraceSummary = Field(default_factory=SearchTraceSummary)
