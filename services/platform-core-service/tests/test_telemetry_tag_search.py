@@ -81,6 +81,8 @@ def _search(client, request=None, **params):
     base = dict(
         task_types=None, status_filter=None, tenant_id=None,
         start_date=None, end_date=None, page=1, page_size=15,
+        q=None, log_status=None, status_code=None, service_id=None,
+        sort_by=None, sort_order=None,
     )
     return asyncio.run(search_traces_opensearch(
         request=request or _request(), opensearch_client=client, **{**base, **params},
