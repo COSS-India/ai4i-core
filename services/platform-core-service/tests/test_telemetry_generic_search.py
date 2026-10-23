@@ -20,8 +20,6 @@ sys.modules["app.routes.telemetry"] = _telemetry
 _spec.loader.exec_module(_telemetry)
 
 search_traces_opensearch = _telemetry.search_traces_opensearch
-_escape_query_string = _telemetry._escape_query_string
-_PRE_QUERY_SIZE = _telemetry._PRE_QUERY_SIZE
 _MAX_KEYWORD_TRACE_IDS = _telemetry._MAX_KEYWORD_TRACE_IDS
 
 ADMIN = "1"
@@ -46,14 +44,18 @@ def _span_hit(trace_id: str, name: str = "request", attrs: dict | None = None) -
     }
 
 
-def _make_client(trace_ids: list, pre_query_hits: list | None = None):
+def _make_client(trace_ids: list, pre_trace_ids: list | None = None):
     """Mock OpenSearch client that handles all call types in a full search flow.
 
     Distinguishes calls by their query shape:
-    - collapse + no aggs   → pre-query (keyword or service_id)
-    - trace_count in aggs  → main collapse query (Step 2)
-    - trace_ids in aggs    → composite aggregation (breakdown)
-    - else                 → span fetch (Step 3 or breakdown batch)
+    - trace_count in aggs                                    → main collapse query (Step 2)
+    - trace_ids in aggs, context.trace_id.keyword in query  → breakdown composite agg
+    - trace_ids in aggs, no context.trace_id.keyword        → pre-query composite agg
+    - else                                                   → span fetch (Step 3 / breakdown batch)
+
+    Pre-queries now use _collect_all_trace_ids (composite aggregation, size=0) instead of
+    the old collapse+hits approach. The breakdown also uses composite aggregation but always
+    has context.trace_id.keyword in its query filter, which is the distinguishing marker.
     """
     client = MagicMock()
     client.captured_pre_queries = []
@@ -61,28 +63,28 @@ def _make_client(trace_ids: list, pre_query_hits: list | None = None):
 
     def search_traces(**kwargs):
         aggs = kwargs.get("aggs") or {}
-        collapse = kwargs.get("collapse")
+        query = kwargs.get("query", {})
 
         if "trace_count" in aggs:
-            client.captured_main_queries.append(kwargs["query"])
+            client.captured_main_queries.append(query)
             return {
                 "aggregations": {"trace_count": {"value": len(trace_ids)}},
                 "hits": {"hits": [{"_source": {"context": {"trace_id": t}}} for t in trace_ids]},
             }
+
         if "trace_ids" in aggs:
+            is_breakdown = "context.trace_id.keyword" in str(query)
+            if not is_breakdown:
+                client.captured_pre_queries.append(query)
+                ids = pre_trace_ids if pre_trace_ids is not None else trace_ids
+            else:
+                ids = trace_ids
             return {
-                "aggregations": {"trace_ids": {"buckets": [
-                    {"key": {"trace_id": t}} for t in trace_ids
-                ]}}
+                "aggregations": {"trace_ids": {"buckets": [{"key": {"trace_id": t}} for t in ids]}}
             }
-        if collapse and not aggs:
-            client.captured_pre_queries.append(kwargs["query"])
-            hits = pre_query_hits if pre_query_hits is not None else [
-                {"_source": {"context": {"trace_id": t}}} for t in trace_ids
-            ]
-            return {"hits": {"hits": hits}}
+
         # Span fetch
-        should = kwargs["query"]["bool"].get("should", [])
+        should = query.get("bool", {}).get("should", [])
         batch_ids = [c["match_phrase"]["context.trace_id"] for c in should]
         return {"hits": {"hits": [_span_hit(tid) for tid in batch_ids]}}
 
@@ -112,31 +114,41 @@ def _http_client(opensearch_client):
     return TestClient(app)
 
 
-# ── _escape_query_string ──────────────────────────────────────────────────────
+# ── No search_traces call may exceed the OpenSearch default window ────────────
 
-def test_escape_query_string_escapes_slash_and_dash():
-    assert _escape_query_string("google/gemma-4-E4B-it") == r"google\/gemma\-4\-E4B\-it"
+def test_no_search_traces_call_exceeds_opensearch_window():
+    """Pre-queries must use composite aggregation (size=0) — no hits-window dependency.
 
+    OpenSearch rejects size > 10,000 (default max_result_window). The old approach used
+    size=20001 which was silently swallowed and returned 0 results on default clusters.
+    """
+    client = _make_client(["t1", "t2"])
 
-def test_escape_query_string_escapes_multiple_special_chars():
-    assert _escape_query_string("a+b=c:d") == r"a\+b\=c\:d"
+    _search(client, q="gemma", service_id="llm0-01-aug")
 
-
-def test_escape_query_string_leaves_plain_text_unchanged():
-    assert _escape_query_string("inference service") == "inference service"
+    for call in client.search_traces.call_args_list:
+        size = call[1].get("size", 0)
+        assert size <= 10000, f"search_traces called with size={size} > 10000"
 
 
 # ── Keyword search (q) ────────────────────────────────────────────────────────
 
-def test_q_triggers_pre_query_with_escaped_keyword():
-    """The pre-query must reach OpenSearch with the keyword escaped for query_string."""
+def test_two_word_keyword_reaches_opensearch_as_phrase():
+    """AC-10: a two-word keyword must reach OpenSearch as a phrase, not OR-ed tokens.
+
+    query_string default_operator=OR meant q='zzzqqq_nomatch nmt' returned the same
+    results as q='nmt'. multi_match type:phrase treats the whole input as a literal
+    phrase so both words must appear adjacent in that order.
+    """
     client = _make_client(["t1"])
 
-    _search(client, q="google/gemma-4-E4B-it")
+    _search(client, q="zzzqqq_nomatch nmt")
 
     assert len(client.captured_pre_queries) == 1
-    qs_query = client.captured_pre_queries[0]["bool"]["must"][0]["query_string"]["query"]
-    assert qs_query == r"google\/gemma\-4\-E4B\-it"
+    must = client.captured_pre_queries[0]["bool"]["must"][0]
+    assert "multi_match" in must, "expected multi_match, not query_string"
+    assert must["multi_match"]["type"] == "phrase"
+    assert must["multi_match"]["query"] == "zzzqqq_nomatch nmt"
 
 
 def test_q_filters_main_query_to_pre_query_trace_ids():
@@ -157,7 +169,7 @@ def test_q_filters_main_query_to_pre_query_trace_ids():
 
 def test_q_with_no_matches_returns_empty_response_without_main_query():
     """If the keyword pre-query finds no traces, return empty immediately."""
-    client = _make_client([], pre_query_hits=[])
+    client = _make_client([], pre_trace_ids=[])
 
     response = _search(client, q="nonexistent")
 
@@ -179,13 +191,18 @@ def test_no_q_does_not_add_trace_id_filter_to_main_query():
 
 # ── AC-17: 20,000-trace cap ───────────────────────────────────────────────────
 
-def test_q_returns_400_when_keyword_matches_more_than_20000_traces():
-    """AC-17: a keyword matching >20,000 traces must return HTTP 400."""
+def test_q_returns_400_when_keyword_matches_20000_or_more_traces():
+    """AC-17: a keyword matching ≥20,000 traces must return HTTP 400.
+
+    Reaching the collector limit means there may be more — the caller must narrow.
+    """
     client = MagicMock()
     client.search_traces.return_value = {
-        "hits": {"hits": [
-            {"_source": {"context": {"trace_id": f"t{i}"}}} for i in range(_PRE_QUERY_SIZE)
-        ]}
+        "aggregations": {
+            "trace_ids": {
+                "buckets": [{"key": {"trace_id": f"t{i}"}} for i in range(_MAX_KEYWORD_TRACE_IDS)]
+            }
+        }
     }
 
     with pytest.raises(HTTPException) as exc:
@@ -194,13 +211,43 @@ def test_q_returns_400_when_keyword_matches_more_than_20000_traces():
     assert exc.value.status_code == 400
 
 
-def test_q_does_not_400_at_exactly_20000_traces():
-    """Exactly 20,000 matches is within the limit — only strictly more triggers 400."""
-    client = _make_client([f"t{i}" for i in range(_MAX_KEYWORD_TRACE_IDS)])
+def test_service_id_returns_400_when_matching_20000_or_more_traces():
+    """service_id with ≥20,000 matching traces must also return HTTP 400."""
+    client = MagicMock()
+    client.search_traces.return_value = {
+        "aggregations": {
+            "trace_ids": {
+                "buckets": [{"key": {"trace_id": f"t{i}"}} for i in range(_MAX_KEYWORD_TRACE_IDS)]
+            }
+        }
+    }
 
-    response = _search(client, q="keyword")
+    with pytest.raises(HTTPException) as exc:
+        _search(client, service_id="busy-service")
 
-    assert response.total == _MAX_KEYWORD_TRACE_IDS
+    assert exc.value.status_code == 400
+
+
+# ── task_types + status_code ──────────────────────────────────────────────────
+
+def test_task_types_and_status_code_both_in_main_filter_not_pre_queried():
+    """task_type is set on the request span (same doc as status_code/url/total_time_ms)
+    so both filters belong in the main query — no pre-query gate needed.
+
+    An earlier review suggested a trace-ID gate, but staging data confirms task_type
+    is present on the request span (orchestrator.py:83, routes/inference.py:527),
+    so a single bool.must with name=request satisfies both constraints on one document.
+    """
+    client = _make_client(["t1"])
+
+    _search(client, task_types="llm", status_code="200")
+
+    assert len(client.captured_main_queries) == 1
+    flat = str(client.captured_main_queries[0])
+    assert "task_type" in flat
+    assert "status_code" in flat
+    # No pre-query issued: task_type does not need cross-span resolution
+    assert len(client.captured_pre_queries) == 0
 
 
 # ── Sort validation ───────────────────────────────────────────────────────────
@@ -236,7 +283,6 @@ def test_sort_by_latency_maps_to_total_time_ms():
 
     _search(client, sort_by="latency", sort_order="desc")
 
-    # The main query's sort clause must reference total_time_ms
     for call_obj in client.search_traces.call_args_list:
         kwargs = call_obj[1]
         if "trace_count" in (kwargs.get("aggs") or {}):
@@ -318,27 +364,22 @@ def test_service_id_and_q_results_are_intersected():
 
     def search_traces(**kwargs):
         aggs = kwargs.get("aggs") or {}
-        collapse = kwargs.get("collapse")
+        query = kwargs.get("query", {})
 
         if "trace_count" in aggs:
-            client.captured_main_queries.append(kwargs["query"])
+            client.captured_main_queries.append(query)
             return {
                 "aggregations": {"trace_count": {"value": 1}},
                 "hits": {"hits": [{"_source": {"context": {"trace_id": "t1"}}}]},
             }
         if "trace_ids" in aggs:
-            return {"aggregations": {"trace_ids": {"buckets": [{"key": {"trace_id": "t1"}}]}}}
-        if collapse and not aggs:
+            if "context.trace_id.keyword" in str(query):
+                return {"aggregations": {"trace_ids": {"buckets": [{"key": {"trace_id": "t1"}}]}}}
+            # pre-query: first call is q (t1, t2), second is service_id (t1, t3)
             pre_call_count[0] += 1
-            # First pre-query (q): returns t1, t2
-            # Second pre-query (service_id): returns t1, t3
-            hits = (
-                [{"_source": {"context": {"trace_id": t}}} for t in ["t1", "t2"]]
-                if pre_call_count[0] == 1
-                else [{"_source": {"context": {"trace_id": t}}} for t in ["t1", "t3"]]
-            )
-            return {"hits": {"hits": hits}}
-        should = kwargs["query"]["bool"].get("should", [])
+            ids = ["t1", "t2"] if pre_call_count[0] == 1 else ["t1", "t3"]
+            return {"aggregations": {"trace_ids": {"buckets": [{"key": {"trace_id": t}} for t in ids]}}}
+        should = query.get("bool", {}).get("should", [])
         batch_ids = [c["match_phrase"]["context.trace_id"] for c in should]
         return {"hits": {"hits": [_span_hit(tid) for tid in batch_ids]}}
 
@@ -353,7 +394,6 @@ def test_service_id_and_q_results_are_intersected():
         None,
     )
     assert trace_id_clause is not None
-    # Only t1 is in both pre-query results
     assert trace_id_clause["terms"]["context.trace_id.keyword"] == ["t1"]
 
 
@@ -367,9 +407,7 @@ def test_log_status_takes_precedence_over_status_filter():
 
     assert len(client.captured_main_queries) == 1
     flat = str(client.captured_main_queries[0])
-    # "success" from log_status must appear; "failed" from status_filter must not
     assert "success" in flat
-    # The effective_status = log_status or status_filter, so only one status clause exists
     assert flat.count("attributes.status") == 1
 
 
@@ -414,12 +452,14 @@ def test_http_invalid_status_code_returns_422():
 
 
 def test_http_ac17_returns_400_for_large_keyword_result():
-    """AC-17: the HTTP layer must surface the 400 when keyword matches >20,000 traces."""
+    """AC-17: the HTTP layer must surface the 400 when keyword matches ≥20,000 traces."""
     client = MagicMock()
     client.search_traces.return_value = {
-        "hits": {"hits": [
-            {"_source": {"context": {"trace_id": f"t{i}"}}} for i in range(_PRE_QUERY_SIZE)
-        ]}
+        "aggregations": {
+            "trace_ids": {
+                "buckets": [{"key": {"trace_id": f"t{i}"}} for i in range(_MAX_KEYWORD_TRACE_IDS)]
+            }
+        }
     }
 
     response = _http_client(client).get(
