@@ -90,7 +90,42 @@ export interface TelemetryTraceRecord {
   url: string;
   tenant_id: string;
   timestamp: string;
+  service?: string | null;
+  /** Present when `status_code` is in `columns` (or merged for status display). */
+  status_code?: number | null;
+  /** Admins only; present when `error` is in `columns`. */
+  error?: string | null;
+  service_id?: string | null;
+  model_name?: string | null;
+  latency_ms?: number | null;
+  app_id?: string | null;
+  api_key_id?: string | null;
+  end_user?: string | null;
+  metadata?: string[] | null;
+  method?: string | null;
 }
+
+/** Column metadata from GET /telemetry/traces/columns. */
+export interface TelemetryTraceColumnDef {
+  key: string;
+  label: string;
+  default: boolean;
+  filter: string | null;
+  keyword: boolean;
+  sort: boolean;
+  admin_only: boolean;
+}
+
+export interface TelemetryTraceColumnsResponse {
+  columns: TelemetryTraceColumnDef[];
+}
+
+/** Allowed `sort_by` values on traces/search. */
+export type TelemetryTraceSortBy =
+  | "timestamp"
+  | "url"
+  | "latency"
+  | "status_code";
 
 export interface TelemetryTraceSearchAggregations {
   total: number;
