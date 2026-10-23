@@ -68,7 +68,7 @@ export const apiEndpoints = {
     tierList: `${API_V1}/auth/tenants/tier/list`,
     /** PATCH assign or change a tenant's tier. DELETE removes it. */
     tenantTier: (tenantId: string) => `${API_V1}/auth/tenants/${tenantId}/tier`,
-    /** PATCH — top-up / top-down tenant budget (delta, not edit total). */
+    /** PATCH — top-up tenant budget (delta, not edit total). */
     tenantBudget: (tenantId: string) => `${API_V1}/auth/tenants/${tenantId}/budget`,
     /** PUT — rebalance Application budget allocations under a tenant. */
     budgetAllocation: (tenantId: string) =>
