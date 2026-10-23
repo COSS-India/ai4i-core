@@ -498,15 +498,11 @@ async def search_traces_opensearch(
                 range_query["lte"] = end_date
             base_filter_clauses.append({"range": {"@timestamp": range_query}})
 
-        # --- Pre-queries: resolve cross-span filters to trace IDs ---
-        #
-        # Some filters (keyword q, service_id) match fields that live on model or
-        # ai-inference spans — NOT the request span. When the main query also needs
-        # to anchor to the request span (for sort by latency/url or status_code
-        # filtering), those two constraints can't be expressed on the same document.
-        # Solution: resolve each cross-span filter to a set of trace IDs first, then
-        # gate the main query on that set. The main query then only sees request spans
-        # and the trace ID list ensures only the right traces are included.
+        # --- Keyword pre-query ---
+        # q= matches across all span types. When the main query is anchored to the
+        # request span (for sort by latency/url or status_code filtering), those two
+        # constraints can't be expressed on the same document. Resolve q to a set of
+        # trace IDs first, then gate the main query on that set.
 
         keyword_trace_ids: Optional[list] = None
         if q:
@@ -516,40 +512,14 @@ async def search_traces_opensearch(
                     "must": [{"multi_match": {"query": q, "fields": ["*"], "type": "phrase", "lenient": True}}],
                 }
             }
-            keyword_trace_ids = _collect_all_trace_ids(opensearch_client, pre_query, limit=_MAX_KEYWORD_TRACE_IDS)
-            if len(keyword_trace_ids) >= _MAX_KEYWORD_TRACE_IDS:
+            keyword_trace_ids = _collect_all_trace_ids(opensearch_client, pre_query, limit=_MAX_KEYWORD_TRACE_IDS + 1)
+            if len(keyword_trace_ids) > _MAX_KEYWORD_TRACE_IDS:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Too many results. Please narrow your date range or refine your search.",
                 )
 
-        # service_id lives on model/ai-inference spans, not on the request span.
-        # Pre-query to resolve it to trace IDs so the main query (which may be
-        # anchored to request spans for sort/status_code) can still filter by it.
-        service_id_trace_ids: Optional[list] = None
-        if service_id:
-            svc_pre_query: dict = {
-                "bool": {
-                    "filter": base_filter_clauses + [_exact_attribute_match("service_id", service_id)],
-                }
-            }
-            service_id_trace_ids = _collect_all_trace_ids(opensearch_client, svc_pre_query, limit=_MAX_KEYWORD_TRACE_IDS)
-            if len(service_id_trace_ids) >= _MAX_KEYWORD_TRACE_IDS:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Too many results. Please narrow your date range or refine your search.",
-                )
-
-        # Combine pre-query trace ID sets: both must match (intersection)
-        combined_trace_ids: Optional[list] = None
-        if keyword_trace_ids is not None and service_id_trace_ids is not None:
-            combined_trace_ids = list(set(keyword_trace_ids) & set(service_id_trace_ids))
-        elif keyword_trace_ids is not None:
-            combined_trace_ids = keyword_trace_ids
-        elif service_id_trace_ids is not None:
-            combined_trace_ids = service_id_trace_ids
-
-        if combined_trace_ids is not None and not combined_trace_ids:
+        if keyword_trace_ids is not None and not keyword_trace_ids:
             return SearchTracesResponse(
                 data=[],
                 total=0,
@@ -598,14 +568,17 @@ async def search_traces_opensearch(
                 _exact_attribute_match("metadata_kv", f"{metadata_key}={metadata_value}")
             )
 
+        if service_id:
+            filter_clauses.append(_exact_attribute_match("service_id", service_id))
+
         if status_code_list:
             filter_clauses.append({"terms": {"attributes.status_code": status_code_list}})
 
         if needs_request_anchor:
             filter_clauses.append({"term": {"name": "request"}})
 
-        if combined_trace_ids is not None:
-            filter_clauses.append({"terms": {"context.trace_id.keyword": combined_trace_ids}})
+        if keyword_trace_ids is not None:
+            filter_clauses.append({"terms": {"context.trace_id.keyword": keyword_trace_ids}})
 
         filter_query = {"bool": {"must": filter_clauses}} if filter_clauses else {"match_all": {}}
 

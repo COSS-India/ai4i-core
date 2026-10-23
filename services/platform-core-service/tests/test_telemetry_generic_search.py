@@ -191,16 +191,13 @@ def test_no_q_does_not_add_trace_id_filter_to_main_query():
 
 # ── AC-17: 20,000-trace cap ───────────────────────────────────────────────────
 
-def test_q_returns_400_when_keyword_matches_20000_or_more_traces():
-    """AC-17: a keyword matching ≥20,000 traces must return HTTP 400.
-
-    Reaching the collector limit means there may be more — the caller must narrow.
-    """
+def test_q_returns_400_when_keyword_matches_more_than_20000_traces():
+    """AC-17: a keyword matching >20,000 traces must return HTTP 400."""
     client = MagicMock()
     client.search_traces.return_value = {
         "aggregations": {
             "trace_ids": {
-                "buckets": [{"key": {"trace_id": f"t{i}"}} for i in range(_MAX_KEYWORD_TRACE_IDS)]
+                "buckets": [{"key": {"trace_id": f"t{i}"}} for i in range(_MAX_KEYWORD_TRACE_IDS + 1)]
             }
         }
     }
@@ -211,21 +208,15 @@ def test_q_returns_400_when_keyword_matches_20000_or_more_traces():
     assert exc.value.status_code == 400
 
 
-def test_service_id_returns_400_when_matching_20000_or_more_traces():
-    """service_id with ≥20,000 matching traces must also return HTTP 400."""
-    client = MagicMock()
-    client.search_traces.return_value = {
-        "aggregations": {
-            "trace_ids": {
-                "buckets": [{"key": {"trace_id": f"t{i}"}} for i in range(_MAX_KEYWORD_TRACE_IDS)]
-            }
-        }
-    }
+def test_q_does_not_400_at_exactly_20000_traces():
+    """AC-17 edge case: exactly 20,000 matches is within the limit — only strictly more triggers 400."""
+    client = _make_client([f"t{i}" for i in range(_MAX_KEYWORD_TRACE_IDS)])
 
-    with pytest.raises(HTTPException) as exc:
-        _search(client, service_id="busy-service")
+    response = _search(client, q="keyword")
 
-    assert exc.value.status_code == 400
+    assert response.total == _MAX_KEYWORD_TRACE_IDS
+
+
 
 
 # ── task_types + status_code ──────────────────────────────────────────────────
@@ -345,56 +336,39 @@ def test_status_code_rejects_more_than_10_values():
 
 # ── Service ID filter ─────────────────────────────────────────────────────────
 
-def test_service_id_triggers_pre_query_with_exact_match():
-    """service_id lives on model/ai-inference spans so a pre-query must resolve it."""
+def test_service_id_in_main_filter_not_pre_queried():
+    """service_id is set on the request span (orchestrator.py:84, 93) so it belongs
+    in the main filter — no pre-query or 400 cap needed."""
     client = _make_client(["t1"])
 
     _search(client, service_id="llm0-01-aug")
 
-    assert len(client.captured_pre_queries) == 1
-    flat = str(client.captured_pre_queries[0])
+    assert len(client.captured_pre_queries) == 0, "service_id must not trigger a pre-query"
+    assert len(client.captured_main_queries) == 1
+    flat = str(client.captured_main_queries[0])
     assert "service_id" in flat and "llm0-01-aug" in flat
 
 
-def test_service_id_and_q_results_are_intersected():
-    """When both q and service_id are given, only traces matching both are returned."""
-    client = MagicMock()
-    pre_call_count = [0]
-    client.captured_main_queries = []
+def test_service_id_with_many_traces_does_not_return_400():
+    """service_id is a plain filter, not subject to the AC-17 keyword cap."""
+    client = _make_client([f"t{i}" for i in range(25000)])
 
-    def search_traces(**kwargs):
-        aggs = kwargs.get("aggs") or {}
-        query = kwargs.get("query", {})
+    response = _search(client, service_id="busy-service")
 
-        if "trace_count" in aggs:
-            client.captured_main_queries.append(query)
-            return {
-                "aggregations": {"trace_count": {"value": 1}},
-                "hits": {"hits": [{"_source": {"context": {"trace_id": "t1"}}}]},
-            }
-        if "trace_ids" in aggs:
-            if "context.trace_id.keyword" in str(query):
-                return {"aggregations": {"trace_ids": {"buckets": [{"key": {"trace_id": "t1"}}]}}}
-            # pre-query: first call is q (t1, t2), second is service_id (t1, t3)
-            pre_call_count[0] += 1
-            ids = ["t1", "t2"] if pre_call_count[0] == 1 else ["t1", "t3"]
-            return {"aggregations": {"trace_ids": {"buckets": [{"key": {"trace_id": t}} for t in ids]}}}
-        should = query.get("bool", {}).get("should", [])
-        batch_ids = [c["match_phrase"]["context.trace_id"] for c in should]
-        return {"hits": {"hits": [_span_hit(tid) for tid in batch_ids]}}
+    assert response is not None
 
-    client.search_traces.side_effect = search_traces
+
+def test_service_id_and_q_together():
+    """service_id goes into the main filter; q gates via trace IDs — both applied."""
+    client = _make_client(["t1"])
 
     _search(client, q="gemma", service_id="llm0-01-aug")
 
+    assert len(client.captured_pre_queries) == 1, "only q= should trigger a pre-query"
     assert len(client.captured_main_queries) == 1
-    filter_clauses = client.captured_main_queries[0]["bool"]["must"]
-    trace_id_clause = next(
-        (c for c in filter_clauses if "terms" in c and "context.trace_id.keyword" in c["terms"]),
-        None,
-    )
-    assert trace_id_clause is not None
-    assert trace_id_clause["terms"]["context.trace_id.keyword"] == ["t1"]
+    flat = str(client.captured_main_queries[0])
+    assert "service_id" in flat and "llm0-01-aug" in flat
+    assert "context.trace_id.keyword" in flat
 
 
 # ── log_status (status alias) ─────────────────────────────────────────────────
@@ -452,12 +426,12 @@ def test_http_invalid_status_code_returns_422():
 
 
 def test_http_ac17_returns_400_for_large_keyword_result():
-    """AC-17: the HTTP layer must surface the 400 when keyword matches ≥20,000 traces."""
+    """AC-17: the HTTP layer must surface the 400 when keyword matches >20,000 traces."""
     client = MagicMock()
     client.search_traces.return_value = {
         "aggregations": {
             "trace_ids": {
-                "buckets": [{"key": {"trace_id": f"t{i}"}} for i in range(_MAX_KEYWORD_TRACE_IDS)]
+                "buckets": [{"key": {"trace_id": f"t{i}"}} for i in range(_MAX_KEYWORD_TRACE_IDS + 1)]
             }
         }
     }
