@@ -80,8 +80,7 @@ export const FIELD_HINTS = {
       loading: "Loading models...",
       needTaskType: "Select a task type first",
     },
-    modelId: { helper: "Auto-filled", empty: "Select a model above" },
-    submissionDate: { helper: "Auto-filled" },
+    modelId: { empty: "Select a model above" },
     name: {
       placeholder: "Enter service name",
       helper:
@@ -90,9 +89,9 @@ export const FIELD_HINTS = {
     serviceId: {
       placeholder: "Enter service ID",
       helper:
-        "Pre-filled with the model prefix. Letters, numbers, hyphens, underscores, and slashes only. 5–255 characters. e.g: [model-name]/[GPU]",
+        "Format: model-name/service-name (e.g., model-name/service-01). Pre-filled with the model prefix. Use 5–255 characters: letters, numbers, hyphens (-), underscores (_), and slashes (/) only.",
       llmHelper:
-        "Pre-filled with the model prefix. Letters, numbers, hyphens, and slashes only. 5–255 characters. e.g: [model-name]/[GPU]",
+        "Format: model-name/service-name (e.g., model-name/service-01). Pre-filled with the model prefix. Use 5–255 characters: letters, numbers, hyphens (-), and slashes (/) only.",
     },
     description: {
       placeholder: "Provide a brief description of what this service does",
