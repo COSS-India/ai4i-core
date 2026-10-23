@@ -7,7 +7,8 @@ import {
 import { ChevronRightIcon } from "@chakra-ui/icons";
 import NextLink from "next/link";
 import React from "react";
-import { getServiceTitle } from "../../config/serviceMetadata";
+import { getServiceTitle, PATH_TO_SERVICE_ID } from "../../config/serviceMetadata";
+import { APP_HOME_PATH } from "../../utils/navigation";
 
 export type Crumb = {
   label: string;
@@ -24,9 +25,11 @@ export type Crumb = {
  * Breadcrumb rules:
  * - Top-level sidebar pages (e.g. Logs Dashboard, Platform Settings,
  *   Institution Management) show no breadcrumb.
- * - The landing page (Usage Dashboard / Explore) is never prepended to
- *   another section's breadcrumb.
- * - Only detail/nested pages show a trail: parent section, then current page.
+ * - The landing page (Usage Dashboard) is never prepended to another
+ *   section's breadcrumb.
+ * - Detail/nested pages show a trail: parent section, then current page
+ *   (Explore → Try-it service; Pipeline → Pipeline Builder; Manage list →
+ *   record).
  * Labels come from the page title / service metadata — never raw URL segments.
  */
 export function getPageBreadcrumbs(
@@ -46,8 +49,15 @@ export function getPageBreadcrumbs(
     ];
   }
 
-  // Every other route rendered through the page header is a top-level
-  // page, so there is no parent section to show.
+  // Try-it pages are opened from Explore cards, not the sidebar.
+  if (PATH_TO_SERVICE_ID[pathname]) {
+    return [
+      { label: "Explore", href: APP_HOME_PATH },
+      { label: title },
+    ];
+  }
+
+  // Sidebar / other top-level pages have no parent section to show.
   return null;
 }
 
