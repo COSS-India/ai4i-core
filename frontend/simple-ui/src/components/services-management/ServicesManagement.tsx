@@ -157,7 +157,7 @@ const ServicesManagement: React.FC = () => {
       },
       {
         id: "task",
-        header: "Model Task Type",
+        header: "Task Type",
         cell: (service) => {
           const taskType = resolveTaskType(service);
           return (
