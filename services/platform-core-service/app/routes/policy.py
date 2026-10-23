@@ -6,7 +6,7 @@ belongs to exactly one category.
 
 Categories and sub-categories are enabled/disabled via PATCH .../status,
 so their policies and history survive a disable. PATCH on the item itself
-edits its name and description; DELETE removes
+edits its name and description (and a sub-category's parent); DELETE removes
 it only once nothing sits under it.
 A toggle changes only that row: children keep their own is_active, and a
 sub-category or policy is in effect only when it and every ancestor are
@@ -42,6 +42,8 @@ from app.schemas.policy_management.sub_category import (
     SubCategoryCreate,
     SubCategoryListData,
     SubCategoryStatusUpdate,
+    SubCategoryUpdate,
+    UpdateSubCategoryResponse,
     UpdateSubCategoryStatusResponse,
 )
 from app.schemas.policy_management.policy_type import (
@@ -253,6 +255,53 @@ async def update_sub_category_status(
     return UpdateSubCategoryStatusResponse(
         success=True, data=item, meta=MessageMeta(message=f"Sub-category '{item.name}' {state}.")
     )
+
+
+@router.patch(
+    "/sub-categories/{sub_category_id}",
+    response_model=UpdateSubCategoryResponse,
+    responses=error_responses(403, 404, 409),
+)
+async def update_sub_category(
+    payload: SubCategoryUpdate,
+    request: Request,
+    sub_category_id: int = Path(..., gt=0, le=ID_MAX),
+    session: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis),
+) -> UpdateSubCategoryResponse:
+    """Update a sub-category's name, description and/or category_id, which
+    moves it and its policies under another category; only the fields sent
+    change. 404 if the sub-category or the target category does not exist,
+    409 if the name is already taken (case-insensitive). Status changes go
+    through PATCH .../status. Adopter Admin only."""
+    if not is_admin(request):
+        raise InsufficientPermissionsError()
+    user_id = request.headers.get("X-User-Id")
+    item = await sub_category_service.update_sub_category(
+        session, sub_category_id, payload, updated_by=user_id, redis=redis
+    )
+    return UpdateSubCategoryResponse(
+        success=True, data=item, meta=MessageMeta(message=f"Sub-category '{item.name}' updated.")
+    )
+
+
+@router.delete(
+    "/sub-categories/{sub_category_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    responses=error_responses(403, 404, 409),
+)
+async def delete_sub_category(
+    request: Request,
+    sub_category_id: int = Path(..., gt=0, le=ID_MAX),
+    session: AsyncSession = Depends(get_db),
+) -> Response:
+    """Delete a sub-category. 404 if it does not exist, 409 if any policy
+    still belongs to it. Adopter Admin only."""
+    if not is_admin(request):
+        raise InsufficientPermissionsError()
+    await sub_category_service.delete_sub_category(session, sub_category_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ── Policy-type endpoints ─────────────────────────────────────────────────────
