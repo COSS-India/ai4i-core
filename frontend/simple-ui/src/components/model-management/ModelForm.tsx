@@ -10,11 +10,12 @@ import {
   Heading,
   HStack,
   Input,
+  Link,
   Spinner,
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { CopyIcon } from "@chakra-ui/icons";
+import { CopyIcon, ExternalLinkIcon } from "@chakra-ui/icons";
 import React, { useEffect, useState } from "react";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import FieldHint from "../common/FieldHint";
@@ -79,6 +80,24 @@ export default function ModelForm({
     <VStack spacing={0} align="stretch">
       {mode === "create" ? (
         <FormSection title="Upload Model Definition">
+          {/* isExternal opens a new tab so the admin keeps what's already in the drawer. */}
+          <VStack mb={4} spacing={1} align="stretch">
+            {FIELD_HINTS.model.jsonUpload.specReferences.map((spec) => (
+              <Text key={spec.id} fontSize="sm" color="ink.600" lineHeight="1.5">
+                {spec.text}{" "}
+                <Link
+                  href={spec.href}
+                  isExternal
+                  color="blue.600"
+                  fontWeight="600"
+                  aria-label={`${spec.linkLabel} (opens in a new tab)`}
+                >
+                  View specification
+                  <ExternalLinkIcon mx="2px" mb="2px" />
+                </Link>
+              </Text>
+            ))}
+          </VStack>
           <FormControl>
             <HStack justify="space-between" mb={2} align="center">
               <FieldLabel formLabelProps={{ mb: 0, htmlFor: "model-json-file" }}>
