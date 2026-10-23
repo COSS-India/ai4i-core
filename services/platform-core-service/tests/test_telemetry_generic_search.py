@@ -48,14 +48,14 @@ def _make_client(trace_ids: list, pre_trace_ids: list | None = None):
     """Mock OpenSearch client that handles all call types in a full search flow.
 
     Distinguishes calls by their query shape:
-    - trace_count in aggs                                    → main collapse query (Step 2)
-    - trace_ids in aggs, context.trace_id.keyword in query  → breakdown composite agg
-    - trace_ids in aggs, no context.trace_id.keyword        → pre-query composite agg
-    - else                                                   → span fetch (Step 3 / breakdown batch)
+    - trace_count in aggs              → main collapse query (Step 2)
+    - trace_ids in aggs, multi_match   → keyword pre-query composite agg
+    - trace_ids in aggs, no multi_match → breakdown composite agg
+    - else                             → span fetch (Step 3 / breakdown batch)
 
-    Pre-queries now use _collect_all_trace_ids (composite aggregation, size=0) instead of
-    the old collapse+hits approach. The breakdown also uses composite aggregation but always
-    has context.trace_id.keyword in its query filter, which is the distinguishing marker.
+    The keyword pre-query is the only composite-agg call that contains multi_match.
+    The breakdown uses _collect_all_trace_ids with the main filter (no multi_match),
+    so checking for multi_match is the only reliable distinguishing marker.
     """
     client = MagicMock()
     client.captured_pre_queries = []
@@ -73,8 +73,8 @@ def _make_client(trace_ids: list, pre_trace_ids: list | None = None):
             }
 
         if "trace_ids" in aggs:
-            is_breakdown = "context.trace_id.keyword" in str(query)
-            if not is_breakdown:
+            is_pre_query = "multi_match" in str(query)
+            if is_pre_query:
                 client.captured_pre_queries.append(query)
                 ids = pre_trace_ids if pre_trace_ids is not None else trace_ids
             else:

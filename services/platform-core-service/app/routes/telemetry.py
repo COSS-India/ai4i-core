@@ -212,11 +212,9 @@ _SORT_FIELD_MAP = {
     "status_code": "attributes.status_code",
 }
 
-# Maximum trace IDs returned by the keyword/service_id pre-query before we
-# reject the request. Capped at 9999 so the pre-query can request size=10000
-# (one more) without exceeding OpenSearch's default max_result_window of 10000.
-# If the pre-query returns 10000 hits we know there are at least that many and
-# return 400 — the caller must narrow their search.
+# AC-17: keyword searches matching more than this many traces return 400.
+# _collect_all_trace_ids is called with limit=_MAX_KEYWORD_TRACE_IDS + 1; if it
+# returns more than _MAX_KEYWORD_TRACE_IDS IDs the caller must narrow their search.
 _MAX_KEYWORD_TRACE_IDS = 20000
 
 
