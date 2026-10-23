@@ -109,16 +109,6 @@ def _collect_all_trace_ids(opensearch_client: OpenSearchTraceClient, filter_quer
 _KEYWORD_IGNORE_ABOVE = 256
 
 
-# query_string special characters that OpenSearch treats as operators/regex
-# delimiters (e.g. / starts a regex, + - && || are boolean ops).
-# We escape them so user input is always treated as a literal keyword.
-_QS_SPECIAL_CHARS = re.compile(r'([+\-=<>!(){}\[\]^"~*?:\\/|&])')
-
-
-def _escape_query_string(q: str) -> str:
-    """Escape OpenSearch query_string special characters in user input."""
-    return _QS_SPECIAL_CHARS.sub(r'\\\1', q)
-
 
 def _exact_attribute_match(attribute: str, value: str) -> dict:
     """Exact-value, case-insensitive filter on one span attribute.
@@ -228,7 +218,6 @@ _SORT_FIELD_MAP = {
 # If the pre-query returns 10000 hits we know there are at least that many and
 # return 400 — the caller must narrow their search.
 _MAX_KEYWORD_TRACE_IDS = 20000
-_PRE_QUERY_SIZE = 20001  # = _MAX_KEYWORD_TRACE_IDS + 1, within OS window limit
 
 
 async def _compute_full_breakdown(opensearch_client: OpenSearchTraceClient, trace_ids: list, tenant_filter: Optional[str]) -> tuple:
@@ -524,29 +513,15 @@ async def search_traces_opensearch(
             pre_query: dict = {
                 "bool": {
                     "filter": base_filter_clauses,
-                    "must": [{"query_string": {"query": _escape_query_string(q), "fields": ["*"]}}],
+                    "must": [{"multi_match": {"query": q, "fields": ["*"], "type": "phrase", "lenient": True}}],
                 }
             }
-            pre_response = opensearch_client.search_traces(
-                query=pre_query,
-                size=_PRE_QUERY_SIZE,
-                source_fields=["context.trace_id"],
-                collapse={"field": "context.trace_id.keyword"},
-                sort=[{"@timestamp": {"order": "desc"}}],
-            )
-            pre_hits = pre_response.get("hits", {}).get("hits", [])
-            if len(pre_hits) >= _PRE_QUERY_SIZE:
+            keyword_trace_ids = _collect_all_trace_ids(opensearch_client, pre_query, limit=_MAX_KEYWORD_TRACE_IDS)
+            if len(keyword_trace_ids) >= _MAX_KEYWORD_TRACE_IDS:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=(
-                        "Too many results. Please narrow your date range or refine your search."
-                    ),
+                    detail="Too many results. Please narrow your date range or refine your search.",
                 )
-            keyword_trace_ids = [
-                h.get("_source", {}).get("context", {}).get("trace_id")
-                for h in pre_hits
-            ]
-            keyword_trace_ids = [tid for tid in keyword_trace_ids if tid]
 
         # service_id lives on model/ai-inference spans, not on the request span.
         # Pre-query to resolve it to trace IDs so the main query (which may be
@@ -558,19 +533,12 @@ async def search_traces_opensearch(
                     "filter": base_filter_clauses + [_exact_attribute_match("service_id", service_id)],
                 }
             }
-            svc_pre_response = opensearch_client.search_traces(
-                query=svc_pre_query,
-                size=_PRE_QUERY_SIZE,
-                source_fields=["context.trace_id"],
-                collapse={"field": "context.trace_id.keyword"},
-                sort=[{"@timestamp": {"order": "desc"}}],
-            )
-            svc_pre_hits = svc_pre_response.get("hits", {}).get("hits", [])
-            service_id_trace_ids = [
-                h.get("_source", {}).get("context", {}).get("trace_id")
-                for h in svc_pre_hits
-            ]
-            service_id_trace_ids = [tid for tid in service_id_trace_ids if tid]
+            service_id_trace_ids = _collect_all_trace_ids(opensearch_client, svc_pre_query, limit=_MAX_KEYWORD_TRACE_IDS)
+            if len(service_id_trace_ids) >= _MAX_KEYWORD_TRACE_IDS:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Too many results. Please narrow your date range or refine your search.",
+                )
 
         # Combine pre-query trace ID sets: both must match (intersection)
         combined_trace_ids: Optional[list] = None
