@@ -304,6 +304,12 @@ def test_search_traces_summary_matches_pagination_total_and_reconciles():
             page=1,
             page_size=3,
             opensearch_client=client,
+            q=None,
+            log_status=None,
+            status_code=None,
+            service_id=None,
+            sort_by=None,
+            sort_order=None,
         )
     )
 
@@ -346,6 +352,8 @@ def test_search_traces_flags_partial_when_breakdown_is_capped():
             search_traces_opensearch(
                 request=request, task_types=None, status_filter=None, tenant_id=None,
                 start_date=None, end_date=None, page=1, page_size=1, opensearch_client=client,
+                q=None, log_status=None, status_code=None, service_id=None,
+                sort_by=None, sort_order=None,
             )
         )
 
