@@ -96,6 +96,8 @@ export function collectEditTenantErrors(input: {
   knownTenantEmails: Set<string>;
   knownUserEmails: Set<string>;
   editTenantEmail: string | undefined;
+  /** Same-institution user emails allowed as the new contact (AI4IDS-3401). */
+  allowedUserEmails?: Set<string> | readonly string[];
 }): Record<string, string> {
   const {
     organisation,
@@ -108,6 +110,7 @@ export function collectEditTenantErrors(input: {
     knownTenantEmails,
     knownUserEmails,
     editTenantEmail,
+    allowedUserEmails,
   } = input;
   const errors: Record<string, string> = {};
   const orgError = validateOrganisation(organisation ?? "");
@@ -130,6 +133,7 @@ export function collectEditTenantErrors(input: {
       {
         excludeTenantEmail: editTenantEmail,
         excludeUserEmail: editTenantEmail,
+        allowedUserEmails,
       },
     );
     if (emailError) errors.email = emailError;
