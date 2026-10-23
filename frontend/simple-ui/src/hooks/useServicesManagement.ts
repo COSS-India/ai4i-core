@@ -255,8 +255,6 @@ export function useServicesManagement() {
     () => ({
       name: (s: Service) => s.name ?? "",
       tiers: (s: Service) => (s.tierNames ?? s.tiers ?? []).join(", ").toLowerCase(),
-      created: (s: Service) =>
-        s.createdAt ? new Date(s.createdAt).getTime() : 0,
     }),
     [],
   );

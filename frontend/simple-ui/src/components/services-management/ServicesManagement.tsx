@@ -212,20 +212,6 @@ const ServicesManagement: React.FC = () => {
           </Badge>
         ),
       },
-      {
-        id: "created",
-        header: "Created At",
-        sortable: true,
-        sortAccessor: (service) =>
-          service.createdAt ? new Date(service.createdAt).getTime() : 0,
-        cell: (service) => (
-          <Text fontSize="sm" color="ink.600">
-            {service.createdAt
-              ? new Date(service.createdAt).toLocaleDateString()
-              : "N/A"}
-          </Text>
-        ),
-      },
       createActionsColumn<Service>({
         getActions: (service) => {
           const publishBlocked = isServiceModelDeprecated(service);
