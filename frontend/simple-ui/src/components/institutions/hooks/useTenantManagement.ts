@@ -9,8 +9,11 @@ import * as tenantService from "../../../services/tenantService";
 import { showError } from "../../../utils/errorHandler";
 import { refreshUntil } from "../../../utils/postMutationRefresh";
 import {
+  collectInstitutionAdminEmails,
+  collectInstitutionUserEmails,
   collectTenantContactEmails,
   collectUserEmails,
+  emailSetHas,
   normalizeEmail,
   validateEmailFormatOnly,
 } from "../../../utils/tenantEmailValidation";
@@ -211,6 +214,13 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     Record<string, string>
   >({});
   const [isSubmittingEditTenant, setIsSubmittingEditTenant] = useState(false);
+  /** Same-institution user emails allowed as the new contact (AI4IDS-3401). */
+  const [editTenantAllowedUserEmails, setEditTenantAllowedUserEmails] =
+    useState<Set<string>>(() => new Set());
+  /** Institution Admin emails — contact change applies without re-verification. */
+  const [editTenantAdminEmails, setEditTenantAdminEmails] = useState<
+    Set<string>
+  >(() => new Set());
 
   // Status update confirmation
   const [statusUpdateTarget, setStatusUpdateTarget] =
@@ -633,6 +643,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       exclusions: {
         excludeTenantEmail: editTenantRow?.email,
         excludeUserEmail: editTenantRow?.email,
+        allowedUserEmails: editTenantAllowedUserEmails,
       },
       skipRemoteCheck: unchanged,
     };
@@ -641,6 +652,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     knownUserEmails,
     editTenantForm.email,
     editTenantRow?.email,
+    editTenantAllowedUserEmails,
   ]);
 
   const createTenantEmailAvailability = useEmailAvailabilityField({
@@ -659,21 +671,19 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     recheckKey: isUserModalOpen ? knownEmailRecheckKey : undefined,
   });
 
-  /** Contact email is editable only while the tenant is PENDING (pending verification). */
-  const isEditTenantEmailEditable = useMemo(
-    () => isTenantStatus(editTenantRow?.status, TENANT.STATUS.PENDING),
-    [editTenantRow?.status],
-  );
+  /** Contact email is editable whenever Update Institution is open (AI4IDS-3401). */
+  const isEditTenantEmailEditable = true;
+
+  const editTenantEmailRecheckKey = isEditTenantModalOpen
+    ? `${knownEmailRecheckKey}:allowed:${editTenantAllowedUserEmails.size}`
+    : undefined;
 
   const editTenantEmailAvailability = useEmailAvailabilityField({
     enabled: isEditTenantModalOpen && isEditTenantEmailEditable,
     email: editTenantForm.email ?? "",
     patchError: patchEditTenantFormError,
     getCheckOptions: getEditTenantEmailCheckOptions,
-    recheckKey:
-      isEditTenantModalOpen && isEditTenantEmailEditable
-        ? knownEmailRecheckKey
-        : undefined,
+    recheckKey: editTenantEmailRecheckKey,
   });
 
   // ----- Create tenant -----
@@ -1122,6 +1132,21 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   };
 
   // ----- Edit tenant -----
+  const loadEditTenantInstitutionEmails = async (tenantId: string) => {
+    try {
+      const users =
+        tenantDetailView?.tenant_id === tenantId && tenantUsers.length > 0
+          ? tenantUsers
+          : await loadTenantUsersForTenant(tenantId);
+      setEditTenantAllowedUserEmails(collectInstitutionUserEmails(users));
+      setEditTenantAdminEmails(collectInstitutionAdminEmails(users));
+    } catch (err) {
+      console.error("Failed to load institution users for email edit:", err);
+      setEditTenantAllowedUserEmails(new Set());
+      setEditTenantAdminEmails(new Set());
+    }
+  };
+
   const handleOpenEditTenant = async (t: TenantView) => {
     try {
       // Fetch unmasked PII for edit pre-fill only (list/view keep masked GETs).
@@ -1137,9 +1162,12 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         phone_number: unmasked.phone_number ?? "",
       });
       setEditTenantFormErrors({});
+      setEditTenantAllowedUserEmails(new Set());
+      setEditTenantAdminEmails(new Set());
       editTenantEmailAvailability.clear();
       setIsEditTenantModalOpen(true);
       void refreshKnownAccountEmails();
+      void loadEditTenantInstitutionEmails(unmasked.tenant_id);
     } catch (err) {
       console.error("Failed to load tenant for edit:", err);
       showError(err);
@@ -1159,6 +1187,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       knownTenantEmails,
       knownUserEmails,
       editTenantEmail: editTenantRow?.email,
+      allowedUserEmails: editTenantAllowedUserEmails,
     });
     if (isEditTenantEmailEditable) {
       delete errors.email;
@@ -1170,10 +1199,13 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       return;
     }
     setEditTenantFormErrors({});
+    const nextEmail = normalizeEmail(editTenantForm.email ?? "");
     const emailChanged =
       isEditTenantEmailEditable &&
-      normalizeEmail(editTenantForm.email ?? "") !==
-        normalizeEmail(editTenantRow?.email ?? "");
+      nextEmail !== normalizeEmail(editTenantRow?.email ?? "");
+    // Already an Institution Admin for this institution → no verification (AI4IDS-3401).
+    const alreadyInstitutionAdmin =
+      emailChanged && emailSetHas(editTenantAdminEmails, nextEmail);
 
     setIsSubmittingEditTenant(true);
     try {
@@ -1188,16 +1220,17 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       };
       await tenantService.updateTenant(patch);
 
+      const applyEmailLocally = !emailChanged || alreadyInstitutionAdmin;
       patchTenantLocal(patch.tenant_id, {
         organisation: patch.organisation,
         contact_name: patch.contact_name,
         phone_number: patch.phone_number,
-        ...(isEditTenantEmailEditable && !emailChanged
+        ...(isEditTenantEmailEditable && applyEmailLocally
           ? { email: patch.email }
           : {}),
       });
 
-      if (emailChanged) {
+      if (emailChanged && !alreadyInstitutionAdmin) {
         showToast({
           type: "info",
           message:
@@ -1208,6 +1241,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       }
       setIsEditTenantModalOpen(false);
       setEditTenantRow(null);
+      setEditTenantAllowedUserEmails(new Set());
+      setEditTenantAdminEmails(new Set());
       const expectedOrg = patch.organisation;
       const expectedContact = patch.contact_name;
       await refreshTenantAndUserLists(editTenantForm.tenant_id, (rows) =>
@@ -1231,6 +1266,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setIsEditTenantModalOpen(false);
     setEditTenantRow(null);
     setEditTenantFormErrors({});
+    setEditTenantAllowedUserEmails(new Set());
+    setEditTenantAdminEmails(new Set());
   };
 
   const canSubmitEditTenantForm = useMemo(() => {
@@ -1259,6 +1296,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
           knownTenantEmails,
           knownUserEmails,
           editTenantEmail: editTenantRow?.email,
+          allowedUserEmails: editTenantAllowedUserEmails,
         }),
       ).length === 0
     );
@@ -1273,6 +1311,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     editTenantForm.phone_number,
     editTenantForm.tenant_id,
     editTenantRow?.email,
+    editTenantAllowedUserEmails,
     knownTenantEmails,
     knownUserEmails,
     tenants,

@@ -31,7 +31,8 @@ export const FIELD_HINTS = {
     emailChecking: "Checking if email exists…",
     emailAvailable: EMAIL_AVAILABLE_MSG,
     emailVerifyOnChange:
-      "If you change the contact email, the update takes effect only after the new address is verified.",
+      "Changing to a new address takes effect only after verification. An existing Institution Admin email for this organisation applies immediately.",
+    /** Kept for callers that still lock email on edit; Update Institution always allows edit (AI4IDS-3401). */
     emailPendingOnly: `The contact email can only be corrected while the ${org} is pending verification.`,
     planAppliesImmediately: "Tier and Budget changes apply immediately.",
   },
