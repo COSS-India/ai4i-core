@@ -4,6 +4,7 @@ import {
   policyCategoryCreateResponseSchema,
   policyCategoryListResponseSchema,
   policyCategoryStatusResponseSchema,
+  policyCategoryUpdateResponseSchema,
   policyCreateResponseSchema,
   policyItemResponseSchema,
   policyListResponseSchema,
@@ -11,6 +12,7 @@ import {
   policySubCategoryCreateResponseSchema,
   policySubCategoryListResponseSchema,
   policySubCategoryStatusResponseSchema,
+  policySubCategoryUpdateResponseSchema,
   policyTypeCreateResponseSchema,
   policyTypeItemResponseSchema,
   policyTypeListResponseSchema,
@@ -65,6 +67,40 @@ export async function createPolicySubCategory(
     category_id: body.category_id,
   });
   return policySubCategoryCreateResponseSchema.parse(response.data).data;
+}
+
+/** PATCH /policies/categories/{id}. Body is `{ name, description }`. */
+export async function updatePolicyCategory(
+  id: number,
+  body: PolicyCategoryWrite,
+): Promise<PolicyCategoryItem> {
+  const response = await apiClient.patch(apiEndpoints.policyHierarchy.categoryById(id), {
+    name: body.name,
+    description: body.description ?? null,
+  });
+  return policyCategoryUpdateResponseSchema.parse(response.data).data;
+}
+
+/** DELETE /policies/categories/{id}. 204 when it has no sub-categories. */
+export async function deletePolicyCategory(id: number): Promise<void> {
+  await apiClient.delete(apiEndpoints.policyHierarchy.categoryById(id));
+}
+
+/** PATCH /policies/sub-categories/{id}. Body is `{ name, description }`. */
+export async function updatePolicySubCategory(
+  id: number,
+  body: PolicyCategoryWrite,
+): Promise<PolicySubCategoryItem> {
+  const response = await apiClient.patch(apiEndpoints.policyHierarchy.subCategoryById(id), {
+    name: body.name,
+    description: body.description ?? null,
+  });
+  return policySubCategoryUpdateResponseSchema.parse(response.data).data;
+}
+
+/** DELETE /policies/sub-categories/{id}. 204 when no policy references it. */
+export async function deletePolicySubCategory(id: number): Promise<void> {
+  await apiClient.delete(apiEndpoints.policyHierarchy.subCategoryById(id));
 }
 
 /** PATCH /policies/categories/{id}/status. Body is `{ is_active }`. */

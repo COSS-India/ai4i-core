@@ -74,7 +74,7 @@ export const FIELD_HINTS = {
     },
   },
   service: {
-    taskType: { placeholder: "Select a model task type" },
+    taskType: { placeholder: "Select a task type" },
     modelName: {
       placeholder: "Select model",
       loading: "Loading models...",
@@ -192,7 +192,7 @@ export const FIELD_HINTS = {
       placeholder: "Enter tier description",
       helper: "e.g. Enterprise tier for high usage.",
     },
-    quotaUnit: { helper: "Auto-filled based on Model Task Type (e.g., tokens for LLM)" },
+    quotaUnit: { helper: "Auto-filled based on Task Type (e.g., tokens for LLM)" },
     rateLimit: {
       placeholder: "Enter rate limit",
       helper: "Requests per minute across all inference APIs. Leave empty to use the platform default.",

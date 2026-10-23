@@ -252,9 +252,13 @@ export const apiEndpoints = {
   },
   /** Platform-core policy hierarchy. */
   policyHierarchy: {
+    /** GET list, POST, PATCH by id, DELETE by id. */
     categories: `${API_V1}/policies/categories`,
+    categoryById: (id: number) => `${API_V1}/policies/categories/${id}`,
     categoryStatus: (id: number) => `${API_V1}/policies/categories/${id}/status`,
+    /** GET list, POST, PATCH by id, DELETE by id. */
     subCategories: `${API_V1}/policies/sub-categories`,
+    subCategoryById: (id: number) => `${API_V1}/policies/sub-categories/${id}`,
     subCategoryStatus: (id: number) => `${API_V1}/policies/sub-categories/${id}/status`,
     /** PII definitions. GET list, GET by id, POST, PUT (id in the body), DELETE. */
     policyTypes: `${API_V1}/policies/policy-types`,
