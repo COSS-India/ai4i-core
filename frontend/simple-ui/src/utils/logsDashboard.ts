@@ -168,7 +168,11 @@ export const writeStoredColumns = (keys: string[]) => {
   }
 };
 
-/** Build `columns` query value: visible keys + status_code for failed-row display. */
+/**
+ * Build `columns` query value: visible keys + status_code for failed-row display.
+ * When `includeError` is set (admins), always request `error` so AC-6 can show it
+ * on failed rows without requiring the Error column to be selected.
+ */
 export const buildColumnsQueryParam = (
   selectedColumns: string[],
   columnOrder: string[],
@@ -176,8 +180,11 @@ export const buildColumnsQueryParam = (
 ): string => {
   const keys = new Set(selectedColumns);
   keys.add("status_code");
-  if (options?.includeError && selectedColumns.includes("error")) {
+  if (options?.includeError) {
     keys.add("error");
   }
-  return columnOrder.filter((k) => keys.has(k)).join(",");
+  const order = [...columnOrder];
+  if (!order.includes("status_code")) order.push("status_code");
+  if (options?.includeError && !order.includes("error")) order.push("error");
+  return order.filter((k) => keys.has(k)).join(",");
 };
