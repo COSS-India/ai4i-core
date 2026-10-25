@@ -85,7 +85,6 @@ import {
   defaultTimeRange,
   formatDateTimeLocal,
   isFailureStatus,
-  isLiveEndTime,
   isSuccessStatus,
   KEYWORD_MAX_LENGTH,
   END_USER_MAX_LENGTH,
@@ -168,6 +167,12 @@ const LogsPage: React.FC = () => {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(15);
   const [autoRefresh, setAutoRefresh] = useState(false);
+  /**
+   * True while the range is meant to end at "now" (default open, Refresh, Clear).
+   * Cleared when the user edits End Time so auto-refresh stays available on the
+   * default range instead of timing out against a pinned datetime-local value.
+   */
+  const [followsPresent, setFollowsPresent] = useState(true);
   const [sort, setSort] = useState<DataTableSortState>({
     key: "timestamp",
     direction: "desc",
@@ -224,13 +229,11 @@ const LogsPage: React.FC = () => {
       ? statusCodeFilter.error
       : undefined;
 
-  const liveRange = isLiveEndTime(draft.endTime);
-
   useEffect(() => {
-    if (!liveRange && autoRefresh) {
+    if (!followsPresent && autoRefresh) {
       setAutoRefresh(false);
     }
-  }, [liveRange, autoRefresh]);
+  }, [followsPresent, autoRefresh]);
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -310,6 +313,7 @@ const LogsPage: React.FC = () => {
 
   const {
     data: columnsResponse,
+    isFetched: columnsFetched,
   } = useQuery({
     queryKey: ["telemetry-traces-columns"],
     queryFn: async () => {
@@ -320,7 +324,7 @@ const LogsPage: React.FC = () => {
         return { columns: FALLBACK_COLUMN_DEFS };
       }
     },
-    enabled: isAuthenticated && !isUser && !isGuest,
+    enabled: isAuthenticated && !isUser && !isGuest && !authLoading,
     staleTime: 5 * 60 * 1000,
     retry: false,
   });
@@ -340,10 +344,11 @@ const LogsPage: React.FC = () => {
     [columnDefs]
   );
 
-  // Hydrate column selection once catalogue is known.
+  // Hydrate after auth + catalogue settle so admin-only columns (e.g. Error) are kept.
   const didHydrateColumns = useRef(false);
   useEffect(() => {
-    if (didHydrateColumns.current || columnDefs.length === 0) return;
+    if (didHydrateColumns.current) return;
+    if (authLoading || !columnsFetched || columnsResponse === undefined) return;
     didHydrateColumns.current = true;
     const allowed = new Set(columnDefs.map((c) => c.key));
     const stored = readStoredColumns();
@@ -353,10 +358,13 @@ const LogsPage: React.FC = () => {
         ? stored.filter((k) => allowed.has(k))
         : defaults;
     setSelectedColumns(next.length > 0 ? next : defaults);
-  }, [columnDefs]);
+  }, [authLoading, columnsFetched, columnsResponse, columnDefs]);
 
   const updateDraft = useCallback(
     <K extends keyof DraftFilters>(key: K, value: DraftFilters[K]) => {
+      if (key === "endTime") {
+        setFollowsPresent(false);
+      }
       setDraft((prev) => ({ ...prev, [key]: value }));
     },
     []
@@ -427,6 +435,7 @@ const LogsPage: React.FC = () => {
       selectedTenantId: "",
     });
     setSort({ key: "timestamp", direction: "desc" });
+    setFollowsPresent(true);
     setPage(1);
   }, []);
 
@@ -603,6 +612,7 @@ const LogsPage: React.FC = () => {
         endTime: range.endTime,
       }));
     }
+    setFollowsPresent(true);
   }, [applied.endTime, applied.startTime, draft.endTime, draft.startTime]);
 
   const handleRefreshRef = useRef(handleRefresh);
@@ -611,12 +621,12 @@ const LogsPage: React.FC = () => {
   }, [handleRefresh]);
 
   useEffect(() => {
-    if (!autoRefresh || !liveRange) return;
+    if (!autoRefresh || !followsPresent) return;
     const refreshTimer = setInterval(() => {
       handleRefreshRef.current();
     }, AUTO_REFRESH_MS);
     return () => clearInterval(refreshTimer);
-  }, [autoRefresh, liveRange]);
+  }, [autoRefresh, followsPresent]);
 
   const formatTimestamp = (timestamp: string) => {
     try {
@@ -674,43 +684,57 @@ const LogsPage: React.FC = () => {
     setPage(1);
   }, []);
 
-  const renderStatusCell = useCallback((row: TelemetryTraceRecord) => {
-    const failed = isFailureStatus(row.status);
-    const ok = isSuccessStatus(row.status);
-    const label =
-      failed && row.status_code != null
-        ? `${row.status} (${row.status_code})`
-        : row.status;
-    const icon = failed ? (
-      <CloseIcon boxSize={2.5} color="red.500" aria-hidden />
-    ) : ok ? (
-      <CheckIcon boxSize={3} color="green.500" aria-hidden />
-    ) : (
-      <Box as="span" w={2} h={2} borderRadius="full" bg="orange.400" aria-hidden />
-    );
+  const renderStatusCell = useCallback(
+    (row: TelemetryTraceRecord) => {
+      const failed = isFailureStatus(row.status);
+      const ok = isSuccessStatus(row.status);
+      let label =
+        failed && row.status_code != null
+          ? `${row.status} (${row.status_code})`
+          : row.status;
+      // AC-6: admins see the error without opening the trace (tooltip on default view).
+      if (failed && isAdmin && row.error) {
+        label = `${label}: ${row.error}`;
+      }
+      const icon = failed ? (
+        <CloseIcon boxSize={2.5} color="red.500" aria-hidden />
+      ) : ok ? (
+        <CheckIcon boxSize={3} color="green.500" aria-hidden />
+      ) : (
+        <Box
+          as="span"
+          w={2}
+          h={2}
+          borderRadius="full"
+          bg="orange.400"
+          aria-hidden
+        />
+      );
 
-    return (
-      <HStack spacing={2} align="center">
-        <Tooltip label={label} placement="top" hasArrow>
-          <Flex
-            align="center"
-            justify="center"
-            w={5}
-            h={5}
-            aria-label={label}
-            role="img"
-          >
-            {icon}
-          </Flex>
-        </Tooltip>
-        {failed && row.status_code != null && (
-          <Text fontSize="sm" color="red.600" fontWeight="medium">
-            {row.status_code}
-          </Text>
-        )}
-      </HStack>
-    );
-  }, []);
+      return (
+        <HStack spacing={2} align="center">
+          <Tooltip label={label} placement="top" hasArrow>
+            <Flex
+              align="center"
+              justify="center"
+              w={5}
+              h={5}
+              aria-label={label}
+              role="img"
+            >
+              {icon}
+            </Flex>
+          </Tooltip>
+          {failed && row.status_code != null && (
+            <Text fontSize="sm" color="red.600" fontWeight="medium">
+              {row.status_code}
+            </Text>
+          )}
+        </HStack>
+      );
+    },
+    [isAdmin]
+  );
 
   const cellForColumn = useCallback(
     (key: string, row: TelemetryTraceRecord): React.ReactNode => {
@@ -1051,8 +1075,16 @@ const LogsPage: React.FC = () => {
                 }}
                 isLoading={tracesLoading}
                 loadingMessage="Loading traces..."
-                emptyMessage="No traces found for the selected filters. Try adjusting the time range or removing filters."
-                noResultsMessage="No traces match the current filters."
+                emptyMessage={
+                  narrowRangeMessage
+                    ? FIELD_HINTS.logs.narrowDateRange
+                    : "No traces found for the selected filters. Try adjusting the time range or removing filters."
+                }
+                noResultsMessage={
+                  narrowRangeMessage
+                    ? FIELD_HINTS.logs.narrowDateRange
+                    : "No traces match the current filters."
+                }
                 hasActiveFilters={hasAppliedFilters}
                 onClearFilters={clearAllFilters}
                 search={{
@@ -1320,7 +1352,7 @@ const LogsPage: React.FC = () => {
                       </FieldLabel>
                       <Tooltip
                         label={
-                          liveRange
+                          followsPresent
                             ? FIELD_HINTS.logs.autoRefresh.helper
                             : "Available only while End Time is the present"
                         }
@@ -1332,7 +1364,7 @@ const LogsPage: React.FC = () => {
                             id="auto-refresh-toggle"
                             colorScheme="green"
                             isChecked={autoRefresh}
-                            isDisabled={!liveRange}
+                            isDisabled={!followsPresent}
                             onChange={(e) => setAutoRefresh(e.target.checked)}
                           />
                         </Box>
