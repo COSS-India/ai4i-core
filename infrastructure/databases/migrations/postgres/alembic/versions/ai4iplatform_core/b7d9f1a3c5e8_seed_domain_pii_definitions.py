@@ -26,17 +26,31 @@ already shows every built-in, so a custom copy would list it twice.
   PAN Number -> IN_PAN. Also matches lowercase and checks the holder-type
       letter.
 
-The rest have no built-in and stay custom, with the story's regexes, except
-Address. Presidio has no address entity (LOCATION only catches the city), and
-the story's regex masks everything after the first digit ("5 students in
-class"), so Address uses a stricter regex: a house number, then street words
-ending in a keyword such as Road, Street or Nagar (or "Sector 21"), then an
-optional locality, city and PIN code. It misses addresses written all in
-lowercase. Date of Birth stays custom rather than DATE_TIME, which masks every
-date and weekday.
+The rest have no built-in and stay custom, with the story's regexes, except:
+
+  Address. Presidio has no address entity (LOCATION only catches the city),
+      and the story's regex masks everything after the first digit ("5
+      students in class"). This one needs a house number, then street words
+      ending in a keyword such as Road, Street or Nagar (or "Sector 21"), then
+      an optional locality, city and PIN code. It misses addresses written all
+      in lowercase.
+  Transaction ID. The story's [A-Z0-9]{8,20} masks any amount or date of 8+
+      digits ("Loan of 25000000 sanctioned on 20241015"). This one needs a
+      letter prefix and 8+ digits; 8 rather than 6 so an IFSC code (4 letters,
+      then 7 characters) is not taken for a transaction id.
+  Health Insurance ID. The story's [A-Z0-9]{6,20} masks dates, PIN codes and
+      tokens like COVID19. This one needs a letter prefix and 6+ digits. A
+      medical record number has the same shape, so either label may win when
+      one value matches both; the value is masked either way.
+
+Date of Birth stays custom rather than DATE_TIME, which masks every date and
+weekday.
 
 A name an admin already uses (any case) is left alone, so re-running or
 upgrading a database with a hand-made 'Education PII' changes nothing.
+Downgrade leaves a seeded definition that a policy lists in policy_type_id,
+which the database does not enforce: removing it would leave that policy with
+nothing to mask, and no error.
 
 Revision ID: b7d9f1a3c5e8
 Revises: e2f4a6c8b0d3
@@ -114,7 +128,7 @@ _DOMAIN_PII_DEFINITIONS = {
             {
                 "entity_name": "TRANSACTION_ID",
                 "examples": ["TXN987654321", "TRX20231009", "PAY123456789"],
-                "regex": r"\b[A-Z0-9]{8,20}\b",
+                "regex": r"\b[A-Z]{2,5}\d{8,15}\b",
             },
             {
                 "entity_name": "UPI_ID",
@@ -134,7 +148,7 @@ _DOMAIN_PII_DEFINITIONS = {
             {
                 "entity_name": "HEALTH_INSURANCE_ID",
                 "examples": ["HIN9876543", "INS123456789", "POL987654321"],
-                "regex": r"\b[A-Z0-9]{6,20}\b",
+                "regex": r"\b[A-Z]{2,5}\d{6,15}\b",
             },
             {
                 "entity_name": "DIAGNOSIS_CODE_ICD10",
@@ -171,6 +185,14 @@ def upgrade() -> None:
 def downgrade() -> None:
     bind = op.get_bind()
     bind.execute(
-        sa.text("DELETE FROM policy_type WHERE created_by = :seeder_id"),
+        sa.text(
+            """
+            DELETE FROM policy_type
+             WHERE created_by = :seeder_id
+               AND NOT EXISTS (
+                   SELECT 1 FROM policy p WHERE policy_type.id = ANY(p.policy_type_id)
+               )
+            """
+        ),
         {"seeder_id": SEEDER_ID},
     )
