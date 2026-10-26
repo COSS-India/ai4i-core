@@ -210,6 +210,8 @@ def _build_page_data(
     hits: list,
     selected_columns: frozenset,
     paginated_trace_ids: list,
+    *,
+    is_admin: bool = False,
 ) -> list:
     """Build response rows containing only the selected columns.
 
@@ -217,6 +219,7 @@ def _build_page_data(
     Indexes spans by trace_id once so attribute lookup is O(1) per trace.
     """
     request_attrs: dict = {}
+    request_error: dict = {}
     model_attrs: dict = {}
     any_attrs: dict = {}
 
@@ -231,6 +234,7 @@ def _build_page_data(
             any_attrs[tid] = attrs
         if span_name == "request" and tid not in request_attrs:
             request_attrs[tid] = attrs
+            request_error[tid] = source.get("status", {}).get("description")
         elif span_name == "model" and tid not in model_attrs:
             model_attrs[tid] = attrs
 
@@ -251,7 +255,7 @@ def _build_page_data(
         if "institution" in selected_columns: row["tenant_id"] = base.get("tenant_id")
         if "service"     in selected_columns: row["service"]     = base.get("service")
         if "status_code" in selected_columns: row["status_code"] = req.get("status_code")
-        if "error"       in selected_columns: row["error"]       = req.get("error")
+        if "error"       in selected_columns: row["error"]       = request_error.get(tid) if is_admin else None
         if "latency"     in selected_columns: row["latency"]     = req.get("total_time_ms")
         if "method"      in selected_columns: row["method"]      = req.get("method")
         if "model"       in selected_columns: row["model"]       = mdl.get("model_name")
@@ -740,11 +744,11 @@ async def search_traces_opensearch(
             spans_response = opensearch_client.search_traces(
                 query=step3_query,
                 size=len(paginated_trace_ids) * _SPAN_CEILING_PER_TRACE,
-                source_fields=["@timestamp", "name", "context.trace_id", "attributes", "service_name"],
+                source_fields=["@timestamp", "name", "context.trace_id", "attributes", "service_name", "status"],
             )
             hits = spans_response.get("hits", {}).get("hits", [])
             traces_map = _build_traces_map(hits, tenant_filter)
-            data = _build_page_data(traces_map, hits, selected_columns, paginated_trace_ids)
+            data = _build_page_data(traces_map, hits, selected_columns, paginated_trace_ids, is_admin=is_admin)
 
         # Calculate aggregations across ALL matching traces (not just this page) so the
         # summary cards match the pagination footer's total instead of the page size.
