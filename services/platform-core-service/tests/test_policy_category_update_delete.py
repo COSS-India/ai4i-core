@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 from pydantic import ValidationError as PydanticValidationError
@@ -272,11 +272,6 @@ class TestDeleteCategoryService:
 # ── Sub-category service ─────────────────────────────────────────────────────
 
 
-def _locked(*categories) -> MagicMock:
-    """Result of the move's SELECT ... FOR UPDATE on the categories."""
-    return _result(rows=categories)
-
-
 def _parent(is_active=True) -> Category:
     return Category(id=1, name="Security & Privacy", is_active=is_active)
 
@@ -289,7 +284,7 @@ def _target(is_active=True) -> Category:
 class TestUpdateSubCategoryService:
     async def test_renames_moves_and_sets_audit_fields(self):
         row = _sub_category()
-        session = _session(row, results=[_locked(_parent(), _target()), _MISSING])
+        session = _session(row, _parent(), _target(), row, results=[_MISSING])
         item = await sub_category_service.update_sub_category(
             session, 3, SubCategoryUpdate(name="Toxicity", category_id=2), updated_by="42"
         )
@@ -301,39 +296,40 @@ class TestUpdateSubCategoryService:
             id=3, name="Toxicity", description="Keep", category_id=2, is_active=True
         )
 
-    async def test_move_locks_both_categories_then_the_sub_category(self):
+    async def test_move_locks_both_categories_in_id_order_then_the_sub_category(self):
         row = _sub_category()
-        session = _session(row, results=[_locked(_parent(), _target())])
+        session = _session(row, _parent(), _target(), row)
         await sub_category_service.update_sub_category(session, 3, SubCategoryUpdate(category_id=2))
-        session.get.assert_awaited_once_with(SubCategory, 3)
-        sql = str(session.execute.await_args_list[0].args[0].compile(compile_kwargs={"literal_binds": True}))
-        assert "category.id IN (1, 2)" in sql
-        assert "ORDER BY category.id" in sql and "FOR UPDATE" in sql
-        assert session.refresh.await_args_list[0].kwargs == {"with_for_update": True}
+        assert session.get.await_args_list == [
+            call(SubCategory, 3),
+            call(Category, 1, with_for_update=True),
+            call(Category, 2, with_for_update=True),
+            call(SubCategory, 3, with_for_update=True, populate_existing=True),
+        ]
 
-    async def test_move_retries_when_the_parent_changed_before_the_lock(self):
+    async def test_move_relocks_when_the_parent_changed_before_the_lock(self):
         row = _sub_category()
-        refreshes = []
-
-        async def _refresh(r, **kwargs):
-            refreshes.append(kwargs)
-            if len(refreshes) == 1:
-                r.category_id = 5  # another request moved it meanwhile
-
-        moved_parent = Category(id=5, name="Other", is_active=True)
-        session = _session(
-            row, results=[_locked(_parent(), _target()), _locked(_target(), moved_parent)]
-        )
-        session.refresh = AsyncMock(side_effect=_refresh)
+        moved = SubCategory(id=3, name="PII Guardrails", category_id=5, is_active=True)
+        other = Category(id=5, name="Other", is_active=True)
+        session = _session(row, _parent(), _target(), moved, _target(), other, moved)
         await sub_category_service.update_sub_category(session, 3, SubCategoryUpdate(category_id=2))
-        sql = str(session.execute.await_args_list[1].args[0].compile(compile_kwargs={"literal_binds": True}))
-        assert "category.id IN (2, 5)" in sql
+        assert session.get.await_args_list[4:6] == [
+            call(Category, 2, with_for_update=True),
+            call(Category, 5, with_for_update=True),
+        ]
         session.rollback.assert_awaited_once()
-        assert row.category_id == 2
+        assert moved.category_id == 2
+
+    async def test_sub_category_deleted_while_waiting_for_the_lock_is_not_found(self):
+        session = _session(_sub_category(), _parent(), _target(), None)
+        with pytest.raises(EntityNotFoundError, match="Sub-category 3"):
+            await sub_category_service.update_sub_category(session, 3, SubCategoryUpdate(category_id=2))
+        session.rollback.assert_awaited_once()
+        session.commit.assert_not_awaited()
 
     async def test_enabled_sub_category_cannot_move_under_a_disabled_category(self):
         row = _sub_category()
-        session = _session(row, results=[_locked(_parent(), _target(is_active=False))])
+        session = _session(row, _parent(), _target(is_active=False), row)
         with pytest.raises(AppError) as exc:
             await sub_category_service.update_sub_category(session, 3, SubCategoryUpdate(category_id=2))
         assert (exc.value.status_code, exc.value.code) == (409, "CATEGORY_DISABLED")
@@ -343,7 +339,7 @@ class TestUpdateSubCategoryService:
 
     async def test_disabled_sub_category_can_move_under_a_disabled_category(self):
         row = SubCategory(id=3, name="PII Guardrails", category_id=1, is_active=False)
-        session = _session(row, results=[_locked(_parent(), _target(is_active=False))])
+        session = _session(row, _parent(), _target(is_active=False), row)
         await sub_category_service.update_sub_category(session, 3, SubCategoryUpdate(category_id=2))
         assert row.category_id == 2
         session.commit.assert_awaited_once()
@@ -376,7 +372,7 @@ class TestUpdateSubCategoryService:
 
     async def test_move_to_missing_category_is_not_found(self):
         row = _sub_category()
-        session = _session(row, results=[_locked(_parent())])
+        session = _session(row, _parent(), None, row)
         with pytest.raises(EntityNotFoundError, match="Category 42"):
             await sub_category_service.update_sub_category(session, 3, SubCategoryUpdate(category_id=42))
         session.commit.assert_not_awaited()
@@ -408,11 +404,11 @@ class TestUpdateSubCategoryService:
             "app.services.policy_management.policy_cache.cache_policy", cache
         )
         row, target, policy = _sub_category(), _target(), Policy(id=7)
-        session = _session(row, results=[_locked(_parent(), target), _result(rows=[(policy, row)])])
+        session = _session(row, _parent(), target, row, results=[_result(rows=[(policy, row)])])
         await sub_category_service.update_sub_category(
             session, 3, SubCategoryUpdate(category_id=2), redis=MagicMock()
         )
-        sql = str(session.execute.await_args_list[1].args[0].compile(compile_kwargs={"literal_binds": True}))
+        sql = str(session.execute.await_args_list[0].args[0].compile(compile_kwargs={"literal_binds": True}))
         assert "sub_category.id = 3" in sql
         cache.assert_awaited_once()
         assert cache.await_args.args[0] is policy

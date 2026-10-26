@@ -13,10 +13,11 @@ policies keep their own is_active, and the parent category and sibling
 sub-categories are untouched. A policy is in effect only when its own flag
 and every ancestor's flag are true. A sub-category cannot be enabled while
 its category is disabled (409) — enable the category instead. The parent
-category row is locked FOR UPDATE, the same lock a category toggle and any
-other toggle of this sub-category take, and the sub-category is re-read once
-the lock is held, so neither the check nor the no-op test works on a stale
-row. A request for the state the sub-category is already in changes nothing.
+category row is locked FOR UPDATE, the same lock a category toggle and a
+move take, and the sub-category is locked and re-read once it is held, so
+neither the check nor the no-op test works on a stale row or parent (see
+_lock_with_parent). A request for the state the sub-category is already in
+changes nothing.
 
 Updating a sub-category changes only the fields sent; a new category_id
 moves it, with its policies, under that category (404 if it does not
@@ -103,11 +104,8 @@ async def update_sub_category_status(
     updated_by: str | None = None,
     redis=None,
 ) -> SubCategoryItem:
-    row = await session.get(SubCategory, sub_category_id)
-    if row is None:
-        raise EntityNotFoundError(f"Sub-category {sub_category_id}")
-    category = await session.get(Category, row.category_id, with_for_update=True)
-    await session.refresh(row)  # read after the lock, not before it
+    row, locked = await _lock_with_parent(session, sub_category_id)
+    category = locked[row.category_id]
     if body.is_active and not category.is_active:
         raise AppError(
             f"Category '{category.name}' is disabled; enable it before enabling "
@@ -146,7 +144,11 @@ async def update_sub_category(
     fields = body.model_dump(include=body.model_fields_set)
     target: Optional[Category] = None
     if "category_id" in fields:
-        row, target = await _lock_for_move(session, sub_category_id, body.category_id)
+        row, locked = await _lock_with_parent(session, sub_category_id, body.category_id)
+        target = locked.get(body.category_id)
+        if target is None:
+            await session.rollback()
+            raise EntityNotFoundError(f"Category {body.category_id}")
     else:
         row = await session.get(SubCategory, sub_category_id, with_for_update=True)
         if row is None:
@@ -197,34 +199,38 @@ async def update_sub_category(
     return SubCategoryItem.model_validate(row)
 
 
-async def _lock_for_move(
-    session: AsyncSession, sub_category_id: int, target_id: int
-) -> tuple[SubCategory, Category]:
-    """Lock the sub-category's current and target categories (in id order, so
-    two moves can't deadlock), then the sub-category: categories first, as a
-    status toggle does. If another move changed the parent before the lock was
-    held, start again with the new parent. 404 if either row is missing."""
+async def _lock_with_parent(
+    session: AsyncSession, sub_category_id: int, target_id: Optional[int] = None
+) -> tuple[SubCategory, dict[int, Category]]:
+    """Lock the sub-category's parent category, and a move's target category
+    when given, in id order so two requests can't deadlock, then the
+    sub-category itself: categories first, the order every toggle and move
+    takes them in. The parent is read before its lock is held, so if a move
+    committed a new one in between, roll back and lock that one instead. The
+    sub-category is re-read under its lock (populate_existing, so no stale copy
+    from the identity map), and 404s if it was deleted while this waited.
+    Returns the locked sub-category and the locked categories by id; a missing
+    target is absent from the dict."""
     row = await session.get(SubCategory, sub_category_id)
     if row is None:
         raise EntityNotFoundError(f"Sub-category {sub_category_id}")
+    parent_id = row.category_id
     while True:
-        parent_id = row.category_id
-        result = await session.execute(
-            select(Category)
-            .where(Category.id.in_({parent_id, target_id}))
-            .order_by(Category.id)
-            .with_for_update()
+        locked = {}
+        for category_id in sorted({parent_id, target_id} - {None}):
+            category = await session.get(Category, category_id, with_for_update=True)
+            if category is not None:
+                locked[category_id] = category
+        row = await session.get(
+            SubCategory, sub_category_id, with_for_update=True, populate_existing=True
         )
-        locked = {c.id: c for c in result.scalars().all()}
-        await session.refresh(row, with_for_update=True)
+        if row is None:
+            await session.rollback()
+            raise EntityNotFoundError(f"Sub-category {sub_category_id}")
         if row.category_id == parent_id:
-            break
+            return row, locked
+        parent_id = row.category_id  # moved meanwhile; read before rollback expires the row
         await session.rollback()
-        await session.refresh(row)
-    if target_id not in locked:
-        await session.rollback()
-        raise EntityNotFoundError(f"Category {target_id}")
-    return row, locked[target_id]
 
 
 async def delete_sub_category(session: AsyncSession, sub_category_id: int) -> None:
