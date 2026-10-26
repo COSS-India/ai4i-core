@@ -116,10 +116,10 @@ class TestResolveTierLimits:
         }
 
     @pytest.mark.asyncio
-    async def test_quotas_keep_the_tier_order(self) -> None:
+    async def test_quotas_follow_catalogue_order(self) -> None:
         db = _tier_db(quotas=_QUOTAS)
         await TenantService.resolve_tier_limits(uuid4(), db)
-        assert "ORDER BY tq.created_at" in db.sql[-1]
+        assert "ORDER BY it.id" in db.sql[-1]
 
     @pytest.mark.asyncio
     async def test_tier_without_rate_limit_or_quotas(self) -> None:
