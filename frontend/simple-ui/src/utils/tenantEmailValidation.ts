@@ -6,8 +6,7 @@ import {
   isTenantStatus,
   type TenantStatusValue,
 } from "../config/constants";
-import type { TenantView, TenantUserView } from "../types/tenant";
-import { tenantUserHasRole } from "./tenantUserRoles";
+import type { TenantView } from "../types/tenant";
 
 export const EMAIL_REQUIRED_MSG = "Email is required.";
 export const EMAIL_INVALID_FORMAT_MSG =
@@ -19,6 +18,12 @@ export const EMAIL_USER_ALREADY_EXISTS_MSG =
 export const EMAIL_ALREADY_EXISTS_MSG =
   "This email is already associated with an existing account";
 export const EMAIL_AVAILABLE_MSG = "Email is available.";
+
+/** PATCH /tenants/{id} email uniqueness conflicts (AI4IDS-3401 / #1818). */
+export const TENANT_EMAIL_CONFLICT_CODES = new Set([
+  "DUPLICATE_EMAIL",
+  "DUPLICATE_TENANT_EMAIL",
+]);
 
 export function normalizeEmail(email: string): string {
   return (email || "").trim().toLowerCase();
@@ -47,39 +52,51 @@ export function collectUserEmails(users: { email?: string | null }[]): Set<strin
   return out;
 }
 
-/** Emails of users already provisioned under this institution. */
-export function collectInstitutionUserEmails(
-  users: { email?: string | null }[],
-): Set<string> {
-  return collectUserEmails(users);
-}
-
-/**
- * Institution Admin emails for this institution (AI4IDS-3401).
- * Only these may pass the FE uniqueness check when changing contact email;
- * same-institution non-admin users are rejected (BE 409 DUPLICATE_EMAIL).
- * Callers must supply unmasked emails — masked listUsers values never match.
- */
-export function collectInstitutionAdminEmails(
-  users: TenantUserView[],
-): Set<string> {
-  const out = new Set<string>();
-  for (const u of users) {
-    if (!tenantUserHasRole(u, "TENANT ADMIN")) continue;
-    const e = normalizeEmail(u.email ?? "");
-    if (e) out.add(e);
-  }
-  return out;
-}
-
-/** Contact email can be edited for PENDING and ACTIVE institutions only. */
+/** Contact email editable for PENDING/ACTIVE non-default institutions (AI4IDS-3401). */
 export function isTenantContactEmailEditable(
   status: TenantStatusValue | string | null | undefined,
+  options?: { isDefaultOrganisation?: boolean },
 ): boolean {
+  if (options?.isDefaultOrganisation) return false;
   return (
     isTenantStatus(status, TENANT.STATUS.PENDING) ||
     isTenantStatus(status, TENANT.STATUS.ACTIVE)
   );
+}
+
+export function extractApiErrorCode(error: unknown): string | null {
+  const detail = (
+    error as { response?: { data?: { detail?: unknown } } } | null
+  )?.response?.data?.detail;
+  if (!detail || typeof detail !== "object" || Array.isArray(detail)) {
+    return null;
+  }
+  const code =
+    (detail as { code?: unknown }).code ??
+    (detail as { error?: unknown }).error;
+  return code != null ? String(code).toUpperCase() : null;
+}
+
+export function extractApiErrorMessage(error: unknown): string | undefined {
+  const detail = (
+    error as { response?: { data?: { detail?: unknown }; message?: string } } | null
+  )?.response?.data?.detail;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+    const message = (detail as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+  const top = (error as { message?: unknown } | null)?.message;
+  return typeof top === "string" && top.trim() ? top : undefined;
+}
+
+/** Inline form message for PATCH email uniqueness 409s; undefined for other errors. */
+export function mapTenantEmailConflictToFieldError(
+  error: unknown,
+): string | undefined {
+  const code = extractApiErrorCode(error);
+  if (!code || !TENANT_EMAIL_CONFLICT_CODES.has(code)) return undefined;
+  return extractApiErrorMessage(error) ?? EMAIL_ALREADY_EXISTS_MSG;
 }
 
 export type TenantEmailUpdateFeedback = {
@@ -145,16 +162,13 @@ export function emailSetHas(
 }
 
 /**
- * When editing, skip collision checks for the record's current email, and for
- * Institution Admin emails of the same institution (AI4IDS-3401).
+ * When editing, skip collision checks for the record's current email.
+ * Contact-email edit uniqueness for users is decided by PATCH (emails stay masked).
  */
 export interface EmailUniquenessExclusions {
   excludeTenantEmail?: string;
   excludeUserEmail?: string;
-  /**
-   * Same-institution Institution Admin emails — allowed as the new contact
-   * (applies immediately, no verification). Non-admin users must not be listed.
-   */
+  /** Optional allow-list for create/add-user flows that have plain emails. */
   allowedUserEmails?: Set<string> | readonly string[];
 }
 

@@ -9,10 +9,10 @@ import * as tenantService from "../../../services/tenantService";
 import { showError } from "../../../utils/errorHandler";
 import { refreshUntil } from "../../../utils/postMutationRefresh";
 import {
-  collectInstitutionAdminEmails,
   collectTenantContactEmails,
   collectUserEmails,
   isTenantContactEmailEditable,
+  mapTenantEmailConflictToFieldError,
   normalizeEmail,
   resolveTenantEmailUpdateFeedback,
   validateEmailFormatOnly,
@@ -214,13 +214,6 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     Record<string, string>
   >({});
   const [isSubmittingEditTenant, setIsSubmittingEditTenant] = useState(false);
-  /**
-   * Unmasked Institution Admin emails for this institution — only these may
-   * pass the FE uniqueness check when changing contact email (AI4IDS-3401).
-   */
-  const [editTenantAllowedUserEmails, setEditTenantAllowedUserEmails] =
-    useState<Set<string>>(() => new Set());
-
   // Status update confirmation
   const [statusUpdateTarget, setStatusUpdateTarget] =
     useState<StatusUpdateTargetUnion | null>(null);
@@ -642,8 +635,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       exclusions: {
         excludeTenantEmail: editTenantRow?.email,
         excludeUserEmail: editTenantRow?.email,
-        allowedUserEmails: editTenantAllowedUserEmails,
       },
+      // User collisions are decided by PATCH — listUsers emails stay masked.
+      skipUserCollision: true,
       skipRemoteCheck: unchanged,
     };
   }, [
@@ -651,7 +645,6 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     knownUserEmails,
     editTenantForm.email,
     editTenantRow?.email,
-    editTenantAllowedUserEmails,
   ]);
 
   const createTenantEmailAvailability = useEmailAvailabilityField({
@@ -670,13 +663,17 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     recheckKey: isUserModalOpen ? knownEmailRecheckKey : undefined,
   });
 
-  /** Contact email editable for PENDING/ACTIVE only (AI4IDS-3401). */
+  /** Contact email editable for PENDING/ACTIVE non-default orgs (AI4IDS-3401). */
   const isEditTenantEmailEditable = isTenantContactEmailEditable(
     editTenantRow?.status,
+    {
+      isDefaultOrganisation:
+        editTenantRow != null && isDefaultTenant(editTenantRow),
+    },
   );
 
   const editTenantEmailRecheckKey = isEditTenantModalOpen
-    ? `${knownEmailRecheckKey}:allowed:${editTenantAllowedUserEmails.size}`
+    ? knownEmailRecheckKey
     : undefined;
 
   const editTenantEmailAvailability = useEmailAvailabilityField({
@@ -1133,18 +1130,6 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   };
 
   // ----- Edit tenant -----
-  /** Unmasked Institution Admin emails only — masked listUsers never matches typed input. */
-  const loadEditTenantInstitutionEmails = async (tenantId: string) => {
-    try {
-      const res = await tenantService.listUsers(tenantId, { unmask: true });
-      const users = normalizeTenantUserRoles(res.users ?? []);
-      setEditTenantAllowedUserEmails(collectInstitutionAdminEmails(users));
-    } catch (err) {
-      console.error("Failed to load institution admins for email edit:", err);
-      setEditTenantAllowedUserEmails(new Set());
-    }
-  };
-
   const handleOpenEditTenant = async (t: TenantView) => {
     try {
       // Fetch unmasked PII for edit pre-fill only (list/view keep masked GETs).
@@ -1160,13 +1145,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         phone_number: unmasked.phone_number ?? "",
       });
       setEditTenantFormErrors({});
-      setEditTenantAllowedUserEmails(new Set());
       editTenantEmailAvailability.clear();
       setIsEditTenantModalOpen(true);
       void refreshKnownAccountEmails();
-      if (isTenantContactEmailEditable(unmasked.status)) {
-        void loadEditTenantInstitutionEmails(unmasked.tenant_id);
-      }
     } catch (err) {
       console.error("Failed to load tenant for edit:", err);
       showError(err);
@@ -1184,9 +1165,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       tenants,
       isEditTenantEmailEditable,
       knownTenantEmails,
-      knownUserEmails,
       editTenantEmail: editTenantRow?.email,
-      allowedUserEmails: editTenantAllowedUserEmails,
     });
     if (isEditTenantEmailEditable) {
       delete errors.email;
@@ -1244,7 +1223,6 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
       setIsEditTenantModalOpen(false);
       setEditTenantRow(null);
-      setEditTenantAllowedUserEmails(new Set());
       const expectedOrg = patch.organisation;
       const expectedContact = patch.contact_name;
       await refreshTenantAndUserLists(editTenantForm.tenant_id, (rows) =>
@@ -1257,6 +1235,11 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       );
     } catch (err) {
       console.error("Failed to update tenant:", err);
+      const emailConflict = mapTenantEmailConflictToFieldError(err);
+      if (emailConflict) {
+        setEditTenantFormErrors((prev) => ({ ...prev, email: emailConflict }));
+        return;
+      }
       showError(err);
     } finally {
       setIsSubmittingEditTenant(false);
@@ -1268,7 +1251,6 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setIsEditTenantModalOpen(false);
     setEditTenantRow(null);
     setEditTenantFormErrors({});
-    setEditTenantAllowedUserEmails(new Set());
   };
 
   const canSubmitEditTenantForm = useMemo(() => {
@@ -1295,9 +1277,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
           tenants,
           isEditTenantEmailEditable,
           knownTenantEmails,
-          knownUserEmails,
           editTenantEmail: editTenantRow?.email,
-          allowedUserEmails: editTenantAllowedUserEmails,
         }),
       ).length === 0
     );
@@ -1312,9 +1292,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     editTenantForm.phone_number,
     editTenantForm.tenant_id,
     editTenantRow?.email,
-    editTenantAllowedUserEmails,
     knownTenantEmails,
-    knownUserEmails,
     tenants,
   ]);
 

@@ -32,8 +32,8 @@ export const FIELD_HINTS = {
     emailAvailable: EMAIL_AVAILABLE_MSG,
     emailVerifyOnChange:
       "Changing to a new address takes effect only after verification. An existing Institution Admin email for this organisation applies immediately.",
-    /** Shown when contact email cannot be edited (Suspended / Deactivated). */
-    emailPendingOnly: `The contact email can only be changed while the ${org} is Pending or Active.`,
+    /** Shown when contact email cannot be edited (Suspended / Deactivated / Default Org). */
+    emailPendingOnly: `The contact email can only be changed while the ${org} is Pending or Active, and cannot be changed for the Default Organisation.`,
     emailVerificationPending: "Verification pending",
     planAppliesImmediately: "Tier and Budget changes apply immediately.",
   },

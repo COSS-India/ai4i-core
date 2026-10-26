@@ -2,54 +2,15 @@ import {
   EMAIL_ALREADY_EXISTS_MSG,
   EMAIL_INVALID_FORMAT_MSG,
   EMAIL_USER_ALREADY_EXISTS_MSG,
-  collectInstitutionAdminEmails,
-  collectInstitutionUserEmails,
   emailSetHas,
+  extractApiErrorCode,
   isTenantContactEmailEditable,
+  mapTenantEmailConflictToFieldError,
   normalizeEmail,
   resolveTenantEmailUpdateFeedback,
   validateTenantContactEmail,
 } from "../../src/utils/tenantEmailValidation";
 import { INSTITUTION, TENANT } from "../../src/config/constants";
-import type { TenantUserView } from "../../src/types/tenant";
-
-function user(
-  email: string,
-  roles: string[] = ["USER"],
-): TenantUserView {
-  return {
-    user_id: email,
-    username: email.split("@")[0] ?? "u",
-    email,
-    is_active: true,
-    roles,
-  };
-}
-
-describe("collectInstitutionAdminEmails (AI4IDS-3401)", () => {
-  it("collects only TENANT ADMIN emails, normalized", () => {
-    const emails = collectInstitutionAdminEmails([
-      user("Admin@Example.com", ["TENANT ADMIN"]),
-      user("user@example.com", ["USER"]),
-      user("both@example.com", ["USER", "TENANT ADMIN"]),
-    ]);
-    expect(emails).toEqual(
-      new Set(["admin@example.com", "both@example.com"]),
-    );
-  });
-});
-
-describe("collectInstitutionUserEmails", () => {
-  it("collects every provisioned user email", () => {
-    expect(
-      collectInstitutionUserEmails([
-        { email: "A@x.com" },
-        { email: "b@x.com" },
-        { email: "  " },
-      ]),
-    ).toEqual(new Set(["a@x.com", "b@x.com"]));
-  });
-});
 
 describe("isTenantContactEmailEditable (AI4IDS-3401)", () => {
   it("allows PENDING and ACTIVE only", () => {
@@ -58,6 +19,14 @@ describe("isTenantContactEmailEditable (AI4IDS-3401)", () => {
     expect(isTenantContactEmailEditable(TENANT.STATUS.SUSPENDED)).toBe(false);
     expect(isTenantContactEmailEditable(TENANT.STATUS.DEACTIVATED)).toBe(false);
     expect(isTenantContactEmailEditable(undefined)).toBe(false);
+  });
+
+  it("locks the Default Organisation even when ACTIVE", () => {
+    expect(
+      isTenantContactEmailEditable(TENANT.STATUS.ACTIVE, {
+        isDefaultOrganisation: true,
+      }),
+    ).toBe(false);
   });
 });
 
@@ -122,7 +91,47 @@ describe("resolveTenantEmailUpdateFeedback (AI4IDS-3401)", () => {
   });
 });
 
-describe("validateTenantContactEmail with allowedUserEmails (AI4IDS-3401)", () => {
+describe("mapTenantEmailConflictToFieldError (AI4IDS-3401)", () => {
+  function conflict(code: string, message: string) {
+    return {
+      response: {
+        status: 409,
+        data: { detail: { code, message } },
+      },
+    };
+  }
+
+  it("maps DUPLICATE_EMAIL / DUPLICATE_TENANT_EMAIL to an inline message", () => {
+    expect(
+      mapTenantEmailConflictToFieldError(
+        conflict("DUPLICATE_EMAIL", "This email is already in use."),
+      ),
+    ).toBe("This email is already in use.");
+    expect(
+      mapTenantEmailConflictToFieldError(
+        conflict("DUPLICATE_TENANT_EMAIL", "A tenant with this email already exists."),
+      ),
+    ).toBe("A tenant with this email already exists.");
+    expect(extractApiErrorCode(conflict("DUPLICATE_EMAIL", "x"))).toBe(
+      "DUPLICATE_EMAIL",
+    );
+  });
+
+  it("ignores other errors so the caller can toast them", () => {
+    expect(
+      mapTenantEmailConflictToFieldError(
+        conflict("TENANT_EMAIL_EDIT_NOT_ALLOWED", "Locked"),
+      ),
+    ).toBeUndefined();
+    expect(
+      mapTenantEmailConflictToFieldError({
+        response: { status: 409, data: { detail: { code: "DUPLICATE_EMAIL" } } },
+      }),
+    ).toBe(EMAIL_ALREADY_EXISTS_MSG);
+  });
+});
+
+describe("validateTenantContactEmail", () => {
   const tenantEmails = new Set(["other-tenant@example.com"]);
   const userEmails = new Set([
     "admin@acme.com",
@@ -146,44 +155,12 @@ describe("validateTenantContactEmail with allowedUserEmails (AI4IDS-3401)", () =
     ).toBe(EMAIL_USER_ALREADY_EXISTS_MSG);
   });
 
-  it("allows an existing Institution Admin email for this institution", () => {
-    expect(
-      validateTenantContactEmail(
-        "Admin@Acme.com",
-        tenantEmails,
-        userEmails,
-        {
-          excludeTenantEmail: "old@acme.com",
-          excludeUserEmail: "old@acme.com",
-          allowedUserEmails: new Set(["admin@acme.com"]),
-        },
-      ),
-    ).toBeUndefined();
-  });
-
-  it("rejects a same-institution non-admin user email (BE 409 DUPLICATE_EMAIL)", () => {
-    expect(
-      validateTenantContactEmail(
-        "member@acme.com",
-        tenantEmails,
-        userEmails,
-        {
-          allowedUserEmails: collectInstitutionAdminEmails([
-            user("admin@acme.com", ["TENANT ADMIN"]),
-            user("member@acme.com", ["USER"]),
-          ]),
-        },
-      ),
-    ).toBe(EMAIL_USER_ALREADY_EXISTS_MSG);
-  });
-
   it("still rejects another institution contact email", () => {
     expect(
       validateTenantContactEmail(
         "other-tenant@example.com",
         tenantEmails,
         userEmails,
-        { allowedUserEmails: new Set(["admin@acme.com"]) },
       ),
     ).toBe(EMAIL_ALREADY_EXISTS_MSG);
   });

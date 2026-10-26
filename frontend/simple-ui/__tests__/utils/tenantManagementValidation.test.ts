@@ -264,7 +264,6 @@ describe("collectEditTenantErrors", () => {
     tenants: [tenant()],
     isEditTenantEmailEditable: false,
     knownTenantEmails: new Set(["ada@acme.com"]),
-    knownUserEmails: new Set(["ada@acme.com"]),
     editTenantEmail: "ada@acme.com",
   };
 
@@ -312,41 +311,26 @@ describe("collectEditTenantErrors", () => {
     ).toEqual({});
   });
 
-  it("prefers a user collision when the edited email belongs to someone else", () => {
+  it("rejects another institution contact email on edit (AI4IDS-3401)", () => {
     expect(
       collectEditTenantErrors({
         ...editing,
         isEditTenantEmailEditable: true,
         email: "other@acme.com",
-        knownUserEmails: new Set(["other@acme.com"]),
-        knownTenantEmails: new Set(["other@acme.com"]),
+        knownTenantEmails: new Set(["ada@acme.com", "other@acme.com"]),
       }).email,
-    ).toBe(EMAIL_USER_ALREADY_EXISTS_MSG);
+    ).toBe(EMAIL_ALREADY_EXISTS_MSG);
   });
 
-  it("allows an existing Institution Admin email for this institution (AI4IDS-3401)", () => {
+  it("does not reject unknown user emails on edit — PATCH decides (masked listUsers)", () => {
+    // User collisions are not checked client-side on Update Institution.
     expect(
       collectEditTenantErrors({
         ...editing,
         isEditTenantEmailEditable: true,
-        email: "admin@acme.com",
-        knownUserEmails: new Set(["ada@acme.com", "admin@acme.com"]),
-        allowedUserEmails: new Set(["admin@acme.com"]),
+        email: "someone@elsewhere.com",
       }),
     ).toEqual({});
-  });
-
-  it("rejects a same-institution non-admin user as the new contact (AI4IDS-3401)", () => {
-    expect(
-      collectEditTenantErrors({
-        ...editing,
-        isEditTenantEmailEditable: true,
-        email: "member@acme.com",
-        knownUserEmails: new Set(["ada@acme.com", "member@acme.com"]),
-        // Only Institution Admins are allow-listed — not ordinary users.
-        allowedUserEmails: new Set(["ada@acme.com"]),
-      }).email,
-    ).toBe(EMAIL_USER_ALREADY_EXISTS_MSG);
   });
 
   it("rejects a short or letterless contact name, and an invalid phone", () => {

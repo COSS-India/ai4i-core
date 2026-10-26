@@ -26,6 +26,12 @@ export interface RunEmailAvailabilityCheckOptions {
   userEmails: Set<string>;
   exclusions?: EmailUniquenessExclusions;
   skipRemoteCheck?: boolean;
+  /**
+   * Skip /auth/check-email and known-user collision (AI4IDS-3401 edit flow).
+   * listUsers emails stay masked even with unmask=true, so FE cannot tell
+   * Institution Admin vs other users — PATCH owns that decision.
+   */
+  skipUserCollision?: boolean;
 }
 
 export interface EmailAvailabilityResult {
@@ -56,7 +62,15 @@ function clientCollisionError(
 export async function runEmailAvailabilityCheck(
   options: RunEmailAvailabilityCheckOptions
 ): Promise<EmailAvailabilityResult> {
-  const { email, mode, tenantEmails, userEmails, exclusions, skipRemoteCheck } = options;
+  const {
+    email,
+    mode,
+    tenantEmails,
+    userEmails,
+    exclusions,
+    skipRemoteCheck,
+    skipUserCollision = false,
+  } = options;
 
   const formatError = validateEmailFormatOnly(email);
   if (formatError) {
@@ -72,6 +86,10 @@ export async function runEmailAvailabilityCheck(
     return { error: tenantTakenError, status: "idle" };
   }
 
+  if (skipUserCollision) {
+    return { status: "available" };
+  }
+
   if (skipRemoteCheck) {
     const clientError = clientCollisionError(
       email,
@@ -85,14 +103,14 @@ export async function runEmailAvailabilityCheck(
   }
 
   const lower = normalizeEmail(email);
-  const skipUserCollision =
+  const skipExcludedUser =
     (Boolean(exclusions?.excludeUserEmail) &&
       lower === normalizeEmail(exclusions?.excludeUserEmail ?? "")) ||
     emailSetHas(exclusions?.allowedUserEmails, lower);
 
   try {
     const exists = await authService.checkEmailExists(email);
-    if (exists && !skipUserCollision) {
+    if (exists && !skipExcludedUser) {
       return { error: userExistsMessage(mode), status: "idle" };
     }
   } catch {
@@ -106,7 +124,7 @@ export async function runEmailAvailabilityCheck(
     if (clientError) return { error: clientError, status: "idle" };
   }
 
-  if (userEmails.has(lower) && !skipUserCollision) {
+  if (userEmails.has(lower) && !skipExcludedUser) {
     return { error: userExistsMessage(mode), status: "idle" };
   }
 
