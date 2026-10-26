@@ -64,6 +64,26 @@ function resolveCreateEmailHint(emailStatus?: string): string {
   return FIELD_HINTS.tenant.email.helper;
 }
 
+function emailAvailabilityTone(
+  emailStatus?: string,
+): "success" | "muted" {
+  if (emailStatus === "available") return "success";
+  return "muted";
+}
+
+function emailAvailabilityLabel(emailStatus?: string): string {
+  if (emailStatus === "checking") return FIELD_HINTS.tenant.emailChecking;
+  return FIELD_HINTS.tenant.emailAvailable;
+}
+
+function formatPendingEmailHint(pendingEmail: string | null): string | null {
+  const pending = pendingEmail?.trim();
+  if (pending) {
+    return `${pending} — ${FIELD_HINTS.tenant.emailVerificationPending}`;
+  }
+  return null;
+}
+
 function InstitutionViewFields({
   values,
   pendingEmail,
@@ -90,6 +110,71 @@ function InstitutionViewFields({
   );
 }
 
+function InstitutionLockedEmailField({
+  email,
+  pendingEmail,
+}: Readonly<{ email: string; pendingEmail: string | null }>) {
+  return (
+    <FormControl>
+      <ReadOnlyField label="Email">
+        <InstitutionContactEmail email={email} pendingEmail={pendingEmail} />
+      </ReadOnlyField>
+      <FieldHint>{FIELD_HINTS.tenant.emailPendingOnly}</FieldHint>
+    </FormControl>
+  );
+}
+
+function CreateEmailHints({
+  errors,
+  emailStatus,
+  emailHint,
+}: Readonly<{
+  errors: InstitutionFormErrors;
+  emailStatus?: string;
+  emailHint: string | null;
+}>) {
+  return (
+    <FieldHint
+      show={!errors.email}
+      tone={emailAvailabilityTone(emailStatus)}
+    >
+      {emailHint}
+    </FieldHint>
+  );
+}
+
+function EditEmailHints({
+  errors,
+  pendingEmail,
+  emailStatus,
+}: Readonly<{
+  errors: InstitutionFormErrors;
+  pendingEmail: string | null;
+  emailStatus?: string;
+}>) {
+  const pendingHint = formatPendingEmailHint(pendingEmail);
+  const showAvailabilityHint =
+    !errors.email &&
+    (emailStatus === "checking" || emailStatus === "available");
+
+  return (
+    <>
+      {pendingHint ? (
+        <FieldHint show={!errors.email}>{pendingHint}</FieldHint>
+      ) : null}
+      <FieldHint show={!errors.email}>
+        {FIELD_HINTS.tenant.emailVerifyOnChange}
+      </FieldHint>
+      <FieldHint
+        show={showAvailabilityHint}
+        tone={emailAvailabilityTone(emailStatus)}
+      >
+        {emailAvailabilityLabel(emailStatus)}
+      </FieldHint>
+    </>
+  );
+}
+
 function InstitutionEditableEmailField({
   isCreate,
   emailEditable,
@@ -103,66 +188,41 @@ function InstitutionEditableEmailField({
 }: EditableEmailFieldProps) {
   const canEditEmail = isCreate || emailEditable;
   if (canEditEmail) {
-    const pendingHint = pendingEmail?.trim()
-      ? `${pendingEmail.trim()} — ${FIELD_HINTS.tenant.emailVerificationPending}`
-      : null;
-    const showAvailabilityHint =
-      !errors.email &&
-      (emailStatus === "checking" || emailStatus === "available");
-
     return (
-      <FormControl
-        isRequired={canEditEmail}
-        isInvalid={Boolean(errors.email)}
-      >
+      <FormControl isRequired isInvalid={Boolean(errors.email)}>
         <FieldLabel>Email</FieldLabel>
         <Input
           type="email"
           value={values.email}
           onChange={(e) => onEmailChange?.(e.target.value)}
           onBlur={isCreate ? onEmailBlur : undefined}
-          placeholder={isCreate ? FIELD_HINTS.tenant.email.placeholder : undefined}
+          placeholder={
+            isCreate ? FIELD_HINTS.tenant.email.placeholder : undefined
+          }
         />
         <FormErrorMessage>{errors.email}</FormErrorMessage>
         {isCreate ? (
-          <FieldHint
-            show={!errors.email}
-            tone={emailStatus === "available" ? "success" : "muted"}
-          >
-            {emailHint}
-          </FieldHint>
+          <CreateEmailHints
+            errors={errors}
+            emailStatus={emailStatus}
+            emailHint={emailHint}
+          />
         ) : (
-          <>
-            {pendingHint ? (
-              <FieldHint show={!errors.email}>{pendingHint}</FieldHint>
-            ) : null}
-            <FieldHint show={!errors.email}>
-              {FIELD_HINTS.tenant.emailVerifyOnChange}
-            </FieldHint>
-            <FieldHint
-              show={showAvailabilityHint}
-              tone={emailStatus === "available" ? "success" : "muted"}
-            >
-              {emailStatus === "checking"
-                ? FIELD_HINTS.tenant.emailChecking
-                : FIELD_HINTS.tenant.emailAvailable}
-            </FieldHint>
-          </>
+          <EditEmailHints
+            errors={errors}
+            pendingEmail={pendingEmail}
+            emailStatus={emailStatus}
+          />
         )}
       </FormControl>
     );
   }
 
   return (
-    <FormControl>
-      <ReadOnlyField label="Email">
-        <InstitutionContactEmail
-          email={values.email}
-          pendingEmail={pendingEmail}
-        />
-      </ReadOnlyField>
-      <FieldHint>{FIELD_HINTS.tenant.emailPendingOnly}</FieldHint>
-    </FormControl>
+    <InstitutionLockedEmailField
+      email={values.email}
+      pendingEmail={pendingEmail}
+    />
   );
 }
 

@@ -51,8 +51,7 @@ const DETAIL_SUB_TABS: readonly DetailSubTab[] = [
 ];
 
 function detailSubTabIndex(tab: string): number {
-  const idx = DETAIL_SUB_TABS.indexOf(tab as DetailSubTab);
-  return idx >= 0 ? idx : 0;
+  return Math.max(DETAIL_SUB_TABS.indexOf(tab as DetailSubTab), 0);
 }
 
 function detailSubTabFromIndex(idx: number): DetailSubTab {
