@@ -4,10 +4,13 @@ from __future__ import annotations
 import importlib.util
 import inspect
 import sys
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
+from typing import Annotated
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi import Depends, FastAPI
+from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.dialects import postgresql
 
@@ -211,3 +214,62 @@ class TestRouteHelpers:
         with pytest.raises(Exception) as exc:
             _route._validate_date_ranges(bad)
         assert exc.value.code == "INVALID_DATE_RANGE"
+
+
+class TestDatetimeRangeBounds:
+    """Date-range filters accept a date (whole UTC day) or a datetime (exact
+    instant), so the UI can send the bounds of the day it displays locally."""
+
+    IST = timezone(timedelta(hours=5, minutes=30))
+
+    def test_ist_day_bounds_reach_sql_unchanged(self):
+        w = _where(ServiceListFilters(
+            created_from=datetime(2026, 1, 5, tzinfo=self.IST),
+            created_to=datetime(2026, 1, 6, tzinfo=self.IST),
+        ))
+        assert "mm_services.created_at >= '2026-01-05 00:00:00+05:30'" in w
+        assert "mm_services.created_at < '2026-01-06 00:00:00+05:30'" in w
+
+    def test_naive_datetime_is_utc(self):
+        w = _where(ServiceListFilters(published_from=datetime(2026, 1, 5, 10, 0)))
+        assert "mm_services.published_at >= '2026-01-05 10:00:00+00:00'" in w
+
+    def _parse(self, raw):
+        app = FastAPI()
+
+        @app.get("/probe")
+        def probe(filters: Annotated[ServiceListFilterParams, Depends()]):
+            v = filters.created_from
+            return {"type": type(v).__name__, "iso": v.isoformat()}
+
+        return TestClient(app).get("/probe", params={"created_from": raw})
+
+    def test_plain_date_stays_a_date(self):
+        assert self._parse("2026-01-05").json() == {"type": "date", "iso": "2026-01-05"}
+
+    def test_datetime_keeps_its_offset(self):
+        r = self._parse("2026-01-05T00:00:00+05:30").json()
+        assert r == {"type": "datetime", "iso": "2026-01-05T00:00:00+05:30"}
+
+    def test_utc_z_suffix(self):
+        assert self._parse("2026-01-05T18:30:00Z").json()["iso"] == "2026-01-05T18:30:00+00:00"
+
+    def test_garbage_is_422(self):
+        assert self._parse("not-a-date").status_code == 422
+        assert self._parse("2026-13-05").status_code == 422
+
+    def test_mixed_date_and_datetime_range_validates(self):
+        ok = ServiceListFilterParams(
+            created_from=date(2026, 1, 5), created_to=datetime(2026, 1, 5, 12, tzinfo=self.IST)
+        )
+        _route._validate_date_ranges(ok)
+        bad = ServiceListFilterParams(
+            created_from=datetime(2026, 1, 6, tzinfo=self.IST), created_to=date(2026, 1, 4)
+        )
+        with pytest.raises(_route.ValidationError):
+            _route._validate_date_ranges(bad)
+
+    def test_empty_datetime_range_is_rejected(self):
+        t = datetime(2026, 1, 5, tzinfo=self.IST)
+        with pytest.raises(_route.ValidationError):
+            _route._validate_date_ranges(ServiceListFilterParams(published_from=t, published_to=t))

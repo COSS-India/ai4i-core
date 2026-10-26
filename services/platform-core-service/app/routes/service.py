@@ -3,10 +3,11 @@ Service management API endpoints.
 """
 
 import logging
-from datetime import date
+from datetime import date, datetime
 from typing import Annotated, Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, Query, Request, Response
+from pydantic import BeforeValidator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import importlib as _importlib
@@ -15,7 +16,11 @@ from app.core.database import get_db
 from app.core.exceptions import AppError, ValidationError
 from app.core.permissions import is_platform_admin
 from app.dependencies.services import ServiceService, get_service_service
-from app.repositories.model_management.service_repository import ServiceListFilters
+from app.repositories.model_management.service_repository import (
+    ServiceListFilters,
+    range_end_exclusive,
+    range_start,
+)
 from app.schemas.model_management.service_columns import (
     ADMIN_ONLY_FILTER_PARAMS,
     ADMIN_ONLY_KEYS,
@@ -153,6 +158,27 @@ async def list_try_it_services(
     )
 
 
+def _parse_date_or_datetime(value: Any) -> Any:
+    """A bare YYYY-MM-DD stays a calendar date (a whole UTC day); anything with
+    a time is a datetime that keeps its UTC offset. Pydantic's own union would
+    read 2026-01-05T00:00:00+05:30 as the date 2026-01-05 and drop the offset."""
+    if not isinstance(value, str):
+        return value
+    value = value.strip()
+    if len(value) == 10:
+        return date.fromisoformat(value)
+    return datetime.fromisoformat(value)
+
+
+DateOrDatetime = Annotated[date | datetime, BeforeValidator(_parse_date_or_datetime)]
+
+_DATE_PARAM_HELP = (
+    "Either an ISO date (YYYY-MM-DD, a whole UTC day) or an ISO datetime with offset "
+    "(e.g. 2026-01-05T00:00:00+05:30, an exact instant; no offset means UTC). "
+    "URL-encode '+' as %2B."
+)
+
+
 class ServiceListFilterParams:
     """Query-param dependency: the filter half of GET /services."""
 
@@ -201,38 +227,40 @@ class ServiceListFilterParams:
             ),
         ] = None,
         created_from: Annotated[
-            Optional[date],
+            Optional[DateOrDatetime],
             Query(
                 description=(
-                    "ISO date (YYYY-MM-DD, UTC). Services created on or after the start of this day. "
-                    "Admin/moderator only."
+                    "Services created at or after this point: the start of the day for a date, "
+                    "the instant itself for a datetime. " + _DATE_PARAM_HELP + " Admin/moderator only."
                 ),
             ),
         ] = None,
         created_to: Annotated[
-            Optional[date],
+            Optional[DateOrDatetime],
             Query(
                 description=(
-                    "ISO date (YYYY-MM-DD, UTC). Services created up to and including this day. "
-                    "Must not be before created_from. Admin/moderator only."
+                    "Services created before this point: up to and including the day for a date, "
+                    "strictly before the instant for a datetime (send the next day's local midnight). "
+                    + _DATE_PARAM_HELP + " Must not be before created_from. Admin/moderator only."
                 ),
             ),
         ] = None,
         published_from: Annotated[
-            Optional[date],
+            Optional[DateOrDatetime],
             Query(
                 description=(
-                    "ISO date (YYYY-MM-DD, UTC). Services published on or after the start of this day. "
-                    "Admin/moderator only."
+                    "Services published at or after this point: the start of the day for a date, "
+                    "the instant itself for a datetime. " + _DATE_PARAM_HELP + " Admin/moderator only."
                 ),
             ),
         ] = None,
         published_to: Annotated[
-            Optional[date],
+            Optional[DateOrDatetime],
             Query(
                 description=(
-                    "ISO date (YYYY-MM-DD, UTC). Services published up to and including this day. "
-                    "Must not be before published_from. Admin/moderator only."
+                    "Services published before this point: up to and including the day for a date, "
+                    "strictly before the instant for a datetime (send the next day's local midnight). "
+                    + _DATE_PARAM_HELP + " Must not be before published_from. Admin/moderator only."
                 ),
             ),
         ] = None,
@@ -327,12 +355,13 @@ def _reject_admin_only_filters(filters: ServiceListFilterParams, is_admin: bool)
 
 
 def _validate_date_ranges(filters: ServiceListFilterParams) -> None:
-    """Raise INVALID_DATE_RANGE when a *_from date is after its *_to date."""
+    """Raise INVALID_DATE_RANGE when a *_from/*_to pair selects nothing. Bounds
+    are compared as instants so a date and a datetime can be mixed."""
     for lo_name, lo, hi_name, hi in (
         ("created_from", filters.created_from, "created_to", filters.created_to),
         ("published_from", filters.published_from, "published_to", filters.published_to),
     ):
-        if lo is not None and hi is not None and lo > hi:
+        if lo is not None and hi is not None and range_start(lo) >= range_end_exclusive(hi):
             raise ValidationError(
                 message=f"{lo_name} must not be after {hi_name}",
                 code="INVALID_DATE_RANGE",

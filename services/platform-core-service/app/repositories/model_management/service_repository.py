@@ -30,7 +30,9 @@ class ServiceListFilters:
 
     Date bounds are inclusive calendar days (UTC): a ``*_from`` date matches
     from 00:00 of that day, a ``*_to`` date up to the end of that day. A
-    ``datetime`` is used as-is (``*_from`` inclusive, ``*_to`` exclusive).
+    ``datetime`` is an exact instant (``*_from`` inclusive, ``*_to`` exclusive),
+    so a caller can send the bounds of a day in its own timezone; a naive
+    datetime is taken as UTC.
     """
 
     task_types: Optional[List[str]] = None
@@ -72,16 +74,18 @@ def _contains(column, value: str):
     return column.ilike(f"%{_escape_like(value)}%", escape="\\")
 
 
-def _day_start(value: date | datetime) -> datetime:
+def range_start(value: date | datetime) -> datetime:
+    """Inclusive lower bound: a date's UTC midnight, or the datetime itself."""
     if isinstance(value, datetime):
-        return value
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
     return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
 
 
-def _range_end_exclusive(value: date | datetime) -> datetime:
+def range_end_exclusive(value: date | datetime) -> datetime:
+    """Exclusive upper bound: the next day's UTC midnight, or the datetime itself."""
     if isinstance(value, datetime):
-        return value
-    return _day_start(value) + timedelta(days=1)
+        return range_start(value)
+    return range_start(value) + timedelta(days=1)
 
 
 def _apply_list_filters(stmt, filters: ServiceListFilters):
@@ -109,13 +113,13 @@ def _apply_list_filters(stmt, filters: ServiceListFilters):
     if f.tier_ids:
         stmt = stmt.where(Service.tier_ids.overlap(array(f.tier_ids, type_=String)))
     if f.created_from is not None:
-        stmt = stmt.where(Service.created_at >= _day_start(f.created_from))
+        stmt = stmt.where(Service.created_at >= range_start(f.created_from))
     if f.created_to is not None:
-        stmt = stmt.where(Service.created_at < _range_end_exclusive(f.created_to))
+        stmt = stmt.where(Service.created_at < range_end_exclusive(f.created_to))
     if f.published_from is not None:
-        stmt = stmt.where(Service.published_at >= _day_start(f.published_from))
+        stmt = stmt.where(Service.published_at >= range_start(f.published_from))
     if f.published_to is not None:
-        stmt = stmt.where(Service.published_at < _range_end_exclusive(f.published_to))
+        stmt = stmt.where(Service.published_at < range_end_exclusive(f.published_to))
     return stmt
 
 
