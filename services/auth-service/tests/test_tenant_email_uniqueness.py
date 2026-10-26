@@ -70,7 +70,7 @@ class TestUpdateTenantEmailUniqueness:
             await svc.update_tenant(_acting_admin(), 1, body)
 
         assert exc_info.value.status_code == 409
-        assert exc_info.value.code == "DUPLICATE_TENANT_EMAIL"
+        assert exc_info.value.detail["code"] == "DUPLICATE_TENANT_EMAIL"
 
     @pytest.mark.asyncio
     async def test_update_keeping_own_email_is_allowed(self) -> None:
@@ -104,7 +104,7 @@ class TestUpdateTenantEmailUniqueness:
             await svc.update_tenant(_acting_admin(), 1, body)
 
         assert exc_info.value.status_code == 409
-        assert exc_info.value.code == "DUPLICATE_EMAIL"
+        assert exc_info.value.detail["code"] == "DUPLICATE_EMAIL"
 
     @pytest.mark.asyncio
     async def test_update_to_email_of_user_in_another_tenant_raises_409(self) -> None:
@@ -120,20 +120,16 @@ class TestUpdateTenantEmailUniqueness:
             await svc.update_tenant(_acting_admin(), 1, body)
 
         assert exc_info.value.status_code == 409
-        assert exc_info.value.code == "DUPLICATE_EMAIL"
+        assert exc_info.value.detail["code"] == "DUPLICATE_EMAIL"
 
     @pytest.mark.asyncio
-    async def test_update_to_email_of_own_tenant_admin_is_allowed(self) -> None:
-        """Email belonging to an Institution Admin of the same tenant must not be rejected."""
+    async def test_update_to_email_of_own_tenant_user_is_allowed(self) -> None:
+        """Email belonging to a user within the same tenant must not be rejected."""
         svc = _make_service()
-        svc._roles.get_user_roles = AsyncMock(return_value=["TENANT ADMIN"])
-        svc.enforce_scope = AsyncMock()  # roles mock now describes the target user
         svc._tenants.get_by_id = AsyncMock(return_value=_tenant(1, "old@tenant.com"))
         svc._tenants.get_by_email = AsyncMock(return_value=None)
-        # Active admin of the same tenant (tenant_id=1 == tenant_id being updated)
-        existing_admin = _user(tenant_id=1)
-        existing_admin.is_active = True
-        svc._users.get_by_email = AsyncMock(return_value=existing_admin)
+        # User belongs to same tenant (tenant_id=1 == tenant_id being updated)
+        svc._users.get_by_email = AsyncMock(return_value=_user(tenant_id=1))
 
         body = MagicMock()
         body.model_dump.return_value = {"email": "admin@tenant.com"}
@@ -141,29 +137,6 @@ class TestUpdateTenantEmailUniqueness:
         await svc.update_tenant(_acting_admin(), 1, body)
 
         svc._tenants.update.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_update_to_email_of_own_tenant_non_admin_raises_409(self) -> None:
-        """A same-tenant non-admin holds the address: the verify flow would move
-        the current admin onto it, colliding on users.email → 409 up front."""
-        svc = _make_service()
-        svc._roles.get_user_roles = AsyncMock(return_value=["USER"])
-        svc.enforce_scope = AsyncMock()  # roles mock now describes the target user
-        svc._tenants.get_by_id = AsyncMock(return_value=_tenant(1, "old@tenant.com"))
-        admin = User(id=uuid4(), email="old@tenant.com", username="adm", tenant_id=1)
-        member = _user(tenant_id=1)
-        svc._users.get_by_email = AsyncMock(
-            side_effect=lambda e: admin if e == "old@tenant.com" else member
-        )
-
-        body = MagicMock()
-        body.model_dump.return_value = {"email": "member@tenant.com"}
-
-        with pytest.raises(HTTPException) as exc_info:
-            await svc.update_tenant(_acting_admin(), 1, body)
-
-        assert exc_info.value.code == "DUPLICATE_EMAIL"
-        svc._tenants.update.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_update_case_variant_of_another_tenants_email_raises_409(self) -> None:
@@ -179,4 +152,4 @@ class TestUpdateTenantEmailUniqueness:
             await svc.update_tenant(_acting_admin(), 1, body)
 
         assert exc_info.value.status_code == 409
-        assert exc_info.value.code == "DUPLICATE_TENANT_EMAIL"
+        assert exc_info.value.detail["code"] == "DUPLICATE_TENANT_EMAIL"

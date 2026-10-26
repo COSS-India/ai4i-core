@@ -244,10 +244,6 @@ class TenantResponse(BaseSchema):
     allocated_budget: Optional[Decimal] = None
     budget_effective_from: Optional[datetime] = None
     budget_effective_to: Optional[datetime] = None
-    # New contact email awaiting verification (masked); ``email`` keeps the
-    # current value until it is verified. Read via active_pending_email so an
-    # expired request stops showing as pending.
-    pending_email: Optional[str] = Field(None, validation_alias="active_pending_email")
 
 
 _TENANT_USER_CREATE_EXAMPLE = {
@@ -540,14 +536,10 @@ class GetTenantResponse(SuccessResponse):
     data: TenantResponse
 
 
-class UpdateTenantData(TenantResponse):
-    email_verification_sent: bool = False
-
-
 class UpdateTenantResponse(SuccessResponse):
     """PATCH /auth/tenants/{tenant_id}"""
 
-    data: UpdateTenantData
+    data: TenantResponse
 
 
 class UpdateTenantStatusResponse(SuccessResponse):

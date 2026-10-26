@@ -61,19 +61,10 @@ from app.schemas.tenant import (
 from app.schemas.user import UserListResponse
 from app.services.allocation_service import AllocationService
 from app.services.api_key_service import APIKeyService
-from app.services.auth_email_templates import (
-    render_account_deleted,
-    render_email_change,
-    render_setup_link,
-    render_verify_email,
-)
+from app.services.auth_email_templates import render_account_deleted, render_setup_link, render_verify_email
 from app.services.tenant_lifecycle import (
     TENANT_ONBOARDING_STATUSES,
     assert_default_tenant_not_targeted,
-    assert_email_available,
-    assert_not_platform_admin,
-    assert_tenant_email_editable,
-    find_email_contact,
     assert_valid_tenant_status_transition,
     is_default_tenant,
     sync_tenant_users_for_status,
@@ -874,7 +865,7 @@ class TenantService:
         Default (list/view): email and phone are masked. With ``unmask`` (Edit
         Tenant form): the phone is revealed; the contact email always stays
         masked. While the tenant is PENDING, both stay masked even with
-        ``unmask``. ``pending_email`` is masked like ``email``.
+        ``unmask``.
         """
         data = to_response(tenant, TenantResponse)
         if unmask and tenant.status != TenantStatus.PENDING:
@@ -910,13 +901,6 @@ class TenantService:
                     "message": "A tenant with this organisation name already exists.",
                 },
             )
-
-    async def _is_institution_admin(self, user: User, tenant_id: int) -> bool:
-        # Deactivated admins don't count — contact mail must reach a live account.
-        if user.tenant_id != tenant_id or not user.is_active:
-            return False
-        roles = await self._roles.get_user_roles(user.id)
-        return RoleName.TENANT_ADMIN.value in roles
 
     async def _resolve_pending_email_admin(
         self, tenant: Tenant, data: dict
@@ -958,39 +942,48 @@ class TenantService:
             )
         return old_email, new_email, admin
 
-    async def _plan_email_change(
-        self, tenant: Tenant, new_email: str, email_changed: bool
-    ) -> tuple[bool, Optional[User]]:
-        """``(hold_for_verification, contact)`` for this update. A non-PENDING
-        tenant holds the change until the new address is verified, unless that
-        address already belongs to an active Institution Admin of the tenant;
-        ``contact`` is the user whose login follows ``tenant.email`` on
-        confirmation. 409 while email edits are locked."""
-        if not email_changed:
-            return False, None
-        assert_tenant_email_editable(tenant)
-        if tenant.status == TenantStatus.PENDING:
-            return False, None
-        holder = await self._users.get_by_email(new_email)
-        if holder is not None and await self._is_institution_admin(holder, tenant.id):
-            return False, None
-        return True, await find_email_contact(self._users, tenant)
-
-    @staticmethod
-    def _stage_pending_email(
-        data: dict, new_email: str, email_changed: bool, hold_for_verification: bool
+    async def _assert_email_available(
+        self, data: dict, tenant_id: int, admin: Optional[User]
     ) -> None:
-        """Hold the new address in ``pending_email`` (saving the other fields
-        only), or clear any older pending request when the email changes now.
-        A newer request overwrites ``pending_email``, which invalidates older
-        links."""
-        if hold_for_verification:
-            data.pop("email")
-            data["pending_email"] = new_email
-            data["pending_email_expires_at"] = setup_token_expires_at()
-        elif email_changed:
-            data["pending_email"] = None
-            data["pending_email_expires_at"] = None
+        """Single, admin-aware email-uniqueness check. Consolidates what
+        PR #828 added (cross-tenant tenant+user collision) with the
+        reissue-time check this PR needed (any non-admin user collision),
+        so there is exactly one query per table and one place that owns
+        email uniqueness for this endpoint.
+        """
+        if "email" not in data:
+            return
+        existing_tenant = await self._tenants.get_by_email(data["email"])
+        if existing_tenant and existing_tenant.id != tenant_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "DUPLICATE_TENANT_EMAIL",
+                    "message": "A tenant with this email already exists.",
+                },
+            )
+        existing_user = await self._users.get_by_email(data["email"])
+        if existing_user is None:
+            return
+        if admin is not None:
+            # Reissue flow will assign ``admin.email = new_email``. Any other
+            # holder — same-tenant or cross-tenant — breaks the users.email
+            # UNIQUE constraint at flush time, so only the admin themselves
+            # is an allowed match.
+            collides = existing_user.id != admin.id
+        else:
+            # No reissue planned: tenant.email is independent of users.email,
+            # so a same-tenant user happening to share the address is
+            # harmless. Only reject cross-tenant.
+            collides = existing_user.tenant_id != tenant_id
+        if collides:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "DUPLICATE_EMAIL",
+                    "message": "This email is already in use.",
+                },
+            )
 
     async def update_tenant(
         self,
@@ -998,28 +991,21 @@ class TenantService:
         tenant_id: int,
         body: TenantUpdate,
         background_tasks: Optional[BackgroundTasks] = None,
-    ) -> tuple[Tenant, bool]:
-        """Patch a tenant's editable fields. Returns ``(tenant, link_sent)``.
+    ) -> Tenant:
+        """Patch a tenant's editable fields.
 
         When the tenant is ``PENDING`` and the email changes, the
         auto-provisioned admin user's email is updated to match, their
         outstanding SETUP tokens are deactivated, and a fresh activation
         email is enqueued to the new address.
 
-        For any other status, a new email that already belongs to an active
-        Institution Admin of this tenant applies immediately. Otherwise it is
-        held in ``pending_email`` and an EMAIL_CHANGE link is sent to it;
-        ``AuthService.confirm_tenant_email_change`` applies it. Email edits
-        are refused while SUSPENDED/DEACTIVATED and for the Default
-        Organisation.
-
         Transactional contract: every write — tenant column update, admin's
         ``users.email``, token deactivation, new ``token_verification`` row
         — flushes against the SAME ``AsyncSession`` and is committed once
         at the end. Any pre-commit failure (409 on duplicate email, admin
-        not found, helper raise) aborts the whole change. Emails are
-        enqueued **after** commit, so a rolled-back transaction can never
-        leak a delivered email whose token no longer exists.
+        not found, helper raise) aborts the whole change. The activation
+        email is enqueued **after** commit, so a rolled-back transaction
+        can never leak a delivered email whose token no longer exists.
         """
         # TENANT ADMIN now holds tenant.update (perm 42), which the gateway
         # shares between this profile endpoint and the status endpoint. Without
@@ -1044,18 +1030,9 @@ class TenantService:
         # admin-email update + token invalidation.
         await self._assert_organisation_available(data, tenant_id)
         old_email, new_email, admin = await self._resolve_pending_email_admin(tenant, data)
-        email_changed = bool(new_email) and new_email != old_email
-        hold_for_verification, contact = await self._plan_email_change(
-            tenant, new_email, email_changed
-        )
-        aligned = admin or contact
-        if aligned is not None:
-            await assert_not_platform_admin(self._roles, aligned)
-        if "email" in data:
-            await assert_email_available(self._tenants, self._users, data["email"], tenant_id, aligned)
+        await self._assert_email_available(data, tenant_id, admin)
 
         # ── Stage writes against the open session (flush only, no commit).
-        self._stage_pending_email(data, new_email, email_changed, hold_for_verification)
         data["updated_by"] = current_user.id
         await self._tenants.update(tenant, data)
 
@@ -1072,14 +1049,6 @@ class TenantService:
                 verifications_repo=self._verifications,
                 token_service=self._tokens,
                 background_tasks=background_tasks,
-            )
-        change_token: Optional[str] = None
-        if hold_for_verification:
-            change_token = self._tokens.create_email_change_token(
-                user_id=str(current_user.id), new_email=new_email, tenant_id=tenant.id
-            )
-            await persist_token_verification(
-                self._verifications, change_token, current_user.id, setup_token_expires_at()
             )
 
         # ── Single atomic commit + refresh.
@@ -1100,18 +1069,7 @@ class TenantService:
                 self._email,
                 lambda: render_setup_link(admin, new_setup_token),
             )
-        if change_token is not None:
-            logger.info("Tenant %s email change pending verification", tenant.id)
-            organisation = tenant.organisation
-            enqueue_email(
-                background_tasks,
-                self._email,
-                lambda: render_email_change(
-                    new_email, organisation, change_token,
-                    sends_setup_link=contact is not None,
-                ),
-            )
-        return tenant, new_setup_token is not None or change_token is not None
+        return tenant
 
     async def update_tenant_status(
         self,

@@ -183,17 +183,11 @@ async def update_tenant(
 
     Status changes go through PATCH /{tenant_id}/status. Duplicate
     organisation or email returns 409. Returned contact PII is masked.
-
-    Email changes are refused (409) while the tenant is SUSPENDED or
-    DEACTIVATED. Changing the email to an existing Institution Admin of this
-    tenant applies immediately. Otherwise (non-PENDING tenant) a verification link
-    is sent to the new address and ``email`` stays unchanged until it is
-    confirmed — ``pending_email`` / ``email_verification_sent`` report this.
     """
-    tenant, link_sent = await svc.update_tenant(current_user, tenant_id, body, background)
-    data = to_response(tenant, TenantResponse)
-    data["email_verification_sent"] = link_sent
-    return UpdateTenantResponse(data=mask_pii_in_dict(data))
+    tenant = await svc.update_tenant(current_user, tenant_id, body, background)
+    return UpdateTenantResponse(
+        data=mask_pii_in_dict(to_response(tenant, TenantResponse))
+    )
 
 
 @router.patch(

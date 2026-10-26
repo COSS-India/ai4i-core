@@ -22,7 +22,7 @@ A 'default' user is admin-created when:
     shared env value, so it must not become promotable.
 
 Revision ID: e7a1b2c3d4f5
-Revises: c4d5e6f7a8b9
+Revises: 74435be97765
 Create Date: 2026-10-26
 
 """
@@ -32,7 +32,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "e7a1b2c3d4f5"
-down_revision: Union[str, None] = "c4d5e6f7a8b9"
+down_revision: Union[str, None] = "74435be97765"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

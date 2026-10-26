@@ -27,12 +27,10 @@ def _make_service() -> TenantService:
     tenant_repo.save_and_refresh = AsyncMock()
     user_repo = MagicMock()
     user_repo.get_by_email = AsyncMock(return_value=None)
-    role_service = MagicMock()
-    role_service.get_user_roles = AsyncMock(return_value=[])
     svc = TenantService(
         tenant_repo=tenant_repo,
         user_repo=user_repo,
-        role_service=role_service,
+        role_service=MagicMock(),
         verification_repo=MagicMock(),
         credentials_repo=MagicMock(),
         token_service=MagicMock(),
@@ -117,7 +115,7 @@ class TestPendingEmailReissue:
                                     background_tasks=MagicMock())
 
         assert exc.value.status_code == 409
-        assert exc.value.code == "DUPLICATE_EMAIL"
+        assert exc.value.detail["code"] == "DUPLICATE_EMAIL"
         svc._tenants.commit.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -133,18 +131,15 @@ class TestPendingEmailReissue:
                                     background_tasks=MagicMock())
 
         assert exc.value.status_code == 409
-        assert exc.value.code == "DUPLICATE_TENANT_EMAIL"
+        assert exc.value.detail["code"] == "DUPLICATE_TENANT_EMAIL"
         svc._tenants.commit.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_active_tenant_existing_admin_applied_no_reissue(self) -> None:
-        """Non-PENDING: new address already a tenant admin → applied directly; no re-issue."""
+    async def test_active_tenant_same_tenant_user_allowed_no_reissue(self) -> None:
+        """Non-PENDING: a same-tenant user sharing the address is allowed; no re-issue."""
         svc = _make_service()
-        svc._roles.get_user_roles = AsyncMock(return_value=["TENANT ADMIN"])
         svc._tenants.get_by_id = AsyncMock(return_value=_tenant(TenantStatus.ACTIVE, "old@tenant.com"))
-        existing_admin = _user("new@tenant.com", tenant_id=1)
-        existing_admin.is_active = True
-        svc._users.get_by_email = AsyncMock(return_value=existing_admin)
+        svc._users.get_by_email = AsyncMock(return_value=_user("new@tenant.com", tenant_id=1))
 
         with patch("app.services.tenant_service.reissue_setup_token",
                    new=AsyncMock()) as reissue, \
@@ -168,5 +163,5 @@ class TestPendingEmailReissue:
                                     background_tasks=MagicMock())
 
         assert exc.value.status_code == 409
-        assert exc.value.code == "DUPLICATE_EMAIL"
+        assert exc.value.detail["code"] == "DUPLICATE_EMAIL"
         svc._tenants.commit.assert_not_awaited()
