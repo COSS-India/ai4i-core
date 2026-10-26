@@ -10,31 +10,15 @@ import FormSection from "../common/FormSection";
 import ReadOnlyField from "../common/ReadOnlyField";
 import FieldHint from "../common/FieldHint";
 import FieldLabel from "../common/FieldLabel";
-import { formatModelTaskTypeLabel } from "../../config/constants";
+import {
+  TIER_RATE_LIMIT_PLATFORM_DEFAULT,
+  formatModelTaskTypeLabel,
+} from "../../config/constants";
 import { FIELD_HINTS } from "../../config/fieldHints";
+import { formatMonthlyQuota } from "../../utils/valueFormatters";
 import type { TierFormData, TierFormQuota } from "../../types/tierManagement";
 import { QuotaEditor } from "./QuotaEditor";
 import { validateRateLimit } from "./tierFormValidation";
-
-function formatQuotaAmount(
-  limit: number,
-  unit?: string,
-): { boldText: string; suffixText: string } {
-  const trimmedUnit = (unit ?? "").trim();
-  const spaceIdx = trimmedUnit.indexOf(" ");
-  if (spaceIdx === -1) {
-    return {
-      boldText: limit.toLocaleString(),
-      suffixText: trimmedUnit ? `${trimmedUnit.toLowerCase()}/month` : "/month",
-    };
-  }
-  const prefix = trimmedUnit.slice(0, spaceIdx);
-  const rest = trimmedUnit.slice(spaceIdx + 1);
-  return {
-    boldText: `${limit.toLocaleString()}${prefix}`,
-    suffixText: `${rest.toLowerCase()}/month`,
-  };
-}
 
 interface TierFormProps {
   readonly formData: TierFormData;
@@ -74,21 +58,17 @@ export function TierForm({
           <ReadOnlyField label="Rate Limit (per minute)">
             {formData.rateLimit
               ? Number(formData.rateLimit).toLocaleString("en-US")
-              : "Platform default"}
+              : TIER_RATE_LIMIT_PLATFORM_DEFAULT}
           </ReadOnlyField>
           {formData.quotas.length ? (
             formData.quotas.map((q) => {
               const limit = Number(q.limit);
-              const { boldText, suffixText } = formatQuotaAmount(
-                Number.isFinite(limit) ? limit : 0,
-                q.unit,
-              );
               return (
                 <ReadOnlyField
                   key={q.modelTaskType}
                   label={formatModelTaskTypeLabel(q.modelTaskType)}
                 >
-                  {boldText} {suffixText}
+                  {formatMonthlyQuota(Number.isFinite(limit) ? limit : 0, q.unit)}
                 </ReadOnlyField>
               );
             })

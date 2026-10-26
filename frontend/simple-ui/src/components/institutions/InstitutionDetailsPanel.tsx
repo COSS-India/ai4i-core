@@ -21,24 +21,24 @@ import {
 import { FiEye, FiInfo } from "react-icons/fi";
 import {
   INSTITUTION,
+  TIER_RATE_LIMIT_PLATFORM_DEFAULT,
   formatModelTaskTypeLabel,
   formatTenantStatusLabel,
   getTenantStatusColorScheme,
 } from "../../config/constants";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
-import { EMPTY_VALUE, dash, fmtDate } from "../../utils/valueFormatters";
+import {
+  EMPTY_VALUE,
+  dash,
+  fmtDate,
+  formatMonthlyQuota,
+} from "../../utils/valueFormatters";
 import type { TenantView, TierLimits, TierQuotaLimit } from "../../types/tenant";
 import DataTable, { DATA_TABLE_HEADER_SX, type DataTableColumn } from "../common/table";
 import InstitutionForm from "./InstitutionForm";
 
 /** Shown for Tier/Budget when the call behind them failed — not the same as unassigned. */
 const UNAVAILABLE = "Unavailable";
-
-/** "99,999,999 audio minutes/month" — the unit's underscores read as spaces. */
-function formatMonthlyQuota(quota: TierQuotaLimit): string {
-  const amount = quota.monthly_quota.toLocaleString("en-US", { maximumFractionDigits: 2 });
-  return `${amount} ${quota.unit.replaceAll("_", " ")}/month`;
-}
 
 const QUOTA_COLUMNS: DataTableColumn<TierQuotaLimit>[] = [
   {
@@ -50,7 +50,7 @@ const QUOTA_COLUMNS: DataTableColumn<TierQuotaLimit>[] = [
   {
     id: "monthly_quota",
     header: "Quota",
-    cell: (row) => formatMonthlyQuota(row),
+    cell: (row) => formatMonthlyQuota(row.monthly_quota, row.unit),
   },
 ];
 
@@ -84,7 +84,9 @@ function TierUsageLimits({ tierLimits }: Readonly<{ tierLimits: TierLimits | nul
               Rate Limit
             </Text>
             <Text>
-              {rateLimit == null ? EMPTY_VALUE : `${rateLimit.toLocaleString("en-US")} requests/min`}
+              {rateLimit == null
+                ? TIER_RATE_LIMIT_PLATFORM_DEFAULT
+                : `${rateLimit.toLocaleString("en-US")} requests/min`}
             </Text>
           </Box>
           <Box mt={4}>
