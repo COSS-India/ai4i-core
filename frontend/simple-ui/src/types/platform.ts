@@ -219,8 +219,8 @@ export interface ModelResponse {
   updatedOn?: number | null;
   createdAt?: string | null;
   /**
-   * Number of services created for this model (AI4IDS-3402).
-   * Prefer this when BE includes it on list/detail; FE falls back to client-side count.
+   * Optional service count from the models API (future optimisation).
+   * FE currently derives counts from the services list; use this when BE adds it.
    */
   serviceCount?: number | null;
 }
