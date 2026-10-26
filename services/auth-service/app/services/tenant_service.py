@@ -70,6 +70,10 @@ from app.services.auth_email_templates import (
 from app.services.tenant_lifecycle import (
     TENANT_ONBOARDING_STATUSES,
     assert_default_tenant_not_targeted,
+    assert_email_available,
+    assert_not_platform_admin,
+    assert_tenant_email_editable,
+    find_email_contact,
     assert_valid_tenant_status_transition,
     is_default_tenant,
     sync_tenant_users_for_status,
@@ -276,10 +280,6 @@ def _assert_tenant_active_for_user_deactivation(
             message="Tenant users can only be suspended while the tenant is active.",
             code="TENANT_NOT_ACTIVE",
         )
-
-
-# Email edits are refused for these statuses; other fields stay editable.
-_EMAIL_LOCKED_STATUSES = (TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED)
 
 
 class TenantService:
@@ -906,89 +906,6 @@ class TenantService:
             )
         return old_email, new_email, admin
 
-    def _assert_email_editable(self, tenant: Tenant) -> None:
-        if tenant.status in _EMAIL_LOCKED_STATUSES:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "TENANT_EMAIL_EDIT_NOT_ALLOWED",
-                    "message": (
-                        "The email cannot be changed while the institution "
-                        f"is {tenant.status.value.lower()}."
-                    ),
-                },
-            )
-        # Its contact is the seeded platform admin — changing the email would
-        # hand that account over.
-        assert_default_tenant_not_targeted(
-            tenant, message="The Default Organisation's email cannot be changed."
-        )
-
-    async def _email_contact(self, tenant: Tenant) -> Optional[User]:
-        """The user whose login tracks ``tenant.email``; None when the address
-        no longer maps to a user of this tenant (contact's own email edited,
-        contact deleted, legacy data)."""
-        contact = await self._users.get_by_email(tenant.email)
-        return contact if contact is not None and contact.tenant_id == tenant.id else None
-
-    async def _assert_not_platform_admin(self, user: User) -> None:
-        # Re-aligning would move (and on confirmation, hand over) a platform
-        # administrator's account.
-        if RoleName.ADMIN.value in await self._roles.get_user_roles(user.id):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "TENANT_EMAIL_EDIT_NOT_ALLOWED",
-                    "message": (
-                        "The email cannot be changed: the institution's contact "
-                        "is a platform administrator."
-                    ),
-                },
-            )
-
-    async def _assert_email_available(
-        self, data: dict, tenant_id: int, admin: Optional[User]
-    ) -> None:
-        """Single, admin-aware email-uniqueness check. Consolidates what
-        PR #828 added (cross-tenant tenant+user collision) with the
-        reissue-time check this PR needed (any non-admin user collision),
-        so there is exactly one query per table and one place that owns
-        email uniqueness for this endpoint.
-        """
-        if "email" not in data:
-            return
-        existing_tenant = await self._tenants.get_by_email(data["email"])
-        if existing_tenant and existing_tenant.id != tenant_id:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "DUPLICATE_TENANT_EMAIL",
-                    "message": "A tenant with this email already exists.",
-                },
-            )
-        existing_user = await self._users.get_by_email(data["email"])
-        if existing_user is None:
-            return
-        if admin is not None:
-            # Reissue flow will assign ``admin.email = new_email``. Any other
-            # holder — same-tenant or cross-tenant — breaks the users.email
-            # UNIQUE constraint at flush time, so only the admin themselves
-            # is an allowed match.
-            collides = existing_user.id != admin.id
-        else:
-            # No reissue planned: tenant.email is independent of users.email,
-            # so a same-tenant user happening to share the address is
-            # harmless. Only reject cross-tenant.
-            collides = existing_user.tenant_id != tenant_id
-        if collides:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "DUPLICATE_EMAIL",
-                    "message": "This email is already in use.",
-                },
-            )
-
     async def update_tenant(
         self,
         current_user: User,
@@ -1045,17 +962,18 @@ class TenantService:
         hold_for_verification = False
         contact: Optional[User] = None
         if email_changed:
-            self._assert_email_editable(tenant)
+            assert_tenant_email_editable(tenant)
             if tenant.status != TenantStatus.PENDING:
                 holder = await self._users.get_by_email(new_email)
                 if holder is None or not await self._is_institution_admin(holder, tenant.id):
                     hold_for_verification = True
                     # On confirmation the contact's login follows tenant.email.
-                    contact = await self._email_contact(tenant)
+                    contact = await find_email_contact(self._users, tenant)
         aligned = admin or contact
         if aligned is not None:
-            await self._assert_not_platform_admin(aligned)
-        await self._assert_email_available(data, tenant_id, aligned)
+            await assert_not_platform_admin(self._roles, aligned)
+        if "email" in data:
+            await assert_email_available(self._tenants, self._users, data["email"], tenant_id, aligned)
 
         # ── Stage writes against the open session (flush only, no commit).
         if hold_for_verification:

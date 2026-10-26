@@ -29,6 +29,10 @@ from app.models.credentials import UserCredentials
 from app.models.tenant import Tenant, TenantStatus
 from app.services.tenant_lifecycle import (
     TENANT_ONBOARDING_STATUSES,
+    assert_email_available,
+    assert_not_platform_admin,
+    assert_tenant_email_editable,
+    find_email_contact,
     assert_valid_tenant_status_transition,
     sync_tenant_users_for_status,
 )
@@ -310,37 +314,22 @@ class AuthService:
             await self._tenants.get_by_id(int(payload.tenant_id))
             if payload.tenant_id else None
         )
-        # Stale if superseded (a newer request or an applied change replaced
-        # pending_email) or the tenant is now suspended/deactivated (email
-        # edits are locked).
+        # Stale if superseded: a newer request or an applied change replaced
+        # pending_email (or it expired).
         if (
             not new_email
             or tenant is None
             or (tenant.active_pending_email or "").lower().strip() != new_email
-            or tenant.status in (TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED)
         ):
             raise TokenInvalidError(f"This {link_name} is no longer valid.")
 
-        admin = await self._users.get_by_email(tenant.email)
-        if admin is not None and admin.tenant_id != tenant.id:
-            admin = None
-        # Never hand over a platform administrator's account (also refused at
-        # request time; re-checked in case roles changed).
-        if admin is not None and RoleName.ADMIN.value in await self._roles.get_user_roles(admin.id):
-            raise TokenInvalidError(f"This {link_name} is no longer valid.")
-
-        # Re-check uniqueness: the address may have been taken since the request.
-        other_tenant = await self._tenants.get_by_email(new_email)
-        if other_tenant is not None and other_tenant.id != tenant.id:
-            raise DuplicateEntityError("Tenant", "email")
-        other_user = await self._users.get_by_email(new_email)
-        if other_user is not None and (
-            # Re-aligned admin: any other holder breaks users.email UNIQUE.
-            # No contact: same-tenant holders are harmless (as in update_tenant).
-            other_user.id != admin.id if admin is not None
-            else other_user.tenant_id != tenant.id
-        ):
-            raise DuplicateEntityError("User", "email")
+        # Same rules as the request (TenantService.update_tenant), re-checked
+        # because status, roles or address ownership may have changed since.
+        assert_tenant_email_editable(tenant)
+        admin = await find_email_contact(self._users, tenant)
+        if admin is not None:
+            await assert_not_platform_admin(self._roles, admin)
+        await assert_email_available(self._tenants, self._users, new_email, tenant.id, admin)
 
         tenant.email = new_email
         tenant.pending_email = None
