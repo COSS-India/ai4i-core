@@ -177,6 +177,17 @@ class RoleService:
         role = await self._roles.get_role_by_name(key)
         if not role:
             raise EntityNotFoundError(f"Role '{key}'")
+        if key == RoleName.USER.value:
+            target = await self._users.get_by_id(user_id)
+            if target is not None and target.creation_type != CreationType.TENANT:
+                raise AppError(
+                    message=(
+                        f"Cannot remove role '{key}': self-registered users must "
+                        f"always hold the '{RoleName.USER.value}' role."
+                    ),
+                    code="SELF_REGISTERED_ROLE_RESTRICTED",
+                    status_code=422,
+                )
         if key == RoleName.ADMIN.value:
             await self._assert_role_removal_keeps_a_platform_admin(user_id)
         removed = await self._roles.remove_role(user_id, role.id)

@@ -98,6 +98,48 @@ class TestRoleServiceAssignRole:
         svc._roles.assign_role.assert_awaited_once()
 
 
+class TestRoleServiceRemoveRole:
+    """Self-registered users must always hold USER, so USER can't be removed
+    from them — but their stray non-USER roles can still be taken away."""
+
+    @staticmethod
+    def _service(target: User) -> RoleService:
+        svc = _make_role_service(target)
+        svc._roles.remove_role = AsyncMock(return_value=True)
+        return svc
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("creation_type", SELF_REGISTERED)
+    async def test_cannot_remove_user_from_self_registered(self, creation_type) -> None:
+        target = _user(creation_type)
+        svc = self._service(target)
+
+        with pytest.raises(AppError) as exc_info:
+            await svc.remove_role(target.id, RoleName.USER)
+
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.code == "SELF_REGISTERED_ROLE_RESTRICTED"
+        svc._roles.remove_role.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_stray_role_can_still_be_removed_from_self_registered(self) -> None:
+        target = _user(CreationType.DEFAULT)
+        svc = self._service(target)
+
+        await svc.remove_role(target.id, RoleName.USAGE_VIEWER)
+
+        svc._roles.remove_role.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_user_can_be_removed_from_tenant_created_user(self) -> None:
+        target = _user(CreationType.TENANT)
+        svc = self._service(target)
+
+        await svc.remove_role(target.id, RoleName.USER)
+
+        svc._roles.remove_role.assert_awaited_once()
+
+
 class TestAssignRoleRoute:
     """The exact reported scenario over HTTP: a platform ADMIN tries to make a
     Google-signup user a MODERATOR via ``POST /auth/roles/assign``."""
