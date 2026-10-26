@@ -12,6 +12,7 @@ from sqlalchemy import text
 
 from app.core.exceptions import AppError, EntityNotFoundError, ValidationError
 from app.models.role import Permission, Role
+from app.models.user import CreationType, User
 from app.core.constants import RoleName
 from app.utils.common import role_name_to_str
 from app.repositories.role_repository import RoleRepository
@@ -59,7 +60,7 @@ class RoleService:
         if not await self._roles.get_role_by_name(key):
             raise EntityNotFoundError(f"Role '{key}'")
 
-    async def _lock_default_org_admin_roster(self, user_id: UUID) -> None:
+    async def _lock_default_org_admin_roster(self, target: Optional[User]) -> None:
         """Take the per-tenant advisory lock used to guard the ADMIN roster.
 
         Called before both assigning and removing ADMIN so the two can't
@@ -67,7 +68,6 @@ class RoleService:
         ``_assert_role_removal_keeps_a_platform_admin`` could let the count
         used there go stale. No-ops outside the Default Organization.
         """
-        target = await self._users.get_by_id(user_id)
         if target is None or target.tenant_id is None:
             return
         tenant = await self._tenants.get_by_id(target.tenant_id)
@@ -106,6 +106,28 @@ class RoleService:
                 status_code=422,
             )
 
+    @staticmethod
+    def _assert_role_assignable_to_creation_type(target: Optional[User], role_key: str) -> None:
+        """Raise 422 if a non-USER role is assigned to a self-registered user.
+
+        Self-registered accounts (email/password signup, Google OAuth) stay
+        USER-only; only admin-provisioned accounts (``creation_type=tenant``)
+        may hold other roles. Anything that is not ``tenant`` — including a
+        NULL or a future OAuth provider — is treated as self-registered so
+        the check fails closed. Enforced here because every role grant
+        (``/roles/assign``, tenant user PATCH) funnels through ``assign_role``.
+        """
+        if target is None or target.creation_type == CreationType.TENANT:
+            return
+        raise AppError(
+            message=(
+                f"Cannot assign role '{role_key}': self-registered users can "
+                f"only hold the '{RoleName.USER.value}' role."
+            ),
+            code="SELF_REGISTERED_ROLE_RESTRICTED",
+            status_code=422,
+        )
+
     async def assign_role(
         self,
         user_id: UUID,
@@ -132,8 +154,11 @@ class RoleService:
         if not role:
             raise EntityNotFoundError(f"Role '{key}'")
 
-        if key == RoleName.ADMIN.value:
-            await self._lock_default_org_admin_roster(user_id)
+        if key != RoleName.USER.value:
+            target = await self._users.get_by_id(user_id)
+            self._assert_role_assignable_to_creation_type(target, key)
+            if key == RoleName.ADMIN.value:
+                await self._lock_default_org_admin_roster(target)
 
         existing = await self._roles.get_user_role_record(user_id, role.id)
         if existing:
