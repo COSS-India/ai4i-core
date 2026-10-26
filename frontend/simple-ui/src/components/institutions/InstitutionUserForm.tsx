@@ -33,10 +33,12 @@ export type InstitutionUserFormMode = "create" | "edit" | "view";
 
 type TenantManagement = ReturnType<typeof useTenantManagement>;
 
-type InstitutionUserFormProps = {
+type InstitutionUserFormProps = Readonly<{
   mode: InstitutionUserFormMode;
   tm: TenantManagement;
-};
+}>;
+
+type TenantFieldProps = Readonly<{ tm: TenantManagement }>;
 
 function getCreateEmailHint(status: TenantManagement["userEmailStatus"]): string {
   if (status === "checking") return FIELD_HINTS.tenant.emailChecking;
@@ -45,7 +47,7 @@ function getCreateEmailHint(status: TenantManagement["userEmailStatus"]): string
 }
 
 /** Create-only, platform admin only. Locked when opened from an institution. */
-function InstitutionPickerField({ tm }: { tm: TenantManagement }) {
+function InstitutionPickerField({ tm }: TenantFieldProps) {
   if (tm.lockedUserFormTenantId) {
     return (
       <FormControl isRequired isInvalid={Boolean(tm.userFormErrors.tenant_id)}>
@@ -180,7 +182,7 @@ function FullNameField({ mode, tm }: InstitutionUserFormProps) {
   );
 }
 
-function CreateRoleField({ tm }: { tm: TenantManagement }) {
+function CreateRoleField({ tm }: TenantFieldProps) {
   const roleOptions = useMemo(() => {
     const tenantId =
       tm.lockedUserFormTenantId ?? tm.userForm.tenant_id?.trim() ?? "";
@@ -214,7 +216,7 @@ function CreateRoleField({ tm }: { tm: TenantManagement }) {
   );
 }
 
-function EditRoleField({ tm }: { tm: TenantManagement }) {
+function EditRoleField({ tm }: TenantFieldProps) {
   const roleOptions = useMemo((): ReadonlyArray<{
     value: string;
     label: string;
