@@ -3,7 +3,8 @@ Service management API endpoints.
 """
 
 import logging
-from typing import Any, Dict, Optional, Union
+from datetime import date
+from typing import Any, Dict, List, Optional, Union
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +15,12 @@ from app.core.database import get_db
 from app.core.exceptions import AppError, ValidationError
 from app.core.permissions import is_platform_admin
 from app.dependencies.services import ServiceService, get_service_service
+from app.repositories.model_management.service_repository import ServiceListFilters
+from app.schemas.model_management.service_columns import (
+    ADMIN_ONLY_FILTER_PARAMS,
+    ADMIN_ONLY_KEYS,
+    SORTABLE_KEYS,
+)
 from app.schemas.common import MessageMeta, TotalMeta, error_responses
 from app.schemas.enums.model_management import TaskTypeEnum
 from app.services.pay_per_use import inference_type_cache
@@ -76,6 +83,7 @@ _NON_ADMIN_SERVICE_FIELDS = {
     "serviceId",
     "name",
     "modelId",
+    "modelName",
     "modelVersion",
     "description",  # ULCA name for serviceDescription
     "serviceDescription",
@@ -160,6 +168,65 @@ async def list_services(
     created_by: Optional[str] = Query(
         None, description="Filter by user ID who created the service."
     ),
+    name: Optional[str] = Query(
+        None,
+        description="Case-insensitive 'contains' match on the service name.",
+    ),
+    service_id: Optional[str] = Query(
+        None,
+        description="Case-insensitive 'contains' match on the service ID.",
+    ),
+    model_name: Optional[str] = Query(
+        None,
+        description="Case-insensitive 'contains' match on the name of the model the service runs.",
+    ),
+    tier_ids: Optional[str] = Query(
+        None,
+        description=(
+            "Comma-separated tier IDs (UUIDs). Returns services assigned to ANY of them. "
+            "Admin/moderator only."
+        ),
+    ),
+    created_from: Optional[date] = Query(
+        None,
+        description=(
+            "ISO date (YYYY-MM-DD, UTC). Services created on or after the start of this day. "
+            "Admin/moderator only."
+        ),
+    ),
+    created_to: Optional[date] = Query(
+        None,
+        description=(
+            "ISO date (YYYY-MM-DD, UTC). Services created up to and including this day. "
+            "Must not be before created_from. Admin/moderator only."
+        ),
+    ),
+    published_from: Optional[date] = Query(
+        None,
+        description=(
+            "ISO date (YYYY-MM-DD, UTC). Services published on or after the start of this day. "
+            "Admin/moderator only."
+        ),
+    ),
+    published_to: Optional[date] = Query(
+        None,
+        description=(
+            "ISO date (YYYY-MM-DD, UTC). Services published up to and including this day. "
+            "Must not be before published_from. Admin/moderator only."
+        ),
+    ),
+    sort_by: Optional[str] = Query(
+        None,
+        description=(
+            "Column id to sort by: " + ", ".join(sorted(SORTABLE_KEYS)) + ". Sorting is applied "
+            "across the full result set before pagination; empty values come last. Price, tier, "
+            "created_at and published_at are admin/moderator only. Default: published first, newest first."
+        ),
+    ),
+    sort_order: str = Query(
+        "asc",
+        description="Sort direction when sort_by is given: asc (default) or desc.",
+    ),
     offset: int = Query(
         0,
         ge=0,
@@ -174,7 +241,47 @@ async def list_services(
     svc: ServiceService = Depends(get_service_service),
     db: AsyncSession = Depends(get_db),
 ) -> ListServicesResponse:
-    """List services with optional filters and offset/limit pagination."""
+    """List services with optional filters, sorting and offset/limit pagination.
+
+    Filters combine with AND; filtering, sorting and pagination all run over
+    the full dataset server-side, and `meta.total` / `X-Total-Count` is the
+    number of services matching the filters (not just the page).
+    """
+    is_admin = is_platform_admin(request)
+    sort_by = sort_by or None  # a blank sort_by from the UI means default order
+    if sort_by is not None and sort_by not in SORTABLE_KEYS:
+        raise ValidationError(
+            message=f"sort_by must be one of: {', '.join(sorted(SORTABLE_KEYS))}",
+            code="INVALID_SORT_BY",
+        )
+    if sort_order not in {"asc", "desc"}:
+        raise ValidationError(message="sort_order must be 'asc' or 'desc'", code="INVALID_SORT_ORDER")
+    if not is_admin:
+        if sort_by in ADMIN_ONLY_KEYS:
+            raise ValidationError(
+                message=f"sort_by '{sort_by}' is not available to this caller.",
+                code="SORT_NOT_PERMITTED",
+            )
+        supplied = {
+            "tier_ids": tier_ids, "created_from": created_from, "created_to": created_to,
+            "published_from": published_from, "published_to": published_to,
+        }
+        denied = sorted(k for k, v in supplied.items() if v is not None and k in ADMIN_ONLY_FILTER_PARAMS)
+        if denied:
+            raise ValidationError(
+                message=f"Filter parameter(s) not available to this caller: {', '.join(denied)}",
+                code="FILTER_NOT_PERMITTED",
+            )
+    for lo_name, lo, hi_name, hi in (
+        ("created_from", created_from, "created_to", created_to),
+        ("published_from", published_from, "published_to", published_to),
+    ):
+        if lo is not None and hi is not None and lo > hi:
+            raise ValidationError(
+                message=f"{lo_name} must not be after {hi_name}",
+                code="INVALID_DATE_RANGE",
+            )
+    _tier_ids: List[str] = [t.strip().lower() for t in tier_ids.split(",") if t.strip()] if tier_ids else []
     # ONE task-type filter param: a drill-down is just a one-element list, so a
     # separate single param would only recreate union/precedence ambiguity.
     # Parsed leniently: names outside the catalogue (e.g. entries with no
@@ -194,10 +301,22 @@ async def list_services(
         created_by=created_by,
         offset=offset,
         limit=limit,
+        filters=ServiceListFilters(
+            name=name or None,
+            service_id=service_id or None,
+            model_name=model_name or None,
+            tier_ids=_tier_ids or None,
+            created_from=created_from,
+            created_to=created_to,
+            published_from=published_from,
+            published_to=published_to,
+        ),
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
     # Non-admin already loses api_key/inferenceEndPoint entirely below, so
     # masking them first would be wasted work — only admins need it.
-    if is_platform_admin(request):
+    if is_admin:
         items = [mask_service_secrets(i) for i in items]
     else:
         items = [_filter_service_fields(i) for i in items]

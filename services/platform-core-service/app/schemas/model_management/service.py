@@ -992,6 +992,7 @@ class ServiceListItem(ServiceResponse):
 
     languages: List[LanguagePairLenient] = Field(default_factory=list)
     versionStatus: Optional[str] = None
+    modelName: Optional[str] = None
 
 
 class ServiceListResponse(BaseSchema):

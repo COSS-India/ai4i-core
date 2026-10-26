@@ -166,6 +166,7 @@ def service_to_dict(
         "updatedBy": service.updated_by,
     }
     if include_task_languages and model is not None:
+        out["modelName"] = model.name
         out["languages"] = _normalize_languages(model.languages or [])
         out["versionStatus"] = (
             model.version_status.value if model.version_status else None

@@ -2,11 +2,13 @@
 Async repository for the Service entity.
 """
 
-from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass, replace
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional, Tuple, Union
 from uuid import UUID
 
-from sqlalchemy import String, and_, cast, delete, desc, func, select, update
+from sqlalchemy import String, and_, any_, asc, cast, delete, desc, func, select, update
+from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -14,6 +16,141 @@ from app.models.model_management.model import Model
 from app.models.model_management.service import Service
 from app.core.constants import TierStatus
 from app.models.pay_per_use.tier import Tier
+
+
+_MODEL_JOIN = and_(
+    Model.model_id == Service.model_id,
+    Model.version == Service.model_version,
+)
+
+
+@dataclass
+class ServiceListFilters:
+    """Filters shared by ServiceRepository.list_services / count_services.
+
+    Date bounds are inclusive calendar days (UTC): a ``*_from`` date matches
+    from 00:00 of that day, a ``*_to`` date up to the end of that day. A
+    ``datetime`` is used as-is (``*_from`` inclusive, ``*_to`` exclusive).
+    """
+
+    task_types: Optional[List[str]] = None
+    is_published: Optional[bool] = None
+    created_by: Optional[str] = None
+    name: Optional[str] = None
+    service_id: Optional[str] = None
+    model_name: Optional[str] = None
+    tier_ids: Optional[List[str]] = None
+    created_from: Optional[Union[date, datetime]] = None
+    created_to: Optional[Union[date, datetime]] = None
+    published_from: Optional[Union[date, datetime]] = None
+    published_to: Optional[Union[date, datetime]] = None
+
+
+def _merge_filters(
+    filters: Optional[ServiceListFilters],
+    task_types: Optional[List[str]],
+    is_published: Optional[bool],
+    created_by: Optional[str],
+) -> ServiceListFilters:
+    """Fold the legacy keyword filters into a ServiceListFilters."""
+    merged = replace(filters) if filters else ServiceListFilters()
+    if task_types:
+        merged.task_types = task_types
+    if is_published is not None:
+        merged.is_published = is_published
+    if created_by is not None:
+        merged.created_by = created_by
+    return merged
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _contains(column, value: str):
+    """Case-insensitive substring match with LIKE wildcards escaped."""
+    return column.ilike(f"%{_escape_like(value)}%", escape="\\")
+
+
+def _day_start(value: Union[date, datetime]) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
+
+
+def _range_end_exclusive(value: Union[date, datetime]) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    return _day_start(value) + timedelta(days=1)
+
+
+def _apply_list_filters(stmt, filters: ServiceListFilters):
+    """The ONE place list and count queries get their WHERE clause, so the
+    page and the total can never disagree. ``stmt`` must already join Model."""
+    f = filters
+    stmt = stmt.where(Service.deleted_at.is_(None))
+    if f.task_types:
+        # Case-insensitive - same reasoning as ModelRepository's identical
+        # filter: an exact JSONB match against whatever case a row happens
+        # to be stored in would silently exclude it here.
+        stmt = stmt.where(
+            func.lower(Model.task["type"].astext).in_([t.lower() for t in f.task_types])
+        )
+    if f.is_published is not None:
+        stmt = stmt.where(Service.is_published == f.is_published)
+    if f.created_by is not None:
+        stmt = stmt.where(Service.created_by == f.created_by)
+    if f.name:
+        stmt = stmt.where(_contains(Service.name, f.name))
+    if f.service_id:
+        stmt = stmt.where(_contains(Service.service_id, f.service_id))
+    if f.model_name:
+        stmt = stmt.where(_contains(Model.name, f.model_name))
+    if f.tier_ids:
+        stmt = stmt.where(Service.tier_ids.overlap(array(f.tier_ids, type_=String)))
+    if f.created_from is not None:
+        stmt = stmt.where(Service.created_at >= _day_start(f.created_from))
+    if f.created_to is not None:
+        stmt = stmt.where(Service.created_at < _range_end_exclusive(f.created_to))
+    if f.published_from is not None:
+        stmt = stmt.where(Service.published_at >= _day_start(f.published_from))
+    if f.published_to is not None:
+        stmt = stmt.where(Service.published_at < _range_end_exclusive(f.published_to))
+    return stmt
+
+
+def _sort_expressions() -> Dict[str, Any]:
+    tier_name = (
+        select(func.min(Tier.name))
+        .where(cast(Tier.id, String) == any_(Service.tier_ids))
+        .scalar_subquery()
+    )
+    return {
+        "name": Service.name,
+        "service_id": Service.service_id,
+        "model_name": Model.name,
+        "task_type": func.lower(Model.task["type"].astext),
+        "tier": tier_name,
+        "status": Service.is_published,
+        "created_at": Service.created_at,
+        "published_at": Service.published_at,
+        "input_price": Service.cost_per_unit,
+        "output_price": Service.output_cost_per_unit,
+        "cached_input_price": Service.cached_input_cost_per_unit,
+    }
+
+
+def _list_order_by(sort_by: Optional[str], sort_order: str) -> list:
+    """ORDER BY terms. Default (no sort_by) keeps published-first, newest-first.
+    Service.id is always the final tie-breaker so pages are stable."""
+    if sort_by is None:
+        return [desc(Service.is_published), desc(Service.created_at), Service.id]
+    exprs = _sort_expressions()
+    if sort_by not in exprs:
+        raise ValueError(f"Unsupported sort key: {sort_by}")
+    expr = exprs[sort_by]
+    ordered = desc(expr) if sort_order == "desc" else asc(expr)
+    return [ordered.nulls_last(), Service.id]
 
 
 # flag_modified is only load-bearing for callers that mutate an
@@ -73,28 +210,14 @@ class ServiceRepository:
         task_types: Optional[List[str]] = None,
         is_published: Optional[bool] = None,
         created_by: Optional[str] = None,
+        filters: Optional[ServiceListFilters] = None,
     ) -> int:
         """Return the total number of services matching the given filters (no pagination)."""
-        stmt = select(func.count(Service.id)).join(
-            Model,
-            and_(
-                Model.model_id == Service.model_id,
-                Model.version == Service.model_version,
-            ),
-        ).where(Service.deleted_at.is_(None))
-        if task_types:
-            # Case-insensitive — same reasoning as ModelRepository's
-            # identical filter: an exact JSONB match against whatever case
-            # a row happens to be stored in would silently exclude it here
-            # while other task-type-aware endpoints tolerate casing
-            # variance (e.g. TaskSpecLenient on /api/v1/models).
-            stmt = stmt.where(
-                func.lower(Model.task["type"].astext).in_([t.lower() for t in task_types])
-            )
-        if is_published is not None:
-            stmt = stmt.where(Service.is_published == is_published)
-        if created_by is not None:
-            stmt = stmt.where(Service.created_by == created_by)
+        filters = _merge_filters(filters, task_types, is_published, created_by)
+        stmt = _apply_list_filters(
+            select(func.count(Service.id)).select_from(Service).join(Model, _MODEL_JOIN),
+            filters,
+        )
         result = await self._db.execute(stmt)
         return int(result.scalar() or 0)
 
@@ -106,33 +229,16 @@ class ServiceRepository:
         created_by: Optional[str] = None,
         offset: int = 0,
         limit: Optional[int] = None,
+        filters: Optional[ServiceListFilters] = None,
+        sort_by: Optional[str] = None,
+        sort_order: str = "asc",
     ) -> List[Tuple[Service, Model]]:
         """Return (service, model) tuples."""
-        stmt = (
-            select(Service, Model)
-            .join(
-                Model,
-                and_(
-                    Model.model_id == Service.model_id,
-                    Model.version == Service.model_version,
-                ),
-            )
-            .where(Service.deleted_at.is_(None))
+        filters = _merge_filters(filters, task_types, is_published, created_by)
+        stmt = _apply_list_filters(
+            select(Service, Model).join(Model, _MODEL_JOIN), filters
         )
-        if task_types:
-            # Case-insensitive — same reasoning as ModelRepository's
-            # identical filter: an exact JSONB match against whatever case
-            # a row happens to be stored in would silently exclude it here
-            # while other task-type-aware endpoints tolerate casing
-            # variance (e.g. TaskSpecLenient on /api/v1/models).
-            stmt = stmt.where(
-                func.lower(Model.task["type"].astext).in_([t.lower() for t in task_types])
-            )
-        if is_published is not None:
-            stmt = stmt.where(Service.is_published == is_published)
-        if created_by is not None:
-            stmt = stmt.where(Service.created_by == created_by)
-        stmt = stmt.order_by(desc(Service.is_published), desc(Service.created_at))
+        stmt = stmt.order_by(*_list_order_by(sort_by, sort_order))
         stmt = stmt.offset(offset)
         if limit is not None:
             stmt = stmt.limit(limit)

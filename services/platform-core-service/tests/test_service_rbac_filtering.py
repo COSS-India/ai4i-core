@@ -155,46 +155,39 @@ class TestIsPlatformAdmin:
         assert _is_platform_admin(_make_request("")) is False
 
 
+def _list_kwargs(request, svc, **over):
+    response = MagicMock()
+    response.headers = {}
+    kwargs = dict(
+        request=request, response=response, task_types=None, is_published=None,
+        created_by=None, name=None, service_id=None, model_name=None, tier_ids=None,
+        created_from=None, created_to=None, published_from=None, published_to=None,
+        sort_by=None, sort_order="asc", offset=0, limit=None, svc=svc, db=MagicMock(),
+    )
+    kwargs.update(over)
+    return kwargs
+
+
 class TestListServicesRoute:
     @pytest.mark.asyncio
     async def test_admin_gets_full_response(self) -> None:
-        response = MagicMock()
-        response.headers = {}
         svc = MagicMock()
-        svc.list_services = AsyncMock(return_value=([_FULL_SERVICE], 1))
+        svc.list_services = AsyncMock(return_value=([dict(_FULL_SERVICE)], 1))
 
-        result = await list_services(
-            request=_make_request("1"),
-            response=response,
-            task_type=None,
-            is_published=None,
-            created_by=None,
-            offset=0,
-            limit=None,
-            svc=svc,
-        )
+        result = await list_services(**_list_kwargs(_make_request("1"), svc))
 
-        assert result["data"]["services"][0]["api_key"] == "super-secret-key"
+        item = result.data.services[0].model_dump(exclude_unset=True)
+        assert item["api_key"] != "super-secret-key"  # masked, but present
+        assert "api_key" in item
 
     @pytest.mark.asyncio
     async def test_non_admin_gets_filtered_response(self) -> None:
-        response = MagicMock()
-        response.headers = {}
         svc = MagicMock()
-        svc.list_services = AsyncMock(return_value=([_FULL_SERVICE], 1))
+        svc.list_services = AsyncMock(return_value=([dict(_FULL_SERVICE)], 1))
 
-        result = await list_services(
-            request=_make_request("50,51"),
-            response=response,
-            task_type=None,
-            is_published=None,
-            created_by=None,
-            offset=0,
-            limit=None,
-            svc=svc,
-        )
+        result = await list_services(**_list_kwargs(_make_request("50,51"), svc))
 
-        item = result["data"]["services"][0]
+        item = result.data.services[0].model_dump(exclude_unset=True)
         assert "api_key" not in item
         assert item["serviceId"] == "svc-1"
 
