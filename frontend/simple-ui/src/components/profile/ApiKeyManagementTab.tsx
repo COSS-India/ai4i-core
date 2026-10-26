@@ -560,7 +560,7 @@ export default function ApiKeyManagementTab({
           <>
       <FormSection title="API Key">
         <ReadOnlyField label="Key Name">{viewKey.key_name}</ReadOnlyField>
-        <ReadOnlyField label={viewKey.rotated_key || viewKey.api_key_revoked_at ? "Current Key" : "API Key"}>
+        <ReadOnlyField label={viewKey.rotated_key || viewKey.api_key_revoked_at ? "Current Key" : "Key ID"}>
           <Text fontSize="sm" fontFamily="mono" color="ink.700" wordBreak="break-all">
             {mgmt.formatKeyId(viewKey)}
           </Text>
