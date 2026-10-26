@@ -185,13 +185,6 @@ class APIKeyItem(BaseSchema):
             "(until rotated_key_expires_at); null otherwise."
         ),
     )
-    api_key_revoked_at: Optional[datetime] = Field(
-        None,
-        description=(
-            "When the current value alone was revoked during a rotation; null while it works. "
-            "Once set, only the previous value works, until rotated_key_expires_at."
-        ),
-    )
     rotated_at: Optional[datetime] = Field(
         None, description="When the key was last rotated, i.e. when its current value was issued; null if never."
     )
@@ -248,7 +241,6 @@ class APIKeyAdminItem(BaseSchema):
     expires_at: Optional[datetime] = None
     rotated_key_expires_at: Optional[datetime] = None
     rotated_key: Optional[str] = None
-    api_key_revoked_at: Optional[datetime] = None
     rotated_at: Optional[datetime] = None
     is_active: bool
     created_by: Optional[str] = None
@@ -298,12 +290,6 @@ class ExtendRotationResponse(SuccessResponse):
     """PATCH /auth/api-keys/{key_id}/rotated-key"""
 
     data: APIKeyItem
-
-
-class RevokeCurrentKeyResponse(SuccessResponse):
-    """DELETE /auth/api-keys/{key_id}/current-key"""
-
-    data: MessageData
 
 
 class ListAllAPIKeysResponse(SuccessResponse):

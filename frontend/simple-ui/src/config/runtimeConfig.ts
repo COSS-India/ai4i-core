@@ -143,9 +143,10 @@ export function getBranding(): BrandingConfig {
 }
 
 /**
- * Grace period prefilled in the rotate dialog, in whole days; null when
- * ROTATED_API_KEY_DEFAULT_GRACE_DAYS is unset or invalid (the field then
- * starts blank and the admin must enter one — the rotate API requires it).
+ * Grace period preselected in the rotate dialog, in whole days; null when
+ * ROTATED_API_KEY_DEFAULT_GRACE_DAYS is unset or invalid. When null, or not an
+ * option that fits before the key's expiry, the longest option that fits is
+ * preselected instead.
  */
 export function getDefaultRotationGraceDays(): number | null {
   const raw = cached.rotationGraceDays;

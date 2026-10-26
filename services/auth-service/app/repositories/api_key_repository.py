@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import and_, case, cast, func, or_, select, update
+from sqlalchemy import and_, cast, func, or_, select, update
 from sqlalchemy.dialects.postgresql import ARRAY, TEXT
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
@@ -25,13 +25,12 @@ from app.repositories.base import BaseRepository
 
 
 def _live_key_values(rows) -> list[str]:
-    """Flatten (api_key, api_key_revoked_at, rotated_key, rotated_key_expires_at)
-    rows into the key values that authenticate right now."""
+    """Flatten (api_key, rotated_key, rotated_key_expires_at) rows into the
+    key values that authenticate right now."""
     now = datetime.now(timezone.utc)
     values: list[str] = []
-    for api_key, api_key_revoked_at, rotated_key, rotated_expires_at in rows:
-        if api_key_revoked_at is None:
-            values.append(api_key)
+    for api_key, rotated_key, rotated_expires_at in rows:
+        values.append(api_key)
         if rotated_key and rotated_expires_at is not None and rotated_expires_at > now:
             values.append(rotated_key)
     return values
@@ -89,7 +88,7 @@ class APIKeyRepository(BaseRepository):
             .options(joinedload(APIKey.application).joinedload(Application.tenant))
             .where(
                 or_(
-                    and_(APIKey.api_key == api_key_value, APIKey.api_key_revoked_at.is_(None)),
+                    APIKey.api_key == api_key_value,
                     and_(
                         APIKey.rotated_key == api_key_value,
                         APIKey.rotated_key_expires_at > datetime.now(timezone.utc),
@@ -130,7 +129,6 @@ class APIKeyRepository(BaseRepository):
             .where(
                 APIKey.id == key_id,
                 APIKey.api_key == current_value,
-                APIKey.api_key_revoked_at.is_(None),
                 *self._active_key_conditions(),
                 or_(
                     APIKey.rotated_key.is_(None),
@@ -155,10 +153,8 @@ class APIKeyRepository(BaseRepository):
     async def end_rotation(self, key_id: int, rotated_value: str, updated_by: str) -> bool:
         """Clear rotated_key / rotated_key_expires_at, only if the row is still
         active and unexpired and still holds ``rotated_value`` as its rotated
-        key. When api_key was already revoked on its own, nothing is left to
-        authenticate, so the whole key is revoked in the same UPDATE. Returns
-        whether the row was updated; False means a concurrent request already
-        ended the rotation, re-rotated the key or revoked it."""
+        key. Returns whether the row was updated; False means a concurrent
+        request already ended the rotation, re-rotated the key or revoked it."""
         result = await self._db.execute(
             update(APIKey)
             .where(
@@ -166,12 +162,7 @@ class APIKeyRepository(BaseRepository):
                 APIKey.rotated_key == rotated_value,
                 *self._active_key_conditions(),
             )
-            .values(
-                rotated_key=None,
-                rotated_key_expires_at=None,
-                is_active=case((APIKey.api_key_revoked_at.isnot(None), False), else_=True),
-                updated_by=updated_by,
-            )
+            .values(rotated_key=None, rotated_key_expires_at=None, updated_by=updated_by)
         )
         return result.rowcount == 1
 
@@ -195,26 +186,6 @@ class APIKeyRepository(BaseRepository):
                 *self._active_key_conditions(),
             )
             .values(rotated_key_expires_at=new_expires_at, updated_by=updated_by)
-        )
-        return result.rowcount == 1
-
-    async def revoke_current_value(self, key_id: int, current_value: str, updated_by: str) -> bool:
-        """Stop api_key alone, only if the row is still active and unexpired,
-        still holds ``current_value`` as an unrevoked api_key, and has a live
-        rotated key to keep working. Returns whether the row was updated;
-        False means a concurrent request revoked, rotated or ended it first."""
-        now = datetime.now(timezone.utc)
-        result = await self._db.execute(
-            update(APIKey)
-            .where(
-                APIKey.id == key_id,
-                APIKey.api_key == current_value,
-                APIKey.api_key_revoked_at.is_(None),
-                APIKey.rotated_key.isnot(None),
-                APIKey.rotated_key_expires_at > now,
-                *self._active_key_conditions(),
-            )
-            .values(api_key_revoked_at=now, updated_by=updated_by)
         )
         return result.rowcount == 1
 
@@ -376,12 +347,7 @@ class APIKeyRepository(BaseRepository):
                     APIKey.cached_data, cast([field], ARRAY(TEXT)), func.to_jsonb(value)
                 )
             )
-            .returning(
-                APIKey.api_key,
-                APIKey.api_key_revoked_at,
-                APIKey.rotated_key,
-                APIKey.rotated_key_expires_at,
-            )
+            .returning(APIKey.api_key, APIKey.rotated_key, APIKey.rotated_key_expires_at)
         )
         return _live_key_values(result.all())
 

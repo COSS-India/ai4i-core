@@ -39,6 +39,8 @@ import {
   formatExtension,
   formatTimeUntil,
   GRACE_EXTENSION_OPTIONS,
+  isGraceWithinExpiry,
+  ROTATION_GRACE_OPTIONS,
 } from "../../utils/apiKeyUtils";
 import { ChevronDownIcon, ChevronRightIcon, CopyIcon, EditIcon } from "@chakra-ui/icons";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
@@ -126,7 +128,6 @@ export default function ApiKeyManagementTab({
   const cancelRef = useRef<HTMLButtonElement>(null);
   const rotateCancelRef = useRef<HTMLButtonElement>(null);
   const stopPreviousCancelRef = useRef<HTMLButtonElement>(null);
-  const revokeCurrentCancelRef = useRef<HTMLButtonElement>(null);
   const { copy } = useCopyToClipboard();
   const { user } = useAuth();
 
@@ -316,18 +317,11 @@ export default function ApiKeyManagementTab({
       {
         id: "status",
         header: "Status",
-        cell: (key) => {
-          if (key.subRow === "current" && key.api_key_revoked_at) {
-            return statusCell(
-              API_KEY.DISPLAY_STATUS.REVOKED,
-              `Revoked ${new Date(key.api_key_revoked_at).toLocaleString()}`,
-            );
-          }
-          return statusCell(
+        cell: (key) =>
+          statusCell(
             mgmt.resolveKeyDisplayStatus(key),
             mgmt.getKeyInactiveReason(key) ?? mgmt.getKeyRevokedReason(key),
-          );
-        },
+          ),
       },
       {
         id: "created",
@@ -398,15 +392,13 @@ export default function ApiKeyManagementTab({
                 justify="flex-end"
                 actions={[
                   {
-                    id: "revoke-current",
-                    label: "Revoke current key",
-                    tooltip: mgmt.isCurrentKeyLive(key)
-                      ? "Revoke the current key now; the previous key keeps working until its grace period ends"
-                      : "The current key is already revoked.",
+                    // Revoking the rotated key revokes the API key: both keys stop.
+                    id: "revoke",
+                    label: "Revoke API key",
+                    tooltip: "Revoke the API key; the current and previous keys both stop",
                     icon: <FiSlash />,
                     ...revokeStyle,
-                    disabled: !mgmt.isCurrentKeyLive(key),
-                    onClick: () => mgmt.handleOpenRevokeCurrentModal(key),
+                    onClick: () => mgmt.handleOpenRevokeModal(key),
                   },
                 ]}
               />
@@ -427,9 +419,7 @@ export default function ApiKeyManagementTab({
                   {
                     id: "stop-previous",
                     label: "Revoke previous key",
-                    tooltip: mgmt.isCurrentKeyLive(key)
-                      ? "Revoke the previous key now; the current key keeps working"
-                      : "Revoke the previous key now; the current key is already revoked, so the API key is revoked",
+                    tooltip: "Revoke the previous key now; the current key keeps working",
                     icon: <FiSlash />,
                     ...revokeStyle,
                     onClick: () => mgmt.handleOpenStopPreviousModal(key),
@@ -560,15 +550,10 @@ export default function ApiKeyManagementTab({
           <>
       <FormSection title="API Key">
         <ReadOnlyField label="Key Name">{viewKey.key_name}</ReadOnlyField>
-        <ReadOnlyField label={viewKey.rotated_key || viewKey.api_key_revoked_at ? "Current Key" : "Key ID"}>
+        <ReadOnlyField label={viewKey.rotated_key ? "Current Key" : "Key ID"}>
           <Text fontSize="sm" fontFamily="mono" color="ink.700" wordBreak="break-all">
             {mgmt.formatKeyId(viewKey)}
           </Text>
-          {viewKey.api_key_revoked_at ? (
-            <Text fontSize="xs" color="red.600" mt={1}>
-              Revoked {new Date(viewKey.api_key_revoked_at).toLocaleString()}
-            </Text>
-          ) : null}
         </ReadOnlyField>
         {mgmt.isRotationInProgress(viewKey) && viewKey.rotated_key ? (
           <ReadOnlyField label="Previous Key">
@@ -873,7 +858,10 @@ export default function ApiKeyManagementTab({
         body={
           <VStack align="stretch" spacing={4}>
             <Text fontSize="sm" color="ink.700" lineHeight="1.5">
-              Revoking <Text as="b">{mgmt.keyToRevoke?.key_name}</Text> stops it from working
+              Revoking <Text as="b">{mgmt.keyToRevoke?.key_name}</Text> stops{" "}
+              {mgmt.keyToRevoke && mgmt.isRotationInProgress(mgmt.keyToRevoke)
+                ? "both its current and previous keys"
+                : "it from working"}{" "}
               immediately. This can&apos;t be undone.
             </Text>
             <RevokeBudgetBreakdown
@@ -920,27 +908,45 @@ export default function ApiKeyManagementTab({
               once. The current key keeps working for the grace period so you can switch your
               applications over, then stops. Budget, permissions and expiry stay the same.
             </Text>
-            <FormControl isRequired isInvalid={!mgmt.isRotateGraceDaysValid && mgmt.rotateGraceDays !== ""}>
-              <FieldLabel>Grace period (days)</FieldLabel>
-              <Input
-                type="number"
-                min={0}
-                step={1}
-                value={mgmt.rotateGraceDays}
-                onChange={(e) => mgmt.setRotateGraceDays(e.target.value)}
-                placeholder="Days"
-                isDisabled={mgmt.isRotating}
-              />
-              <FieldHint>
-                {mgmt.defaultGraceDays == null ? "" : `Default ${mgmt.defaultGraceDays} days. `}
-                Whole days, 0 or more. Never past the key&apos;s own expiry; you can extend it later.
-              </FieldHint>
+            <FormControl isRequired>
+              <FieldLabel>Grace period</FieldLabel>
+              <ButtonGroup size="sm" isAttached w="100%" role="radiogroup" aria-label="Grace period">
+                {ROTATION_GRACE_OPTIONS.map((days) => {
+                  const selected = mgmt.rotateGraceDays === days;
+                  return (
+                    <Button
+                      key={days}
+                      flex={1}
+                      role="radio"
+                      aria-checked={selected}
+                      variant="outline"
+                      colorScheme={selected ? "blue" : "gray"}
+                      bg={selected ? "blue.50" : undefined}
+                      onClick={() => mgmt.setRotateGraceDays(days)}
+                      isDisabled={
+                        mgmt.isRotating || !isGraceWithinExpiry(days, mgmt.keyToRotate?.expires_at)
+                      }
+                    >
+                      {days} {days === 1 ? "day" : "days"}
+                    </Button>
+                  );
+                })}
+              </ButtonGroup>
+              {mgmt.keyToRotate?.expires_at &&
+              ROTATION_GRACE_OPTIONS.some(
+                (days) => !isGraceWithinExpiry(days, mgmt.keyToRotate?.expires_at),
+              ) ? (
+                <FieldHint>
+                  Grace period can&apos;t go beyond the API key&apos;s expiry (
+                  {new Date(mgmt.keyToRotate.expires_at).toLocaleDateString()}).
+                </FieldHint>
+              ) : null}
             </FormControl>
           </VStack>
         }
         confirmLabel="Rotate API Key"
         cancelLabel="Cancel"
-        isConfirmDisabled={!mgmt.isRotateGraceDaysValid}
+        isConfirmDisabled={mgmt.rotateGraceDays === null}
         isConfirmLoading={mgmt.isRotating}
         confirmLoadingText="Rotating..."
         leastDestructiveRef={rotateCancelRef}
@@ -952,23 +958,20 @@ export default function ApiKeyManagementTab({
         onConfirm={mgmt.handleStopPreviousKeyValue}
         title={
           mgmt.keyToStopPrevious?.key_name
-            ? `Revoke previous value of ${mgmt.keyToStopPrevious.key_name}`
-            : "Revoke previous key value"
+            ? `Revoke previous key of ${mgmt.keyToStopPrevious.key_name}`
+            : "Revoke previous key"
         }
         body={
           <Text fontSize="sm" color="ink.700" lineHeight="1.5">
-            The value <Text as="b">{mgmt.keyToStopPrevious?.key_name}</Text> had before its last
-            rotation stops working immediately, instead of on{" "}
+            The previous key of <Text as="b">{mgmt.keyToStopPrevious?.key_name}</Text> stops working
+            immediately instead of at the end of its grace period
             {mgmt.keyToStopPrevious?.rotated_key_expires_at
-              ? new Date(mgmt.keyToStopPrevious.rotated_key_expires_at).toLocaleString()
-              : "its scheduled date"}
-            .{" "}
-            {mgmt.keyToStopPrevious && !mgmt.isCurrentKeyLive(mgmt.keyToStopPrevious)
-              ? "The current key is already revoked, so the API key is revoked."
-              : "The current key keeps working."}
+              ? ` (${new Date(mgmt.keyToStopPrevious.rotated_key_expires_at).toLocaleString()})`
+              : ""}
+            . The current key keeps working.
           </Text>
         }
-        confirmLabel="Revoke Previous Value"
+        confirmLabel="Revoke Previous Key"
         cancelLabel="Cancel"
         isConfirmLoading={mgmt.isStoppingPrevious}
         confirmLoadingText="Revoking..."
@@ -1064,33 +1067,6 @@ export default function ApiKeyManagementTab({
           </VStack>
         ) : null}
       </StandardModal>
-
-      <ConfirmDialog
-        isOpen={Boolean(mgmt.keyToRevokeCurrent)}
-        onClose={mgmt.handleCloseRevokeCurrentModal}
-        onConfirm={mgmt.handleRevokeCurrentKeyValue}
-        title={
-          mgmt.keyToRevokeCurrent?.key_name
-            ? `Revoke current key of ${mgmt.keyToRevokeCurrent.key_name}`
-            : "Revoke current key"
-        }
-        body={
-          <Text fontSize="sm" color="ink.700" lineHeight="1.5">
-            The current key of <Text as="b">{mgmt.keyToRevokeCurrent?.key_name}</Text> stops
-            working immediately. The previous key keeps working until{" "}
-            {mgmt.keyToRevokeCurrent?.rotated_key_expires_at
-              ? new Date(mgmt.keyToRevokeCurrent.rotated_key_expires_at).toLocaleString()
-              : "its window ends"}
-            ; after that the API key stops working entirely and a new key must be created.
-          </Text>
-        }
-        confirmLabel="Revoke Current Key"
-        cancelLabel="Cancel"
-        confirmColorScheme="red"
-        isConfirmLoading={mgmt.isRevokingCurrent}
-        confirmLoadingText="Revoking..."
-        leastDestructiveRef={revokeCurrentCancelRef}
-      />
 
       <StandardModal
         isOpen={Boolean(mgmt.rotatedKey)}

@@ -165,7 +165,6 @@ const apiKeyResponseRawSchema = z
     expires_at: z.string().nullable().optional(),
     rotated_key_expires_at: z.string().nullable().optional(),
     rotated_key: z.string().nullable().optional(),
-    api_key_revoked_at: z.string().nullable().optional(),
     rotated_at: z.string().nullable().optional(),
   })
   .passthrough();
@@ -182,7 +181,6 @@ function normalizeApiKeyResponse<T extends z.infer<typeof apiKeyResponseRawSchem
     expires_at: d.expires_at ?? undefined,
     rotated_key_expires_at: d.rotated_key_expires_at ?? undefined,
     rotated_key: d.rotated_key ?? undefined,
-    api_key_revoked_at: d.api_key_revoked_at ?? undefined,
     rotated_at: d.rotated_at ?? undefined,
   };
 }

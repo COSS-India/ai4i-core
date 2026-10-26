@@ -118,10 +118,9 @@ below show the domain-level paths. Source: `services/auth-service/app/routes/`.
 | GET | `/auth/api-keys/all` | List all keys (admin) |
 | PATCH | `/auth/api-keys/{api_key}` | Update name / permissions / expiry / active |
 | DELETE | `/auth/api-keys/{api_key}` | Revoke / delete key |
-| POST | `/auth/api-keys/{key_id}/rotate` | Issue a new key value (returned once); the previous value keeps working for the required `grace_days` |
+| POST | `/auth/api-keys/{key_id}/rotate` | Issue a new key value (returned once); the previous value keeps working for the required `grace_days`, which can't run past the key's expiry (422) |
 | PATCH | `/auth/api-keys/{key_id}/rotated-key` | Move the previous value's window end later, while it still works; never past the key's expiry |
-| DELETE | `/auth/api-keys/{key_id}/rotated-key` | Stop the previous value now, before its window ends; the current value keeps working (if it was already revoked, the whole key is revoked) |
-| DELETE | `/auth/api-keys/{key_id}/current-key` | Stop the current value now, during a rotation; the previous value keeps working until its window ends, then the key has no working value |
+| DELETE | `/auth/api-keys/{key_id}/rotated-key` | Stop the previous value now, before its window ends; the current value keeps working |
 
 ### Tenants — `/auth/tenants`
 | Method | Path | Purpose |
