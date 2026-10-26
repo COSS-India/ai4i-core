@@ -429,9 +429,9 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum by (le, endpoint) (\n    rate(telemetry_obsv_request_duration_seconds_bucket{tenant=~\"$tenant\", service=\"inference-service\",\n      exported_endpoint=~\"/api/v1/chat|/api/v1/chat/completions\"}[$__range])\n  )\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le, exported_endpoint) (\n    rate(telemetry_obsv_request_duration_seconds_bucket{tenant=~\"$tenant\", service=\"inference-service\",\n      exported_endpoint=~\"/api/v1/chat|/api/v1/chat/completions\"}[$__range])\n  )\n)",
           "hide": false,
-          "legendFormat": "{{endpoint}}",
+          "legendFormat": "{{exported_endpoint}}",
           "range": true,
           "refId": "A"
         }
@@ -1068,7 +1068,7 @@
               }
             ]
           },
-          "unit": "s"
+          "unit": "m"
         },
         "overrides": []
       },
@@ -1104,14 +1104,14 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_asr_audio_seconds_processed_bucket{tenant=~\"$tenant\"}[$__range])\n  )\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_asr_audio_minutes_processed_bucket{tenant=~\"$tenant\"}[$__range])\n  )\n)",
           "hide": false,
           "legendFormat": "Avg Payload",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "ASR Payload Size (Median, Seconds)",
+      "title": "ASR Payload Size (Median, Minutes)",
       "type": "stat"
     },
     {
@@ -1259,7 +1259,7 @@
         "type": "prometheus",
         "uid": "prometheus"
       },
-      "description": "Median number of Image Size in KBs processed by the OCR service.",
+      "description": "Median number of images processed by the OCR service.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1314,14 +1314,14 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_ocr_image_size_kb_bucket{tenant=~\"$tenant\"}[$__range])\n  )\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_ocr_images_processed_bucket{tenant=~\"$tenant\"}[$__range])\n  )\n)",
           "hide": false,
           "legendFormat": "Avg Payload",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "OCR Payload Size (Median, Image KBs)",
+      "title": "OCR Payload Size (Median, Images)",
       "type": "stat"
     },
     {
@@ -1454,9 +1454,9 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum by (le, endpoint) (\n    rate(telemetry_obsv_llm_tokens_processed_bucket{tenant=~\"$tenant\", token_type=\"prompt\", exported_endpoint=~\"/api/v1/chat|/api/v1/chat/completions\"}[$__range])\n  )\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le, exported_endpoint) (\n    rate(telemetry_obsv_llm_tokens_processed_bucket{tenant=~\"$tenant\", token_type=\"prompt\", exported_endpoint=~\"/api/v1/chat|/api/v1/chat/completions\"}[$__range])\n  )\n)",
           "hide": false,
-          "legendFormat": "{{endpoint}}",
+          "legendFormat": "{{exported_endpoint}}",
           "range": true,
           "refId": "A"
         }
@@ -1558,7 +1558,7 @@
               }
             ]
           },
-          "unit": "s"
+          "unit": "m"
         },
         "overrides": []
       },
@@ -1594,14 +1594,14 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_speaker_diarization_seconds_processed_bucket{tenant=~\"$tenant\"}[$__range])\n  )\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_speaker_diarization_minutes_processed_bucket{tenant=~\"$tenant\"}[$__range])\n  )\n)",
           "hide": false,
           "legendFormat": "Avg Payload",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Speaker Diarization Payload Size (Median, Seconds)",
+      "title": "Speaker Diarization Payload Size (Median, Minutes)",
       "type": "stat"
     },
     {
@@ -1628,7 +1628,7 @@
               }
             ]
           },
-          "unit": "s"
+          "unit": "m"
         },
         "overrides": []
       },
@@ -1664,14 +1664,14 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_language_diarization_seconds_processed_bucket{tenant=~\"$tenant\"}[$__range])\n  )\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_language_diarization_minutes_processed_bucket{tenant=~\"$tenant\"}[$__range])\n  )\n)",
           "hide": false,
           "legendFormat": "Avg Payload",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Language Diarization Payload Size (Median, Seconds)",
+      "title": "Language Diarization Payload Size (Median, Minutes)",
       "type": "stat"
     },
     {
@@ -1768,7 +1768,7 @@
               }
             ]
           },
-          "unit": "s"
+          "unit": "m"
         },
         "overrides": []
       },
@@ -1804,14 +1804,14 @@
             "uid": "prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_audio_lang_detection_seconds_processed_bucket{tenant=~\"$tenant\"}[$__range])\n  )\n)",
+          "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_audio_lang_detection_minutes_processed_bucket{tenant=~\"$tenant\"}[$__range])\n  )\n)",
           "hide": false,
           "legendFormat": "Avg Payload",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "Audio Language Detection Payload Size (Median, Seconds)",
+      "title": "Audio Language Detection Payload Size (Median, Minutes)",
       "type": "stat"
     },
     {

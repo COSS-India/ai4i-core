@@ -25,7 +25,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "Prometheus"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -79,7 +79,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "Prometheus"
+            "uid": "prometheus"
           },
           "editorMode": "code",
           "expr": "sum by (exported_endpoint) (\n  increase(\n    telemetry_obsv_requests_total{\n      tenant=~\"$tenant\",\n      service=\"inference-service\",\n      exported_endpoint=~\"/api/v1/chat|/api/v1/chat/completions\"\n    }[$__range]\n  )\n)",
@@ -108,7 +108,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "Prometheus"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -165,7 +165,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "Prometheus"
+            "uid": "prometheus"
           },
           "editorMode": "code",
           "expr": "histogram_quantile(\n  0.5,\n  sum by (le, exported_endpoint) (\n    rate(telemetry_obsv_request_duration_seconds_bucket{tenant=~\"$tenant\", service=\"inference-service\", exported_endpoint=~\"/api/v1/chat|/api/v1/chat/completions\"}[$__range])\n  )\n)",
@@ -181,7 +181,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "Prometheus"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -234,7 +234,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "Prometheus"
+            "uid": "prometheus"
           },
           "editorMode": "code",
           "expr": "histogram_quantile(\n  0.5,\n  sum by (le) (\n    rate(telemetry_obsv_llm_tokens_processed_bucket{tenant=~\"$tenant\", token_type=\"prompt\"}[$__range])\n  )\n)",
@@ -250,7 +250,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "Prometheus"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -301,7 +301,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "Prometheus"
+            "uid": "prometheus"
           },
           "editorMode": "code",
           "expr": "100 * (\n  sum(rate(telemetry_obsv_requests_total{\n    tenant=~\"$tenant\", service=\"inference-service\", status_code!~\"200|201\", exported_endpoint=~\"/api/v1/chat|/api/v1/chat/completions\"\n  }[$__range]))\n  /\n  sum(rate(telemetry_obsv_requests_total{\n    tenant=~\"$tenant\", service=\"inference-service\", exported_endpoint=~\"/api/v1/chat|/api/v1/chat/completions\"\n  }[$__range]))\n)",
@@ -317,7 +317,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "Prometheus"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -373,7 +373,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "Prometheus"
+            "uid": "prometheus"
           },
           "editorMode": "code",
           "expr": "100 * sum by (status_code) (\n  rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", service=\"inference-service\", status_code!~\"200|201\", exported_endpoint=~\"/api/v1/chat|/api/v1/chat/completions\"}[$__range])\n)\n/ scalar(\n  sum(rate(telemetry_obsv_requests_total{tenant=~\"$tenant\", service=\"inference-service\", status_code!~\"200|201\", exported_endpoint=~\"/api/v1/chat|/api/v1/chat/completions\"}[$__range]))\n)",
@@ -408,7 +408,7 @@
         },
         "datasource": {
           "type": "prometheus",
-          "uid": "Prometheus"
+          "uid": "prometheus"
         },
         "definition": "label_values(telemetry_obsv_requests_total, tenant)",
         "includeAll": true,
