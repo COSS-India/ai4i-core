@@ -288,9 +288,10 @@ class AuthService:
         self, token: str, background_tasks: Optional[BackgroundTasks] = None
     ) -> None:
         """Apply a held Institution Admin email change (issued by
-        ``TenantService.update_tenant``): swap ``tenant.email`` and the contact
-        admin's ``users.email`` to the verified address. A ``tenant_only``
-        token (no contact user to re-align) updates ``tenant.email`` alone.
+        ``TenantService.update_tenant``): swap ``tenant.email`` and, when
+        ``tenant.email`` belongs to a user of this tenant (the contact), that
+        user's ``users.email`` to the verified address. Without a contact,
+        only ``tenant.email`` changes.
 
         The contact account is handed over to whoever holds the new address,
         so the outgoing admin's password and sessions are revoked and a setup
@@ -320,21 +321,13 @@ class AuthService:
         ):
             raise TokenInvalidError(f"This {link_name} is no longer valid.")
 
-        admin: Optional[User] = None
-        if not payload.tenant_only:
-            admin = await self._users.get_by_id(UUID(payload.sub))
-            # Stale if the admin left the tenant or is no longer its contact
-            # (e.g. their own email was edited since the request).
-            if (
-                admin is None
-                or admin.tenant_id != tenant.id
-                or (tenant.email or "").lower().strip() != (admin.email or "").lower().strip()
-            ):
-                raise TokenInvalidError(f"This {link_name} is no longer valid.")
-            # Never hand over a platform administrator's account (also
-            # refused at request time; re-checked in case roles changed).
-            if RoleName.ADMIN.value in await self._roles.get_user_roles(admin.id):
-                raise TokenInvalidError(f"This {link_name} is no longer valid.")
+        admin = await self._users.get_by_email(tenant.email)
+        if admin is not None and admin.tenant_id != tenant.id:
+            admin = None
+        # Never hand over a platform administrator's account (also refused at
+        # request time; re-checked in case roles changed).
+        if admin is not None and RoleName.ADMIN.value in await self._roles.get_user_roles(admin.id):
+            raise TokenInvalidError(f"This {link_name} is no longer valid.")
 
         # Re-check uniqueness: the address may have been taken since the request.
         other_tenant = await self._tenants.get_by_email(new_email)
@@ -343,7 +336,7 @@ class AuthService:
         other_user = await self._users.get_by_email(new_email)
         if other_user is not None and (
             # Re-aligned admin: any other holder breaks users.email UNIQUE.
-            # Tenant-only: same-tenant holders are harmless (as in update_tenant).
+            # No contact: same-tenant holders are harmless (as in update_tenant).
             other_user.id != admin.id if admin is not None
             else other_user.tenant_id != tenant.id
         ):
@@ -371,7 +364,7 @@ class AuthService:
             )
         await self._users.commit()
         logger.info(
-            "Tenant %s email change verified (tenant-only=%s)", tenant.id, admin is None
+            "Tenant %s email change verified (contact re-aligned=%s)", tenant.id, admin is not None
         )
         if admin is None:
             return

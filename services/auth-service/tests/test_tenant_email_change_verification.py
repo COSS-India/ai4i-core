@@ -97,11 +97,12 @@ class TestUpdateTenantEmailChange:
         svc._users.get_by_email = AsyncMock(
             side_effect=lambda e: admin if e == "old@tenant.com" else None
         )
+        requester = MagicMock(id=uuid4())
 
         with patch("app.services.tenant_service.enqueue_email") as enqueue, \
              patch("app.services.tenant_service.render_email_change") as render:
-            result = await svc.update_tenant(
-                MagicMock(id=uuid4()), 1,
+            _, link_sent = await svc.update_tenant(
+                requester, 1,
                 _body(email="new@tenant.com", contact_name="Jane"),
                 background_tasks=MagicMock(),
             )
@@ -113,12 +114,12 @@ class TestUpdateTenantEmailChange:
         assert staged["pending_email_expires_at"] > datetime.now(timezone.utc)
         assert admin.email == "old@tenant.com"                     # not applied yet
         svc._tokens.create_email_change_token.assert_called_once_with(
-            user_id=str(admin.id), new_email="new@tenant.com", tenant_id=1, tenant_only=False
+            user_id=str(requester.id), new_email="new@tenant.com", tenant_id=1
         )
         render.assert_called_once_with(
             "new@tenant.com", "Acme", "change-token", sends_setup_link=True
         )
-        assert result.verification_sent is True
+        assert link_sent is True
 
     @pytest.mark.asyncio
     async def test_existing_institution_admin_applied_without_verification(self) -> None:
@@ -128,7 +129,7 @@ class TestUpdateTenantEmailChange:
         svc._users.get_by_email = AsyncMock(return_value=_user("other.admin@tenant.com"))
 
         with patch("app.services.tenant_service.enqueue_email") as enqueue:
-            result = await svc.update_tenant(
+            _, link_sent = await svc.update_tenant(
                 MagicMock(id=uuid4()), 1, _body(email="other.admin@tenant.com"),
                 background_tasks=MagicMock(),
             )
@@ -138,7 +139,7 @@ class TestUpdateTenantEmailChange:
         assert _staged(svc)["pending_email_expires_at"] is None
         svc._tokens.create_email_change_token.assert_not_called()
         enqueue.assert_not_called()
-        assert result.verification_sent is False
+        assert link_sent is False
 
     @pytest.mark.asyncio
     async def test_deactivated_admin_does_not_qualify_for_direct_change(self) -> None:
@@ -161,7 +162,7 @@ class TestUpdateTenantEmailChange:
         svc._tenants.update.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_no_contact_user_sends_tenant_only_verification(self) -> None:
+    async def test_no_contact_user_still_sends_verification(self) -> None:
         """tenant.email no longer maps to a user (contact's email edited or
         contact deleted): still verify, but only tenant.email will change."""
         svc = _tenant_service()
@@ -170,19 +171,19 @@ class TestUpdateTenantEmailChange:
 
         with patch("app.services.tenant_service.enqueue_email") as enqueue, \
              patch("app.services.tenant_service.render_email_change") as render:
-            result = await svc.update_tenant(requester, 1, _body(email="new@tenant.com"),
-                                             background_tasks=MagicMock())
+            _, link_sent = await svc.update_tenant(requester, 1, _body(email="new@tenant.com"),
+                                                   background_tasks=MagicMock())
             enqueue.call_args.args[2]()
 
         assert "email" not in _staged(svc)
         assert _staged(svc)["pending_email"] == "new@tenant.com"
         svc._tokens.create_email_change_token.assert_called_once_with(
-            user_id=str(requester.id), new_email="new@tenant.com", tenant_id=1, tenant_only=True
+            user_id=str(requester.id), new_email="new@tenant.com", tenant_id=1
         )
         render.assert_called_once_with(
             "new@tenant.com", "Acme", "change-token", sends_setup_link=False
         )
-        assert result.verification_sent is True
+        assert link_sent is True
 
     @pytest.mark.asyncio
     async def test_pending_tenant_does_not_repoint_to_existing_admin(self) -> None:
@@ -340,17 +341,17 @@ def _auth_service() -> AuthService:
     )
 
 
-def _wire_token(
-    svc: AuthService, owner: User, tenant: Tenant, new_email: str, tenant_only: bool = False
-):
+def _wire_token(svc: AuthService, tenant: Tenant, new_email: str, contact=None, holder=None):
+    """``contact`` is returned for tenant.email, ``holder`` for the new address."""
     svc._tokens.validate_token.return_value = TokenPayload(
-        sub=str(owner.id), token_type=TokenType.EMAIL_CHANGE,
-        tenant_id=str(tenant.id), email=new_email, tenant_only=tenant_only,
+        sub=str(uuid4()), token_type=TokenType.EMAIL_CHANGE,
+        tenant_id=str(tenant.id), email=new_email,
     )
     token_obj = MagicMock(is_active=True)
     svc._verifications.get_by_token = AsyncMock(return_value=token_obj)
-    svc._users.get_by_id = AsyncMock(return_value=owner)
     svc._tenants.get_by_id = AsyncMock(return_value=tenant)
+    by_email = {tenant.email: contact, new_email: holder}
+    svc._users.get_by_email = AsyncMock(side_effect=lambda e: by_email.get(e))
     return token_obj
 
 
@@ -364,7 +365,7 @@ class TestConfirmTenantEmailChange:
         svc = _auth_service()
         tenant = _tenant(pending_email="new@tenant.com")
         admin = _user("old@tenant.com")
-        token_obj = _wire_token(svc, admin, tenant, "new@tenant.com")
+        token_obj = _wire_token(svc, tenant, "new@tenant.com", contact=admin)
         creds = svc._credentials.get_by_user_id.return_value
 
         with patch(_REISSUE, new=AsyncMock(return_value="setup-token")) as reissue, \
@@ -392,7 +393,7 @@ class TestConfirmTenantEmailChange:
         """A newer request replaced pending_email — the older link is dead."""
         svc = _auth_service()
         tenant = _tenant(pending_email="newer@tenant.com")
-        _wire_token(svc, _user("old@tenant.com"), tenant, "new@tenant.com")
+        _wire_token(svc, tenant, "new@tenant.com", contact=_user("old@tenant.com"))
 
         with pytest.raises(TokenInvalidError):
             await svc.verify_email_token("tok")
@@ -403,11 +404,22 @@ class TestConfirmTenantEmailChange:
     async def test_expired_request_rejected(self) -> None:
         svc = _auth_service()
         tenant = _tenant(pending_email="new@tenant.com", pending_expires_in=timedelta(seconds=-1))
-        _wire_token(svc, _user("old@tenant.com"), tenant, "new@tenant.com")
+        _wire_token(svc, tenant, "new@tenant.com", contact=_user("old@tenant.com"))
 
         with pytest.raises(TokenInvalidError):
             await svc.verify_email_token("tok")
         assert tenant.email == "old@tenant.com"
+
+    @pytest.mark.asyncio
+    async def test_link_rejected_after_change_applied_directly(self) -> None:
+        """A direct change clears pending_email, so the old link no longer matches."""
+        svc = _auth_service()
+        tenant = _tenant("other.admin@tenant.com", pending_email=None)
+        _wire_token(svc, tenant, "new@tenant.com", contact=_user("other.admin@tenant.com"))
+
+        with pytest.raises(TokenInvalidError):
+            await svc.verify_email_token("tok")
+        assert tenant.email == "other.admin@tenant.com"
 
     @pytest.mark.asyncio
     async def test_platform_admin_never_handed_over(self) -> None:
@@ -416,7 +428,7 @@ class TestConfirmTenantEmailChange:
         svc._roles.get_user_roles = AsyncMock(return_value=["ADMIN"])
         tenant = _tenant(pending_email="new@tenant.com")
         admin = _user("old@tenant.com")
-        _wire_token(svc, admin, tenant, "new@tenant.com")
+        _wire_token(svc, tenant, "new@tenant.com", contact=admin)
 
         with pytest.raises(TokenInvalidError):
             await svc.verify_email_token("tok")
@@ -425,29 +437,10 @@ class TestConfirmTenantEmailChange:
         svc._users.commit.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_link_rejected_after_change_applied_directly(self) -> None:
-        svc = _auth_service()
-        tenant = _tenant(pending_email=None)
-        _wire_token(svc, _user("old@tenant.com"), tenant, "new@tenant.com")
-
-        with pytest.raises(TokenInvalidError):
-            await svc.verify_email_token("tok")
-
-    @pytest.mark.asyncio
-    async def test_stale_when_tenant_email_moved_on(self) -> None:
-        svc = _auth_service()
-        tenant = _tenant("someone.else@tenant.com", pending_email="new@tenant.com")
-        _wire_token(svc, _user("old@tenant.com"), tenant, "new@tenant.com")
-
-        with pytest.raises(TokenInvalidError):
-            await svc.verify_email_token("tok")
-        svc._users.commit.assert_not_awaited()
-
-    @pytest.mark.asyncio
     async def test_refused_while_tenant_suspended(self) -> None:
         svc = _auth_service()
         tenant = _tenant(status=TenantStatus.SUSPENDED, pending_email="new@tenant.com")
-        _wire_token(svc, _user("old@tenant.com"), tenant, "new@tenant.com")
+        _wire_token(svc, tenant, "new@tenant.com", contact=_user("old@tenant.com"))
 
         with pytest.raises(TokenInvalidError):
             await svc.verify_email_token("tok")
@@ -458,8 +451,8 @@ class TestConfirmTenantEmailChange:
     async def test_address_taken_since_request_raises_409(self) -> None:
         svc = _auth_service()
         tenant = _tenant(pending_email="new@tenant.com")
-        _wire_token(svc, _user("old@tenant.com"), tenant, "new@tenant.com")
-        svc._users.get_by_email = AsyncMock(return_value=_user("new@tenant.com", tenant_id=7))
+        _wire_token(svc, tenant, "new@tenant.com", contact=_user("old@tenant.com"),
+                    holder=_user("new@tenant.com", tenant_id=7))
 
         with pytest.raises(DuplicateEntityError):
             await svc.verify_email_token("tok")
@@ -468,20 +461,21 @@ class TestConfirmTenantEmailChange:
         svc._users.commit.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_tenant_only_updates_tenant_email_alone(self) -> None:
+    async def test_no_contact_updates_tenant_email_alone(self) -> None:
+        """tenant.email maps to no user of this tenant: nothing to hand over."""
         svc = _auth_service()
         tenant = _tenant("orphan@tenant.com", pending_email="new@tenant.com")
-        requester = _user("admin@platform.com", tenant_id=None)
-        _wire_token(svc, requester, tenant, "new@tenant.com", tenant_only=True)
-        # A same-tenant user holding the address is harmless when no login moves.
-        svc._users.get_by_email = AsyncMock(return_value=_user("new@tenant.com", tenant_id=1))
+        # Same address in another tenant is not this tenant's contact.
+        stranger = _user("orphan@tenant.com", tenant_id=9)
+        # A same-tenant user holding the new address is harmless when no login moves.
+        _wire_token(svc, tenant, "new@tenant.com", contact=stranger,
+                    holder=_user("new@tenant.com", tenant_id=1))
 
         with patch(_REISSUE, new=AsyncMock()) as reissue, patch(_ENQUEUE) as enqueue:
             assert await svc.verify_email_token("tok", background_tasks=MagicMock()) is True
 
         assert tenant.email == "new@tenant.com" and tenant.pending_email is None
-        assert requester.email == "admin@platform.com"  # no user re-aligned
-        svc._users.get_by_id.assert_not_awaited()
+        assert stranger.email == "orphan@tenant.com"  # no user re-aligned
         svc._credentials.delete.assert_not_awaited()
         svc._cache.revoke_all_sessions.assert_not_awaited()
         reissue.assert_not_awaited()
@@ -489,12 +483,10 @@ class TestConfirmTenantEmailChange:
         svc._users.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_tenant_only_cross_tenant_holder_raises_409(self) -> None:
+    async def test_no_contact_cross_tenant_holder_raises_409(self) -> None:
         svc = _auth_service()
         tenant = _tenant("orphan@tenant.com", pending_email="new@tenant.com")
-        requester = _user("admin@platform.com", tenant_id=None)
-        _wire_token(svc, requester, tenant, "new@tenant.com", tenant_only=True)
-        svc._users.get_by_email = AsyncMock(return_value=_user("new@tenant.com", tenant_id=7))
+        _wire_token(svc, tenant, "new@tenant.com", holder=_user("new@tenant.com", tenant_id=7))
 
         with pytest.raises(DuplicateEntityError):
             await svc.verify_email_token("tok")
@@ -504,7 +496,7 @@ class TestConfirmTenantEmailChange:
     async def test_used_link_rejected(self) -> None:
         svc = _auth_service()
         tenant = _tenant(pending_email="new@tenant.com")
-        token_obj = _wire_token(svc, _user("old@tenant.com"), tenant, "new@tenant.com")
+        token_obj = _wire_token(svc, tenant, "new@tenant.com", contact=_user("old@tenant.com"))
         token_obj.is_active = False
 
         with pytest.raises(TokenInvalidError):
