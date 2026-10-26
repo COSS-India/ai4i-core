@@ -1,5 +1,4 @@
 // Services Management: registry list stays mounted. Create, edit, and view use FormDrawer.
-import { VStack } from "@chakra-ui/react";
 import { DeleteIcon, EditIcon } from "@chakra-ui/icons";
 import { MdOutlineCheckCircle, MdOutlineUnpublished } from "react-icons/md";
 import React, { useCallback, useLayoutEffect, useMemo, useState } from "react";
@@ -18,22 +17,21 @@ import ConfirmDialog from "../common/ConfirmDialog";
 import { useAuth } from "../../hooks/useAuth";
 import { useServicesManagement } from "../../hooks/useServicesManagement";
 import { authService } from "../../services/authService";
-import {
-  getServiceColumnPreference,
-  resetServiceColumnPreference,
-  saveServiceColumnPreference,
-} from "../../services/servicesManagementService";
 import ServiceListColumnPicker from "./ServiceListColumnPicker";
 import ServiceRegistryTab from "./ServiceRegistryTab";
 import ServiceFormTab from "./ServiceFormTab";
 import ServiceDetailTab from "./ServiceDetailTab";
 import {
   defaultServiceListColumnIds,
-  loadServiceListColumns,
-  resolveServiceListColumns,
-  saveServiceListColumns,
   serviceListCellKey,
+  type ServiceListColumnDef,
 } from "./serviceListColumns";
+import {
+  loadVisibleServiceColumns,
+  nextVisibleColumnIds,
+  persistVisibleServiceColumns,
+  resetVisibleServiceColumns,
+} from "./serviceColumnPreferences";
 import {
   renderEmptyServiceCell,
   renderServiceCachedInputPriceCell,
@@ -48,7 +46,6 @@ import {
   renderServiceTaskTypeCell,
   renderServiceTierCell,
 } from "./serviceListCells";
-import { showError } from "../../utils/errorHandler";
 
 const CREATE_SERVICE_FORM_ID = "create-service-form";
 const EDIT_SERVICE_FORM_ID = "edit-service-form";
@@ -145,6 +142,41 @@ function buildServiceActions(
       disabled: context.deletingServiceUuid !== null,
     },
   ];
+}
+
+function buildVisibleServiceColumns(
+  catalogue: readonly ServiceListColumnDef[],
+  visibleColumnIds: readonly string[],
+  templates: DataTableColumn<Service>[],
+): DataTableColumn<Service>[] {
+  const byCell = new Map(templates.map((column) => [column.id, column]));
+  const built: DataTableColumn<Service>[] = [];
+  let actionsColumn: DataTableColumn<Service> | null = null;
+  for (const definition of catalogue) {
+    if (!visibleColumnIds.includes(definition.id)) continue;
+    const cellKey = serviceListCellKey(definition.id);
+    const template = byCell.get(cellKey);
+    const column: DataTableColumn<Service> = template
+      ? {
+          ...template,
+          id: definition.id,
+          header: definition.label,
+          sortable: definition.sortable !== false && Boolean(template.sortable),
+        }
+      : {
+          id: definition.id,
+          header: definition.label,
+          sortable: false,
+          cell: renderEmptyServiceCell,
+        };
+    if (cellKey === "actions") {
+      actionsColumn = column;
+    } else {
+      built.push(column);
+    }
+  }
+  if (actionsColumn) built.push(actionsColumn);
+  return built;
 }
 
 const ServicesManagement: React.FC = () => {
@@ -272,26 +304,14 @@ const ServicesManagement: React.FC = () => {
     const id = preferenceUserId();
     if (!id) return;
     let cancelled = false;
-    const apply = (next: string[]) => {
+    void loadVisibleServiceColumns({
+      userId: id,
+      usesServer: serviceListUsesServer,
+      catalogue: serviceListCatalogue,
+    }).then((next) => {
       if (cancelled) return;
-      setVisibleColumnIds((current) =>
-        current.length === next.length && current.every((columnId, index) => columnId === next[index])
-          ? current
-          : next,
-      );
-    };
-    if (!serviceListUsesServer) {
-      apply(loadServiceListColumns(id, undefined, serviceListCatalogue));
-      return () => {
-        cancelled = true;
-      };
-    }
-    getServiceColumnPreference()
-      .then((stored) => apply(resolveServiceListColumns(stored, serviceListCatalogue)))
-      .catch((error) => {
-        console.warn("Column preference could not be loaded.", error);
-        apply(loadServiceListColumns(id, undefined, serviceListCatalogue));
-      });
+      setVisibleColumnIds((current) => nextVisibleColumnIds(current, next));
+    });
     return () => {
       cancelled = true;
     };
@@ -316,13 +336,14 @@ const ServicesManagement: React.FC = () => {
 
   const applyVisibleColumns = useCallback(
     (next: readonly string[]) => {
-      const resolved = serviceListUsesServer
-        ? resolveServiceListColumns(next, serviceListCatalogue)
-        : saveServiceListColumns(preferenceUserId(), next, undefined, serviceListCatalogue);
+      const resolved = persistVisibleServiceColumns({
+        userId: preferenceUserId(),
+        usesServer: serviceListUsesServer,
+        catalogue: serviceListCatalogue,
+        columnIds: next,
+      });
       setVisibleColumnIds(resolved);
       resetSortIfColumnHidden(resolved);
-      if (!serviceListUsesServer) return;
-      saveServiceColumnPreference(resolved).catch((error) => showError(error));
     },
     [
       preferenceUserId,
@@ -333,14 +354,13 @@ const ServicesManagement: React.FC = () => {
   );
 
   const resetVisibleColumns = useCallback(() => {
-    const defaults = defaultServiceListColumnIds(serviceListCatalogue);
+    const defaults = resetVisibleServiceColumns({
+      userId: preferenceUserId(),
+      usesServer: serviceListUsesServer,
+      catalogue: serviceListCatalogue,
+    });
     setVisibleColumnIds(defaults);
     resetSortIfColumnHidden(defaults);
-    if (!serviceListUsesServer) {
-      saveServiceListColumns(preferenceUserId(), defaults, undefined, serviceListCatalogue);
-      return;
-    }
-    resetServiceColumnPreference().catch((error) => showError(error));
   }, [
     preferenceUserId,
     resetSortIfColumnHidden,
@@ -451,38 +471,15 @@ const ServicesManagement: React.FC = () => {
     return columns;
   }, [actionsContext]);
 
-  const serviceColumns = useMemo((): DataTableColumn<Service>[] => {
-    const byCell = new Map(columnTemplates.map((column) => [column.id, column]));
-    const built: DataTableColumn<Service>[] = [];
-    let actionsColumn: DataTableColumn<Service> | null = null;
-    for (const definition of serviceListCatalogue) {
-      if (!visibleColumnIds.includes(definition.id)) continue;
-      const cellKey = serviceListCellKey(definition.id);
-      const template = byCell.get(cellKey);
-      const column: DataTableColumn<Service> = template
-        ? {
-            ...template,
-            id: definition.id,
-            header: definition.label,
-            sortable:
-              definition.sortable !== false && Boolean(template.sortable),
-          }
-        : {
-            id: definition.id,
-            header: definition.label,
-            sortable: false,
-            cell: renderEmptyServiceCell,
-          };
-      // API catalogue lists actions second; keep it last like other admin tables.
-      if (cellKey === "actions") {
-        actionsColumn = column;
-      } else {
-        built.push(column);
-      }
-    }
-    if (actionsColumn) built.push(actionsColumn);
-    return built;
-  }, [columnTemplates, serviceListCatalogue, visibleColumnIds]);
+  const serviceColumns = useMemo(
+    () =>
+      buildVisibleServiceColumns(
+        serviceListCatalogue,
+        visibleColumnIds,
+        columnTemplates,
+      ),
+    [columnTemplates, serviceListCatalogue, visibleColumnIds],
+  );
 
   const serviceForm = (
     <ServiceFormTab
@@ -531,19 +528,22 @@ const ServicesManagement: React.FC = () => {
   const showServiceView = Boolean(isViewingService && selectedService);
   const showServiceEdit = Boolean(editingService) && !isRegistryReadOnly && !showServiceView;
   const showServiceCreate = isCreateOpen && !showServiceEdit && !showServiceView;
+  let pageDescription =
+    "Find a service, open it to view or edit, or create a new one. Publish when it should appear for users.";
+  if (isRegistryReadOnly) {
+    pageDescription =
+      "Browse services in the registry. You can open a service to view its configuration.";
+  }
+  const showCreateAction = !isRegistryReadOnly && !isCreateServiceTabDisabled;
 
   return (
     <>
       <ManagementPageHeader
         crumbs={false}
         title="Services Management"
-        description={
-          isRegistryReadOnly
-            ? "Browse services in the registry. You can open a service to view its configuration."
-            : "Find a service, open it to view or edit, or create a new one. Publish when it should appear for users."
-        }
+        description={pageDescription}
         actions={
-          !isRegistryReadOnly && !isCreateServiceTabDisabled ? (
+          showCreateAction ? (
             <CreateButton onClick={openCreateModal}>Create Service</CreateButton>
           ) : undefined
         }

@@ -106,3 +106,62 @@ export function serviceIdsFromItems(items: Service[]): string[] {
     .map((service) => service.serviceId || service.service_id || "")
     .filter((id): id is string => Boolean(id));
 }
+
+export function mergeServiceIdLists(
+  previous: string[] | null | undefined,
+  next: string[],
+): string[] {
+  return Array.from(new Set([...(previous ?? []), ...next]));
+}
+
+export function applyServicePublishPatch(
+  service: Service,
+  serviceId: string,
+  isPublished: boolean,
+  freshService?: Service,
+): Service {
+  if (service.serviceId !== serviceId) return service;
+  if (freshService) return freshService;
+  if (isPublished) {
+    return {
+      ...service,
+      isPublished,
+      publishedOn: Math.floor(Date.now() / 1000),
+    };
+  }
+  return { ...service, isPublished };
+}
+
+export function filterServicesForPublishStatus(
+  services: Service[],
+  options: {
+    serviceId: string;
+    isPublished: boolean;
+    freshService?: Service;
+    publishedOnly: boolean;
+    unpublishedOnly: boolean;
+  },
+): Service[] {
+  const next = services.map((service) =>
+    applyServicePublishPatch(
+      service,
+      options.serviceId,
+      options.isPublished,
+      options.freshService,
+    ),
+  );
+  if (options.publishedOnly) {
+    return next.filter((service) => service.isPublished === true);
+  }
+  if (options.unpublishedOnly) {
+    return next.filter((service) => service.isPublished !== true);
+  }
+  return next;
+}
+
+export function resolveOptionalFilterValue(
+  override: string | undefined,
+  current: string,
+): string {
+  return override ?? current;
+}

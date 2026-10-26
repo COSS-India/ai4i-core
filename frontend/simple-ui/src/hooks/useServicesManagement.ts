@@ -12,7 +12,11 @@ import {
   type ServiceListColumnDef,
 } from "../components/services-management/serviceListColumns";
 import {
+  applyServicePublishPatch,
   fetchRegistryServicesPage,
+  filterServicesForPublishStatus,
+  mergeServiceIdLists,
+  resolveOptionalFilterValue,
   serviceIdsFromItems,
   shouldReplaceFullServiceIds,
 } from "../components/services-management/serviceRegistryFetch";
@@ -43,18 +47,14 @@ import {
 } from "../services/tierManagementService";
 import type { ModelDetails } from "../types/platform";
 import {
-  SERVICE_NAME_MAX_LEN,
   sanitizeServiceId,
-  validateHardwareDescription,
   parsePricePerUnit,
-  validatePricePerUnit,
-  LLM_CACHED_INPUT_PRICE_LABEL,
-  LLM_INPUT_PRICE_LABEL,
-  LLM_OUTPUT_PRICE_LABEL,
-  validateServiceDescription,
-  validateServiceIdLength,
-  validateServiceName,
 } from "../components/services-management/serviceFormValidation";
+import {
+  computeServiceFormGates,
+  hasActiveClientServiceFilters,
+  hasActiveServerServiceFilters,
+} from "../components/services-management/serviceFormGates";
 import { useAuth } from "./useAuth";
 import { isRegistryReadOnlyUser, userHasRole } from "../utils/rbac";
 import { useSessionExpiry } from "./useSessionExpiry";
@@ -470,24 +470,20 @@ export function useServicesManagement() {
   const statusFilterColumnId = serviceListCatalogue.find(
     (column) => serviceListCellKey(column.id) === "status",
   )?.id;
-  const hasActiveServerFilters = Object.entries(serverFilters).some(([id, value]) => {
-    const trimmed = value.trim();
-    if (!trimmed) return false;
-    if (
-      id === taskFilterColumnId &&
-      taskTypeNames.length === 1 &&
-      trimmed === taskTypeNames[0]
-    ) {
-      return false;
-    }
-    return true;
-  });
   const hasActiveFilters = serviceListUsesServer
-    ? hasActiveServerFilters
-    : filterStatus !== "" ||
-      (showTaskTypeAllOption && filterTaskType !== "") ||
-      filterTier !== SERVICE_TIER.FILTER.ALL ||
-      searchQuery.trim() !== "";
+    ? hasActiveServerServiceFilters(
+        serverFilters,
+        taskFilterColumnId,
+        taskTypeNames,
+      )
+    : hasActiveClientServiceFilters({
+        filterStatus,
+        filterTaskType,
+        filterTier,
+        searchQuery,
+        showTaskTypeAllOption,
+        allTierValue: SERVICE_TIER.FILTER.ALL,
+      });
   const clearAllFilters = () => {
     setSearchQuery("");
     setFilterStatus("");
@@ -589,9 +585,7 @@ export function useServicesManagement() {
         setFullServiceIds(ids);
         return;
       }
-      setFullServiceIds((prev) =>
-        Array.from(new Set([...(prev ?? []), ...ids])),
-      );
+      setFullServiceIds((prev) => mergeServiceIdLists(prev, ids));
     },
     [serviceListUsesServer, taskTypeNames],
   );
@@ -604,13 +598,17 @@ export function useServicesManagement() {
     status?: string;
   }): Promise<Service[]> => {
     const commit = options?.commit !== false;
-    const showLoading = !options?.silent && commit;
+    const showLoading = Boolean(commit && !options?.silent);
     if (showLoading) setIsLoading(true);
     try {
-      const statusFilter =
-        options?.status !== undefined ? options.status : filterStatus;
-      const taskTypeFilter =
-        options?.taskType !== undefined ? options.taskType : filterTaskType;
+      const statusFilter = resolveOptionalFilterValue(
+        options?.status,
+        filterStatus,
+      );
+      const taskTypeFilter = resolveOptionalFilterValue(
+        options?.taskType,
+        filterTaskType,
+      );
       const page = await fetchRegistryServicesPage(
         {
           filterStatus,
@@ -690,19 +688,6 @@ export function useServicesManagement() {
    */
   const syncServicePublishStatus = useCallback(
     (serviceId: string, isPublished: boolean, freshService?: Service) => {
-      const apply = (s: Service): Service => {
-        if (s.serviceId !== serviceId) return s;
-        if (freshService) return freshService;
-        if (isPublished) {
-          return {
-            ...s,
-            isPublished,
-            publishedOn: Math.floor(Date.now() / 1000),
-          };
-        }
-        return { ...s, isPublished };
-      };
-
       const serverStatus = statusFilterColumnId
         ? serverFilters[statusFilterColumnId]
         : "";
@@ -710,20 +695,24 @@ export function useServicesManagement() {
         filterStatus === "published" || serverStatus === "true";
       const unpublishedOnly =
         filterStatus === "unpublished" || serverStatus === "false";
-      setServices((prev) => {
-        const next = prev.map(apply);
-        if (publishedOnly) {
-          return next.filter((service) => service.isPublished === true);
-        }
-        if (unpublishedOnly) {
-          return next.filter((service) => service.isPublished !== true);
-        }
-        return next;
-      });
-
-      setSelectedService((prev) =>
-        prev?.serviceId === serviceId ? apply(prev) : prev,
+      setServices((prev) =>
+        filterServicesForPublishStatus(prev, {
+          serviceId,
+          isPublished,
+          freshService,
+          publishedOnly,
+          unpublishedOnly,
+        }),
       );
+      setSelectedService((prev) => {
+        if (!prev || prev.serviceId !== serviceId) return prev;
+        return applyServicePublishPatch(
+          prev,
+          serviceId,
+          isPublished,
+          freshService,
+        );
+      });
     },
     [filterStatus, serverFilters, statusFilterColumnId],
   );
@@ -1302,117 +1291,48 @@ export function useServicesManagement() {
     selectedService?.billingUnitType ||
     "";
 
-  const filteredModelsForDropdown = formData.task_type
-    ? modelsForDropdown.filter((model) => {
-        const modelTaskType = resolveTaskType(model);
-        return (
-          modelTaskType.toLowerCase() === formData.task_type?.toLowerCase()
-        );
-      })
-    : modelsForDropdown;
+  const filteredModelsForDropdown = useMemo(() => {
+    const selectedTask = (formData.task_type || "").toLowerCase();
+    if (!selectedTask) return modelsForDropdown;
+    return modelsForDropdown.filter(
+      (model) => resolveTaskType(model).toLowerCase() === selectedTask,
+    );
+  }, [formData.task_type, modelsForDropdown]);
 
-  const isUnitSizeValid = /^\d+$/.test(unitSize.trim()) && Number(unitSize) > 0;
-
-  /**
-   * Price bounds hold on PATCH as well as POST, so this one is not gated on
-   * create mode the way most of the length rules below are.
-   */
-  const pricePerUnitError = validatePricePerUnit(
-    pricePerUnit,
-    isLlmTaskType ? LLM_INPUT_PRICE_LABEL : undefined,
-  );
-  // LLM services also need a cached input and an output price.
-  const cachedInputPricePerUnitError = isLlmTaskType
-    ? validatePricePerUnit(cachedInputPricePerUnit, LLM_CACHED_INPUT_PRICE_LABEL)
-    : null;
-  const outputPricePerUnitError = isLlmTaskType
-    ? validatePricePerUnit(outputPricePerUnit, LLM_OUTPUT_PRICE_LABEL)
-    : null;
-
-  // Duplicate serviceId check — only in create mode (serviceId is read-only when editing).
   // Union the registry ids so a clash still shows while the unfiltered list loads.
   const existingServiceIds = useMemo(() => {
     const ids = new Set(fullServiceIds ?? []);
     for (const id of allServiceIdsQuery.data ?? []) ids.add(id);
     return ids;
   }, [fullServiceIds, allServiceIdsQuery.data]);
-  const serviceIdExists =
-    !editingService &&
-    !!formData.serviceId?.trim() &&
-    existingServiceIds.has(formData.serviceId.trim());
 
-  /**
-   * Registry-state clash — surfaced immediately, since unlike the length
-   * rules it cannot be stated up-front in hint text.
-   */
-  const serviceIdError = serviceIdExists ? "Service Id already exists" : null;
-
-  /**
-   * ULCA length/charset rules. Description, Name and Service ID length are
-   * create only — PATCH carries none of them, so editing a service that
-   * predates these limits stays submittable. Hardware Description is the
-   * exception: it is editable and PATCH enforces its 5-100 length, so it is
-   * also checked on edit, but only once changed (see
-   * `shouldValidateHardwareDescription`).
-   *
-   * Each value doubles as the field's error message (the form reveals it
-   * once that field has been blurred) and as a Create-button gate. A short
-   * description looks filled in, so the disabled button alone would not say
-   * which field is at fault.
-   */
-  const isCreateMode = !editingService;
-  const serviceDescriptionError = isCreateMode
-    ? validateServiceDescription(formData.serviceDescription)
-    : null;
-  // LLM derives its name from the Service ID, so the separate Service Name
-  // field only exists — and only needs validating — for non-LLM tasks.
-  const serviceNameError =
-    isCreateMode && !isLlmTaskType ? validateServiceName(formData.name) : null;
-  const hardwareDescriptionError = shouldValidateHardwareDescription(
+  const {
+    pricePerUnitError,
+    cachedInputPricePerUnitError,
+    outputPricePerUnitError,
+    serviceIdError,
+    serviceDescriptionError,
+    serviceNameError,
+    hardwareDescriptionError,
+    serviceIdLengthError,
+    canCreateService,
+    isCreateFormModelSelected,
+  } = computeServiceFormGates({
     formData,
     editingService,
-  )
-    ? validateHardwareDescription(formData.hardwareDescription)
-    : null;
-  /**
-   * Service ID length, plus the tighter name cap when the ID doubles as the
-   * Service Name. Kept apart from `serviceIdError` so the duplicate clash
-   * can show immediately while this one waits for blur.
-   */
-  const serviceIdLengthError = !isCreateMode
-    ? null
-    : (validateServiceIdLength(formData.serviceId) ??
-      (isLlmTaskType &&
-      (formData.serviceId || "").trim().length > SERVICE_NAME_MAX_LEN
-        ? `Service ID must not exceed ${SERVICE_NAME_MAX_LEN} characters, because it is also used as the Service Name.`
-        : null));
-
-  const meetsCreateFieldRules =
-    !serviceDescriptionError &&
-    !serviceNameError &&
-    !hardwareDescriptionError &&
-    !serviceIdLengthError;
-
-  // LLM: Service Name is derived from Service ID (not shown). Non-LLM: both required.
-  const hasRequiredServiceIdentity = isLlmTaskType
-    ? !!formData.serviceId?.trim()
-    : !!formData.name?.trim() && !!formData.serviceId?.trim();
-
-  const canCreateService =
-    hasRequiredServiceIdentity &&
-    !serviceIdExists &&
-    meetsCreateFieldRules &&
-    !!formData.modelId?.trim() &&
-    !!formData.endpoint?.trim() &&
-    !!formData.task_type?.trim() &&
-    !pricePerUnitError &&
-    !cachedInputPricePerUnitError &&
-    !outputPricePerUnitError &&
-    !!currency.trim() &&
-    isUnitSizeValid &&
-    selectedTiers.length > 0;
-
-  const isCreateFormModelSelected = !!formData.modelId?.trim();
+    isLlmTaskType,
+    pricePerUnit,
+    cachedInputPricePerUnit,
+    outputPricePerUnit,
+    unitSize,
+    currency,
+    selectedTiers,
+    existingServiceIds,
+    shouldValidateHardware: shouldValidateHardwareDescription(
+      formData,
+      editingService,
+    ),
+  });
 
   const handleViewService = async (serviceId: string) => {
     // Check session expiry before viewing service
