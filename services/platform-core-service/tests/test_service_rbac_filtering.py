@@ -30,6 +30,8 @@ _spec.loader.exec_module(_service_route_mod)
 _filter_service_fields = _service_route_mod._filter_service_fields
 from app.core.permissions import is_platform_admin as _is_platform_admin  # noqa: E402
 list_services = _service_route_mod.list_services
+ServiceListFilterParams = _service_route_mod.ServiceListFilterParams
+ServiceListSortParams = _service_route_mod.ServiceListSortParams
 view_service = _service_route_mod.view_service
 list_try_it_services = _service_route_mod.list_try_it_services
 
@@ -158,14 +160,10 @@ class TestIsPlatformAdmin:
 def _list_kwargs(request, svc, **over):
     response = MagicMock()
     response.headers = {}
-    kwargs = dict(
-        request=request, response=response, task_types=None, is_published=None,
-        created_by=None, name=None, service_id=None, model_name=None, tier_ids=None,
-        created_from=None, created_to=None, published_from=None, published_to=None,
-        sort_by=None, sort_order="asc", offset=0, limit=None, svc=svc, db=MagicMock(),
+    return dict(
+        request=request, response=response, svc=svc, db=MagicMock(),
+        filters=ServiceListFilterParams(**over), paging=ServiceListSortParams(),
     )
-    kwargs.update(over)
-    return kwargs
 
 
 class TestListServicesRoute:

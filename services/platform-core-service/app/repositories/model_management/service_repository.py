@@ -4,7 +4,7 @@ Async repository for the Service entity.
 
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
 from sqlalchemy import String, and_, any_, asc, cast, delete, desc, func, select, update
@@ -40,10 +40,10 @@ class ServiceListFilters:
     service_id: Optional[str] = None
     model_name: Optional[str] = None
     tier_ids: Optional[List[str]] = None
-    created_from: Optional[Union[date, datetime]] = None
-    created_to: Optional[Union[date, datetime]] = None
-    published_from: Optional[Union[date, datetime]] = None
-    published_to: Optional[Union[date, datetime]] = None
+    created_from: date | datetime | None = None
+    created_to: date | datetime | None = None
+    published_from: date | datetime | None = None
+    published_to: date | datetime | None = None
 
 
 def _merge_filters(
@@ -72,13 +72,13 @@ def _contains(column, value: str):
     return column.ilike(f"%{_escape_like(value)}%", escape="\\")
 
 
-def _day_start(value: Union[date, datetime]) -> datetime:
+def _day_start(value: date | datetime) -> datetime:
     if isinstance(value, datetime):
         return value
     return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
 
 
-def _range_end_exclusive(value: Union[date, datetime]) -> datetime:
+def _range_end_exclusive(value: date | datetime) -> datetime:
     if isinstance(value, datetime):
         return value
     return _day_start(value) + timedelta(days=1)

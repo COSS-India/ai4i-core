@@ -1,6 +1,6 @@
 """Service List column metadata API (column picker)."""
 
-from typing import List, Optional
+from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import select
@@ -53,13 +53,12 @@ async def _tier_options(db: AsyncSession) -> List[ServiceColumnFilterOption]:
 
 @router.get(
     "/columns",
-    response_model=ServiceColumnsResponse,
     summary="Service List Column Catalogue",
     responses=error_responses(401, 403),
 )
 async def get_service_columns(
     request: Request,
-    db: AsyncSession = Depends(get_db),
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> ServiceColumnsResponse:
     """Columns the caller may show in the Service List, with filter metadata.
 
