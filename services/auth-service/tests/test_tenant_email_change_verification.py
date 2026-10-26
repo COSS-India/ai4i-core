@@ -17,7 +17,7 @@ from fastapi import HTTPException
 from pydantic import ValidationError as PydanticValidationError
 
 from app.core.constants import TokenType
-from app.core.exceptions import DuplicateEntityError, TokenInvalidError, ValidationError
+from app.core.exceptions import TokenInvalidError, ValidationError
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User
 from app.schemas.tenant import TenantUpdate
@@ -430,8 +430,9 @@ class TestConfirmTenantEmailChange:
         admin = _user("old@tenant.com")
         _wire_token(svc, tenant, "new@tenant.com", contact=admin)
 
-        with pytest.raises(TokenInvalidError):
+        with pytest.raises(HTTPException) as exc:
             await svc.verify_email_token("tok")
+        assert exc.value.detail["code"] == "TENANT_EMAIL_EDIT_NOT_ALLOWED"
         assert admin.email == "old@tenant.com"
         svc._credentials.delete.assert_not_awaited()
         svc._users.commit.assert_not_awaited()
@@ -442,8 +443,9 @@ class TestConfirmTenantEmailChange:
         tenant = _tenant(status=TenantStatus.SUSPENDED, pending_email="new@tenant.com")
         _wire_token(svc, tenant, "new@tenant.com", contact=_user("old@tenant.com"))
 
-        with pytest.raises(TokenInvalidError):
+        with pytest.raises(HTTPException) as exc:
             await svc.verify_email_token("tok")
+        assert exc.value.detail["code"] == "TENANT_EMAIL_EDIT_NOT_ALLOWED"
         assert tenant.email == "old@tenant.com"
         svc._users.commit.assert_not_awaited()
 
@@ -454,8 +456,9 @@ class TestConfirmTenantEmailChange:
         _wire_token(svc, tenant, "new@tenant.com", contact=_user("old@tenant.com"),
                     holder=_user("new@tenant.com", tenant_id=7))
 
-        with pytest.raises(DuplicateEntityError):
+        with pytest.raises(HTTPException) as exc:
             await svc.verify_email_token("tok")
+        assert exc.value.detail["code"] == "DUPLICATE_EMAIL"
         assert tenant.email == "old@tenant.com"
         svc._credentials.delete.assert_not_awaited()
         svc._users.commit.assert_not_awaited()
@@ -488,8 +491,9 @@ class TestConfirmTenantEmailChange:
         tenant = _tenant("orphan@tenant.com", pending_email="new@tenant.com")
         _wire_token(svc, tenant, "new@tenant.com", holder=_user("new@tenant.com", tenant_id=7))
 
-        with pytest.raises(DuplicateEntityError):
+        with pytest.raises(HTTPException) as exc:
             await svc.verify_email_token("tok")
+        assert exc.value.detail["code"] == "DUPLICATE_EMAIL"
         assert tenant.email == "orphan@tenant.com"
 
     @pytest.mark.asyncio
