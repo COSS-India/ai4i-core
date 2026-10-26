@@ -248,7 +248,7 @@ def _build_page_data(
         if "status"      in selected_columns: row["status"]      = base.get("status", "unknown")
         if "task_type"   in selected_columns: row["task_type"]   = base.get("task_type")
         if "url"         in selected_columns: row["url"]         = base.get("url")
-        if "institution" in selected_columns: row["institution"] = base.get("tenant_id")
+        if "institution" in selected_columns: row["tenant_id"] = base.get("tenant_id")
         if "service"     in selected_columns: row["service"]     = base.get("service")
         if "status_code" in selected_columns: row["status_code"] = req.get("status_code")
         if "error"       in selected_columns: row["error"]       = req.get("error")
@@ -525,12 +525,6 @@ async def search_traces_opensearch(
             detail="sort_order must be 'asc' or 'desc'",
         )
 
-    if q is not None and len(q) > 256:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="q must be at most 256 characters",
-        )
-
     # Parse and validate selected columns
     if columns:
         requested_keys = {k.strip() for k in columns.split(",") if k.strip()}
@@ -799,7 +793,7 @@ async def get_trace_columns(request: Request):
     """Return all available column definitions for the trace search column picker.
 
     Frontend calls this once on page load to render the column picker UI.
-    os_field and span routing hints are intentionally excluded from the response.
+    span routing hint is intentionally excluded from the response.
     """
     _validate_telemetry_access(request)
     return COLUMN_DEFINITIONS
