@@ -1155,6 +1155,41 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
   };
 
+  const buildEditTenantLocalPatch = (
+    patch: {
+      organisation: string | undefined;
+      contact_name: string | undefined;
+      phone_number: string | undefined;
+      email?: string;
+    },
+    updated: TenantView,
+    emailChanged: boolean,
+  ): Partial<TenantView> => {
+    const localPatch: Partial<TenantView> = {
+      organisation: patch.organisation,
+      contact_name: patch.contact_name,
+      phone_number: patch.phone_number,
+    };
+    if (emailChanged) {
+      const feedback = resolveTenantEmailUpdateFeedback(
+        updated,
+        editTenantRow?.email,
+      );
+      localPatch.email = feedback.email;
+      localPatch.pending_email = feedback.pending_email;
+      showToast({ type: feedback.toastType, message: feedback.message });
+      return localPatch;
+    }
+    if (updated.pending_email !== undefined) {
+      localPatch.pending_email = updated.pending_email;
+    }
+    if (updated.email) {
+      localPatch.email = updated.email;
+    }
+    showToast({ type: "success", message: `${INSTITUTION} updated.` });
+    return localPatch;
+  };
+
   const handleSaveEditTenant = async () => {
     if (!editTenantForm.tenant_id) return;
     const errors = collectEditTenantErrors({
@@ -1190,36 +1225,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         organisation: editTenantForm.organisation,
         contact_name: editTenantForm.contact_name,
         phone_number: editTenantForm.phone_number,
-        ...(isEditTenantEmailEditable
-          ? { email: editTenantForm.email }
-          : {}),
+        ...(isEditTenantEmailEditable ? { email: editTenantForm.email } : {}),
       };
       const updated = await tenantService.updateTenant(patch);
-
-      const localPatch: Partial<TenantView> = {
-        organisation: patch.organisation,
-        contact_name: patch.contact_name,
-        phone_number: patch.phone_number,
-      };
-
-      if (emailChanged) {
-        const feedback = resolveTenantEmailUpdateFeedback(
-          updated,
-          editTenantRow?.email,
-        );
-        localPatch.email = feedback.email;
-        localPatch.pending_email = feedback.pending_email;
-        showToast({ type: feedback.toastType, message: feedback.message });
-      } else {
-        if (updated.pending_email !== undefined) {
-          localPatch.pending_email = updated.pending_email;
-        }
-        if (updated.email) {
-          localPatch.email = updated.email;
-        }
-        showToast({ type: "success", message: `${INSTITUTION} updated.` });
-      }
-
+      const localPatch = buildEditTenantLocalPatch(patch, updated, emailChanged);
       patchTenantLocal(patch.tenant_id, localPatch);
 
       setIsEditTenantModalOpen(false);

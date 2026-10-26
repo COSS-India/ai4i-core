@@ -4,7 +4,6 @@ import {
   INSTITUTION,
   TENANT,
   isTenantStatus,
-  type TenantStatusValue,
 } from "../config/constants";
 import type { TenantView } from "../types/tenant";
 
@@ -54,7 +53,7 @@ export function collectUserEmails(users: { email?: string | null }[]): Set<strin
 
 /** Contact email editable for PENDING/ACTIVE non-default institutions (AI4IDS-3401). */
 export function isTenantContactEmailEditable(
-  status: TenantStatusValue | string | null | undefined,
+  status: string | null | undefined,
   options?: { isDefaultOrganisation?: boolean },
 ): boolean {
   if (options?.isDefaultOrganisation) return false;
@@ -64,17 +63,32 @@ export function isTenantContactEmailEditable(
   );
 }
 
+function asErrorDetailRecord(
+  detail: unknown,
+): Record<string, unknown> | null {
+  if (typeof detail === "object" && detail !== null && !Array.isArray(detail)) {
+    return detail as Record<string, unknown>;
+  }
+  return null;
+}
+
+function stringifyErrorCode(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) return value.toUpperCase();
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value).toUpperCase();
+  }
+  return null;
+}
+
 export function extractApiErrorCode(error: unknown): string | null {
   const detail = (
     error as { response?: { data?: { detail?: unknown } } } | null
   )?.response?.data?.detail;
-  if (!detail || typeof detail !== "object" || Array.isArray(detail)) {
-    return null;
-  }
-  const code =
-    (detail as { code?: unknown }).code ??
-    (detail as { error?: unknown }).error;
-  return code != null ? String(code).toUpperCase() : null;
+  const record = asErrorDetailRecord(detail);
+  if (!record) return null;
+  return (
+    stringifyErrorCode(record.code) ?? stringifyErrorCode(record.error)
+  );
 }
 
 /** Message from API `detail` only — never axios's top-level `error.message`. */
@@ -83,11 +97,10 @@ export function extractApiErrorMessage(error: unknown): string | undefined {
     error as { response?: { data?: { detail?: unknown } } } | null
   )?.response?.data?.detail;
   if (typeof detail === "string" && detail.trim()) return detail;
-  if (detail && typeof detail === "object" && !Array.isArray(detail)) {
-    const message = (detail as { message?: unknown }).message;
-    if (typeof message === "string" && message.trim()) return message;
-  }
-  return undefined;
+  const record = asErrorDetailRecord(detail);
+  if (!record) return undefined;
+  const message = record.message;
+  return typeof message === "string" && message.trim() ? message : undefined;
 }
 
 /** Inline form message for PATCH email uniqueness 409s; undefined for other errors. */

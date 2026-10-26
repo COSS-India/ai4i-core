@@ -1,13 +1,14 @@
 import { Badge, Box, HStack, Text, VStack } from "@chakra-ui/react";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import { dash } from "../../utils/valueFormatters";
+import type { TenantView } from "../../types/tenant";
 
-type InstitutionContactEmailProps = {
+type InstitutionContactEmailProps = Readonly<{
   email?: string | null;
   pendingEmail?: string | null;
   /** Compact single-line for table cells. */
   compact?: boolean;
-};
+}>;
 
 /** Effective contact email plus optional pending-verification address (AI4IDS-3401). */
 export default function InstitutionContactEmail({
@@ -57,5 +58,16 @@ export default function InstitutionContactEmail({
         </Badge>
       </HStack>
     </Box>
+  );
+}
+
+/** Table cell renderer — kept module-scoped so it is not redefined inside the list. */
+export function InstitutionEmailTableCell(tenant: TenantView) {
+  return (
+    <InstitutionContactEmail
+      email={tenant.email}
+      pendingEmail={tenant.pending_email}
+      compact
+    />
   );
 }
