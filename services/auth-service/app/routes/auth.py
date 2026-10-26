@@ -124,13 +124,13 @@ async def verify_email(
     """Consume a verification token from the link in the verify-email email
     and activate the user. Sends a welcome email after activation.
     """
-    email_changed = await svc.verify_email_token(body.token, background_tasks=background_tasks)
-    message = (
-        "Email verified. The institution admin email has been updated. "
-        "If you're the new admin, check your inbox for a link to set your password."
-        if email_changed
-        else "Email verified. You can now sign in."
-    )
+    setup_link_sent = await svc.verify_email_token(body.token, background_tasks=background_tasks)
+    if setup_link_sent is None:
+        message = "Email verified. You can now sign in."
+    else:
+        message = "Email verified. The institution admin email has been updated."
+        if setup_link_sent:
+            message += " Check your inbox for a link to set your password."
     return VerifyEmailResponse(data=MessageData(message=message))
 
 
