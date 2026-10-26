@@ -906,6 +906,40 @@ class TenantService:
             )
         return old_email, new_email, admin
 
+    async def _plan_email_change(
+        self, tenant: Tenant, new_email: str, email_changed: bool
+    ) -> tuple[bool, Optional[User]]:
+        """``(hold_for_verification, contact)`` for this update. A non-PENDING
+        tenant holds the change until the new address is verified, unless that
+        address already belongs to an active Institution Admin of the tenant;
+        ``contact`` is the user whose login follows ``tenant.email`` on
+        confirmation. 409 while email edits are locked."""
+        if not email_changed:
+            return False, None
+        assert_tenant_email_editable(tenant)
+        if tenant.status == TenantStatus.PENDING:
+            return False, None
+        holder = await self._users.get_by_email(new_email)
+        if holder is not None and await self._is_institution_admin(holder, tenant.id):
+            return False, None
+        return True, await find_email_contact(self._users, tenant)
+
+    @staticmethod
+    def _stage_pending_email(
+        data: dict, new_email: str, email_changed: bool, hold_for_verification: bool
+    ) -> None:
+        """Hold the new address in ``pending_email`` (saving the other fields
+        only), or clear any older pending request when the email changes now.
+        A newer request overwrites ``pending_email``, which invalidates older
+        links."""
+        if hold_for_verification:
+            data.pop("email")
+            data["pending_email"] = new_email
+            data["pending_email_expires_at"] = setup_token_expires_at()
+        elif email_changed:
+            data["pending_email"] = None
+            data["pending_email_expires_at"] = None
+
     async def update_tenant(
         self,
         current_user: User,
@@ -959,16 +993,9 @@ class TenantService:
         await self._assert_organisation_available(data, tenant_id)
         old_email, new_email, admin = await self._resolve_pending_email_admin(tenant, data)
         email_changed = bool(new_email) and new_email != old_email
-        hold_for_verification = False
-        contact: Optional[User] = None
-        if email_changed:
-            assert_tenant_email_editable(tenant)
-            if tenant.status != TenantStatus.PENDING:
-                holder = await self._users.get_by_email(new_email)
-                if holder is None or not await self._is_institution_admin(holder, tenant.id):
-                    hold_for_verification = True
-                    # On confirmation the contact's login follows tenant.email.
-                    contact = await find_email_contact(self._users, tenant)
+        hold_for_verification, contact = await self._plan_email_change(
+            tenant, new_email, email_changed
+        )
         aligned = admin or contact
         if aligned is not None:
             await assert_not_platform_admin(self._roles, aligned)
@@ -976,15 +1003,7 @@ class TenantService:
             await assert_email_available(self._tenants, self._users, data["email"], tenant_id, aligned)
 
         # ── Stage writes against the open session (flush only, no commit).
-        if hold_for_verification:
-            # Save the other fields only. A newer request overwrites
-            # pending_email, which invalidates older links.
-            data.pop("email")
-            data["pending_email"] = new_email
-            data["pending_email_expires_at"] = setup_token_expires_at()
-        elif email_changed:
-            data["pending_email"] = None
-            data["pending_email_expires_at"] = None
+        self._stage_pending_email(data, new_email, email_changed, hold_for_verification)
         data["updated_by"] = current_user.id
         await self._tenants.update(tenant, data)
 
