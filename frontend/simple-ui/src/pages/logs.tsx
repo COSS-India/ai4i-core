@@ -547,6 +547,11 @@ const LogsPage: React.FC = () => {
       (!isTenantAdmin || !!apiTenantId) &&
       taskTypeFilterReady,
     staleTime: 30 * 1000,
+    // Default app retry is 1; skip for AC-17 narrow-range 400 so the costly
+    // keyword pre-query (up to 20,001 trace IDs) does not run twice.
+    retry: (count, err) =>
+      count < 1 &&
+      !(err as Error)?.message?.toLowerCase().includes("narrow"),
   });
 
   useEffect(() => {
