@@ -3,6 +3,9 @@ Tenant ORM model.
 """
 
 import enum
+from datetime import datetime, timezone
+from typing import Optional
+
 from sqlalchemy import Column, DateTime, Enum, Index, Integer, Numeric, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -26,6 +29,11 @@ class Tenant(Base):
     name = Column(String(255), nullable=False)
     organisation = Column(String(255), nullable=False)
     email = Column(EncryptedEmail(), nullable=False)
+    # New contact email awaiting verification (AI4IDS-3401); ``email`` keeps
+    # the current value until the EMAIL_CHANGE link is confirmed.
+    pending_email = Column(EncryptedEmail(), nullable=True)
+    # Matches the EMAIL_CHANGE link's expiry; past it the request is dead.
+    pending_email_expires_at = Column(DateTime(timezone=True), nullable=True)
     phone_number = Column(EncryptedPhone(), nullable=True)
     status = Column(
         Enum(
@@ -55,6 +63,16 @@ class Tenant(Base):
         Index("uq_tenants_organisation_lower", func.lower(organisation), unique=True),
         Index("uq_tenants_email", email, unique=True),
     )
+
+    @property
+    def active_pending_email(self) -> Optional[str]:
+        """``pending_email`` while its verification link can still be used."""
+        if self.pending_email is None:
+            return None
+        expires_at = self.pending_email_expires_at
+        if expires_at is not None and expires_at <= datetime.now(timezone.utc):
+            return None
+        return self.pending_email
 
     # Relationships
     users = relationship("User", back_populates="tenant")

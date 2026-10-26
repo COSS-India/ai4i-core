@@ -31,7 +31,7 @@ def _make_service() -> TenantService:
         tenant_repo=tenant_repo,
         user_repo=user_repo,
         role_service=role_service,
-        verification_repo=MagicMock(deactivate_email_changes_for_tenant=AsyncMock()),
+        verification_repo=MagicMock(),
         credentials_repo=MagicMock(),
         token_service=MagicMock(),
         email_client=MagicMock(),
@@ -130,8 +130,10 @@ class TestUpdateTenantEmailUniqueness:
         svc.enforce_scope = AsyncMock()  # roles mock now describes the target user
         svc._tenants.get_by_id = AsyncMock(return_value=_tenant(1, "old@tenant.com"))
         svc._tenants.get_by_email = AsyncMock(return_value=None)
-        # User belongs to same tenant (tenant_id=1 == tenant_id being updated)
-        svc._users.get_by_email = AsyncMock(return_value=_user(tenant_id=1))
+        # Active admin of the same tenant (tenant_id=1 == tenant_id being updated)
+        existing_admin = _user(tenant_id=1)
+        existing_admin.is_active = True
+        svc._users.get_by_email = AsyncMock(return_value=existing_admin)
 
         body = MagicMock()
         body.model_dump.return_value = {"email": "admin@tenant.com"}

@@ -33,7 +33,7 @@ def _make_service() -> TenantService:
         tenant_repo=tenant_repo,
         user_repo=user_repo,
         role_service=role_service,
-        verification_repo=MagicMock(deactivate_email_changes_for_tenant=AsyncMock()),
+        verification_repo=MagicMock(),
         credentials_repo=MagicMock(),
         token_service=MagicMock(),
         email_client=MagicMock(),
@@ -142,7 +142,9 @@ class TestPendingEmailReissue:
         svc = _make_service()
         svc._roles.get_user_roles = AsyncMock(return_value=["TENANT ADMIN"])
         svc._tenants.get_by_id = AsyncMock(return_value=_tenant(TenantStatus.ACTIVE, "old@tenant.com"))
-        svc._users.get_by_email = AsyncMock(return_value=_user("new@tenant.com", tenant_id=1))
+        existing_admin = _user("new@tenant.com", tenant_id=1)
+        existing_admin.is_active = True
+        svc._users.get_by_email = AsyncMock(return_value=existing_admin)
 
         with patch("app.services.tenant_service.reissue_setup_token",
                    new=AsyncMock()) as reissue, \

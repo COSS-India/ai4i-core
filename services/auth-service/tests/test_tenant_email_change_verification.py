@@ -1,25 +1,25 @@
 """Unit tests for Institution Admin email change on non-PENDING tenants (AI4IDS-3401).
 
-update_tenant holds the change and sends the existing verify-email message to
-the new address; /auth/verify-email (EMAIL_CHANGE token) applies it. Email
-edits are locked while SUSPENDED/DEACTIVATED, and the pending address is
-surfaced on reads via resolve_pending_emails.
+update_tenant stores the new address in tenants.pending_email (until the link
+expires) and sends the email_change message; /auth/verify-email (EMAIL_CHANGE
+token) applies it and hands the contact account over (old password and
+sessions revoked, setup link to the new address). Email edits are locked while
+SUSPENDED/DEACTIVATED, for the Default Organisation, and when the contact is a
+platform administrator.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
-from jwt.exceptions import PyJWTError
 from pydantic import ValidationError as PydanticValidationError
 
 from app.core.constants import TokenType
-from app.core.exceptions import DuplicateEntityError, TokenInvalidError
+from app.core.exceptions import DuplicateEntityError, TokenInvalidError, ValidationError
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User
-from app.repositories.verification_repository import VerificationRepository
 from app.schemas.tenant import TenantUpdate
 from app.services.auth_service import AuthService
 from app.services.tenant_service import TenantService
@@ -27,13 +27,22 @@ from app.services.token_service import TokenPayload
 
 
 def _tenant(
-    email: str = "old@tenant.com", id: int = 1, status: TenantStatus = TenantStatus.ACTIVE
+    email: str = "old@tenant.com",
+    id: int = 1,
+    status: TenantStatus = TenantStatus.ACTIVE,
+    pending_email=None,
+    organisation: str = "Acme",
+    pending_expires_in: timedelta = timedelta(hours=1),
 ) -> Tenant:
-    return Tenant(id=id, name="Acme", organisation="Acme", email=email, status=status)
+    return Tenant(id=id, name="Acme", organisation=organisation, email=email, status=status,
+                  pending_email=pending_email,
+                  pending_email_expires_at=(datetime.now(timezone.utc) + pending_expires_in
+                                            if pending_email else None))
 
 
-def _user(email: str, tenant_id=1) -> User:
-    return User(id=uuid4(), email=email, username=uuid4().hex[:12], tenant_id=tenant_id)
+def _user(email: str, tenant_id=1, is_active: bool = True) -> User:
+    return User(id=uuid4(), email=email, username=uuid4().hex[:12], tenant_id=tenant_id,
+                is_active=is_active)
 
 
 def _body(**fields) -> MagicMock:
@@ -54,7 +63,6 @@ def _tenant_service() -> TenantService:
     role_service.get_user_roles = AsyncMock(return_value=[])
     verifications = MagicMock()
     verifications.create = AsyncMock()
-    verifications.deactivate_email_changes_for_tenant = AsyncMock()
     tokens = MagicMock()
     tokens.create_email_change_token.return_value = "change-token"
     svc = TenantService(
@@ -70,6 +78,10 @@ def _tenant_service() -> TenantService:
     return svc
 
 
+def _staged(svc: TenantService) -> dict:
+    return svc._tenants.update.await_args.args[1]
+
+
 class TestTenantUpdateEmailFormat:
     def test_invalid_email_rejected(self) -> None:
         with pytest.raises(PydanticValidationError):
@@ -80,15 +92,14 @@ class TestUpdateTenantEmailChange:
     @pytest.mark.asyncio
     async def test_new_email_held_and_verification_sent(self) -> None:
         svc = _tenant_service()
-        tenant = _tenant()
         admin = _user("old@tenant.com")
-        svc._tenants.get_by_id = AsyncMock(return_value=tenant)
+        svc._tenants.get_by_id = AsyncMock(return_value=_tenant())
         svc._users.get_by_email = AsyncMock(
             side_effect=lambda e: admin if e == "old@tenant.com" else None
         )
 
         with patch("app.services.tenant_service.enqueue_email") as enqueue, \
-             patch("app.services.tenant_service.render_verify_email") as render:
+             patch("app.services.tenant_service.render_email_change") as render:
             result = await svc.update_tenant(
                 MagicMock(id=uuid4()), 1,
                 _body(email="new@tenant.com", contact_name="Jane"),
@@ -96,22 +107,24 @@ class TestUpdateTenantEmailChange:
             )
             enqueue.call_args.args[2]()  # invoke the render factory
 
-        staged = svc._tenants.update.await_args.args[1]
+        staged = _staged(svc)
         assert "email" not in staged and staged["name"] == "Jane"  # other fields still saved
+        assert staged["pending_email"] == "new@tenant.com"
+        assert staged["pending_email_expires_at"] > datetime.now(timezone.utc)
         assert admin.email == "old@tenant.com"                     # not applied yet
         svc._tokens.create_email_change_token.assert_called_once_with(
             user_id=str(admin.id), new_email="new@tenant.com", tenant_id=1, tenant_only=False
         )
-        svc._verifications.deactivate_email_changes_for_tenant.assert_awaited_once_with(1)
-        render.assert_called_once_with(admin, "change-token", to="new@tenant.com")
-        assert result.pending_email == "new@tenant.com"
+        render.assert_called_once_with(
+            "new@tenant.com", "Acme", "change-token", sends_setup_link=True
+        )
         assert result.verification_sent is True
 
     @pytest.mark.asyncio
     async def test_existing_institution_admin_applied_without_verification(self) -> None:
         svc = _tenant_service()
         svc._roles.get_user_roles = AsyncMock(return_value=["TENANT ADMIN"])
-        svc._tenants.get_by_id = AsyncMock(return_value=_tenant())
+        svc._tenants.get_by_id = AsyncMock(return_value=_tenant(pending_email="older@tenant.com"))
         svc._users.get_by_email = AsyncMock(return_value=_user("other.admin@tenant.com"))
 
         with patch("app.services.tenant_service.enqueue_email") as enqueue:
@@ -120,13 +133,32 @@ class TestUpdateTenantEmailChange:
                 background_tasks=MagicMock(),
             )
 
-        assert svc._tenants.update.await_args.args[1]["email"] == "other.admin@tenant.com"
-        # A direct change still supersedes any earlier pending request.
-        svc._verifications.deactivate_email_changes_for_tenant.assert_awaited_once_with(1)
+        assert _staged(svc)["email"] == "other.admin@tenant.com"
+        assert _staged(svc)["pending_email"] is None  # earlier request dropped
+        assert _staged(svc)["pending_email_expires_at"] is None
         svc._tokens.create_email_change_token.assert_not_called()
         enqueue.assert_not_called()
-        assert result.pending_email is None
         assert result.verification_sent is False
+
+    @pytest.mark.asyncio
+    async def test_deactivated_admin_does_not_qualify_for_direct_change(self) -> None:
+        """A deactivated Tenant Admin is not an existing admin — verify instead."""
+        svc = _tenant_service()
+        svc._roles.get_user_roles = AsyncMock(return_value=["TENANT ADMIN"])
+        svc._tenants.get_by_id = AsyncMock(return_value=_tenant())
+        contact = _user("old@tenant.com")
+        inactive_admin = _user("former.admin@tenant.com", is_active=False)
+        svc._users.get_by_email = AsyncMock(
+            side_effect=lambda e: contact if e == "old@tenant.com" else inactive_admin
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            await svc.update_tenant(MagicMock(id=uuid4()), 1,
+                                    _body(email="former.admin@tenant.com"),
+                                    background_tasks=MagicMock())
+        # Verify path would move the contact onto an address another user holds.
+        assert exc.value.detail["code"] == "DUPLICATE_EMAIL"
+        svc._tenants.update.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_no_contact_user_sends_tenant_only_verification(self) -> None:
@@ -137,19 +169,19 @@ class TestUpdateTenantEmailChange:
         requester = MagicMock(id=uuid4())
 
         with patch("app.services.tenant_service.enqueue_email") as enqueue, \
-             patch("app.services.tenant_service.render_verify_email") as render:
+             patch("app.services.tenant_service.render_email_change") as render:
             result = await svc.update_tenant(requester, 1, _body(email="new@tenant.com"),
                                              background_tasks=MagicMock())
             enqueue.call_args.args[2]()
 
-        assert "email" not in svc._tenants.update.await_args.args[1]
+        assert "email" not in _staged(svc)
+        assert _staged(svc)["pending_email"] == "new@tenant.com"
         svc._tokens.create_email_change_token.assert_called_once_with(
             user_id=str(requester.id), new_email="new@tenant.com", tenant_id=1, tenant_only=True
         )
-        greeted, token = render.call_args.args
-        assert greeted.full_name == "Acme" and token == "change-token"
-        assert render.call_args.kwargs == {"to": "new@tenant.com"}
-        assert result.pending_email == "new@tenant.com"
+        render.assert_called_once_with(
+            "new@tenant.com", "Acme", "change-token", sends_setup_link=False
+        )
         assert result.verification_sent is True
 
     @pytest.mark.asyncio
@@ -184,6 +216,51 @@ class TestUpdateTenantEmailChange:
         svc._tenants.commit.assert_not_awaited()
 
 
+class TestProtectedContacts:
+    @pytest.mark.asyncio
+    async def test_default_organisation_email_cannot_change(self) -> None:
+        """Its contact is the seeded platform admin - never hand that over."""
+        svc = _tenant_service()
+        svc._tenants.get_by_id = AsyncMock(
+            return_value=_tenant("admin@ai4inclusion.org", organisation="Default Organisation")
+        )
+
+        with pytest.raises(ValidationError) as exc:
+            await svc.update_tenant(MagicMock(id=uuid4()), 1, _body(email="new@tenant.com"),
+                                    background_tasks=MagicMock())
+        assert exc.value.code == "DEFAULT_ORG_PROTECTED"
+        svc._tenants.update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_default_organisation_other_fields_still_editable(self) -> None:
+        svc = _tenant_service()
+        svc._tenants.get_by_id = AsyncMock(
+            return_value=_tenant("admin@ai4inclusion.org", organisation="Default Organisation")
+        )
+
+        await svc.update_tenant(MagicMock(id=uuid4()), 1,
+                                _body(email="admin@ai4inclusion.org", contact_name="Ops"),
+                                background_tasks=MagicMock())
+        assert _staged(svc)["name"] == "Ops"
+
+    @pytest.mark.asyncio
+    async def test_platform_admin_contact_rejected(self) -> None:
+        svc = _tenant_service()
+        svc._roles.get_user_roles = AsyncMock(return_value=["ADMIN"])
+        svc._tenants.get_by_id = AsyncMock(return_value=_tenant())
+        contact = _user("old@tenant.com")
+        svc._users.get_by_email = AsyncMock(
+            side_effect=lambda e: contact if e == "old@tenant.com" else None
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            await svc.update_tenant(MagicMock(id=uuid4()), 1, _body(email="new@tenant.com"),
+                                    background_tasks=MagicMock())
+        assert exc.value.status_code == 409
+        assert exc.value.detail["code"] == "TENANT_EMAIL_EDIT_NOT_ALLOWED"
+        svc._tokens.create_email_change_token.assert_not_called()
+
+
 class TestEmailEditLockedStatuses:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("locked", [TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED])
@@ -210,29 +287,24 @@ class TestEmailEditLockedStatuses:
                                 _body(email="OLD@tenant.com", contact_name="Jane"),
                                 background_tasks=MagicMock())
 
-        assert svc._tenants.update.await_args.args[1]["name"] == "Jane"
+        assert _staged(svc)["name"] == "Jane"
+        assert "pending_email" not in _staged(svc)
         svc._tenants.commit.assert_awaited_once()
 
 
-class TestResolvePendingEmails:
-    @pytest.mark.asyncio
-    async def test_skips_pending_tenants(self) -> None:
-        svc = _tenant_service()
-        active = _tenant("a@one.com", id=1)
-        onboarding = _tenant("b@two.com", id=2, status=TenantStatus.PENDING)
-        svc._verifications.get_pending_email_changes = AsyncMock(return_value={1: "new@one.com"})
-
-        result = await svc.resolve_pending_emails([active, onboarding])
-
-        assert result == {1: "new@one.com"}
-        svc._verifications.get_pending_email_changes.assert_awaited_once_with([1])
-
-    def test_pending_email_masked_in_response(self) -> None:
-        tenant = _tenant()
+class TestPendingEmailInResponse:
+    def test_pending_email_returned_masked(self) -> None:
+        tenant = _tenant(pending_email="newperson@tenant.com")
         tenant.created_at = datetime.now(timezone.utc)
-        data = TenantService.build_tenant_response(tenant, pending_email="newperson@tenant.com")
-        assert data["pending_email"] and data["pending_email"] != "newperson@tenant.com"
-        assert "*" in data["pending_email"]
+        data = TenantService.build_tenant_response(tenant)
+        assert data["pending_email"] and "*" in data["pending_email"]
+        assert data["pending_email"] != "newperson@tenant.com"
+
+    def test_expired_request_not_shown_as_pending(self) -> None:
+        tenant = _tenant(pending_email="newperson@tenant.com",
+                         pending_expires_in=timedelta(seconds=-1))
+        tenant.created_at = datetime.now(timezone.utc)
+        assert TenantService.build_tenant_response(tenant)["pending_email"] is None
 
 
 def _auth_service() -> AuthService:
@@ -246,16 +318,25 @@ def _auth_service() -> AuthService:
     verifications = MagicMock()
     verifications.get_by_token = AsyncMock()
     verifications.deactivate = AsyncMock()
+    credentials = MagicMock()
+    credentials.get_by_user_id = AsyncMock(return_value=MagicMock(name="creds"))
+    credentials.delete = AsyncMock()
+    refresh_tokens = MagicMock()
+    refresh_tokens.delete_by_user_id = AsyncMock()
+    cache = MagicMock()
+    cache.revoke_all_sessions = AsyncMock()
+    roles = MagicMock()
+    roles.get_user_roles = AsyncMock(return_value=["TENANT ADMIN"])
     return AuthService(
         user_repo=users,
-        role_service=MagicMock(),
+        role_service=roles,
         token_service=MagicMock(),
-        credentials_repo=MagicMock(),
-        refresh_token_repo=MagicMock(),
+        credentials_repo=credentials,
+        refresh_token_repo=refresh_tokens,
         verification_repo=verifications,
         tenant_repo=tenants,
         email_client=MagicMock(),
-        cache_service=MagicMock(),
+        cache_service=cache,
     )
 
 
@@ -273,26 +354,90 @@ def _wire_token(
     return token_obj
 
 
+_REISSUE = "app.services.auth_service.reissue_setup_token"
+_ENQUEUE = "app.services.auth_service.enqueue_email"
+
+
 class TestConfirmTenantEmailChange:
     @pytest.mark.asyncio
-    async def test_verify_email_applies_change(self) -> None:
+    async def test_applies_change_and_hands_account_over(self) -> None:
         svc = _auth_service()
-        tenant, admin = _tenant(), _user("old@tenant.com")
+        tenant = _tenant(pending_email="new@tenant.com")
+        admin = _user("old@tenant.com")
         token_obj = _wire_token(svc, admin, tenant, "new@tenant.com")
+        creds = svc._credentials.get_by_user_id.return_value
 
-        email_changed = await svc.verify_email_token("tok")
+        with patch(_REISSUE, new=AsyncMock(return_value="setup-token")) as reissue, \
+             patch(_ENQUEUE) as enqueue, \
+             patch("app.services.auth_service.render_setup_link") as render:
+            email_changed = await svc.verify_email_token("tok", background_tasks=MagicMock())
+            enqueue.call_args.args[2]()
 
         assert email_changed is True
-        assert tenant.email == "new@tenant.com"
+        assert tenant.email == "new@tenant.com" and tenant.pending_email is None
+        assert tenant.pending_email_expires_at is None
         assert admin.email == "new@tenant.com"
         svc._verifications.deactivate.assert_awaited_once_with(token_obj)
+        # Outgoing admin loses password and every session.
+        svc._credentials.delete.assert_awaited_once_with(creds)
+        svc._refresh_tokens.delete_by_user_id.assert_awaited_once_with(admin.id)
+        svc._cache.revoke_all_sessions.assert_awaited_once_with(str(admin.id))
+        # Incoming admin gets a setup link at the new address.
+        assert reissue.await_args.args[0] is admin
+        render.assert_called_once_with(admin, "setup-token")
         svc._users.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_superseded_link_rejected(self) -> None:
+        """A newer request replaced pending_email — the older link is dead."""
+        svc = _auth_service()
+        tenant = _tenant(pending_email="newer@tenant.com")
+        _wire_token(svc, _user("old@tenant.com"), tenant, "new@tenant.com")
+
+        with pytest.raises(TokenInvalidError):
+            await svc.verify_email_token("tok")
+        assert tenant.email == "old@tenant.com"
+        svc._users.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_expired_request_rejected(self) -> None:
+        svc = _auth_service()
+        tenant = _tenant(pending_email="new@tenant.com", pending_expires_in=timedelta(seconds=-1))
+        _wire_token(svc, _user("old@tenant.com"), tenant, "new@tenant.com")
+
+        with pytest.raises(TokenInvalidError):
+            await svc.verify_email_token("tok")
+        assert tenant.email == "old@tenant.com"
+
+    @pytest.mark.asyncio
+    async def test_platform_admin_never_handed_over(self) -> None:
+        """Roles changed after the request: confirmation still refuses."""
+        svc = _auth_service()
+        svc._roles.get_user_roles = AsyncMock(return_value=["ADMIN"])
+        tenant = _tenant(pending_email="new@tenant.com")
+        admin = _user("old@tenant.com")
+        _wire_token(svc, admin, tenant, "new@tenant.com")
+
+        with pytest.raises(TokenInvalidError):
+            await svc.verify_email_token("tok")
+        assert admin.email == "old@tenant.com"
+        svc._credentials.delete.assert_not_awaited()
+        svc._users.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_link_rejected_after_change_applied_directly(self) -> None:
+        svc = _auth_service()
+        tenant = _tenant(pending_email=None)
+        _wire_token(svc, _user("old@tenant.com"), tenant, "new@tenant.com")
+
+        with pytest.raises(TokenInvalidError):
+            await svc.verify_email_token("tok")
 
     @pytest.mark.asyncio
     async def test_stale_when_tenant_email_moved_on(self) -> None:
         svc = _auth_service()
-        tenant, admin = _tenant("someone.else@tenant.com"), _user("old@tenant.com")
-        _wire_token(svc, admin, tenant, "new@tenant.com")
+        tenant = _tenant("someone.else@tenant.com", pending_email="new@tenant.com")
+        _wire_token(svc, _user("old@tenant.com"), tenant, "new@tenant.com")
 
         with pytest.raises(TokenInvalidError):
             await svc.verify_email_token("tok")
@@ -301,8 +446,8 @@ class TestConfirmTenantEmailChange:
     @pytest.mark.asyncio
     async def test_refused_while_tenant_suspended(self) -> None:
         svc = _auth_service()
-        tenant, admin = _tenant(status=TenantStatus.SUSPENDED), _user("old@tenant.com")
-        _wire_token(svc, admin, tenant, "new@tenant.com")
+        tenant = _tenant(status=TenantStatus.SUSPENDED, pending_email="new@tenant.com")
+        _wire_token(svc, _user("old@tenant.com"), tenant, "new@tenant.com")
 
         with pytest.raises(TokenInvalidError):
             await svc.verify_email_token("tok")
@@ -312,35 +457,41 @@ class TestConfirmTenantEmailChange:
     @pytest.mark.asyncio
     async def test_address_taken_since_request_raises_409(self) -> None:
         svc = _auth_service()
-        tenant, admin = _tenant(), _user("old@tenant.com")
-        _wire_token(svc, admin, tenant, "new@tenant.com")
+        tenant = _tenant(pending_email="new@tenant.com")
+        _wire_token(svc, _user("old@tenant.com"), tenant, "new@tenant.com")
         svc._users.get_by_email = AsyncMock(return_value=_user("new@tenant.com", tenant_id=7))
 
         with pytest.raises(DuplicateEntityError):
             await svc.verify_email_token("tok")
         assert tenant.email == "old@tenant.com"
+        svc._credentials.delete.assert_not_awaited()
         svc._users.commit.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_tenant_only_updates_tenant_email_alone(self) -> None:
         svc = _auth_service()
-        tenant = _tenant("orphan@tenant.com")
+        tenant = _tenant("orphan@tenant.com", pending_email="new@tenant.com")
         requester = _user("admin@platform.com", tenant_id=None)
         _wire_token(svc, requester, tenant, "new@tenant.com", tenant_only=True)
         # A same-tenant user holding the address is harmless when no login moves.
         svc._users.get_by_email = AsyncMock(return_value=_user("new@tenant.com", tenant_id=1))
 
-        assert await svc.verify_email_token("tok") is True
+        with patch(_REISSUE, new=AsyncMock()) as reissue, patch(_ENQUEUE) as enqueue:
+            assert await svc.verify_email_token("tok", background_tasks=MagicMock()) is True
 
-        assert tenant.email == "new@tenant.com"
+        assert tenant.email == "new@tenant.com" and tenant.pending_email is None
         assert requester.email == "admin@platform.com"  # no user re-aligned
         svc._users.get_by_id.assert_not_awaited()
+        svc._credentials.delete.assert_not_awaited()
+        svc._cache.revoke_all_sessions.assert_not_awaited()
+        reissue.assert_not_awaited()
+        enqueue.assert_not_called()
         svc._users.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_tenant_only_cross_tenant_holder_raises_409(self) -> None:
         svc = _auth_service()
-        tenant = _tenant("orphan@tenant.com")
+        tenant = _tenant("orphan@tenant.com", pending_email="new@tenant.com")
         requester = _user("admin@platform.com", tenant_id=None)
         _wire_token(svc, requester, tenant, "new@tenant.com", tenant_only=True)
         svc._users.get_by_email = AsyncMock(return_value=_user("new@tenant.com", tenant_id=7))
@@ -352,54 +503,26 @@ class TestConfirmTenantEmailChange:
     @pytest.mark.asyncio
     async def test_used_link_rejected(self) -> None:
         svc = _auth_service()
-        tenant, admin = _tenant(), _user("old@tenant.com")
-        token_obj = _wire_token(svc, admin, tenant, "new@tenant.com")
+        tenant = _tenant(pending_email="new@tenant.com")
+        token_obj = _wire_token(svc, _user("old@tenant.com"), tenant, "new@tenant.com")
         token_obj.is_active = False
 
         with pytest.raises(TokenInvalidError):
             await svc.verify_email_token("tok")
 
 
-_CLAIMS = {
-    "setup": {"type": TokenType.SETUP, "email": "old@tenant.com"},
-    "t1": {"type": TokenType.EMAIL_CHANGE, "email": "new@one.com", "tenant_id": "1"},
-    "t2": {"type": TokenType.EMAIL_CHANGE, "email": "new@two.com", "tenant_id": "2"},
-}
+class TestEmailChangeTemplate:
+    @pytest.mark.parametrize("sends_setup_link", [True, False])
+    def test_renders_handover_copy(self, sends_setup_link) -> None:
+        from app.services.auth_email_templates import render_email_change
 
+        with patch("app.services.auth_email_templates.build_verify_url",
+                   return_value="https://ui.example/auth/verify-email?token=t"):
+            msg = render_email_change("new@tenant.com", "Acme", "t",
+                                      sends_setup_link=sends_setup_link)
 
-def _decode(token, kid):
-    if token == "bad":
-        raise PyJWTError("bad signature")
-    return _CLAIMS[token]
-
-
-def _repo(rows) -> VerificationRepository:
-    db = MagicMock()
-    db.execute = AsyncMock(return_value=MagicMock(
-        scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=rows)))
-    ))
-    db.flush = AsyncMock()
-    return VerificationRepository(db)
-
-
-@patch("app.repositories.verification_repository._decode_stored_token", side_effect=_decode)
-@patch("app.repositories.verification_repository.jwt.get_unverified_header",
-       return_value={"kid": "k1"})
-class TestEmailChangeTokenLookup:
-    @pytest.mark.asyncio
-    async def test_pending_maps_requested_tenants_only(self, *_) -> None:
-        rows = [MagicMock(token=t, created_by=uuid4()) for t in ("setup", "bad", "t1", "t2")]
-        assert await _repo(rows).get_pending_email_changes([1, 3]) == {1: "new@one.com"}
-
-    @pytest.mark.asyncio
-    async def test_no_tenants_skips_query(self, *_) -> None:
-        repo = _repo([])
-        assert await repo.get_pending_email_changes([]) == {}
-        repo._db.execute.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_deactivate_for_tenant_leaves_other_tokens(self, *_) -> None:
-        rows = {t: MagicMock(token=t, created_by=uuid4(), is_active=True) for t in ("setup", "t1", "t2")}
-        await _repo(list(rows.values())).deactivate_email_changes_for_tenant(1)
-        assert rows["t1"].is_active is False
-        assert rows["t2"].is_active is True and rows["setup"].is_active is True
+        assert msg.to == "new@tenant.com"
+        for body in (msg.html_body, msg.text_body):
+            assert "Acme" in body and "verify-email?token=t" in body
+            assert "signing up" not in body and "Didn" not in body
+            assert ("set your password" in body) is sends_setup_link
