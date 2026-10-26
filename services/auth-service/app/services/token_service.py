@@ -6,7 +6,7 @@ Token contract:
 - Refresh tokens: sub, tenant_id, type=refresh — no roles, no token_id
 - API key tokens: sub, tenant_id, permission_ids, type=api_key, token_id (for revocation)
 - Setup tokens:   sub, email, type=setup (for email activation)
-- Email-change:   sub, email (new address), tenant_id, [tenant_only], type=email_change
+- Email-change:   sub, email (new address), tenant_id, type=email_change
 All tokens include: iss, iat, kid, alg=RS256
 """
 
@@ -46,7 +46,6 @@ class TokenPayload:
     token_id: Optional[str] = None
     tenant_id: Optional[str] = None
     email: Optional[str] = None
-    tenant_only: bool = False
 
 
 class TokenService:
@@ -168,23 +167,17 @@ class TokenService:
         user_id: str,
         new_email: str,
         tenant_id: int,
-        tenant_only: bool = False,
         expires_delta: Optional[timedelta] = None,
     ) -> str:
-        """Tenant-email-change confirmation token. ``sub`` is the tenant's
-        current admin (whose email will be swapped), ``email`` the pending new
-        address. Signed, so the pending value can't be tampered with in transit.
-
-        ``tenant_only``: the tenant has no contact user to re-align, so only
-        ``tenant.email`` changes on verification; ``sub`` is then the requester.
+        """Tenant-email-change confirmation token. ``sub`` is the requester,
+        ``email`` the pending new address (checked against
+        ``tenants.pending_email`` on confirmation). Signed, so the pending
+        value can't be tampered with in transit.
         """
-        extra: dict[str, Any] = {"email": new_email, "tenant_id": str(tenant_id)}
-        if tenant_only:
-            extra["tenant_only"] = True
         return self._create_token(
             token_type=TokenType.EMAIL_CHANGE,
             sub=str(user_id),
-            extra=extra,
+            extra={"email": new_email, "tenant_id": str(tenant_id)},
             default_delta=timedelta(hours=settings.setup_token_expire_hours),
             expires_delta=expires_delta,
         )
@@ -240,7 +233,6 @@ class TokenService:
                 token_id=payload.get("token_id"),
                 tenant_id=payload.get("tenant_id"),
                 email=payload.get("email"),
-                tenant_only=bool(payload.get("tenant_only")),
             )
 
         except ExpiredSignatureError as exc:

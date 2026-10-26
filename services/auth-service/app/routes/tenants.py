@@ -187,9 +187,9 @@ async def update_tenant(
     is sent to the new address and ``email`` stays unchanged until it is
     confirmed — ``pending_email`` / ``email_verification_sent`` report this.
     """
-    result = await svc.update_tenant(current_user, tenant_id, body, background)
-    data = to_response(result.tenant, TenantResponse)
-    data["email_verification_sent"] = result.verification_sent
+    tenant, link_sent = await svc.update_tenant(current_user, tenant_id, body, background)
+    data = to_response(tenant, TenantResponse)
+    data["email_verification_sent"] = link_sent
     return UpdateTenantResponse(data=mask_pii_in_dict(data))
 
 
