@@ -35,6 +35,12 @@ function RegistrationMethodBadge({ user }: Readonly<{ user: TenantUserView }>) {
   );
 }
 
+const rolesColumn: DataTableColumn<TenantUserView> = {
+  id: "roles",
+  header: "Roles",
+  cell: (u) => <TenantUserRoleBadges roles={u.roles} />,
+};
+
 const registrationColumn: DataTableColumn<TenantUserView> = {
   id: "registration_method",
   header: "Registration Method",
@@ -86,11 +92,7 @@ export function InstitutionUsersTable({
         sortAccessor: (u) => u.full_name ?? "",
         cell: (u) => dash(u.full_name),
       },
-      {
-        id: "roles",
-        header: "Roles",
-        cell: (u) => <TenantUserRoleBadges roles={u.roles} />,
-      },
+      rolesColumn,
       ...(showRegistrationMethod ? [registrationColumn] : []),
       {
         id: "status",
