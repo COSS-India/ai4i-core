@@ -4,7 +4,7 @@ Per-user, per-view column selection for table views (Service List today; the
 view_key keeps it reusable for other tables). One row per (user_id, view_key).
 
 Revision ID: b8d2f4a6c0e1
-Revises: e2f4a6c8b0d3
+Revises: b7d9f1a3c5e8
 Create Date: 2026-10-26
 
 """
@@ -15,7 +15,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "b8d2f4a6c0e1"
-down_revision: Union[str, None] = "e2f4a6c8b0d3"
+down_revision: Union[str, None] = "b7d9f1a3c5e8"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
