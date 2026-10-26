@@ -133,3 +133,22 @@ async def delete_policy_cache(policy_id: int, redis: Redis) -> None:
         await redis.srem(GLOBAL_POLICY_IDS_KEY, policy_id)
     except Exception:
         logger.warning("Failed to remove policy id=%s from global index", policy_id, exc_info=True)
+
+
+async def recache_policies(
+    session: AsyncSession,
+    redis: Redis,
+    category: Category,
+    sub_category: Optional[SubCategory] = None,
+) -> None:
+    """Re-cache every policy under ``category``, or only those under
+    ``sub_category`` when given, after a change to an ancestor their cached
+    payload carries (a name, a status or the sub-category's parent)."""
+    stmt = select(Policy, SubCategory).join(SubCategory, Policy.sub_category_id == SubCategory.id)
+    if sub_category is not None:
+        stmt = stmt.where(SubCategory.id == sub_category.id)
+    else:
+        stmt = stmt.where(SubCategory.category_id == category.id)
+    joined = await session.execute(stmt)
+    for policy, sub_cat in joined.all():
+        await cache_policy(policy, session, redis, sub_cat=sub_cat, category=category)
