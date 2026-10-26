@@ -1098,3 +1098,36 @@ class DeleteServiceResponse(SuccessResponseWithMeta):
 
     data: DeleteServiceData
     meta: MessageMeta
+
+
+class ServiceColumnFilterOption(BaseSchema):
+    value: str
+    label: str
+
+
+class ServiceColumnFilter(BaseSchema):
+    """Filter metadata for a column. ``options`` is null for text/date_range."""
+
+    type: str
+    params: List[str]
+    options: Optional[List[ServiceColumnFilterOption]] = None
+
+
+class ServiceColumnDefinition(BaseSchema):
+    id: str
+    label: str
+    mandatory: bool
+    defaultVisible: bool
+    sortable: bool
+    filterable: bool
+    filter: Optional[ServiceColumnFilter] = None
+
+
+class ServiceColumnsData(BaseSchema):
+    columns: List[ServiceColumnDefinition]
+
+
+class ServiceColumnsResponse(SuccessResponse):
+    """GET /services/columns"""
+
+    data: ServiceColumnsData

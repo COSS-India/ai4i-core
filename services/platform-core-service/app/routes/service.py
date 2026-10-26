@@ -3,7 +3,6 @@ Service management API endpoints.
 """
 
 import logging
-import re
 from typing import Any, Dict, Optional, Union
 
 from fastapi import APIRouter, Depends, Query, Request, Response
@@ -13,6 +12,7 @@ import importlib as _importlib
 
 from app.core.database import get_db
 from app.core.exceptions import AppError, ValidationError
+from app.core.permissions import is_platform_admin
 from app.dependencies.services import ServiceService, get_service_service
 from app.schemas.common import MessageMeta, TotalMeta, error_responses
 from app.schemas.enums.model_management import TaskTypeEnum
@@ -63,9 +63,6 @@ router = APIRouter(
 # or should see. Non-admin callers (and the fully public try-it endpoint) get
 # an allow-listed subset instead; Admin/Moderator keep the full response.
 
-_ROLE_ADMIN = 1
-_ROLE_MODERATOR = 2
-
 # Only fields actually consumed by the inference-submission flow and the
 # public try-it picker (confirmed against every *Service.ts call site and
 # shared picker component in frontend/simple-ui/src), plus "model" — required
@@ -100,17 +97,6 @@ _NON_ADMIN_SERVICE_FIELDS = {
     # non-admins. Exposing a redacted version of it is a separate follow-up
     # if a non-admin caller ever needs these fields.
 }
-
-
-def _permission_ids(request: Request) -> set[int]:
-    """Mirrors app/routes/metering.py's helper — X-Permission-IDS is injected
-    by the gateway after JWT validation."""
-    raw = request.headers.get("X-Permission-IDS", "")
-    return {int(m) for m in re.findall(r"\d+", raw)}
-
-
-def _is_platform_admin(request: Request) -> bool:
-    return bool(_permission_ids(request) & {_ROLE_ADMIN, _ROLE_MODERATOR})
 
 
 def _filter_service_fields(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -211,7 +197,7 @@ async def list_services(
     )
     # Non-admin already loses api_key/inferenceEndPoint entirely below, so
     # masking them first would be wasted work — only admins need it.
-    if _is_platform_admin(request):
+    if is_platform_admin(request):
         items = [mask_service_secrets(i) for i in items]
     else:
         items = [_filter_service_fields(i) for i in items]
@@ -240,7 +226,7 @@ async def view_service(
     except ValueError as exc:
         raise ValidationError(message=str(exc), code="INVALID_SERVICE_ID")
     data = await svc.get_service_detail(service_id)
-    if _is_platform_admin(request):
+    if is_platform_admin(request):
         data = mask_service_secrets(data)
     else:
         data = _filter_service_fields(data)
