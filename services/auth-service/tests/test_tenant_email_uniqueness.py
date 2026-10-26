@@ -31,7 +31,7 @@ def _make_service() -> TenantService:
         tenant_repo=tenant_repo,
         user_repo=user_repo,
         role_service=role_service,
-        verification_repo=MagicMock(),
+        verification_repo=MagicMock(deactivate_email_changes_for_tenant=AsyncMock()),
         credentials_repo=MagicMock(),
         token_service=MagicMock(),
         email_client=MagicMock(),
@@ -123,9 +123,11 @@ class TestUpdateTenantEmailUniqueness:
         assert exc_info.value.detail["code"] == "DUPLICATE_EMAIL"
 
     @pytest.mark.asyncio
-    async def test_update_to_email_of_own_tenant_user_is_allowed(self) -> None:
-        """Email belonging to a user within the same tenant must not be rejected."""
+    async def test_update_to_email_of_own_tenant_admin_is_allowed(self) -> None:
+        """Email belonging to an Institution Admin of the same tenant must not be rejected."""
         svc = _make_service()
+        svc._roles.get_user_roles = AsyncMock(return_value=["TENANT ADMIN"])
+        svc.enforce_scope = AsyncMock()  # roles mock now describes the target user
         svc._tenants.get_by_id = AsyncMock(return_value=_tenant(1, "old@tenant.com"))
         svc._tenants.get_by_email = AsyncMock(return_value=None)
         # User belongs to same tenant (tenant_id=1 == tenant_id being updated)
@@ -137,6 +139,29 @@ class TestUpdateTenantEmailUniqueness:
         await svc.update_tenant(_acting_admin(), 1, body)
 
         svc._tenants.update.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_update_to_email_of_own_tenant_non_admin_raises_409(self) -> None:
+        """A same-tenant non-admin holds the address: the verify flow would move
+        the current admin onto it, colliding on users.email → 409 up front."""
+        svc = _make_service()
+        svc._roles.get_user_roles = AsyncMock(return_value=["USER"])
+        svc.enforce_scope = AsyncMock()  # roles mock now describes the target user
+        svc._tenants.get_by_id = AsyncMock(return_value=_tenant(1, "old@tenant.com"))
+        admin = User(id=uuid4(), email="old@tenant.com", username="adm", tenant_id=1)
+        member = _user(tenant_id=1)
+        svc._users.get_by_email = AsyncMock(
+            side_effect=lambda e: admin if e == "old@tenant.com" else member
+        )
+
+        body = MagicMock()
+        body.model_dump.return_value = {"email": "member@tenant.com"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await svc.update_tenant(_acting_admin(), 1, body)
+
+        assert exc_info.value.detail["code"] == "DUPLICATE_EMAIL"
+        svc._tenants.update.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_update_case_variant_of_another_tenants_email_raises_409(self) -> None:

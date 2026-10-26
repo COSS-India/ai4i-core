@@ -88,6 +88,7 @@ class TestGetTenantRouteTierName:
         svc.get_tenant = AsyncMock(return_value=tenant)
         svc.build_tenant_response = TenantService.build_tenant_response
         svc.resolve_tier_name = TenantService.resolve_tier_name
+        svc.resolve_pending_emails = AsyncMock(return_value={})
 
         app = FastAPI()
         register_exception_handlers(app)

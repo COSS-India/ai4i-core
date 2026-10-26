@@ -124,10 +124,14 @@ async def verify_email(
     """Consume a verification token from the link in the verify-email email
     and activate the user. Sends a welcome email after activation.
     """
-    await svc.verify_email_token(body.token, background_tasks=background_tasks)
-    return VerifyEmailResponse(
-        data=MessageData(message="Email verified. You can now sign in.")
+    email_changed = await svc.verify_email_token(body.token, background_tasks=background_tasks)
+    message = (
+        "Email verified. The institution admin email has been updated — "
+        "sign in with your new email."
+        if email_changed
+        else "Email verified. You can now sign in."
     )
+    return VerifyEmailResponse(data=MessageData(message=message))
 
 
 @router.post(

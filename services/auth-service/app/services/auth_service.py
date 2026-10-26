@@ -260,12 +260,20 @@ class AuthService:
         self,
         token: str,
         background_tasks: Optional[BackgroundTasks] = None,
-    ) -> None:
+    ) -> bool:
         """Consume a verify token and activate the user (/auth/register flow).
 
         Tenant admins use setup-password links instead; they must not rely on
-        verify-email for onboarding.
+        verify-email for onboarding. EMAIL_CHANGE tokens share this endpoint
+        (and the frontend verify page) and are routed to
+        ``confirm_tenant_email_change``.
+
+        Returns True when the token confirmed a tenant email change.
         """
+        if self._tokens.validate_token(token).token_type == TokenType.EMAIL_CHANGE:
+            await self.confirm_tenant_email_change(token)
+            return True
+
         token_obj, user = await self._resolve_verified_token(token, TokenType.VERIFY, "verification link")
         await self._assert_user_tenant_onboarding(user)
 
@@ -274,6 +282,70 @@ class AuthService:
         await self._users.commit()
         logger.info("Email verified for user id=%s", user.id)
         enqueue_email(background_tasks, self._email, lambda: render_welcome(user))
+        return False
+
+    async def confirm_tenant_email_change(self, token: str) -> None:
+        """Apply a held Institution Admin email change (issued by
+        ``TenantService.update_tenant``): swap ``tenant.email`` and the contact
+        admin's ``users.email`` to the verified address. A ``tenant_only``
+        token (no contact user to re-align) updates ``tenant.email`` alone.
+        """
+        link_name = "email change link"
+        payload = self._validate_token_of_type(token, TokenType.EMAIL_CHANGE)
+        token_obj = await self._verifications.get_by_token(token)
+        if not token_obj:
+            raise TokenInvalidError(f"Invalid {link_name}.")
+        if not token_obj.is_active:
+            raise TokenInvalidError(f"{link_name.capitalize()} has already been used.")
+
+        new_email = (payload.email or "").lower().strip()
+        tenant = (
+            await self._tenants.get_by_id(int(payload.tenant_id))
+            if payload.tenant_id else None
+        )
+        # Stale if the tenant is now suspended/deactivated (email edits are
+        # locked). Superseded requests are already deactivated by
+        # update_tenant, so they fail the is_active check above.
+        if (
+            not new_email
+            or tenant is None
+            or tenant.status in (TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED)
+        ):
+            raise TokenInvalidError(f"This {link_name} is no longer valid.")
+
+        admin: Optional[User] = None
+        if not payload.tenant_only:
+            admin = await self._users.get_by_id(UUID(payload.sub))
+            # Stale if the admin left the tenant or is no longer its contact
+            # (e.g. their own email was edited since the request).
+            if (
+                admin is None
+                or admin.tenant_id != tenant.id
+                or (tenant.email or "").lower().strip() != (admin.email or "").lower().strip()
+            ):
+                raise TokenInvalidError(f"This {link_name} is no longer valid.")
+
+        # Re-check uniqueness: the address may have been taken since the request.
+        other_tenant = await self._tenants.get_by_email(new_email)
+        if other_tenant is not None and other_tenant.id != tenant.id:
+            raise DuplicateEntityError("Tenant", "email")
+        other_user = await self._users.get_by_email(new_email)
+        if other_user is not None and (
+            # Re-aligned admin: any other holder breaks users.email UNIQUE.
+            # Tenant-only: same-tenant holders are harmless (as in update_tenant).
+            other_user.id != admin.id if admin is not None
+            else other_user.tenant_id != tenant.id
+        ):
+            raise DuplicateEntityError("User", "email")
+
+        tenant.email = new_email
+        if admin is not None:
+            admin.email = new_email
+        await self._verifications.deactivate(token_obj)
+        await self._users.commit()
+        logger.info(
+            "Tenant %s email change verified (tenant-only=%s)", tenant.id, admin is None
+        )
 
     # ── Email verification: Resend ──
 
