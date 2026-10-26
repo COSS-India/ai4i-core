@@ -22,7 +22,7 @@ from app.repositories.model_management.service_repository import (
     _apply_list_filters,
     _list_order_by,
 )
-from app.schemas.model_management.service_columns import SORTABLE_KEYS
+from app.schemas.model_management.service_columns import SERVICE_LIST_COLUMNS, SORTABLE_KEYS
 
 _spec = importlib.util.spec_from_file_location("app.routes.service", "app/routes/service.py")
 _route = importlib.util.module_from_spec(_spec)
@@ -202,6 +202,20 @@ class TestRoute:
 
 
 class TestRouteHelpers:
+    def test_every_catalogue_filter_param_is_a_route_param(self):
+        params = ServiceListFilterParams()
+        for col in SERVICE_LIST_COLUMNS:
+            for p in col.filter_params:
+                assert hasattr(params, p), f"{col.id}: {p} missing from ServiceListFilterParams"
+
+    def test_admin_only_check_follows_the_catalogue(self, monkeypatch):
+        # Marking another filter admin-only in the catalogue is enough to deny it.
+        monkeypatch.setattr(_route, "ADMIN_ONLY_FILTER_PARAMS", frozenset({"name", "tier_ids"}))
+        with pytest.raises(_route.ValidationError):
+            _route._reject_admin_only_filters(ServiceListFilterParams(name="asr"), is_admin=False)
+        _route._reject_admin_only_filters(ServiceListFilterParams(name="asr"), is_admin=True)
+        _route._reject_admin_only_filters(ServiceListFilterParams(model_name="m"), is_admin=False)
+
     def test_split_csv(self):
         assert _route._split_csv(" A1 ,, b2,") == ["a1", "b2"]
         assert _route._split_csv(None) == []
