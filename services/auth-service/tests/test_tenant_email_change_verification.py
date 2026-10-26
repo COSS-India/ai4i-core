@@ -371,10 +371,10 @@ class TestConfirmTenantEmailChange:
         with patch(_REISSUE, new=AsyncMock(return_value="setup-token")) as reissue, \
              patch(_ENQUEUE) as enqueue, \
              patch("app.services.auth_service.render_setup_link") as render:
-            email_changed = await svc.verify_email_token("tok", background_tasks=MagicMock())
+            setup_link_sent = await svc.verify_email_token("tok", background_tasks=MagicMock())
             enqueue.call_args.args[2]()
 
-        assert email_changed is True
+        assert setup_link_sent is True
         assert tenant.email == "new@tenant.com" and tenant.pending_email is None
         assert tenant.pending_email_expires_at is None
         assert admin.email == "new@tenant.com"
@@ -475,7 +475,8 @@ class TestConfirmTenantEmailChange:
                     holder=_user("new@tenant.com", tenant_id=1))
 
         with patch(_REISSUE, new=AsyncMock()) as reissue, patch(_ENQUEUE) as enqueue:
-            assert await svc.verify_email_token("tok", background_tasks=MagicMock()) is True
+            # No contact → no set-password link, so the route mustn't promise one.
+            assert await svc.verify_email_token("tok", background_tasks=MagicMock()) is False
 
         assert tenant.email == "new@tenant.com" and tenant.pending_email is None
         assert stranger.email == "orphan@tenant.com"  # no user re-aligned
@@ -522,3 +523,40 @@ class TestEmailChangeTemplate:
             assert "Acme" in body and "verify-email?token=t" in body
             assert "signing up" not in body and "Didn" not in body
             assert ("set your password" in body) is sends_setup_link
+
+
+class TestVerifyEmailRouteMessage:
+    """The success message only mentions a set-password link when one was sent."""
+
+    @staticmethod
+    def _message(service_result):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+
+        from app.core.exceptions import register_exception_handlers
+        from app.dependencies.services import get_auth_service
+        from app.routes import auth as auth_routes
+
+        svc = MagicMock()
+        svc.verify_email_token = AsyncMock(return_value=service_result)
+        app = FastAPI()
+        register_exception_handlers(app)
+        app.include_router(auth_routes.router)
+        app.dependency_overrides[get_auth_service] = lambda: svc
+        response = TestClient(app).post("/auth/verify-email", json={"token": "tok"})
+        assert response.status_code == 200
+        return response.json()["data"]["message"]
+
+    def test_sign_up_verification(self) -> None:
+        assert self._message(None) == "Email verified. You can now sign in."
+
+    def test_email_change_with_setup_link(self) -> None:
+        assert self._message(True) == (
+            "Email verified. The institution admin email has been updated. "
+            "Check your inbox for a link to set your password."
+        )
+
+    def test_email_change_without_contact(self) -> None:
+        assert self._message(False) == (
+            "Email verified. The institution admin email has been updated."
+        )

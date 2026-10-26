@@ -264,7 +264,7 @@ class AuthService:
         self,
         token: str,
         background_tasks: Optional[BackgroundTasks] = None,
-    ) -> bool:
+    ) -> Optional[bool]:
         """Consume a verify token and activate the user (/auth/register flow).
 
         Tenant admins use setup-password links instead; they must not rely on
@@ -272,11 +272,11 @@ class AuthService:
         (and the frontend verify page) and are routed to
         ``confirm_tenant_email_change``.
 
-        Returns True when the token confirmed a tenant email change.
+        Returns None for a sign-up verification; for a tenant email change,
+        whether a set-password link was sent to the new address.
         """
         if self._tokens.validate_token(token).token_type == TokenType.EMAIL_CHANGE:
-            await self.confirm_tenant_email_change(token, background_tasks)
-            return True
+            return await self.confirm_tenant_email_change(token, background_tasks)
 
         token_obj, user = await self._resolve_verified_token(token, TokenType.VERIFY, "verification link")
         await self._assert_user_tenant_onboarding(user)
@@ -286,11 +286,11 @@ class AuthService:
         await self._users.commit()
         logger.info("Email verified for user id=%s", user.id)
         enqueue_email(background_tasks, self._email, lambda: render_welcome(user))
-        return False
+        return None
 
     async def confirm_tenant_email_change(
         self, token: str, background_tasks: Optional[BackgroundTasks] = None
-    ) -> None:
+    ) -> bool:
         """Apply a held Institution Admin email change (issued by
         ``TenantService.update_tenant``): swap ``tenant.email`` and, when
         ``tenant.email`` belongs to a user of this tenant (the contact), that
@@ -300,6 +300,9 @@ class AuthService:
         The contact account is handed over to whoever holds the new address,
         so the outgoing admin's password and sessions are revoked and a setup
         link goes to the new address (as in the PENDING reissue path).
+
+        Returns whether that set-password link was sent (never without a
+        contact).
         """
         link_name = "email change link"
         payload = self._validate_token_of_type(token, TokenType.EMAIL_CHANGE)
@@ -356,16 +359,18 @@ class AuthService:
             "Tenant %s email change verified (contact re-aligned=%s)", tenant.id, admin is not None
         )
         if admin is None:
-            return
+            return False
         try:
             await self._cache.revoke_all_sessions(str(admin.id))
         except Exception:
             logger.error("Failed to set logout timestamp for user id=%s; live access tokens not revoked", admin.id)
-        if setup_token is not None:
-            enqueue_email(
-                background_tasks, self._email,
-                lambda: render_setup_link(admin, setup_token),
-            )
+        if setup_token is None:
+            return False
+        enqueue_email(
+            background_tasks, self._email,
+            lambda: render_setup_link(admin, setup_token),
+        )
+        return True
 
     # ── Email verification: Resend ──
 
