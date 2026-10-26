@@ -40,7 +40,7 @@ import {
   formatTimeUntil,
   GRACE_EXTENSION_OPTIONS,
 } from "../../utils/apiKeyUtils";
-import { ChevronDownIcon, ChevronRightIcon, CopyIcon, EditIcon, ViewIcon } from "@chakra-ui/icons";
+import { ChevronDownIcon, ChevronRightIcon, CopyIcon, EditIcon } from "@chakra-ui/icons";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import StandardModal from "../common/StandardModal";
 import {
@@ -444,13 +444,6 @@ export default function ApiKeyManagementTab({
               justify="flex-end"
               actions={[
                 {
-                  id: "view",
-                  label: "View API key",
-                  tooltip: "View",
-                  icon: <ViewIcon />,
-                  onClick: () => mgmt.handleOpenViewModal(key),
-                },
-                {
                   id: "edit",
                   label: "Update API key",
                   tooltip: mgmt.isKeyEffectivelyActive(key)
@@ -567,7 +560,7 @@ export default function ApiKeyManagementTab({
           <>
       <FormSection title="API Key">
         <ReadOnlyField label="Key Name">{viewKey.key_name}</ReadOnlyField>
-        <ReadOnlyField label={viewKey.rotated_key || viewKey.api_key_revoked_at ? "Current Key" : "Key ID"}>
+        <ReadOnlyField label={viewKey.rotated_key || viewKey.api_key_revoked_at ? "Current Key" : "API Key"}>
           <Text fontSize="sm" fontFamily="mono" color="ink.700" wordBreak="break-all">
             {mgmt.formatKeyId(viewKey)}
           </Text>

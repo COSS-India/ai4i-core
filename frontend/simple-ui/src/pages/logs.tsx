@@ -35,7 +35,6 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import { useQuery } from "@tanstack/react-query";
 import {
   RepeatIcon,
-  ViewIcon,
   CheckIcon,
   CloseIcon,
   ChevronDownIcon,
@@ -846,41 +845,13 @@ const LogsPage: React.FC = () => {
 
   const traceColumns = useMemo((): DataTableColumn<TelemetryTraceRecord>[] => {
     const visible = columnDefs.filter((c) => selectedColumns.includes(c.key));
-    const cols: DataTableColumn<TelemetryTraceRecord>[] = visible.map((def) => ({
+    return visible.map((def) => ({
       id: def.key,
       header: def.label,
       sortable: Boolean(def.sortable && SORTABLE_API_KEYS[def.key]),
       cell: (row) => cellForColumn(def.key, row),
     }));
-
-    cols.push({
-      id: "actions",
-      header: "Actions",
-      cell: (row) =>
-        row.trace_id ? (
-          <Tooltip label="View trace" placement="top" hasArrow>
-            <IconButton
-              aria-label="View trace"
-              icon={<ViewIcon />}
-              size="sm"
-              variant="ghost"
-              color="ink.700"
-              _hover={{ color: "blue.500", bg: "blue.50" }}
-              onClick={(e) => {
-                e.stopPropagation();
-                openTraceDetail(row.trace_id);
-              }}
-            />
-          </Tooltip>
-        ) : (
-          <Text color="ink.400" fontSize="sm">
-            —
-          </Text>
-        ),
-    });
-
-    return cols;
-  }, [columnDefs, selectedColumns, cellForColumn, openTraceDetail]);
+  }, [columnDefs, selectedColumns, cellForColumn]);
 
   const hasAppliedFilters =
     applied.level !== "" ||

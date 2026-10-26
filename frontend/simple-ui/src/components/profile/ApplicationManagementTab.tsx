@@ -11,7 +11,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { EditIcon, ViewIcon } from "@chakra-ui/icons";
+import { EditIcon } from "@chakra-ui/icons";
 import { FiEdit2, FiRefreshCw, FiSliders } from "react-icons/fi";
 import DataTable, {
   createActionsColumn,
@@ -152,18 +152,10 @@ export default function ApplicationManagementTab({
       cell: (app) => <ApplicationStatusText status={app.status} />,
     },
     createActionsColumn<Application>({
-      align: "right",
       getActions: (app) => {
         const budgetActionLabel = editBudgetForName(app.name);
         const budgetDisabled = app.status !== "ACTIVE";
         return [
-          {
-            id: "view",
-            label: "View",
-            icon: <ViewIcon />,
-            "aria-label": `View ${app.name}`,
-            onClick: () => mgr.openView(app),
-          },
           {
             id: "edit",
             label: "Edit",
