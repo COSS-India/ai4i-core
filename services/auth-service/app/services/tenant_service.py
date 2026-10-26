@@ -495,7 +495,7 @@ class TenantService:
         full_name: Optional[str] = None,
         phone_number: Optional[str] = None,
         tenant_id: Optional[int | str] = None,
-        creation_type: str = "default",
+        creation_type: CreationType | str = CreationType.TENANT,
         role_name: str = RoleName.USER,
         background_tasks: Optional[BackgroundTasks] = None,
         email_kind: Literal["setup", "verify", "none"] = "setup",
@@ -514,17 +514,18 @@ class TenantService:
         (create_tenant's own first-admin provisioning, create_tenant_user)
         are admin-triggered and always have one; left None only for a
         hypothetical future self-service caller with no admin actor.
+
+        ``creation_type`` defaults to TENANT and an unknown value raises
+        ``ValueError`` instead of falling back to DEFAULT: DEFAULT marks the
+        user as self-registered, which locks them to the USER role.
         """
+        creation = CreationType(creation_type)
         if await self._users.email_exists(email):
             raise DuplicateEntityError("User", "email")
         if await self._users.get_by_username(username):
             raise DuplicateEntityError("User", "username")
 
         parsed_tenant_id = await resolve_tenant_id(tenant_id, self._tenants)
-        try:
-            creation = CreationType(creation_type)
-        except ValueError:
-            creation = CreationType.DEFAULT
 
         user = User(
             email=email,
