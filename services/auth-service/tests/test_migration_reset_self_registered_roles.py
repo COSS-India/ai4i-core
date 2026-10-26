@@ -166,6 +166,52 @@ class TestResetSelfRegisteredRoles:
             trans.rollback()
             conn.close()
 
+    def test_null_creation_type_user_keeps_its_roles(self, migrations) -> None:
+        # Review case: a NULL creation_type isn't a known signup type, and
+        # one whose credentials share its created_at (e.g. a script that
+        # inserted both in one transaction) is not re-labelled by the
+        # backfill either — the reset must leave it alone, not strip it.
+        conn = _live_connection()
+        trans = conn.begin()
+        try:
+            unlabelled_admin = _insert_user(
+                conn, creation_type=None, roles=("USER", "ADMIN", "MODERATOR")
+            )
+
+            _run_upgrades(migrations, conn)
+
+            assert _roles(conn, unlabelled_admin) == ["ADMIN", "MODERATOR", "USER"]
+        finally:
+            trans.rollback()
+            conn.close()
+
+    def test_null_creation_type_admin_counts_as_a_remaining_admin(self, migrations) -> None:
+        # Guards the NOT (...) in the remaining-admin count: with a bare
+        # ``creation_type IN (...)`` a NULL row evaluates to NULL, NOT NULL
+        # is still NULL, and the NULL admin would silently drop out of the
+        # count — keeping ADMIN on a self-registered user for no reason.
+        conn = _live_connection()
+        trans = conn.begin()
+        try:
+            conn.execute(text(
+                "DELETE FROM user_role WHERE role_id = (SELECT id FROM roles WHERE name = 'ADMIN')"
+            ))
+            _insert_user(
+                conn, creation_type=None, roles=("ADMIN",),
+                created_at="2026-06-01 00:00:00+00", creds_at="2026-06-01 00:00:00+00",
+            )
+            self_registered_admin = _insert_user(
+                conn, creation_type="default", roles=("USER", "ADMIN"),
+                created_at="2026-05-01 00:00:00+00", creds_at="2026-05-01 00:00:00+00",
+            )
+
+            _run_upgrades(migrations, conn)
+
+            assert _roles(conn, self_registered_admin) == ["USER"]
+        finally:
+            trans.rollback()
+            conn.close()
+
     def test_seeded_guest_keeps_guest_role(self, migrations) -> None:
         conn = _live_connection()
         trans = conn.begin()

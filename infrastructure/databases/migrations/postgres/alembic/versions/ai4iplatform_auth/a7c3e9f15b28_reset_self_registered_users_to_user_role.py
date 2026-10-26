@@ -42,9 +42,16 @@ GUEST_USERNAME = "guest"
 
 logger = logging.getLogger("alembic.runtime.migration")
 
-# Self-registered = anything not admin-created, minus the seeded guest.
+# Self-registered = a known signup type, minus the seeded guest. Scoped to
+# the signup labels rather than "not tenant" so an unlabelled (NULL) row is
+# never swept — this migration deletes grants, so it must fail open. The
+# explicit IS NOT NULL keeps the predicate two-valued: a bare IN (...) is
+# NULL for a NULL row, and NOT (NULL) would drop that row from the
+# remaining-admin count below.
 _SELF_REGISTERED = (
-    "u.creation_type IS DISTINCT FROM 'tenant' AND u.username <> :guest"
+    "u.creation_type IS NOT NULL"
+    " AND u.creation_type IN ('default', 'google')"
+    " AND u.username <> :guest"
 )
 
 
