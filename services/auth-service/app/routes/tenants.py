@@ -490,7 +490,7 @@ async def resend_tenant_user_setup_link(
 @router.patch(
     "/{tenant_id}/users/{user_id}",
     response_model=UpdateTenantUserResponse,
-    responses=error_responses(403, 404, 409),
+    responses=error_responses(403, 404, 409, 422),
 )
 async def update_tenant_user(
     tenant_id: int,
