@@ -93,10 +93,23 @@ def test_no_custom_entity_repeats_a_built_in():
         ("ADDRESS", "5 students in class"),
         ("ADDRESS", "Chapter 3 Road Safety Rules"),
         ("ADDRESS", "12-08-2004"),
+        ("UPI_ID", "a.b@gmail.com"),
+        ("UPI_ID", "arjun@college.edu"),
     ],
 )
 def test_regex_ignores_lookalikes(entity_name, text):
     assert not re.search(_regex(entity_name), text)
+
+
+def test_upi_id_matches_a_handle_ending_a_sentence():
+    assert re.search(_regex("UPI_ID"), "Pay to user@okaxis.").group() == "user@okaxis"
+
+
+def test_definitions_with_upi_id_also_mask_emails():
+    # UPI_ID no longer matches emails, so without EMAIL_ADDRESS they would go unmasked.
+    for name, fields in DEFINITIONS.items():
+        if any(field["entity_name"] == "UPI_ID" for field in fields["custom_field"]):
+            assert "EMAIL_ADDRESS" in _model_entities(fields), name
 
 
 def test_downgrade_keeps_definitions_a_policy_references(monkeypatch):

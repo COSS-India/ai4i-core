@@ -42,6 +42,13 @@ The rest have no built-in and stay custom, with the story's regexes, except:
       tokens like COVID19. This one needs a letter prefix and 6+ digits. A
       medical record number has the same shape, so either label may win when
       one value matches both; the value is masked either way.
+  UPI ID. The story's [\w.-]+@[\w.-]+ matches every email address. UPI
+      handles have no dot after the @ (@okaxis, @ybl), so this one stops
+      there, and Finance PII adds EMAIL_ADDRESS so emails stay masked.
+
+Bank Account Number keeps the story's \d{9,18}, so it also masks phone numbers
+and long amounts. An account number has no prefix to require, and telling one
+apart needs the surrounding words, which custom fields cannot use.
 
 Date of Birth stays custom rather than DATE_TIME, which masks every date and
 weekday.
@@ -133,10 +140,10 @@ _DOMAIN_PII_DEFINITIONS = {
             {
                 "entity_name": "UPI_ID",
                 "examples": ["arjun@upi", "user@okaxis", "merchant@ybl"],
-                "regex": r"\b[\w.-]+@[\w.-]+\b",
+                "regex": r"\b[\w.-]+@[A-Za-z]{2,64}\b(?!\w|\.\w)",
             },
         ],
-        "model_supported_field": _model_entities("CREDIT_CARD", "IN_PAN"),
+        "model_supported_field": _model_entities("CREDIT_CARD", "IN_PAN", "EMAIL_ADDRESS"),
     },
     "Healthcare PII": {
         "custom_field": [
