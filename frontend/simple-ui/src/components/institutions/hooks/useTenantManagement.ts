@@ -1596,6 +1596,70 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     editUserForm.role.trim().toUpperCase() !==
     editUserInitialFormRole.trim().toUpperCase();
 
+  /** Default-org rule that blocks the edit, or null when the save may proceed. */
+  const getDefaultOrgEditUserBlockMessage = (): string | null => {
+    if (
+      editUserForm.role !== "GUEST" &&
+      !isDefaultOrgUserRole(editUserForm.role)
+    ) {
+      return "Default Organisation users may only be User, Moderator, Usage Viewer, or Admin.";
+    }
+    // Last-admin guard: if editing self as the only Admin, cannot change role.
+    if (isEditingSelfUser && isEditUserOnlyAdmin && isEditUserRoleChanged()) {
+      return "You are the only Admin in the default organisation and cannot change your role";
+    }
+    // Self-registered users are unvetted and must stay on the USER role.
+    if (isEditUserSelfRegistered && isEditUserRoleChanged()) {
+      return SELF_REGISTERED_ROLE_LOCKED_MESSAGE;
+    }
+    return null;
+  };
+
+  const buildEditUserProfilePayload = () => ({
+    tenant_id: editUserForm.tenant_id,
+    user_id: editUserForm.user_id,
+    username: (editUserForm.username ?? "").trim(),
+    full_name: editUserForm.full_name?.trim(),
+    phone_number: editUserForm.phone_number?.trim(),
+  });
+
+  /**
+   * Saves profile fields, then syncs the default-org role when it changed.
+   * Returns the role that was synced, or null when no role was written.
+   */
+  const saveDefaultOrgEditUser = async (): Promise<string | null> => {
+    await tenantService.updateUser(buildEditUserProfilePayload());
+    // Sync only when the operator changed the role and we trust the loaded roles.
+    // Avoids silent demotion on profile-only edits after a failed roles fetch.
+    const initialRole = resolveDefaultOrgFormRole(editUserRow?.roles);
+    const nextRole = editUserForm.role.trim().toUpperCase();
+    if (!isDefaultOrgUserRole(nextRole) || nextRole === initialRole) return null;
+    if (!editUserRolesLoaded) {
+      showToast({
+        type: "warning",
+        message:
+          "Role was not updated because current roles could not be loaded. Other changes were saved.",
+      });
+      return null;
+    }
+    await syncDefaultOrgUserRole(
+      editUserForm.user_id,
+      nextRole,
+      editUserRow?.roles,
+    );
+    return nextRole;
+  };
+
+  const saveTenantEditUser = async () => {
+    await tenantService.updateUser({
+      ...buildEditUserProfilePayload(),
+      role:
+        editUserForm.role === "TENANT ADMIN"
+          ? "TENANT ADMIN"
+          : DEFAULT_TENANT_USER_ROLE,
+    });
+  };
+
   const handleSaveEditUser = async () => {
     if (!editUserForm.tenant_id || !editUserForm.user_id) return;
     const errors = collectEditUserErrors({
@@ -1609,82 +1673,18 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
     const tenant = resolveTenantById(editUserForm.tenant_id);
     const isDefaultOrg = tenant != null && isDefaultTenant(tenant);
-    if (
-      isDefaultOrg &&
-      editUserForm.role !== "GUEST" &&
-      !isDefaultOrgUserRole(editUserForm.role)
-    ) {
-      showToast({
-        type: "warning",
-        message:
-          "Default Organisation users may only be User, Moderator, Usage Viewer, or Admin.",
-      });
-      return;
-    }
-    // Last-admin guard: if editing self as the only Admin, cannot change role.
-    if (
-      isDefaultOrg &&
-      isEditingSelfUser &&
-      isEditUserOnlyAdmin &&
-      isEditUserRoleChanged()
-    ) {
-      showToast({
-        type: "warning",
-        message:
-          "You are the only Admin in the default organisation and cannot change your role",
-      });
-      return;
-    }
-    // Self-registered users are unvetted and must stay on the USER role.
-    if (isDefaultOrg && isEditUserSelfRegistered && isEditUserRoleChanged()) {
-      showToast({ type: "warning", message: SELF_REGISTERED_ROLE_LOCKED_MESSAGE });
+    const blockMessage = isDefaultOrg ? getDefaultOrgEditUserBlockMessage() : null;
+    if (blockMessage) {
+      showToast({ type: "warning", message: blockMessage });
       return;
     }
     setIsSubmittingEditUser(true);
     try {
-      let didSyncDefaultOrgRole = false;
       let syncedDefaultOrgRole: string | null = null;
       if (isDefaultOrg) {
-        await tenantService.updateUser({
-          tenant_id: editUserForm.tenant_id,
-          user_id: editUserForm.user_id,
-          username: (editUserForm.username ?? "").trim(),
-          full_name: editUserForm.full_name?.trim(),
-          phone_number: editUserForm.phone_number?.trim(),
-        });
-        // Sync only when the operator changed the role and we trust the loaded roles.
-        // Avoids silent demotion on profile-only edits after a failed roles fetch.
-        const initialRole = resolveDefaultOrgFormRole(editUserRow?.roles);
-        const nextRole = editUserForm.role.trim().toUpperCase();
-        if (isDefaultOrgUserRole(nextRole) && nextRole !== initialRole) {
-          if (!editUserRolesLoaded) {
-            showToast({
-              type: "warning",
-              message:
-                "Role was not updated because current roles could not be loaded. Other changes were saved.",
-            });
-          } else {
-            await syncDefaultOrgUserRole(
-              editUserForm.user_id,
-              nextRole,
-              editUserRow?.roles,
-            );
-            didSyncDefaultOrgRole = true;
-            syncedDefaultOrgRole = nextRole;
-          }
-        }
+        syncedDefaultOrgRole = await saveDefaultOrgEditUser();
       } else {
-        await tenantService.updateUser({
-          tenant_id: editUserForm.tenant_id,
-          user_id: editUserForm.user_id,
-          username: (editUserForm.username ?? "").trim(),
-          full_name: editUserForm.full_name?.trim(),
-          phone_number: editUserForm.phone_number?.trim(),
-          role:
-            editUserForm.role === "TENANT ADMIN"
-              ? "TENANT ADMIN"
-              : DEFAULT_TENANT_USER_ROLE,
-        });
+        await saveTenantEditUser();
       }
       showToast({ type: "success", message: "User updated" });
       setIsEditUserModalOpen(false);
@@ -1695,7 +1695,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       await refreshTenantAndUserLists(editedTenantId);
       // List users API collapses MODERATOR/GUEST → USER; re-apply the role we
       // just wrote so the Role column matches View/Edit.
-      if (didSyncDefaultOrgRole && syncedDefaultOrgRole) {
+      if (syncedDefaultOrgRole) {
         const roleToShow = syncedDefaultOrgRole;
         rememberDefaultOrgRoleOverride(editedUserId, roleToShow);
         patchTenantUserLocal(editedUserId, (row) =>

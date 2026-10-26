@@ -25,6 +25,22 @@ import { useTenantManagement } from "./hooks/useTenantManagement";
 
 type TenantManagement = ReturnType<typeof useTenantManagement>;
 
+function RegistrationMethodBadge({ user }: Readonly<{ user: TenantUserView }>) {
+  const option = getRegistrationMethodOption(resolveRegistrationMethod(user));
+  if (!option) return <>{dash(null)}</>;
+  return (
+    <Badge colorScheme={option.colorScheme} textTransform="none">
+      {option.label}
+    </Badge>
+  );
+}
+
+const registrationColumn: DataTableColumn<TenantUserView> = {
+  id: "registration_method",
+  header: "Registration Method",
+  cell: (u) => <RegistrationMethodBadge user={u} />,
+};
+
 export function InstitutionUsersTable({
   tm,
   sortedTenantUsers,
@@ -44,20 +60,6 @@ export function InstitutionUsersTable({
   const showRegistrationMethod = tm.isDefaultTenantUsersView;
 
   const userColumns = useMemo((): DataTableColumn<TenantUserView>[] => {
-    const registrationColumn: DataTableColumn<TenantUserView> = {
-      id: "registration_method",
-      header: "Registration Method",
-      cell: (u) => {
-        const option = getRegistrationMethodOption(resolveRegistrationMethod(u));
-        return option ? (
-          <Badge colorScheme={option.colorScheme} textTransform="none">
-            {option.label}
-          </Badge>
-        ) : (
-          dash(null)
-        );
-      },
-    };
     return [
       {
         id: "username",

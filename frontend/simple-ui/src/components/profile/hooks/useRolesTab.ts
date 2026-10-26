@@ -26,6 +26,33 @@ export interface SelectedUserInfo {
   username: string;
 }
 
+/**
+ * Removes then assigns roles one at a time so one failure does not abort the rest.
+ * Returns the operations that failed.
+ */
+async function applyRoleChanges(
+  userId: string,
+  toRemove: string[],
+  toAdd: string[],
+): Promise<string[]> {
+  const failedOps: string[] = [];
+  for (const roleName of toRemove) {
+    try {
+      await roleService.removeRole(userId, roleName);
+    } catch {
+      failedOps.push(`remove:${roleName}`);
+    }
+  }
+  for (const roleName of toAdd) {
+    try {
+      await roleService.assignRole(userId, roleName);
+    } catch {
+      failedOps.push(`assign:${roleName}`);
+    }
+  }
+  return failedOps;
+}
+
 export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions) {
   const [roles, setRoles] = useState<Role[]>([]);
   const [selectedUser, setSelectedUser] = useState<SelectedUserInfo | null>(null);
@@ -127,33 +154,29 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     return originalPrimary !== draftRole;
   })();
 
+  /** Reason the draft role cannot be saved, or null when it can. */
+  const getManageRolesBlockMessage = (): string | null => {
+    if (isSelectedUserSelfRegistered) return SELF_REGISTERED_ROLE_LOCKED_MESSAGE;
+    if (!draftRole) return "Select a role to assign to this user.";
+    if (!isDefaultTenantAssignableRole(draftRole)) {
+      return `Only ${DEFAULT_TENANT_ASSIGNABLE_ROLES.map(
+        formatDefaultTenantAssignableRoleLabel,
+      ).join(", ")} can be assigned from Role Assignment.`;
+    }
+    return null;
+  };
+
   const saveManageRoles = async () => {
     if (!selectedUser) return;
     if (!isAdmin || isModeratorOnly) return;
-    if (isSelectedUserSelfRegistered) {
-      showToast({ type: "warning", message: SELF_REGISTERED_ROLE_LOCKED_MESSAGE });
-      return;
-    }
-    if (!draftRole) {
-      showToast({
-        type: "warning",
-        message: "Select a role to assign to this user.",
-      });
-      return;
-    }
-    if (!isDefaultTenantAssignableRole(draftRole)) {
-      showToast({
-        type: "warning",
-        message: `Only ${DEFAULT_TENANT_ASSIGNABLE_ROLES.map(
-          formatDefaultTenantAssignableRoleLabel,
-        ).join(", ")} can be assigned from Role Assignment.`,
-      });
+    const blockMessage = getManageRolesBlockMessage();
+    if (blockMessage) {
+      showToast({ type: "warning", message: blockMessage });
       return;
     }
     const originalPrimary = selectedUserRoles[0] ?? "";
     const toRemove = selectedUserRoles.filter((role) => role !== draftRole);
-    const toAdd =
-      draftRole && draftRole !== originalPrimary ? [draftRole] : [];
+    const toAdd = draftRole === originalPrimary ? [] : [draftRole];
 
     if (toAdd.length === 0 && toRemove.length === 0 && selectedUserRoles.length <= 1) {
       showToast({
@@ -165,22 +188,8 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     }
 
     setIsSavingRoles(true);
-    const failedOps: string[] = [];
     try {
-      for (const roleName of toRemove) {
-        try {
-          await roleService.removeRole(selectedUser.user_id, roleName);
-        } catch {
-          failedOps.push(`remove:${roleName}`);
-        }
-      }
-      for (const roleName of toAdd) {
-        try {
-          await roleService.assignRole(selectedUser.user_id, roleName);
-        } catch {
-          failedOps.push(`assign:${roleName}`);
-        }
-      }
+      const failedOps = await applyRoleChanges(selectedUser.user_id, toRemove, toAdd);
 
       const refreshed = await roleService.getUserRoles(selectedUser.user_id);
       setSelectedUserRoles(refreshed.roles);
