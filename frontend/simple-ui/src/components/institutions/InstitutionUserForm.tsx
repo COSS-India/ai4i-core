@@ -1,8 +1,10 @@
 import {
+  Box,
   FormControl,
   FormErrorMessage,
   Input,
   Select,
+  Tooltip,
   VStack,
 } from "@chakra-ui/react";
 import React, { useMemo } from "react";
@@ -235,31 +237,51 @@ export default function InstitutionUserForm({ mode, tm }: InstitutionUserFormPro
         ) : (
           <FormControl>
             <FieldLabel required>Role</FieldLabel>
-            <Select
-              value={tm.editUserForm.role}
-              isDisabled={!tm.editUserRolesLoaded || tm.isEditUserOnlyAdmin}
-              onChange={(e) =>
-                tm.setEditUserForm({
-                  ...tm.editUserForm,
-                  role: e.target.value as typeof tm.editUserForm.role,
-                })
-              }
+            {/* Disabled controls swallow hover, so the tooltip targets a wrapper. */}
+            <Tooltip
+              label={FIELD_HINTS.tenantUser.selfRegisteredRoleLocked}
+              placement="top"
+              hasArrow
+              openDelay={300}
+              isDisabled={!tm.isEditUserSelfRegistered}
             >
-              {editRoleOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </Select>
+              <Box tabIndex={tm.isEditUserSelfRegistered ? 0 : undefined}>
+                <Select
+                  value={tm.editUserForm.role}
+                  isDisabled={
+                    !tm.editUserRolesLoaded ||
+                    tm.isEditUserOnlyAdmin ||
+                    tm.isEditUserSelfRegistered
+                  }
+                  onChange={(e) =>
+                    tm.setEditUserForm({
+                      ...tm.editUserForm,
+                      role: e.target.value as typeof tm.editUserForm.role,
+                    })
+                  }
+                >
+                  {editRoleOptions.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </Select>
+              </Box>
+            </Tooltip>
             {!tm.editUserRolesLoaded && (
               <FieldHint>{FIELD_HINTS.tenantUser.rolesLoadFailed}</FieldHint>
             )}
-            {tm.isEditUserOnlyAdmin && (
+            {tm.isEditUserSelfRegistered && (
+              <FieldHint>{FIELD_HINTS.tenantUser.selfRegisteredRoleLocked}</FieldHint>
+            )}
+            {tm.isEditUserOnlyAdmin && !tm.isEditUserSelfRegistered && (
               <FieldHint>{FIELD_HINTS.tenantUser.onlyAdminLocked}</FieldHint>
             )}
-            {!tm.isEditUserOnlyAdmin && tm.editUserRolesLoaded && (
-              <FieldHint>{FIELD_HINTS.tenantUser.role.helper}</FieldHint>
-            )}
+            {!tm.isEditUserOnlyAdmin &&
+              !tm.isEditUserSelfRegistered &&
+              tm.editUserRolesLoaded && (
+                <FieldHint>{FIELD_HINTS.tenantUser.role.helper}</FieldHint>
+              )}
           </FormControl>
         )}
 

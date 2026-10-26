@@ -18,6 +18,8 @@ export interface User {
   roles?: string[];
   tenant_id?: string | null;
   is_tenant_active?: boolean | null;
+  /** auth-service `creation_type` (default | google | tenant). */
+  creation_type?: string | null;
 }
 
 export interface UserUpdateRequest {

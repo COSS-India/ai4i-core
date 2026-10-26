@@ -14,6 +14,7 @@ import {
   Button,
   Badge,
   Select,
+  Tooltip,
   Wrap,
   WrapItem,
 } from "@chakra-ui/react";
@@ -58,14 +59,30 @@ export default function RolesTab({ users, isLoadingUsers, defaultTenantId }: Rol
           <Text fontSize="sm" color="ink.600">
             Manage user roles and permissions
           </Text>
-            <Button
-              size="sm"
-              colorScheme="blue"
-              onClick={rt.openManageRoles}
-              isDisabled={!rt.selectedUser || !rt.isAdmin || rt.isModeratorOnly || rt.isLoadingUserRoles}
+            <Tooltip
+              label={FIELD_HINTS.tenantUser.selfRegisteredRoleLocked}
+              placement="top"
+              hasArrow
+              openDelay={300}
+              isDisabled={!rt.isSelectedUserSelfRegistered}
             >
-              Manage Roles
-            </Button>
+              <Box as="span" tabIndex={rt.isSelectedUserSelfRegistered ? 0 : undefined} display="inline-flex">
+                <Button
+                  size="sm"
+                  colorScheme="blue"
+                  onClick={rt.openManageRoles}
+                  isDisabled={
+                    !rt.selectedUser ||
+                    !rt.isAdmin ||
+                    rt.isModeratorOnly ||
+                    rt.isLoadingUserRoles ||
+                    rt.isSelectedUserSelfRegistered
+                  }
+                >
+                  Manage Roles
+                </Button>
+              </Box>
+            </Tooltip>
           </HStack>
 
           <Box>
