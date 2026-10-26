@@ -3,7 +3,9 @@ HTTP route (service-level exceptions mapped to status codes)."""
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -204,3 +206,30 @@ class TestRoute:
             r = client.delete(f"/preferences/columns/{VIEW}", headers=_h())
         assert r.status_code == 200
         assert r.json()["data"]["isDefault"] is True
+
+
+_API_PERMISSIONS = Path(__file__).resolve().parents[2] / "auth-service" / "api_permissions.json"
+_ADMIN_SENTINEL = 1
+
+
+def _gateway_permissions() -> dict:
+    data = json.loads(_API_PERMISSIONS.read_text())
+    entries = data if isinstance(data, list) else next(v for v in data.values() if isinstance(v, list))
+    return {e["endpoint"]: e["permissionRequired"] for e in entries}
+
+
+@pytest.mark.parametrize("view_key", sorted(svc.VIEW_CATALOGUES))
+def test_every_view_has_its_own_gateway_permission(view_key):
+    # The gateway matches an exact path before the {view_key} template, so each
+    # view must list its own entries; otherwise it falls back to admin-only.
+    perms = _gateway_permissions()
+    for method in ("GET", "PUT", "DELETE"):
+        key = f"{method}:/api/v1/preferences/columns/{view_key}"
+        assert key in perms, f"{key} missing from api_permissions.json"
+        assert perms[key] != _ADMIN_SENTINEL
+
+
+def test_unlisted_view_falls_back_to_admin_only():
+    perms = _gateway_permissions()
+    for method in ("GET", "PUT", "DELETE"):
+        assert perms[f"{method}:/api/v1/preferences/columns/{{view_key}}"] == _ADMIN_SENTINEL
