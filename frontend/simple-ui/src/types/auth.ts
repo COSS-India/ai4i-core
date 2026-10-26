@@ -159,8 +159,6 @@ export interface APIKeyResponse {
   rotated_key_expires_at?: string;
   /** The previous value, masked, while it still works; absent otherwise. */
   rotated_key?: string;
-  /** When the current value alone was revoked during a rotation; absent while it works. */
-  api_key_revoked_at?: string;
   /** When the key was last rotated (its current value issued); absent if never. */
   rotated_at?: string;
 }

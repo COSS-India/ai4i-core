@@ -133,12 +133,10 @@ class APIKeyService:
     def effective_is_active(
         api_key: APIKey, application: Optional[Application], tenant: Optional[Tenant]
     ) -> bool:
-        """Runtime validity: not revoked, not expired, some value still
-        authenticates, application/tenant allow access."""
+        """Runtime validity: not revoked, not expired, application/tenant allow access."""
         return bool(
             api_key.is_active
             and not api_key.is_expired()
-            and api_key.has_live_value()
             and APIKeyService.application_may_use_api_keys(application, tenant)
         )
 
@@ -292,12 +290,9 @@ class APIKeyService:
         budget_effective_to: Optional[datetime] = None,
     ) -> None:
         ttl = self._compute_cache_ttl(db_key)
-        values = db_key.cache_key_values()
-        if ttl <= 0 or not values:
+        if ttl <= 0:
             return
-        # Any live value's entry carries the row's billing state; api_key's
-        # is gone once it alone was revoked.
-        existing = await self._cache.get_api_key_cache(values[0])
+        existing = await self._cache.get_api_key_cache(db_key.api_key)
         # No value filter: a live "0" is evidence too — filtering to v == "1"
         # would let a stale "1" in cached_data win the merge below and
         # resurrect a cleared budget-exhausted flag into both stores.
@@ -315,7 +310,7 @@ class APIKeyService:
         )
         # Same fields under every live value of the row (the rotated key's
         # entry too), each with its own TTL.
-        for value in values:
+        for value in db_key.cache_key_values():
             value_ttl = self._cache_ttl_for(db_key, value)
             if value_ttl > 0:
                 await self._cache.set_api_key_cache(value, value_ttl, payload)
@@ -1332,11 +1327,13 @@ class APIKeyService:
         """Issue a new value for a key already fetched and scope-verified by
         the caller. The old value moves to rotated_key and keeps working as
         the same row (same id, budget, permissions) until
-        rotated_key_expires_at — ``grace_days`` from now, capped at the key's
-        own expires_at — or until it or the whole key is revoked.
+        rotated_key_expires_at — ``grace_days`` from now — or until it or the
+        whole key is revoked. The key's own expires_at is unchanged.
 
-        409 when the key isn't active, or its previous value is still live.
-        Returns the new raw value (shown once) and the refreshed row."""
+        409 when the key isn't active, or its previous value is still live;
+        422 INVALID_GRACE_PERIOD when the grace period would run past the
+        key's expiry. Returns the new raw value (shown once) and the
+        refreshed row."""
         application, tenant = await self._application_and_tenant(db_key)
         if application is None or not self.effective_is_active(db_key, application, tenant):
             raise AppError(
@@ -1354,11 +1351,16 @@ class APIKeyService:
                 status_code=409,
             )
 
+        rotated_key_expires_at = datetime.now(timezone.utc) + timedelta(days=grace_days)
+        if db_key.expires_at is not None and rotated_key_expires_at > db_key.expires_at:
+            raise ValidationError(
+                message="Grace period can't go beyond the API key's expiry "
+                f"({db_key.expires_at.isoformat()}).",
+                code="INVALID_GRACE_PERIOD",
+            )
+
         new_value = await self._generate_unused_key()
         old_value = db_key.api_key
-        rotated_key_expires_at = datetime.now(timezone.utc) + timedelta(days=grace_days)
-        if db_key.expires_at is not None and db_key.expires_at < rotated_key_expires_at:
-            rotated_key_expires_at = db_key.expires_at
         rotated = await self._repo.rotate(
             db_key.id, old_value, new_value, rotated_key_expires_at, str(actor_user_id)
         )
@@ -1409,9 +1411,7 @@ class APIKeyService:
 
     async def end_rotation_by_obj(self, db_key: APIKey, actor_user_id: UUID) -> APIKey:
         """Stop a key's previous value now, before rotated_key_expires_at; the
-        current value is untouched. When the current value was already
-        revoked on its own, nothing is left, so the whole key is revoked
-        (is_active=false). 409 NO_ROTATION_IN_PROGRESS when no
+        current value is untouched. 409 NO_ROTATION_IN_PROGRESS when no
         previous value is live, or when a concurrent request already ended
         the rotation or revoked the key. Clears the columns first, then
         deletes the old value's Redis entry; a cache miss on the old value
@@ -1444,8 +1444,8 @@ class APIKeyService:
                 db_key.id,
             )
         logger.info(
-            "API key previous value revoked early: id=%s application=%s key_revoked=%s",
-            db_key.id, db_key.application_id, not db_key.is_active,
+            "API key previous value revoked early: id=%s application=%s",
+            db_key.id, db_key.application_id,
         )
         return db_key
 
@@ -1503,51 +1503,6 @@ class APIKeyService:
             )
         logger.info(
             "API key rotation window extended: id=%s application=%s rotated_key_expires_at=%s",
-            db_key.id, db_key.application_id, db_key.rotated_key_expires_at,
-        )
-        return db_key
-
-    async def revoke_current_value_by_obj(self, db_key: APIKey, actor_user_id: UUID) -> APIKey:
-        """Stop a key's current value now, during a rotation; the previous
-        value keeps working until rotated_key_expires_at, and after that the
-        key has no working value. 409 NO_ROTATION_IN_PROGRESS when no previous
-        value is live (revoke the whole key instead), 409
-        CURRENT_KEY_ALREADY_REVOKED when the current value is already
-        stopped; a concurrent revoke, rotation or end also returns 409."""
-        if db_key.live_rotated_key_expires_at() is None:
-            raise AppError(
-                message="This key has no previous value in its rotation window. "
-                "Revoke the whole key instead.",
-                code="NO_ROTATION_IN_PROGRESS",
-                status_code=409,
-            )
-        if db_key.api_key_revoked_at is not None:
-            raise AppError(
-                message="This key's current value is already revoked.",
-                code="CURRENT_KEY_ALREADY_REVOKED",
-                status_code=409,
-            )
-        current_value = db_key.api_key
-        if not await self._repo.revoke_current_value(db_key.id, current_value, str(actor_user_id)):
-            raise AppError(
-                message="This key was rotated, revoked or changed by another request.",
-                code="NO_ROTATION_IN_PROGRESS",
-                status_code=409,
-            )
-        await self._repo.commit()
-        await self._repo.refresh(db_key)
-        try:
-            await self._cache.delete_api_key_cache(current_value)
-        except Exception:
-            # The DB no longer accepts the value; its Redis entry is the only
-            # thing keeping it alive, until its TTL.
-            logger.exception(
-                "API key current value revoke: could not delete the Redis entry for "
-                "api_key_id=%s; it stops at its TTL",
-                db_key.id,
-            )
-        logger.info(
-            "API key current value revoked: id=%s application=%s rotated_key_expires_at=%s",
             db_key.id, db_key.application_id, db_key.rotated_key_expires_at,
         )
         return db_key
