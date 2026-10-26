@@ -36,9 +36,16 @@ def _db(row) -> MagicMock:
 def _tier_db(name="Gold", rate_limit=600, quotas=()) -> MagicMock:
     """Platform-core session answering each lookup by the table it reads."""
     tier = SimpleNamespace(name=name, rate_limit=rate_limit)
-    quota_rows = [SimpleNamespace(task_type=t, monthly_quota=Decimal(q), unit=u) for t, q, u in quotas]
+    quota_rows = [
+        SimpleNamespace(
+            task_type=t, unit=u, monthly_quota=Decimal(q), pending_monthly_quota=Decimal(p) if p else None
+        )
+        for t, q, u, p in quotas
+    ]
+    calls = []
 
     async def execute(stmt, params):
+        calls.append(str(stmt))
         result = MagicMock()
         if "tier_quotas" in str(stmt):
             result.all.return_value = quota_rows
@@ -48,12 +55,13 @@ def _tier_db(name="Gold", rate_limit=600, quotas=()) -> MagicMock:
 
     db = MagicMock()
     db.execute = AsyncMock(side_effect=execute)
+    db.sql = calls
     return db
 
 
 _QUOTAS = (
-    ("asr", "99999999.0000", "audio_minutes"),
-    ("llm", "99999999.0000", "tokens"),
+    ("llm", "99999999.0000", "tokens", None),
+    ("asr", "99999999.0000", "audio_minutes", "50000.0000"),
 )
 
 
@@ -92,10 +100,26 @@ class TestResolveTierLimits:
         assert limits == {
             "rate_limit": 600,
             "quotas": [
-                {"task_type": "asr", "monthly_quota": Decimal("99999999.0000"), "unit": "audio_minutes"},
-                {"task_type": "llm", "monthly_quota": Decimal("99999999.0000"), "unit": "tokens"},
+                {
+                    "task_type": "llm",
+                    "unit": "tokens",
+                    "monthly_quota": Decimal("99999999.0000"),
+                    "pending_monthly_quota": None,
+                },
+                {
+                    "task_type": "asr",
+                    "unit": "audio_minutes",
+                    "monthly_quota": Decimal("99999999.0000"),
+                    "pending_monthly_quota": Decimal("50000.0000"),
+                },
             ],
         }
+
+    @pytest.mark.asyncio
+    async def test_quotas_keep_the_tier_order(self) -> None:
+        db = _tier_db(quotas=_QUOTAS)
+        await TenantService.resolve_tier_limits(uuid4(), db)
+        assert "ORDER BY tq.created_at" in db.sql[-1]
 
     @pytest.mark.asyncio
     async def test_tier_without_rate_limit_or_quotas(self) -> None:
@@ -186,9 +210,12 @@ class TestGetTenantRouteTierName:
         limits = client.get("/auth/tenants/152").json()["data"]["tier_limits"]
 
         assert limits["rate_limit"] == 600
-        assert [(q["task_type"], Decimal(q["monthly_quota"]), q["unit"]) for q in limits["quotas"]] == [
-            ("asr", Decimal("99999999"), "audio_minutes"),
-            ("llm", Decimal("99999999"), "tokens"),
+        assert [
+            (q["task_type"], q["unit"], Decimal(q["monthly_quota"]), q["pending_monthly_quota"])
+            for q in limits["quotas"]
+        ] == [
+            ("llm", "tokens", Decimal("99999999"), None),
+            ("asr", "audio_minutes", Decimal("99999999"), "50000.0000"),
         ]
 
     def test_unassigned_tenant_returns_null_tier_name(self) -> None:

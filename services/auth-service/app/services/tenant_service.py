@@ -821,7 +821,10 @@ class TenantService:
     ) -> Optional[dict]:
         """Rate limit and per-task-type monthly quotas of ``tier_id``, read
         live from platform-core so a tier edit or reassignment shows up on
-        the next GET. Fails soft like resolve_tier_name: None when no tier is
+        the next GET. Quotas are listed in the order the tier was set up.
+        ``monthly_quota`` is the one in effect now; an edit waiting for the
+        1st-of-month promotion is returned as ``pending_monthly_quota``.
+        Fails soft like resolve_tier_name: None when no tier is
         assigned or the tier can't be read — in that last case tier_name is
         already UNKNOWN_TIER_NAME, so the client can tell the two apart."""
         if tier_id is None or platform_core_db is None:
@@ -835,9 +838,9 @@ class TenantService:
             quotas = (
                 await platform_core_db.execute(
                     text(
-                        "SELECT it.name AS task_type, tq.monthly_quota, it.unit "
+                        "SELECT it.name AS task_type, it.unit, tq.monthly_quota, tq.pending_monthly_quota "
                         "FROM tier_quotas tq JOIN inference_types it ON it.id = tq.inference_type_id "
-                        "WHERE tq.tier_id = :tid ORDER BY it.name"
+                        "WHERE tq.tier_id = :tid ORDER BY tq.created_at, it.name"
                     ),
                     {"tid": tier_id},
                 )
@@ -848,7 +851,13 @@ class TenantService:
         return {
             "rate_limit": tier.rate_limit,
             "quotas": [
-                {"task_type": q.task_type, "monthly_quota": q.monthly_quota, "unit": q.unit} for q in quotas
+                {
+                    "task_type": q.task_type,
+                    "unit": q.unit,
+                    "monthly_quota": q.monthly_quota,
+                    "pending_monthly_quota": q.pending_monthly_quota,
+                }
+                for q in quotas
             ],
         }
 
