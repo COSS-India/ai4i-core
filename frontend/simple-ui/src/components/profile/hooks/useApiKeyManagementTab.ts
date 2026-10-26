@@ -478,7 +478,7 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     const allowed = ROTATION_GRACE_OPTIONS.filter((d) => isGraceWithinExpiry(d, key.expires_at));
     const preferred = getDefaultRotationGraceDays();
     setRotateGraceDays(
-      allowed.find((d) => d === preferred) ?? allowed[allowed.length - 1] ?? null,
+      allowed.find((d) => d === preferred) ?? allowed.at(-1) ?? null,
     );
     setKeyToRotate(key);
   };
