@@ -341,12 +341,8 @@ def _reject_admin_only_filters(filters: ServiceListFilterParams, is_admin: bool)
     """Raise FILTER_NOT_PERMITTED if a non-admin supplied an admin-only filter."""
     if is_admin:
         return
-    supplied = {
-        "tier_ids": filters.tier_ids, "created_from": filters.created_from,
-        "created_to": filters.created_to, "published_from": filters.published_from,
-        "published_to": filters.published_to,
-    }
-    denied = sorted(k for k, v in supplied.items() if v is not None and k in ADMIN_ONLY_FILTER_PARAMS)
+    supplied = {p: getattr(filters, p) for p in ADMIN_ONLY_FILTER_PARAMS}
+    denied = sorted(p for p, v in supplied.items() if v is not None)
     if denied:
         raise ValidationError(
             message=f"Filter parameter(s) not available to this caller: {', '.join(denied)}",
