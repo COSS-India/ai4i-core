@@ -336,6 +336,19 @@ describe("collectEditTenantErrors", () => {
     ).toEqual({});
   });
 
+  it("rejects a same-institution non-admin user as the new contact (AI4IDS-3401)", () => {
+    expect(
+      collectEditTenantErrors({
+        ...editing,
+        isEditTenantEmailEditable: true,
+        email: "member@acme.com",
+        knownUserEmails: new Set(["ada@acme.com", "member@acme.com"]),
+        // Only Institution Admins are allow-listed — not ordinary users.
+        allowedUserEmails: new Set(["ada@acme.com"]),
+      }).email,
+    ).toBe(EMAIL_USER_ALREADY_EXISTS_MSG);
+  });
+
   it("rejects a short or letterless contact name, and an invalid phone", () => {
     expect(
       collectEditTenantErrors({ ...editing, contact_name: "A" }).contact_name,

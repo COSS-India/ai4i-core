@@ -139,6 +139,7 @@ export default function InstitutionDetailsPanel({
             email: institution.email ?? "",
             phone_number: institution.phone_number ?? "",
           }}
+          pendingEmail={institution.pending_email}
         />
         <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3} mt={4}>
           <DetailField label={`${INSTITUTION} ID`}>

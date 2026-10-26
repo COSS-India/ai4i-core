@@ -96,7 +96,10 @@ export function collectEditTenantErrors(input: {
   knownTenantEmails: Set<string>;
   knownUserEmails: Set<string>;
   editTenantEmail: string | undefined;
-  /** Same-institution user emails allowed as the new contact (AI4IDS-3401). */
+  /**
+   * Same-institution Institution Admin emails allowed as the new contact
+   * (AI4IDS-3401). Non-admin users must not be included.
+   */
   allowedUserEmails?: Set<string> | readonly string[];
 }): Record<string, string> {
   const {

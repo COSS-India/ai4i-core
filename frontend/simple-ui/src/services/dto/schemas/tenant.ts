@@ -17,6 +17,8 @@ export const tenantViewSchema = z
     contact_name: z.string(),
     organisation: z.string(),
     email: z.string(),
+    pending_email: z.string().nullable().optional(),
+    email_verification_sent: z.boolean().optional(),
     phone_number: z.string().nullable().optional(),
     status: tenantStatusSchema,
     onboarding_completed: z.boolean().optional(),

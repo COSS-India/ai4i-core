@@ -12,6 +12,16 @@ export interface TenantView {
   contact_name: string;
   organisation: string;
   email: string;
+  /**
+   * New contact email awaiting verification (AI4IDS-3401).
+   * Effective `email` stays the old address until the link is used (or 48h expiry).
+   */
+  pending_email?: string | null;
+  /**
+   * Present on PATCH /tenants/{id} when an email change was requested.
+   * True when a verification/activation email was sent to the new address.
+   */
+  email_verification_sent?: boolean;
   phone_number?: string | null;
   status: TenantStatus;
   /** Client-side flag for PENDING → Deactivate soft deletes (terminal). */

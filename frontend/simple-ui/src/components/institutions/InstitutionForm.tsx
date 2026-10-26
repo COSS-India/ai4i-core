@@ -11,6 +11,7 @@ import FieldLabel from "../common/FieldLabel";
 import FormSection from "../common/FormSection";
 import ReadOnlyField from "../common/ReadOnlyField";
 import { dash } from "../../utils/valueFormatters";
+import InstitutionContactEmail from "./InstitutionContactEmail";
 
 export type InstitutionFormMode = "create" | "edit" | "view";
 
@@ -29,8 +30,10 @@ type InstitutionFormProps = {
   mode: InstitutionFormMode;
   values: InstitutionFormValues;
   errors?: InstitutionFormErrors;
-  /** Edit only. Contact email is editable when updating an institution (AI4IDS-3401). */
+  /** Edit only. Contact email editable for PENDING/ACTIVE (AI4IDS-3401). */
   emailEditable?: boolean;
+  /** Pending verification address from GET/PATCH (shown in view + locked edit). */
+  pendingEmail?: string | null;
   emailStatus?: string;
   onOrganisationChange?: (value: string) => void;
   onOrganisationBlur?: (value: string) => void;
@@ -49,6 +52,7 @@ export default function InstitutionForm({
   values,
   errors = {},
   emailEditable = false,
+  pendingEmail = null,
   emailStatus,
   onOrganisationChange,
   onOrganisationBlur,
@@ -79,7 +83,12 @@ export default function InstitutionForm({
           <ReadOnlyField label="Organisation">{dash(values.organisation)}</ReadOnlyField>
         ) : null}
         <ReadOnlyField label="Contact Name">{dash(values.contact_name)}</ReadOnlyField>
-        <ReadOnlyField label="Email">{dash(values.email)}</ReadOnlyField>
+        <ReadOnlyField label="Email">
+          <InstitutionContactEmail
+            email={values.email}
+            pendingEmail={pendingEmail}
+          />
+        </ReadOnlyField>
         <ReadOnlyField label="Phone Number">{dash(values.phone_number)}</ReadOnlyField>
       </FormSection>
     );
@@ -121,7 +130,12 @@ export default function InstitutionForm({
 
         {mode === "edit" && !emailEditable ? (
           <FormControl>
-            <ReadOnlyField label="Email">{dash(values.email)}</ReadOnlyField>
+            <ReadOnlyField label="Email">
+              <InstitutionContactEmail
+                email={values.email}
+                pendingEmail={pendingEmail}
+              />
+            </ReadOnlyField>
             <FieldHint>{FIELD_HINTS.tenant.emailPendingOnly}</FieldHint>
           </FormControl>
         ) : (
@@ -147,6 +161,11 @@ export default function InstitutionForm({
               </FieldHint>
             ) : (
               <>
+                {pendingEmail?.trim() ? (
+                  <FieldHint show={!errors.email}>
+                    {`${pendingEmail.trim()} — ${FIELD_HINTS.tenant.emailVerificationPending}`}
+                  </FieldHint>
+                ) : null}
                 <FieldHint show={!errors.email}>
                   {FIELD_HINTS.tenant.emailVerifyOnChange}
                 </FieldHint>

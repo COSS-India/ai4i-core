@@ -1,5 +1,11 @@
 // Client-side email rules for tenant contact + tenant user provisioning.
 
+import {
+  INSTITUTION,
+  TENANT,
+  isTenantStatus,
+  type TenantStatusValue,
+} from "../config/constants";
 import type { TenantView, TenantUserView } from "../types/tenant";
 import { tenantUserHasRole } from "./tenantUserRoles";
 
@@ -41,14 +47,19 @@ export function collectUserEmails(users: { email?: string | null }[]): Set<strin
   return out;
 }
 
-/** Emails of users already provisioned under this institution (AI4IDS-3401). */
+/** Emails of users already provisioned under this institution. */
 export function collectInstitutionUserEmails(
   users: { email?: string | null }[],
 ): Set<string> {
   return collectUserEmails(users);
 }
 
-/** Institution Admin emails for this institution — contact update applies immediately. */
+/**
+ * Institution Admin emails for this institution (AI4IDS-3401).
+ * Only these may pass the FE uniqueness check when changing contact email;
+ * same-institution non-admin users are rejected (BE 409 DUPLICATE_EMAIL).
+ * Callers must supply unmasked emails — masked listUsers values never match.
+ */
 export function collectInstitutionAdminEmails(
   users: TenantUserView[],
 ): Set<string> {
@@ -59,6 +70,67 @@ export function collectInstitutionAdminEmails(
     if (e) out.add(e);
   }
   return out;
+}
+
+/** Contact email can be edited for PENDING and ACTIVE institutions only. */
+export function isTenantContactEmailEditable(
+  status: TenantStatusValue | string | null | undefined,
+): boolean {
+  return (
+    isTenantStatus(status, TENANT.STATUS.PENDING) ||
+    isTenantStatus(status, TENANT.STATUS.ACTIVE)
+  );
+}
+
+export type TenantEmailUpdateFeedback = {
+  toastType: "success" | "info";
+  message: string;
+  /** Effective contact after save (old address while verification is pending). */
+  email: string | undefined;
+  pending_email: string | null;
+};
+
+/**
+ * Toast + local email fields from PATCH /tenants/{id} after an email change
+ * (AI4IDS-3401 / BE contract).
+ */
+export function resolveTenantEmailUpdateFeedback(
+  updated: Pick<
+    TenantView,
+    "email" | "pending_email" | "email_verification_sent" | "status"
+  >,
+  previousEmail: string | undefined,
+): TenantEmailUpdateFeedback {
+  const pending = updated.pending_email?.trim() || null;
+  const sent = Boolean(updated.email_verification_sent);
+  const effectiveEmail = updated.email || previousEmail;
+
+  if (pending && sent) {
+    return {
+      toastType: "info",
+      message:
+        "Verification email sent to the new address. The change takes effect once it's verified.",
+      email: effectiveEmail,
+      pending_email: pending,
+    };
+  }
+
+  if (!pending && sent) {
+    return {
+      toastType: "info",
+      message:
+        "Email updated. A new activation link was sent to the new address.",
+      email: effectiveEmail,
+      pending_email: null,
+    };
+  }
+
+  return {
+    toastType: "success",
+    message: `${INSTITUTION} updated.`,
+    email: effectiveEmail,
+    pending_email: null,
+  };
 }
 
 export function emailSetHas(
@@ -74,12 +146,15 @@ export function emailSetHas(
 
 /**
  * When editing, skip collision checks for the record's current email, and for
- * users already in the institution being updated (AI4IDS-3401).
+ * Institution Admin emails of the same institution (AI4IDS-3401).
  */
 export interface EmailUniquenessExclusions {
   excludeTenantEmail?: string;
   excludeUserEmail?: string;
-  /** Same-institution user emails — allowed as the new contact email. */
+  /**
+   * Same-institution Institution Admin emails — allowed as the new contact
+   * (applies immediately, no verification). Non-admin users must not be listed.
+   */
   allowedUserEmails?: Set<string> | readonly string[];
 }
 

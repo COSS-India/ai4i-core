@@ -168,6 +168,7 @@ export function InstitutionWorkspace({
                     email: t.email ?? "",
                     phone_number: t.phone_number ?? "",
                   }}
+                  pendingEmail={t.pending_email}
                 />
                 <FormSection title="Record">
                     <ReadOnlyField label={`${INSTITUTION} ID`}>

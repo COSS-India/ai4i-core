@@ -19,6 +19,7 @@ import { dash, fmtDate } from "../../utils/valueFormatters";
 import type { TenantView } from "../../types/tenant";
 import type { TenantTierAssignment } from "../../services/tierManagementService";
 import { useTenantManagement } from "./hooks/useTenantManagement";
+import InstitutionContactEmail from "./InstitutionContactEmail";
 import {
   getTenantAvatarBg,
   getTenantInitials,
@@ -125,7 +126,13 @@ export function InstitutionAdopterList({
         header: "Email",
         sortable: true,
         sortAccessor: (t) => t.email ?? "",
-        cell: (t) => dash(t.email),
+        cell: (t) => (
+          <InstitutionContactEmail
+            email={t.email}
+            pendingEmail={t.pending_email}
+            compact
+          />
+        ),
       },
       {
         id: "status",
