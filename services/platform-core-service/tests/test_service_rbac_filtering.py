@@ -28,8 +28,10 @@ sys.modules["app.routes.service"] = _service_route_mod
 _spec.loader.exec_module(_service_route_mod)
 
 _filter_service_fields = _service_route_mod._filter_service_fields
-_is_platform_admin = _service_route_mod._is_platform_admin
+from app.core.permissions import is_platform_admin as _is_platform_admin  # noqa: E402
 list_services = _service_route_mod.list_services
+ServiceListFilterParams = _service_route_mod.ServiceListFilterParams
+ServiceListSortParams = _service_route_mod.ServiceListSortParams
 view_service = _service_route_mod.view_service
 list_try_it_services = _service_route_mod.list_try_it_services
 
@@ -155,46 +157,35 @@ class TestIsPlatformAdmin:
         assert _is_platform_admin(_make_request("")) is False
 
 
+def _list_kwargs(request, svc, **over):
+    response = MagicMock()
+    response.headers = {}
+    return dict(
+        request=request, response=response, svc=svc, db=MagicMock(),
+        filters=ServiceListFilterParams(**over), paging=ServiceListSortParams(),
+    )
+
+
 class TestListServicesRoute:
     @pytest.mark.asyncio
     async def test_admin_gets_full_response(self) -> None:
-        response = MagicMock()
-        response.headers = {}
         svc = MagicMock()
-        svc.list_services = AsyncMock(return_value=([_FULL_SERVICE], 1))
+        svc.list_services = AsyncMock(return_value=([dict(_FULL_SERVICE)], 1))
 
-        result = await list_services(
-            request=_make_request("1"),
-            response=response,
-            task_type=None,
-            is_published=None,
-            created_by=None,
-            offset=0,
-            limit=None,
-            svc=svc,
-        )
+        result = await list_services(**_list_kwargs(_make_request("1"), svc))
 
-        assert result["data"]["services"][0]["api_key"] == "super-secret-key"
+        item = result.data.services[0].model_dump(exclude_unset=True)
+        assert item["api_key"] != "super-secret-key"  # masked, but present
+        assert "api_key" in item
 
     @pytest.mark.asyncio
     async def test_non_admin_gets_filtered_response(self) -> None:
-        response = MagicMock()
-        response.headers = {}
         svc = MagicMock()
-        svc.list_services = AsyncMock(return_value=([_FULL_SERVICE], 1))
+        svc.list_services = AsyncMock(return_value=([dict(_FULL_SERVICE)], 1))
 
-        result = await list_services(
-            request=_make_request("50,51"),
-            response=response,
-            task_type=None,
-            is_published=None,
-            created_by=None,
-            offset=0,
-            limit=None,
-            svc=svc,
-        )
+        result = await list_services(**_list_kwargs(_make_request("50,51"), svc))
 
-        item = result["data"]["services"][0]
+        item = result.data.services[0].model_dump(exclude_unset=True)
         assert "api_key" not in item
         assert item["serviceId"] == "svc-1"
 

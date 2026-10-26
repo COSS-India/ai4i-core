@@ -25,7 +25,9 @@ from app.routes.notification_subscription import router as notification_subscrip
 from app.routes.pay_per_use import router as pay_per_use_router
 from app.routes.pii import router as pii_router
 from app.routes.policy import router as policy_router
+from app.routes.user_preferences import router as user_preferences_router
 from app.routes.service import router as service_router
+from app.routes.service_columns import router as service_columns_router
 from app.routes.telemetry import router as telemetry_router
 from app.routes.usage import router as usage_router
 
@@ -45,6 +47,9 @@ v1_router = versioning.create_router("v1")
 # (model_router) now serves /api/v1/models/list.
 v1_router.include_router(models_openai_router)
 v1_router.include_router(model_router)
+# Must precede service_router: it has GET /services/{service_id:path}, which
+# would otherwise capture /services/columns.
+v1_router.include_router(service_columns_router)
 v1_router.include_router(service_router)
 v1_router.include_router(alert_router)
 v1_router.include_router(alert_catalog_router)
@@ -59,6 +64,7 @@ v1_router.include_router(notification_router)
 v1_router.include_router(monitoring_catalog_router)
 v1_router.include_router(notification_subscription_router)
 v1_router.include_router(policy_router)
+v1_router.include_router(user_preferences_router)
 
 # ── Top-level router ──
 api_router = APIRouter()

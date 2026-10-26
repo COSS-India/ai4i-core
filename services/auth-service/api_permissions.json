@@ -53,6 +53,7 @@
     { "endpoint": "PATCH:/api/v1/auth/tenants/{tenant_id}/budget",         "permissionRequired": 144, "description": "Revise tenant budget, top-up only (ppu.tenant.assign); replaces PATCH /pay-per-use/tenant/budget" },
 
     { "endpoint": "GET:/api/v1/services",                                  "permissionRequired": 51, "description": "List all services (service.read)" },
+    { "endpoint": "GET:/api/v1/services/columns",                          "permissionRequired": 51, "description": "Service List column catalogue for the column picker (service.read)" },
     { "endpoint": "GET:/api/v1/services/{service_id}",                     "permissionRequired": 51, "description": "Get service by ID (service.read)" },
     { "endpoint": "POST:/api/v1/services",                                 "permissionRequired": 50, "description": "Create service (service.create)" },
     { "endpoint": "PATCH:/api/v1/services",                                "permissionRequired": 52, "description": "Update service (service.update)" },
@@ -193,6 +194,13 @@
     { "endpoint": "PUT:/api/v1/policies",                                 "permissionRequired": 1,   "description": "Update a policy (admin sentinel — ADMIN only)" },
     { "endpoint": "DELETE:/api/v1/policies/{id}",                         "permissionRequired": 1,   "description": "Delete a policy (admin sentinel — ADMIN only)" },
 
-    { "endpoint": "POST:/api/v1/pii/simulate",                            "permissionRequired": 1,   "description": "Run a PII policy against sample text in the Playground (admin sentinel — ADMIN only)" }
+    { "endpoint": "POST:/api/v1/pii/simulate",                            "permissionRequired": 1,   "description": "Run a PII policy against sample text in the Playground (admin sentinel — ADMIN only)" },
+
+    { "endpoint": "GET:/api/v1/preferences/columns/service-list",          "permissionRequired": 51, "description": "Get the caller's saved Service List columns (service.read)" },
+    { "endpoint": "PUT:/api/v1/preferences/columns/service-list",          "permissionRequired": 51, "description": "Save the caller's Service List columns (service.read)" },
+    { "endpoint": "DELETE:/api/v1/preferences/columns/service-list",       "permissionRequired": 51, "description": "Reset the caller's Service List columns to default (service.read)" },
+    { "endpoint": "GET:/api/v1/preferences/columns/{view_key}",            "permissionRequired": 1,  "description": "Fallback for a view with no entry of its own (admin sentinel — ADMIN only); each view lists its own GET/PUT/DELETE with the permission of the page it belongs to" },
+    { "endpoint": "PUT:/api/v1/preferences/columns/{view_key}",            "permissionRequired": 1,  "description": "Fallback for a view with no entry of its own (admin sentinel — ADMIN only)" },
+    { "endpoint": "DELETE:/api/v1/preferences/columns/{view_key}",         "permissionRequired": 1,  "description": "Fallback for a view with no entry of its own (admin sentinel — ADMIN only)" }
   ]
 }

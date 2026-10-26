@@ -40,7 +40,7 @@ import {
   formatTimeUntil,
   GRACE_EXTENSION_OPTIONS,
 } from "../../utils/apiKeyUtils";
-import { ChevronDownIcon, ChevronRightIcon, CopyIcon, EditIcon, ViewIcon } from "@chakra-ui/icons";
+import { ChevronDownIcon, ChevronRightIcon, CopyIcon, EditIcon } from "@chakra-ui/icons";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import StandardModal from "../common/StandardModal";
 import {
@@ -443,13 +443,6 @@ export default function ApiKeyManagementTab({
             <DataTableActions
               justify="flex-end"
               actions={[
-                {
-                  id: "view",
-                  label: "View API key",
-                  tooltip: "View",
-                  icon: <ViewIcon />,
-                  onClick: () => mgmt.handleOpenViewModal(key),
-                },
                 {
                   id: "edit",
                   label: "Update API key",
