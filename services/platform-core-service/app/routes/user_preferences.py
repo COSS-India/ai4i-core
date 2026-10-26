@@ -1,6 +1,6 @@
 """Per-user table column preferences (GET/PUT/DELETE /preferences/columns/{view_key})."""
 
-from typing import List
+from typing import Annotated, List
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
@@ -38,21 +38,21 @@ def _user_id(request: Request) -> str:
     return user_id
 
 
-@router.get("/{view_key}", response_model=ColumnPreferenceResponse, responses=error_responses(401, 404))
+@router.get("/{view_key}", responses=error_responses(401, 404))
 async def get_column_preference(
-    view_key: str, request: Request, session: AsyncSession = Depends(get_db)
+    view_key: str, request: Request, session: Annotated[AsyncSession, Depends(get_db)]
 ) -> ColumnPreferenceResponse:
     """The caller's visible columns for a view; defaults when none are saved."""
     data = await svc.get_preference(session, _user_id(request), view_key, is_platform_admin(request))
     return ColumnPreferenceResponse(success=True, data=data)
 
 
-@router.put("/{view_key}", response_model=ColumnPreferenceResponse, responses=error_responses(401, 404))
+@router.put("/{view_key}", responses=error_responses(401, 404))
 async def save_column_preference(
     view_key: str,
     body: ColumnPreferenceUpdate,
     request: Request,
-    session: AsyncSession = Depends(get_db),
+    session: Annotated[AsyncSession, Depends(get_db)],
 ) -> ColumnPreferenceResponse:
     """Save the caller's visible columns for a view."""
     data = await svc.save_preference(
@@ -61,9 +61,9 @@ async def save_column_preference(
     return ColumnPreferenceResponse(success=True, data=data)
 
 
-@router.delete("/{view_key}", response_model=ColumnPreferenceResponse, responses=error_responses(401, 404))
+@router.delete("/{view_key}", responses=error_responses(401, 404))
 async def reset_column_preference(
-    view_key: str, request: Request, session: AsyncSession = Depends(get_db)
+    view_key: str, request: Request, session: Annotated[AsyncSession, Depends(get_db)]
 ) -> ColumnPreferenceResponse:
     """Reset the caller's columns for a view to the defaults."""
     data = await svc.reset_preference(session, _user_id(request), view_key, is_platform_admin(request))

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import inspect
 import sys
 from datetime import date
 from unittest.mock import AsyncMock, MagicMock
@@ -25,6 +26,8 @@ _route = importlib.util.module_from_spec(_spec)
 sys.modules["app.routes.service"] = _route
 _spec.loader.exec_module(_route)
 list_services = _route.list_services
+ServiceListFilterParams = _route.ServiceListFilterParams
+ServiceListSortParams = _route.ServiceListSortParams
 
 
 def _sql(stmt) -> str:
@@ -127,14 +130,14 @@ def _req(ids):
 async def _call(ids, **over):
     svc = MagicMock()
     svc.list_services = AsyncMock(return_value=([], 0))
-    kw = dict(
-        request=_req(ids), response=MagicMock(headers={}), task_types=None, is_published=None,
-        created_by=None, name=None, service_id=None, model_name=None, tier_ids=None,
-        created_from=None, created_to=None, published_from=None, published_to=None,
-        sort_by=None, sort_order="asc", offset=0, limit=None, svc=svc, db=MagicMock(),
+    filter_keys = set(inspect.signature(ServiceListFilterParams.__init__).parameters) - {"self"}
+    paging_keys = set(inspect.signature(ServiceListSortParams.__init__).parameters) - {"self"}
+    assert set(over) <= filter_keys | paging_keys, "unknown route override"
+    await list_services(
+        request=_req(ids), response=MagicMock(headers={}), svc=svc, db=MagicMock(),
+        filters=ServiceListFilterParams(**{k: v for k, v in over.items() if k in filter_keys}),
+        paging=ServiceListSortParams(**{k: v for k, v in over.items() if k in paging_keys}),
     )
-    kw.update(over)
-    await list_services(**kw)
     return svc
 
 
@@ -193,3 +196,18 @@ class TestRoute:
     async def test_tier_ids_are_lowercased(self):
         svc = await _call("1", tier_ids=" A1B2 ,c3d4")
         assert svc.list_services.call_args.kwargs["filters"].tier_ids == ["a1b2", "c3d4"]
+
+
+class TestRouteHelpers:
+    def test_split_csv(self):
+        assert _route._split_csv(" A1 ,, b2,") == ["a1", "b2"]
+        assert _route._split_csv(None) == []
+        assert _route._split_csv("") == []
+
+    def test_validate_date_ranges_ok_and_bad(self):
+        ok = ServiceListFilterParams(created_from=date(2026, 1, 1), created_to=date(2026, 1, 1))
+        _route._validate_date_ranges(ok)
+        bad = ServiceListFilterParams(published_from=date(2026, 2, 1), published_to=date(2026, 1, 1))
+        with pytest.raises(Exception) as exc:
+            _route._validate_date_ranges(bad)
+        assert exc.value.code == "INVALID_DATE_RANGE"
