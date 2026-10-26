@@ -236,15 +236,34 @@ const ModelManagementPage: React.FC = () => {
     queryFn: listServicesForModels,
     staleTime: SERVICES_ALL_STALE_MS,
   });
-  const modelIdsWithPublishedService = useMemo(() => {
-    const ids = new Set<string>();
-    (allServices || []).forEach((s: { modelId?: string; model_id?: string; isPublished?: boolean; is_published?: boolean }) => {
-      const id = s.modelId ?? s.model_id;
-      const published = s.isPublished === true || s.is_published === true;
-      if (id && published) ids.add(String(id));
-    });
-    return ids;
+  /** Client-side service counts per model until BE returns `serviceCount` on the models list. */
+  const serviceCountByModelId = useMemo(() => {
+    const counts = new Map<string, number>();
+    (allServices || []).forEach(
+      (s: { modelId?: string; model_id?: string }) => {
+        const id = s.modelId ?? s.model_id;
+        if (!id) return;
+        const key = String(id);
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      },
+    );
+    return counts;
   }, [allServices]);
+
+  const getServiceCount = useCallback(
+    (model: Model): number => {
+      if (typeof model.serviceCount === "number" && Number.isFinite(model.serviceCount)) {
+        return model.serviceCount;
+      }
+      return serviceCountByModelId.get(model.modelId) ?? 0;
+    },
+    [serviceCountByModelId],
+  );
+
+  const hasLinkedServices = useCallback(
+    (model: Model) => getServiceCount(model) > 0,
+    [getServiceCount],
+  );
 
   const registryTableItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -635,46 +654,71 @@ const ModelManagementPage: React.FC = () => {
         },
       },
       {
+        id: "serviceCount",
+        header: "No. of Services",
+        cell: (model) => {
+          const count = getServiceCount(model);
+          return (
+            <Text fontSize="sm" color="ink.600">
+              {count > 0 ? count : "-"}
+            </Text>
+          );
+        },
+      },
+      {
         id: "actions",
-        header: "Actions",
+        header: "Activate/Deprecate",
         tdProps: { onClick: (e) => e.stopPropagation() },
-        cell: (model) => (
-          <HStack spacing={3} align="center">
-            {!isRegistryReadOnly &&
-              ((model.versionStatus?.toLowerCase() === "active" || !model.versionStatus) &&
-              !modelIdsWithPublishedService.has(model.modelId) ? (
-                <Tooltip label="Deprecate model" placement="top" hasArrow>
-                  <Box as="span" display="inline-flex" alignItems="center">
-                    <Switch
-                      size="md"
-                      colorScheme="green"
-                      isChecked={true}
-                      onChange={() => openConfirmDialog("deprecate", model)}
-                      isDisabled={updatingModelId !== null}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  </Box>
-                </Tooltip>
-              ) : model.versionStatus?.toLowerCase() !== "active" && model.versionStatus ? (
-                <Tooltip label="Activate model" placement="top" hasArrow>
-                  <Box as="span" display="inline-flex" alignItems="center">
-                    <Switch
-                      size="md"
-                      colorScheme="green"
-                      isChecked={false}
-                      onChange={() => openConfirmDialog("activate", model)}
-                      isDisabled={updatingModelId !== null}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  </Box>
-                </Tooltip>
-              ) : null)}
-          </HStack>
-        ),
+        cell: (model) => {
+          if (!hasLinkedServices(model)) {
+            return (
+              <Text fontSize="sm" color="ink.600">
+                NA
+              </Text>
+            );
+          }
+          if (isRegistryReadOnly) return null;
+
+          const isActive =
+            model.versionStatus?.toLowerCase() === "active" || !model.versionStatus;
+          if (isActive) {
+            return (
+              <Tooltip label="Deprecate model" placement="top" hasArrow>
+                <Box as="span" display="inline-flex" alignItems="center">
+                  <Switch
+                    size="md"
+                    colorScheme="green"
+                    isChecked={true}
+                    onChange={() => openConfirmDialog("deprecate", model)}
+                    isDisabled={updatingModelId !== null}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </Box>
+              </Tooltip>
+            );
+          }
+          if (model.versionStatus) {
+            return (
+              <Tooltip label="Activate model" placement="top" hasArrow>
+                <Box as="span" display="inline-flex" alignItems="center">
+                  <Switch
+                    size="md"
+                    colorScheme="green"
+                    isChecked={false}
+                    onChange={() => openConfirmDialog("activate", model)}
+                    isDisabled={updatingModelId !== null}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </Box>
+              </Tooltip>
+            );
+          }
+          return null;
+        },
       },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelSort, modelIdsWithPublishedService, updatingModelId, isRegistryReadOnly]);
+  }, [modelSort, getServiceCount, hasLinkedServices, updatingModelId, isRegistryReadOnly]);
 
   return (
     <>
@@ -789,7 +833,9 @@ const ModelManagementPage: React.FC = () => {
                   </CreateButton>
                 )}
                 {!isRegistryReadOnly &&
-                (selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && !modelIdsWithPublishedService.has(selectedModel.modelId) ? (
+                hasLinkedServices(selectedModel) &&
+                (selectedModel.versionStatus?.toLowerCase() === "active" ||
+                  !selectedModel.versionStatus) ? (
                   <Tooltip label="Deprecate model" placement="top" hasArrow>
                     <Box as="span" display="inline-flex" alignItems="center">
                       <Switch
@@ -801,7 +847,10 @@ const ModelManagementPage: React.FC = () => {
                       />
                     </Box>
                   </Tooltip>
-                ) : (selectedModel.versionStatus?.toLowerCase() !== "active" && selectedModel.versionStatus) ? (
+                ) : !isRegistryReadOnly &&
+                  hasLinkedServices(selectedModel) &&
+                  selectedModel.versionStatus?.toLowerCase() !== "active" &&
+                  selectedModel.versionStatus ? (
                   <Tooltip label="Activate model" placement="top" hasArrow>
                     <Box as="span" display="inline-flex" alignItems="center">
                       <Switch
