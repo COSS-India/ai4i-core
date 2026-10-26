@@ -72,6 +72,7 @@ import {
   type ApiKeyDisplayStatusValue,
   formatApiKeyDisplayStatusLabel,
   formatApiKeyFilterStatusLabel,
+  isApiKeyExpired,
 } from "../../config/constants";
 import { FIELD_HINTS } from "../../config/fieldHints";
 
@@ -473,7 +474,9 @@ export default function ApiKeyManagementTab({
                           ? "Rotate key"
                           : rotating && key.rotated_key_expires_at
                             ? `The previous key works until ${new Date(key.rotated_key_expires_at).toLocaleString()}; rotate again after that, or revoke it.`
-                            : "Only effectively active API keys can be rotated.",
+                            : isApiKeyExpired(key.expires_at)
+                              ? "This API key has expired; create a new API key instead."
+                              : "Only effectively active API keys can be rotated.",
                         icon: <FiRefreshCw />,
                         disabled: !mgmt.isKeyRotatable(key),
                         onClick: () => mgmt.handleOpenRotateModal(key),
@@ -550,7 +553,7 @@ export default function ApiKeyManagementTab({
           <>
       <FormSection title="API Key">
         <ReadOnlyField label="Key Name">{viewKey.key_name}</ReadOnlyField>
-        <ReadOnlyField label={viewKey.rotated_key ? "Current Key" : "Key ID"}>
+        <ReadOnlyField label={viewKey.rotated_key ? "Current Key" : "API Key"}>
           <Text fontSize="sm" fontFamily="mono" color="ink.700" wordBreak="break-all">
             {mgmt.formatKeyId(viewKey)}
           </Text>
