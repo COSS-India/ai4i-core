@@ -194,6 +194,10 @@
     { "endpoint": "PUT:/api/v1/policies",                                 "permissionRequired": 1,   "description": "Update a policy (admin sentinel — ADMIN only)" },
     { "endpoint": "DELETE:/api/v1/policies/{id}",                         "permissionRequired": 1,   "description": "Delete a policy (admin sentinel — ADMIN only)" },
 
-    { "endpoint": "POST:/api/v1/pii/simulate",                            "permissionRequired": 1,   "description": "Run a PII policy against sample text in the Playground (admin sentinel — ADMIN only)" }
+    { "endpoint": "POST:/api/v1/pii/simulate",                            "permissionRequired": 1,   "description": "Run a PII policy against sample text in the Playground (admin sentinel — ADMIN only)" },
+
+    { "endpoint": "GET:/api/v1/preferences/columns/{view_key}",            "permissionRequired": 51, "description": "Get the caller's saved table columns for a view (service.read)" },
+    { "endpoint": "PUT:/api/v1/preferences/columns/{view_key}",            "permissionRequired": 51, "description": "Save the caller's table columns for a view (service.read)" },
+    { "endpoint": "DELETE:/api/v1/preferences/columns/{view_key}",         "permissionRequired": 51, "description": "Reset the caller's table columns for a view to default (service.read)" }
   ]
 }

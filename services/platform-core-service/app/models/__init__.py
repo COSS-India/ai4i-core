@@ -119,3 +119,6 @@ __all__ = [
     # usage report — next release (retry + send log):
     # "UsageReportSendLog",
 ]
+
+# User preferences (no cross-domain FKs)
+from app.models.user_preferences.table_preference import UserTablePreference  # noqa: E402
