@@ -271,7 +271,7 @@ class AuthService:
         Returns True when the token confirmed a tenant email change.
         """
         if self._tokens.validate_token(token).token_type == TokenType.EMAIL_CHANGE:
-            await self.confirm_tenant_email_change(token)
+            await self.confirm_tenant_email_change(token, background_tasks)
             return True
 
         token_obj, user = await self._resolve_verified_token(token, TokenType.VERIFY, "verification link")
@@ -284,11 +284,17 @@ class AuthService:
         enqueue_email(background_tasks, self._email, lambda: render_welcome(user))
         return False
 
-    async def confirm_tenant_email_change(self, token: str) -> None:
+    async def confirm_tenant_email_change(
+        self, token: str, background_tasks: Optional[BackgroundTasks] = None
+    ) -> None:
         """Apply a held Institution Admin email change (issued by
         ``TenantService.update_tenant``): swap ``tenant.email`` and the contact
         admin's ``users.email`` to the verified address. A ``tenant_only``
         token (no contact user to re-align) updates ``tenant.email`` alone.
+
+        The contact account is handed over to whoever holds the new address,
+        so the outgoing admin's password and sessions are revoked and a setup
+        link goes to the new address (as in the PENDING reissue path).
         """
         link_name = "email change link"
         payload = self._validate_token_of_type(token, TokenType.EMAIL_CHANGE)
@@ -303,12 +309,13 @@ class AuthService:
             await self._tenants.get_by_id(int(payload.tenant_id))
             if payload.tenant_id else None
         )
-        # Stale if the tenant is now suspended/deactivated (email edits are
-        # locked). Superseded requests are already deactivated by
-        # update_tenant, so they fail the is_active check above.
+        # Stale if superseded (a newer request or an applied change replaced
+        # pending_email) or the tenant is now suspended/deactivated (email
+        # edits are locked).
         if (
             not new_email
             or tenant is None
+            or (tenant.active_pending_email or "").lower().strip() != new_email
             or tenant.status in (TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED)
         ):
             raise TokenInvalidError(f"This {link_name} is no longer valid.")
@@ -323,6 +330,10 @@ class AuthService:
                 or admin.tenant_id != tenant.id
                 or (tenant.email or "").lower().strip() != (admin.email or "").lower().strip()
             ):
+                raise TokenInvalidError(f"This {link_name} is no longer valid.")
+            # Never hand over a platform administrator's account (also
+            # refused at request time; re-checked in case roles changed).
+            if RoleName.ADMIN.value in await self._roles.get_user_roles(admin.id):
                 raise TokenInvalidError(f"This {link_name} is no longer valid.")
 
         # Re-check uniqueness: the address may have been taken since the request.
@@ -339,13 +350,40 @@ class AuthService:
             raise DuplicateEntityError("User", "email")
 
         tenant.email = new_email
+        tenant.pending_email = None
+        tenant.pending_email_expires_at = None
+        await self._verifications.deactivate(token_obj)
+        setup_token: Optional[str] = None
         if admin is not None:
             admin.email = new_email
-        await self._verifications.deactivate(token_obj)
+            # Hand-over: the outgoing admin must not keep access, and the
+            # incoming one sets their own password.
+            creds = await self._credentials.get_by_user_id(admin.id)
+            if creds is not None:
+                await self._credentials.delete(creds)
+            await self._refresh_tokens.delete_by_user_id(admin.id)
+            setup_token = await reissue_setup_token(
+                admin,
+                credentials_repo=self._credentials,
+                verifications_repo=self._verifications,
+                token_service=self._tokens,
+                background_tasks=background_tasks,
+            )
         await self._users.commit()
         logger.info(
             "Tenant %s email change verified (tenant-only=%s)", tenant.id, admin is None
         )
+        if admin is None:
+            return
+        try:
+            await self._cache.revoke_all_sessions(str(admin.id))
+        except Exception:
+            logger.error("Failed to set logout timestamp for user id=%s; live access tokens not revoked", admin.id)
+        if setup_token is not None:
+            enqueue_email(
+                background_tasks, self._email,
+                lambda: render_setup_link(admin, setup_token),
+            )
 
     # ── Email verification: Resend ──
 

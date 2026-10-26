@@ -1,0 +1,23 @@
+{{ platform_name }}
+================================
+
+Confirm your email
+------------------
+
+The Institution Admin contact for {{ organisation }} on {{ platform_name }}
+is being moved to this email address.
+
+Confirm it to complete the change. Until then, the current contact stays
+in place.
+
+  {{ verify_url }}
+
+Heads up: this link expires in {{ expires_hours }} hours and can be used
+only once.{% if sends_setup_link %} After you confirm, we'll send a separate
+link to set your password.{% endif %}
+
+Not expecting this? You can safely ignore this email -- the link will
+expire on its own and nothing will change.
+
+--
+This is an automated message from {{ platform_name }}.

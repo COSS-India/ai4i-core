@@ -64,6 +64,7 @@ from app.services.allocation_service import AllocationService
 from app.services.api_key_service import APIKeyService
 from app.services.auth_email_templates import (
     render_account_deleted,
+    render_email_change,
     render_setup_link,
     render_verify_email,
 )
@@ -293,8 +294,6 @@ class _EmailChange:
 @dataclass(frozen=True)
 class TenantUpdateResult:
     tenant: Tenant
-    # Set when the email change is held until the new address is verified.
-    pending_email: Optional[str] = None
     verification_sent: bool = False
 
 
@@ -831,18 +830,8 @@ class TenantService:
             return UNKNOWN_TIER_NAME
         return row.name
 
-    async def resolve_pending_emails(self, tenants: list[Tenant]) -> dict[int, str]:
-        """Tenant id → new contact email awaiting verification, read from the
-        tenant's live EMAIL_CHANGE token (see ``update_tenant``). PENDING
-        tenants never hold one — their email changes apply immediately."""
-        return await self._verifications.get_pending_email_changes(
-            [t.id for t in tenants if t.status != TenantStatus.PENDING]
-        )
-
     @staticmethod
-    def build_tenant_response(
-        tenant: Tenant, *, unmask: bool = False, pending_email: Optional[str] = None
-    ) -> dict:
+    def build_tenant_response(tenant: Tenant, *, unmask: bool = False) -> dict:
         """Shape a tenant into its API dict, applying the PII-masking policy.
 
         Default (list/view): email and phone are masked. With ``unmask`` (Edit
@@ -851,7 +840,6 @@ class TenantService:
         ``unmask``. ``pending_email`` is masked like ``email``.
         """
         data = to_response(tenant, TenantResponse)
-        data["pending_email"] = pending_email
         if unmask and tenant.status != TenantStatus.PENDING:
             return mask_pii_in_dict(data, mask_emails=True, mask_phones=False)
         return mask_pii_in_dict(data)
@@ -887,7 +875,8 @@ class TenantService:
             )
 
     async def _is_institution_admin(self, user: User, tenant_id: int) -> bool:
-        if user.tenant_id != tenant_id:
+        # Deactivated admins don't count — contact mail must reach a live account.
+        if user.tenant_id != tenant_id or not user.is_active:
             return False
         roles = await self._roles.get_user_roles(user.id)
         return RoleName.TENANT_ADMIN.value in roles
@@ -926,6 +915,11 @@ class TenantService:
                     ),
                 },
             )
+        # Its contact is the seeded platform admin — changing the email would
+        # hand that account over.
+        assert_default_tenant_not_targeted(
+            tenant, message="The Default Organisation's email cannot be changed."
+        )
 
         if tenant.status != TenantStatus.PENDING:
             # Not for PENDING: repointing there would leave the original
@@ -953,6 +947,19 @@ class TenantService:
                         "Cannot update tenant email: the tenant's admin "
                         "user could not be located, so the existing "
                         "activation link cannot be invalidated."
+                    ),
+                },
+            )
+        if RoleName.ADMIN.value in await self._roles.get_user_roles(admin.id):
+            # Re-aligning would move (and on confirmation, hand over) a
+            # platform administrator's account.
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "TENANT_EMAIL_EDIT_NOT_ALLOWED",
+                    "message": (
+                        "The email cannot be changed: the institution's contact "
+                        "is a platform administrator."
                     ),
                 },
             )
@@ -1078,16 +1085,20 @@ class TenantService:
 
         # ── Stage writes against the open session (flush only, no commit).
         if change.kind == "verify":
-            # Held until verified — save the other fields only.
+            # Held until verified — save the other fields only. A newer
+            # request overwrites pending_email, which supersedes older links.
             data.pop("email")
+            data["pending_email"] = new_email
+            data["pending_email_expires_at"] = setup_token_expires_at()
+        elif change.kind != "none":
+            # Applied now — drop any earlier unverified request.
+            data["pending_email"] = None
+            data["pending_email_expires_at"] = None
         data["updated_by"] = current_user.id
         await self._tenants.update(tenant, data)
 
         new_setup_token: Optional[str] = None
         change_token: Optional[str] = None
-        if change.kind != "none":
-            # Any email change supersedes an earlier pending request.
-            await self._verifications.deactivate_email_changes_for_tenant(tenant.id)
         if change.kind == "verify":
             change_token = await self._issue_email_change_token(
                 tenant.id, new_email, admin, current_user
@@ -1134,19 +1145,16 @@ class TenantService:
                 "Tenant %s email change pending verification (tenant-only=%s)",
                 tenant.id, admin is None,
             )
-            # Without a contact user, greet by the tenant's contact name
-            # (transient object for rendering only — never added to the session).
-            recipient = admin or User(full_name=tenant.name)
+            organisation = tenant.organisation
             enqueue_email(
                 background_tasks,
                 self._email,
-                lambda: render_verify_email(recipient, change_token, to=new_email),
+                lambda: render_email_change(
+                    new_email, organisation, change_token,
+                    sends_setup_link=admin is not None,
+                ),
             )
-        return TenantUpdateResult(
-            tenant=tenant,
-            pending_email=new_email if change.kind == "verify" else None,
-            verification_sent=verification_sent,
-        )
+        return TenantUpdateResult(tenant=tenant, verification_sent=verification_sent)
 
     async def update_tenant_status(
         self,

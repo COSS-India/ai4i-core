@@ -126,8 +126,8 @@ async def verify_email(
     """
     email_changed = await svc.verify_email_token(body.token, background_tasks=background_tasks)
     message = (
-        "Email verified. The institution admin email has been updated — "
-        "sign in with your new email."
+        "Email verified. The institution admin email has been updated. "
+        "If you're the new admin, check your inbox for a link to set your password."
         if email_changed
         else "Email verified. You can now sign in."
     )

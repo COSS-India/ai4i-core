@@ -8,7 +8,6 @@ is also embedded in the JWT payload, not stored as a column.
 """
 
 import logging
-from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import select
@@ -25,78 +24,9 @@ from app.core.security import key_manager
 logger = logging.getLogger(__name__)
 
 
-def _decode_stored_token(token: str, kid: str) -> dict:
-    """RS256 signature-verified decode of a stored token. ``verify_exp=False``:
-    callers filter or deliberately include expired rows themselves. Raises
-    PyJWTError / ValueError (unknown kid) on failure."""
-    public_key = key_manager.get_public_key(kid)
-    public_pem = public_key.public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
-    return jwt.decode(
-        token,
-        public_pem,
-        algorithms=["RS256"],
-        options={"verify_exp": False},
-    )
-
-
 class VerificationRepository(BaseRepository):
     def __init__(self, db: AsyncSession) -> None:
         super().__init__(db)
-
-    async def _live_email_change_tokens(self) -> list[tuple[TokenVerification, dict]]:
-        """Active, unexpired EMAIL_CHANGE rows with their verified claims.
-
-        Token type and tenant live only in the signed JWT (no columns), so this
-        decodes every live row. That set is small: only links issued in the
-        last ``setup_token_expire_hours`` that haven't been used. Unverifiable
-        rows are skipped.
-        """
-        result = await self._db.execute(
-            select(TokenVerification)
-            .where(
-                TokenVerification.is_active == True,  # noqa: E712
-                TokenVerification.expires_at > datetime.now(timezone.utc),
-            )
-            .order_by(TokenVerification.id)
-        )
-        live: list[tuple[TokenVerification, dict]] = []
-        for token_obj in result.scalars().all():
-            try:
-                kid = jwt.get_unverified_header(token_obj.token).get("kid")  # NOSONAR(python:S5659)
-                if not kid:
-                    continue
-                payload = _decode_stored_token(token_obj.token, kid)
-            except (PyJWTError, ValueError) as e:
-                logger.warning(
-                    "Skipping unverifiable token for user %s: %s", token_obj.created_by, e
-                )
-                continue
-            if payload.get("type") == TokenType.EMAIL_CHANGE:
-                live.append((token_obj, payload))
-        return live
-
-    async def get_pending_email_changes(self, tenant_ids: list[int]) -> dict[int, str]:
-        """Map tenant id → new email awaiting verification. A new request
-        supersedes the previous one, so there is at most one per tenant."""
-        if not tenant_ids:
-            return {}
-        wanted = {str(t) for t in tenant_ids}
-        return {
-            int(payload["tenant_id"]): payload["email"]
-            for _, payload in await self._live_email_change_tokens()
-            if payload.get("tenant_id") in wanted and payload.get("email")
-        }
-
-    async def deactivate_email_changes_for_tenant(self, tenant_id: int) -> None:
-        """Invalidate any outstanding EMAIL_CHANGE link for this tenant — called
-        whenever its email changes or a newer change is requested."""
-        for token_obj, payload in await self._live_email_change_tokens():
-            if payload.get("tenant_id") == str(tenant_id):
-                token_obj.is_active = False
-        await self._db.flush()
 
     async def get_by_token(self, token: str) -> Optional[TokenVerification]:
         result = await self._db.execute(
@@ -149,7 +79,17 @@ class VerificationRepository(BaseRepository):
                         )
                         token_obj.is_active = False
                         continue
-                    payload = _decode_stored_token(token_obj.token, kid)
+                    public_key = key_manager.get_public_key(kid)
+                    public_pem = public_key.public_bytes(
+                        encoding=serialization.Encoding.PEM,
+                        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+                    )
+                    payload = jwt.decode(
+                        token_obj.token,
+                        public_pem,
+                        algorithms=["RS256"],
+                        options={"verify_exp": False},
+                    )
                     # JWT claim name is ``type`` (see TokenService._create_token);
                     # the older `payload.get("token_type")` here always returned
                     # None, so token-type-scoped deactivation was a silent no-op.
