@@ -1,0 +1,108 @@
+import {
+  fetchAllServicesMatchingFilters,
+  listServicesPaginated,
+} from "../../services/servicesManagementService";
+import type { Service } from "../../types/platform";
+import {
+  serviceListFilterParams,
+  type ServiceListColumnDef,
+} from "./serviceListColumns";
+import {
+  statusFilterToApiValue,
+  statusFilterToPublished,
+} from "./serviceRegistryFilters";
+
+export type RegistryFetchOptions = {
+  silent?: boolean;
+  commit?: boolean;
+  taskType?: string;
+  status?: string;
+};
+
+export type RegistryFetchContext = {
+  filterStatus: string;
+  filterTaskType: string;
+  enabledTaskTypesParam?: string;
+  taskTypeNames: string[];
+  serviceListUsesServer: boolean;
+  serverFilters: Record<string, string>;
+  taskFilterColumnId?: string;
+  statusFilterColumnId?: string;
+  serviceListCatalogue: readonly ServiceListColumnDef[];
+  registryPage: number;
+  registryPageSize: number;
+  sortMode: "time" | "sorted";
+  sortKey: string;
+  sortDirection: "asc" | "desc";
+};
+
+function mergeServerFilters(
+  context: RegistryFetchContext,
+  options: RegistryFetchOptions,
+): Record<string, string> {
+  const filters = { ...context.serverFilters };
+  if (options.taskType !== undefined && context.taskFilterColumnId) {
+    filters[context.taskFilterColumnId] = options.taskType;
+  }
+  if (options.status !== undefined && context.statusFilterColumnId) {
+    filters[context.statusFilterColumnId] = statusFilterToApiValue(options.status);
+  }
+  return filters;
+}
+
+export async function fetchRegistryServicesPage(
+  context: RegistryFetchContext,
+  options: RegistryFetchOptions = {},
+): Promise<{ items: Service[]; total: number }> {
+  let statusFilter = context.filterStatus;
+  if (options.status !== undefined) statusFilter = options.status;
+  let taskTypeFilter = context.filterTaskType;
+  if (options.taskType !== undefined) taskTypeFilter = options.taskType;
+
+  if (!context.serviceListUsesServer) {
+    const result = await fetchAllServicesMatchingFilters({
+      taskType: taskTypeFilter || undefined,
+      taskTypes: context.enabledTaskTypesParam,
+      isPublished: statusFilterToPublished(statusFilter),
+    });
+    return { items: result.items, total: result.total };
+  }
+
+  let sortBy: string | undefined;
+  let sortOrder: "asc" | "desc" | undefined;
+  if (context.sortMode === "sorted" && context.sortKey) {
+    sortBy = context.sortKey;
+    sortOrder = context.sortDirection;
+  }
+  const result = await listServicesPaginated({
+    offset: (context.registryPage - 1) * context.registryPageSize,
+    limit: context.registryPageSize,
+    query: serviceListFilterParams({
+      columns: context.serviceListCatalogue,
+      filters: mergeServerFilters(context, options),
+      enabledTaskTypes: context.enabledTaskTypesParam,
+      sortBy,
+      sortOrder,
+    }),
+  });
+  return { items: result.items, total: result.total };
+}
+
+export function shouldReplaceFullServiceIds(
+  statusFilter: string,
+  taskTypeFilter: string,
+  taskTypeNames: string[],
+): boolean {
+  const statusNarrows =
+    statusFilter === "published" || statusFilter === "unpublished";
+  const onlyEnabledTask =
+    taskTypeNames.length === 1 && taskTypeFilter === taskTypeNames[0];
+  const taskNarrows = Boolean(taskTypeFilter) && !onlyEnabledTask;
+  return !statusNarrows && !taskNarrows;
+}
+
+export function serviceIdsFromItems(items: Service[]): string[] {
+  return items
+    .map((service) => service.serviceId || service.service_id || "")
+    .filter((id): id is string => Boolean(id));
+}

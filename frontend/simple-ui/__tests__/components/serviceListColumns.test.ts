@@ -180,7 +180,7 @@ describe("service list columns", () => {
     expect(formatServiceListPrice(0.00000025)).toContain("0.00000025");
   });
 
-  it("maps date_range filters to from and to query params", () => {
+  it("maps date_range filters to local-midnight ISO bounds", () => {
     const columns: ServiceListColumnDef[] = [
       {
         id: "created_at",
@@ -195,6 +195,9 @@ describe("service list columns", () => {
         },
       },
     ];
+    const fromIso = new Date("2026-10-01T00:00:00").toISOString();
+    const toExclusive = new Date("2026-10-26T00:00:00");
+    toExclusive.setDate(toExclusive.getDate() + 1);
     expect(
       serviceListFilterParams({
         columns,
@@ -206,8 +209,8 @@ describe("service list columns", () => {
         sortOrder: "desc",
       }),
     ).toEqual({
-      created_from: "2026-10-01",
-      created_to: "2026-10-26",
+      created_from: fromIso,
+      created_to: toExclusive.toISOString(),
       sort_by: "created_at",
       sort_order: "desc",
     });

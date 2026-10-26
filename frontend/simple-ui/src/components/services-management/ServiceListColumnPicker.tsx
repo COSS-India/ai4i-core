@@ -28,7 +28,9 @@ type ServiceListColumnPickerProps = {
   onReset: () => void;
 };
 
-const ServiceListColumnPicker: React.FC<ServiceListColumnPickerProps> = ({
+const ServiceListColumnPicker: React.FC<
+  Readonly<ServiceListColumnPickerProps>
+> = ({
   columns = SERVICE_LIST_COLUMNS,
   visibleIds,
   onChange,
@@ -87,11 +89,11 @@ const ServiceListColumnPicker: React.FC<ServiceListColumnPickerProps> = ({
                 >
                   <Text as="span" fontSize="sm">
                     {column.label}
-                    {column.mandatory ? (
+                    {column.mandatory && (
                       <Text as="span" color="ink.400" ml={1}>
                         (required)
                       </Text>
-                    ) : null}
+                    )}
                   </Text>
                 </Checkbox>
               </MenuItem>

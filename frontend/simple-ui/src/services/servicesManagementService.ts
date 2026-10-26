@@ -219,28 +219,34 @@ export const fetchAllServicesMatchingFilters = async (
   return { items, total, offset: 0, limit: null };
 };
 
+function buildServiceListQueryParams(
+  params: ServiceListParams,
+): Record<string, string | number | boolean> {
+  const queryParams: Record<string, string | number | boolean> = {};
+  if (params.offset !== undefined && params.offset > 0) {
+    queryParams.offset = params.offset;
+  }
+  if (params.limit !== undefined) queryParams.limit = params.limit;
+  // drill-down selected -> it's already in the allowlist, so it IS the intersection
+  const taskTypesParam = params.taskType ?? params.taskTypes;
+  if (taskTypesParam) queryParams.task_types = taskTypesParam;
+  if (params.isPublished !== undefined) {
+    queryParams.is_published = params.isPublished;
+  }
+  if (params.createdBy) queryParams.created_by = params.createdBy;
+  if (!params.query) return queryParams;
+  for (const [key, value] of Object.entries(params.query)) {
+    if (value !== "" && queryParams[key] === undefined) queryParams[key] = value;
+  }
+  return queryParams;
+}
+
 export const listServicesPaginated = async (
   params: ServiceListParams = {},
 ): Promise<PaginatedServices> => {
   try {
-    const queryParams: Record<string, any> = {};
-    if (params.offset !== undefined && params.offset > 0)
-      queryParams.offset = params.offset;
-    if (params.limit !== undefined) queryParams.limit = params.limit;
-    // drill-down selected -> it's already in the allowlist, so it IS the intersection
-    const taskTypesParam = params.taskType ?? params.taskTypes;
-    if (taskTypesParam) queryParams.task_types = taskTypesParam;
-    if (params.isPublished !== undefined)
-      queryParams.is_published = params.isPublished;
-    if (params.createdBy) queryParams.created_by = params.createdBy;
-    if (params.query) {
-      for (const [key, value] of Object.entries(params.query)) {
-        if (value !== "" && queryParams[key] === undefined) queryParams[key] = value;
-      }
-    }
-
     const response = await apiService.get(apiEndpoints.platform.services.base, {
-      params: queryParams,
+      params: buildServiceListQueryParams(params),
       suppressErrorAlert: true,
       responseSchema: servicesListSchema,
     });
@@ -256,7 +262,7 @@ export const listServicesPaginated = async (
 
     return {
       items,
-      total: Number.isNaN(total) ? items.length : total,
+      total,
       offset: params.offset ?? 0,
       limit: params.limit ?? null,
     };
@@ -277,7 +283,8 @@ export type ServiceListColumnsResult = {
 
 /**
  * Column catalogue for the service registry picker.
- * Falls back to the offline catalogue when the endpoint is not deployed yet.
+ * Falls back to the offline catalogue only when the endpoint is absent (404/405).
+ * Other failures propagate so the hook can treat them as a load error.
  */
 export const getServiceListColumns = async (): Promise<ServiceListColumnsResult> => {
   try {
@@ -286,12 +293,17 @@ export const getServiceListColumns = async (): Promise<ServiceListColumnsResult>
     });
     const columns = parseServiceListColumnsPayload(response.data);
     if (columns) return { columns, source: "api" };
+    console.warn(
+      "GET /services/columns returned an unexpected body; using the offline catalogue.",
+    );
+    return { columns: [...SERVICE_LIST_COLUMNS], source: "fallback" };
   } catch (error) {
-    if (httpStatus(error) !== 404 && httpStatus(error) !== 405) {
-      console.warn("GET /services/columns failed; using the offline catalogue.", error);
+    const status = httpStatus(error);
+    if (status === 404 || status === 405) {
+      return { columns: [...SERVICE_LIST_COLUMNS], source: "fallback" };
     }
+    throw error;
   }
-  return { columns: [...SERVICE_LIST_COLUMNS], source: "fallback" };
 };
 
 /** Saved visible columns, or null when the user has no preference yet. */

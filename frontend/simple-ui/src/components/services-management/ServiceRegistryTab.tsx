@@ -3,17 +3,19 @@ import React from "react";
 import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
   type DataTableColumn,
-  type DataTableFilterDef,
   type DataTableSortState,
 } from "../common/table";
-import { SERVICE_TIER, formatModelTaskTypeLabel } from "../../config/constants";
 import type { ServiceTierFilterOption } from "../../hooks/useServicesManagement";
 import type { Service } from "../../services/servicesManagementService";
 import {
   serviceListCellKey,
-  serviceListRangeFilterKeys,
   type ServiceListColumnDef,
 } from "./serviceListColumns";
+import {
+  buildClientServiceFilterDefs,
+  buildServerServiceFilterDefs,
+  buildServiceRegistrySearch,
+} from "./serviceRegistryFilters";
 
 interface ServiceRegistryTabProps {
   items: Service[];
@@ -49,7 +51,7 @@ interface ServiceRegistryTabProps {
   onServerPageSizeChange?: (size: number) => void;
 }
 
-const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
+const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
   items,
   columns,
   sort,
@@ -80,80 +82,63 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
   onServerPageChange,
   onServerPageSizeChange,
 }) => {
-  const serverMode = Boolean(serverColumns && onServerFilterChange && onServerPageChange);
+  const serverMode = Boolean(
+    serverColumns && onServerFilterChange && onServerPageChange,
+  );
   const nameColumn = serverColumns?.find(
     (column) => column.filterable && serviceListCellKey(column.id) === "name",
   );
-  const serverFilterDefs: DataTableFilterDef[] = serverMode
-    ? (serverColumns ?? []).flatMap((column): DataTableFilterDef[] => {
-        if (!column.filterable || !column.filter || column.id === nameColumn?.id) return [];
-        const value = serverFilterValues?.[column.id] ?? "";
-        const kind = column.filter.type;
-        if (kind === "single_select" || kind === "multi_select") {
-          const apiOptions = column.filter.options ?? [];
-          const taskOptions =
-            serviceListCellKey(column.id) === "task"
-              ? taskTypeNames
-                  .filter((name) =>
-                    apiOptions.length === 0 ||
-                    apiOptions.some((option) => option.value.toLowerCase() === name.toLowerCase()),
-                  )
-                  .map((name) => ({ label: formatModelTaskTypeLabel(name), value: name }))
-              : serviceListCellKey(column.id) === "tier" && apiOptions.length === 0
-                ? tierFilterOptions.map((tier) => ({ label: tier.name, value: tier.id }))
-                : apiOptions;
-          const showAll =
-            serviceListCellKey(column.id) !== "task" || taskTypeNames.length > 1;
-          return [{
-            id: column.id,
-            label: column.label,
-            type: "select" as const,
-            param: column.filter.params[0],
-            value:
-              serviceListCellKey(column.id) === "task" && taskTypeNames.length === 1
-                ? taskTypeNames[0]
-                : value,
-            onChange: (next: string) => onServerFilterChange?.(column.id, next),
-            options: [
-              ...(showAll ? [{ label: "All", value: "" }] : []),
-              ...taskOptions,
-            ],
-          }];
-        }
-        if (kind === "date_range" && column.filter.params.length >= 2) {
-          const keys = serviceListRangeFilterKeys(column.id);
-          return [
-            {
-              id: keys.from,
-              label: `${column.label} from`,
-              type: "date" as const,
-              param: column.filter.params[0],
-              inputType: "date" as const,
-              value: serverFilterValues?.[keys.from] ?? "",
-              onChange: (next: string) => onServerFilterChange?.(keys.from, next),
-            },
-            {
-              id: keys.to,
-              label: `${column.label} to`,
-              type: "date" as const,
-              param: column.filter.params[1],
-              inputType: "date" as const,
-              value: serverFilterValues?.[keys.to] ?? "",
-              onChange: (next: string) => onServerFilterChange?.(keys.to, next),
-            },
-          ];
-        }
-        if (kind !== "text") return [];
-        return [{
-          id: column.id,
-          label: column.label,
-          type: "text" as const,
-          param: column.filter.params[0],
-          value,
-          onChange: (next: string) => onServerFilterChange?.(column.id, next),
-        }];
-      })
-    : [];
+
+  let serverFilterDefs: ReturnType<typeof buildServerServiceFilterDefs> = [];
+  if (serverMode && onServerFilterChange) {
+    serverFilterDefs = buildServerServiceFilterDefs({
+      columns: serverColumns ?? [],
+      nameColumnId: nameColumn?.id,
+      serverFilterValues,
+      taskTypeNames,
+      tierFilterOptions,
+      onChange: onServerFilterChange,
+    });
+  }
+
+  const clientFilterDefs = buildClientServiceFilterDefs({
+    filterStatus,
+    onFilterStatusChange,
+    filterTaskType,
+    onFilterTaskTypeChange,
+    taskTypeNames,
+    filterTier,
+    onFilterTierChange,
+    tierFilterOptions,
+  });
+
+  const search = buildServiceRegistrySearch({
+    serverMode,
+    nameColumn,
+    serverFilterValues,
+    onServerFilterChange,
+    searchQuery,
+    onSearchQueryChange,
+  });
+
+  let serverPagination:
+    | {
+        page: number;
+        pageSize: number;
+        totalItems: number;
+        onPageChange: (page: number) => void;
+        onPageSizeChange: (size: number) => void;
+      }
+    | undefined;
+  if (serverMode && onServerPageChange && onServerPageSizeChange) {
+    serverPagination = {
+      page: serverPage,
+      pageSize: serverPageSize,
+      totalItems: serverTotal,
+      onPageChange: onServerPageChange,
+      onPageSizeChange: onServerPageSizeChange,
+    };
+  }
 
   return (
     <DataTable
@@ -168,17 +153,7 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
       paginate={serverMode ? "server" : "client"}
       paginationPosition="bottom"
       pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
-      serverPagination={
-        serverMode && onServerPageChange && onServerPageSizeChange
-          ? {
-              page: serverPage,
-              pageSize: serverPageSize,
-              totalItems: serverTotal,
-              onPageChange: onServerPageChange,
-              onPageSizeChange: onServerPageSizeChange,
-            }
-          : undefined
-      }
+      serverPagination={serverPagination}
       isLoading={isLoading}
       loadingMessage="Loading services..."
       emptyMessage="No services in the registry yet."
@@ -187,73 +162,8 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
       hasActiveFilters={hasActiveFilters}
       onClearFilters={onClearFilters}
       filterToolbarRightContent={columnPicker}
-      search={
-        serverMode
-          ? nameColumn
-            ? {
-                label: nameColumn.label,
-                value: serverFilterValues?.[nameColumn.id] ?? "",
-                onChange: (value) => onServerFilterChange?.(nameColumn.id, value),
-                placeholder: "Search by service name...",
-                debounceMs: 400,
-                fields: ["name"],
-              }
-            : undefined
-          : {
-              label: "Search",
-              value: searchQuery,
-              onChange: onSearchQueryChange,
-              placeholder: "Search by service name...",
-              fields: ["service_name", "name"],
-            }
-      }
-      filterDefs={serverMode ? serverFilterDefs : [
-        {
-          id: "status",
-          label: "Status",
-          type: "select",
-          param: "status",
-          value: filterStatus,
-          onChange: onFilterStatusChange,
-          options: [
-            { label: "All", value: "" },
-            { label: "Published", value: "published" },
-            { label: "Unpublished", value: "unpublished" },
-          ],
-        },
-        {
-          id: "taskType",
-          label: "Task Type",
-          type: "select",
-          param: "model_task_type",
-          value: filterTaskType,
-          onChange: onFilterTaskTypeChange,
-          options: [
-            ...(taskTypeNames.length > 1 ? [{ label: "All", value: "" }] : []),
-            ...taskTypeNames.map((t) => ({
-              label: formatModelTaskTypeLabel(t),
-              value: t,
-            })),
-          ],
-        },
-        {
-          id: "tier",
-          label: "Tier",
-          // No `param`: GET /services has no tier filter, so this one is
-          // applied client-side rather than refetching.
-          type: "select",
-          value: filterTier,
-          onChange: onFilterTierChange,
-          options: [
-            { label: "All", value: SERVICE_TIER.FILTER.ALL },
-            ...tierFilterOptions.map((tier) => ({
-              label: tier.name,
-              value: tier.id,
-            })),
-            { label: "No tier", value: SERVICE_TIER.FILTER.NONE },
-          ],
-        },
-      ]}
+      search={search}
+      filterDefs={serverMode ? serverFilterDefs : clientFilterDefs}
     />
   );
 };

@@ -1,10 +1,5 @@
 // Services Management: registry list stays mounted. Create, edit, and view use FormDrawer.
-import {
-  Badge,
-  HStack,
-  Text,
-  VStack,
-} from "@chakra-ui/react";
+import { VStack } from "@chakra-ui/react";
 import { DeleteIcon, EditIcon } from "@chakra-ui/icons";
 import { MdOutlineCheckCircle, MdOutlineUnpublished } from "react-icons/md";
 import React, { useCallback, useLayoutEffect, useMemo, useState } from "react";
@@ -13,7 +8,11 @@ import CreateButton from "../common/CreateButton";
 import FormActions from "../common/FormActions";
 import FormDrawer from "../common/FormDrawer";
 import { useFormPageLeave } from "../common/FormPage";
-import { createActionsColumn, type DataTableColumn } from "../common/table";
+import {
+  createActionsColumn,
+  type DataTableAction,
+  type DataTableColumn,
+} from "../common/table";
 import type { Service } from "../../services/servicesManagementService";
 import ConfirmDialog from "../common/ConfirmDialog";
 import { useAuth } from "../../hooks/useAuth";
@@ -28,21 +27,27 @@ import ServiceListColumnPicker from "./ServiceListColumnPicker";
 import ServiceRegistryTab from "./ServiceRegistryTab";
 import ServiceFormTab from "./ServiceFormTab";
 import ServiceDetailTab from "./ServiceDetailTab";
-import { getTaskColorScheme } from "../../config/constants";
-import { resolveTaskType } from "../../utils/platformService";
 import {
   defaultServiceListColumnIds,
-  formatServiceListDate,
-  formatServiceListPrice,
   loadServiceListColumns,
   resolveServiceListColumns,
   saveServiceListColumns,
-  serviceCreatedAtMillis,
   serviceListCellKey,
-  serviceListServiceId,
-  serviceModelName,
-  servicePublishedOnMillis,
 } from "./serviceListColumns";
+import {
+  renderEmptyServiceCell,
+  renderServiceCachedInputPriceCell,
+  renderServiceCreatedAtCell,
+  renderServiceIdCell,
+  renderServiceInputPriceCell,
+  renderServiceModelNameCell,
+  renderServiceNameCell,
+  renderServiceOutputPriceCell,
+  renderServicePublishedOnCell,
+  renderServiceStatusCell,
+  renderServiceTaskTypeCell,
+  renderServiceTierCell,
+} from "./serviceListCells";
 import { showError } from "../../utils/errorHandler";
 
 const CREATE_SERVICE_FORM_ID = "create-service-form";
@@ -63,84 +68,83 @@ function isServiceModelDeprecated(
   );
 }
 
-function ServiceNameCell({ service }: { service: Service }) {
-  return (
-    <Text fontSize="sm" fontWeight="medium" noOfLines={1} title={service.name}>
-      {service.name || "N/A"}
-    </Text>
-  );
-}
+type ServiceActionsContext = {
+  isRegistryReadOnly: boolean;
+  unpublishingServiceUuid: string | null;
+  publishingServiceUuid: string | null;
+  deletingServiceUuid: string | null;
+  handleEditService: (serviceId: string) => void;
+  handleDeleteClick: (service: Service) => void;
+  requestPublish: (service: Service) => void;
+  requestUnpublish: (service: Service) => void;
+};
 
-function ServiceTaskTypeCell({ service }: { service: Service }) {
-  const taskType = resolveTaskType(service);
-  return (
-    <Badge colorScheme={getTaskColorScheme(taskType)} fontSize="sm" p={1}>
-      {taskType ? taskType.toUpperCase() : "N/A"}
-    </Badge>
-  );
-}
-
-function ServiceTierCell({ service }: { service: Service }) {
-  const names = service.tierNames;
-  if (!names || names.length === 0) {
-    return (
-      <Text fontSize="sm" color="ink.400">
-        —
-      </Text>
-    );
+function buildPublishAction(
+  service: Service,
+  context: ServiceActionsContext,
+): DataTableAction {
+  const publishBusy =
+    context.unpublishingServiceUuid !== null ||
+    context.publishingServiceUuid !== null;
+  if (service.isPublished === true) {
+    return {
+      id: "unpublish",
+      label: "Unpublish",
+      icon: <MdOutlineUnpublished />,
+      visible: !context.isRegistryReadOnly,
+      color: "red.500",
+      hoverColor: "red.600",
+      hoverBg: "red.50",
+      onClick: () => context.requestUnpublish(service),
+      isLoading: context.unpublishingServiceUuid === service.serviceId,
+      disabled: publishBusy,
+    };
   }
-  return (
-    <HStack spacing={1} flexWrap="wrap">
-      {names.map((name) => (
-        <Badge key={name} colorScheme="gray" fontSize="xs" px={2} py={0.5}>
-          {name}
-        </Badge>
-      ))}
-    </HStack>
-  );
+  const publishBlocked = isServiceModelDeprecated(service);
+  let tooltip = "Publish";
+  if (publishBlocked) {
+    tooltip =
+      "This service cannot be published because its associated model is deprecated. Restore the model to ACTIVE before publishing.";
+  }
+  return {
+    id: "publish",
+    label: "Publish",
+    tooltip,
+    icon: <MdOutlineCheckCircle />,
+    visible: !context.isRegistryReadOnly,
+    color: "green.500",
+    hoverColor: "green.600",
+    hoverBg: "green.50",
+    onClick: () => context.requestPublish(service),
+    isLoading: context.publishingServiceUuid === service.serviceId,
+    disabled: publishBusy || publishBlocked,
+  };
 }
 
-function ServiceStatusCell({ service }: { service: Service }) {
-  return (
-    <Badge
-      colorScheme={service.isPublished === true ? "green" : "gray"}
-      fontSize="sm"
-      p={1}
-    >
-      {service.isPublished === true ? "Published" : "Unpublished"}
-    </Badge>
-  );
-}
-
-function ServiceDateCell({ valueMs }: { valueMs: number }) {
-  const label = formatServiceListDate(valueMs);
-  return (
-    <Text fontSize="sm" color={label === "—" ? "ink.400" : undefined} noOfLines={1}>
-      {label}
-    </Text>
-  );
-}
-
-function ServiceTextCell({ value }: { value: string }) {
-  const label = value || "—";
-  return (
-    <Text
-      fontSize="sm"
-      color={label === "—" ? "ink.400" : undefined}
-      noOfLines={1}
-      title={label}
-    >
-      {label}
-    </Text>
-  );
-}
-
-function ServicePriceCell({ value }: { value: number | null | undefined }) {
-  return (
-    <Text fontSize="sm" color={value == null ? "ink.400" : undefined}>
-      {formatServiceListPrice(value)}
-    </Text>
-  );
+function buildServiceActions(
+  service: Service,
+  context: ServiceActionsContext,
+): DataTableAction[] {
+  const serviceId = service.serviceId || service.service_id || "";
+  return [
+    {
+      id: "edit",
+      label: "Edit",
+      icon: <EditIcon />,
+      visible: !context.isRegistryReadOnly,
+      onClick: () => context.handleEditService(serviceId),
+    },
+    buildPublishAction(service, context),
+    {
+      id: "delete",
+      label: "Delete",
+      icon: <DeleteIcon />,
+      visible: !context.isRegistryReadOnly,
+      onClick: () => context.handleDeleteClick(service),
+      isLoading: context.deletingServiceUuid === service.serviceId,
+      disabled: context.deletingServiceUuid !== null,
+    },
+  ];
 }
 
 const ServicesManagement: React.FC = () => {
@@ -293,48 +297,78 @@ const ServicesManagement: React.FC = () => {
     };
   }, [preferenceUserId, serviceListUsesServer, catalogueKey, serviceListCatalogue]);
 
-  const applyVisibleColumns = useCallback(
-    (next: readonly string[]) => {
-      const resolved = serviceListUsesServer
-        ? resolveServiceListColumns(next, serviceListCatalogue)
-        : saveServiceListColumns(preferenceUserId(), next, undefined, serviceListCatalogue);
-      setVisibleColumnIds(resolved);
-      if (
-        registrySort.mode === "sorted" &&
-        registrySort.sort.key &&
-        !resolved.includes(registrySort.sort.key)
-      ) {
-        registrySort.onSortChange({ key: "name", direction: "asc" });
-      }
-      if (!serviceListUsesServer) return;
-      saveServiceColumnPreference(resolved).catch((error) => showError(error));
-    },
-    [preferenceUserId, registrySort, serviceListCatalogue, serviceListUsesServer],
-  );
-
-  const resetVisibleColumns = useCallback(() => {
-    const defaults = defaultServiceListColumnIds(serviceListCatalogue);
-    setVisibleColumnIds(defaults);
-    if (
-      registrySort.mode === "sorted" &&
-      registrySort.sort.key &&
-      !defaults.includes(registrySort.sort.key)
-    ) {
-      registrySort.onSortChange({ key: "name", direction: "asc" });
-    }
-    if (!serviceListUsesServer) {
-      saveServiceListColumns(preferenceUserId(), defaults, undefined, serviceListCatalogue);
-      return;
-    }
-    resetServiceColumnPreference().catch((error) => showError(error));
-  }, [preferenceUserId, registrySort, serviceListCatalogue, serviceListUsesServer]);
-
   const handleRegistrySortChange = useCallback(
     (next: { key: string; direction: "asc" | "desc" }) => {
       if (serviceListUsesServer) setRegistryPage(1);
       registrySort.onSortChange(next);
     },
     [registrySort, serviceListUsesServer, setRegistryPage],
+  );
+
+  const resetSortIfColumnHidden = useCallback(
+    (visibleIds: readonly string[]) => {
+      if (registrySort.mode !== "sorted" || !registrySort.sort.key) return;
+      if (visibleIds.includes(registrySort.sort.key)) return;
+      handleRegistrySortChange({ key: "name", direction: "asc" });
+    },
+    [handleRegistrySortChange, registrySort.mode, registrySort.sort.key],
+  );
+
+  const applyVisibleColumns = useCallback(
+    (next: readonly string[]) => {
+      const resolved = serviceListUsesServer
+        ? resolveServiceListColumns(next, serviceListCatalogue)
+        : saveServiceListColumns(preferenceUserId(), next, undefined, serviceListCatalogue);
+      setVisibleColumnIds(resolved);
+      resetSortIfColumnHidden(resolved);
+      if (!serviceListUsesServer) return;
+      saveServiceColumnPreference(resolved).catch((error) => showError(error));
+    },
+    [
+      preferenceUserId,
+      resetSortIfColumnHidden,
+      serviceListCatalogue,
+      serviceListUsesServer,
+    ],
+  );
+
+  const resetVisibleColumns = useCallback(() => {
+    const defaults = defaultServiceListColumnIds(serviceListCatalogue);
+    setVisibleColumnIds(defaults);
+    resetSortIfColumnHidden(defaults);
+    if (!serviceListUsesServer) {
+      saveServiceListColumns(preferenceUserId(), defaults, undefined, serviceListCatalogue);
+      return;
+    }
+    resetServiceColumnPreference().catch((error) => showError(error));
+  }, [
+    preferenceUserId,
+    resetSortIfColumnHidden,
+    serviceListCatalogue,
+    serviceListUsesServer,
+  ]);
+
+  const actionsContext = useMemo(
+    (): ServiceActionsContext => ({
+      isRegistryReadOnly,
+      unpublishingServiceUuid,
+      publishingServiceUuid,
+      deletingServiceUuid,
+      handleEditService,
+      handleDeleteClick,
+      requestPublish,
+      requestUnpublish,
+    }),
+    [
+      isRegistryReadOnly,
+      unpublishingServiceUuid,
+      publishingServiceUuid,
+      deletingServiceUuid,
+      handleEditService,
+      handleDeleteClick,
+      requestPublish,
+      requestUnpublish,
+    ],
   );
 
   const columnTemplates = useMemo((): DataTableColumn<Service>[] => {
@@ -344,171 +378,110 @@ const ServicesManagement: React.FC = () => {
         header: "Name",
         sortable: true,
         sortAccessor: (service) => service.name ?? "",
-        cell: (service) => <ServiceNameCell service={service} />,
+        cell: renderServiceNameCell,
       },
       {
         id: "task",
         header: "Model Task Type",
         sortable: true,
-        cell: (service) => <ServiceTaskTypeCell service={service} />,
+        cell: renderServiceTaskTypeCell,
       },
       {
         id: "tier",
         header: "Tier",
         sortable: true,
         truncate: false,
-        cell: (service) => <ServiceTierCell service={service} />,
+        cell: renderServiceTierCell,
       },
       {
         id: "status",
         header: "Status",
         sortable: true,
-        cell: (service) => <ServiceStatusCell service={service} />,
+        cell: renderServiceStatusCell,
       },
       {
         id: "createdAt",
         header: "Created At",
         sortable: true,
-        cell: (service) => (
-          <ServiceDateCell valueMs={serviceCreatedAtMillis(service)} />
-        ),
+        cell: renderServiceCreatedAtCell,
       },
       {
         id: "modelName",
         header: "Model Name",
         sortable: true,
-        cell: (service) => <ServiceTextCell value={serviceModelName(service)} />,
+        cell: renderServiceModelNameCell,
       },
       {
         id: "serviceId",
         header: "Service ID",
         sortable: true,
-        cell: (service) => (
-          <ServiceTextCell value={serviceListServiceId(service)} />
-        ),
+        cell: renderServiceIdCell,
       },
       {
         id: "inputPrice",
         header: "Input Price",
         sortable: true,
         isNumeric: true,
-        cell: (service) => <ServicePriceCell value={service.costPerUnit} />,
+        cell: renderServiceInputPriceCell,
       },
       {
         id: "outputPrice",
         header: "Output Price",
         sortable: true,
         isNumeric: true,
-        cell: (service) => (
-          <ServicePriceCell value={service.outputCostPerUnit} />
-        ),
+        cell: renderServiceOutputPriceCell,
       },
       {
         id: "cachedInputPrice",
         header: "Cached Input Price",
         sortable: true,
         isNumeric: true,
-        cell: (service) => (
-          <ServicePriceCell value={service.cachedInputCostPerUnit} />
-        ),
+        cell: renderServiceCachedInputPriceCell,
       },
       {
         id: "publishedOn",
         header: "Published On",
         sortable: true,
-        cell: (service) => (
-          <ServiceDateCell valueMs={servicePublishedOnMillis(service)} />
-        ),
+        cell: renderServicePublishedOnCell,
       },
       createActionsColumn<Service>({
-        getActions: (service) => {
-          const publishBlocked = isServiceModelDeprecated(service);
-          const publishBusy =
-            unpublishingServiceUuid !== null || publishingServiceUuid !== null;
-          return [
-            {
-              id: "edit",
-              label: "Edit",
-              icon: <EditIcon />,
-              visible: !isRegistryReadOnly,
-              onClick: () =>
-                handleEditService(service.serviceId || service.service_id || ""),
-            },
-            service.isPublished === true
-              ? {
-                  id: "unpublish",
-                  label: "Unpublish",
-                  icon: <MdOutlineUnpublished />,
-                  visible: !isRegistryReadOnly,
-                  color: "red.500",
-                  hoverColor: "red.600",
-                  hoverBg: "red.50",
-                  onClick: () => requestUnpublish(service),
-                  isLoading: unpublishingServiceUuid === service.serviceId,
-                  disabled: publishBusy,
-                }
-              : {
-                  id: "publish",
-                  label: "Publish",
-                  tooltip: publishBlocked
-                    ? "This service cannot be published because its associated model is deprecated. Restore the model to ACTIVE before publishing."
-                    : "Publish",
-                  icon: <MdOutlineCheckCircle />,
-                  visible: !isRegistryReadOnly,
-                  color: "green.500",
-                  hoverColor: "green.600",
-                  hoverBg: "green.50",
-                  onClick: () => requestPublish(service),
-                  isLoading: publishingServiceUuid === service.serviceId,
-                  disabled: publishBusy || publishBlocked,
-                },
-            {
-              id: "delete",
-              label: "Delete",
-              icon: <DeleteIcon />,
-              visible: !isRegistryReadOnly,
-              onClick: () => handleDeleteClick(service),
-              isLoading: deletingServiceUuid === service.serviceId,
-              disabled: deletingServiceUuid !== null,
-            },
-          ];
-        },
+        getActions: (service) => buildServiceActions(service, actionsContext),
       }),
     ];
     return columns;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    unpublishingServiceUuid,
-    publishingServiceUuid,
-    deletingServiceUuid,
-    isRegistryReadOnly,
-    availableTiers,
-  ]);
+  }, [actionsContext]);
 
   const serviceColumns = useMemo((): DataTableColumn<Service>[] => {
     const byCell = new Map(columnTemplates.map((column) => [column.id, column]));
-    return serviceListCatalogue.flatMap((definition): DataTableColumn<Service>[] => {
-      if (!visibleColumnIds.includes(definition.id)) return [];
-      const template = byCell.get(serviceListCellKey(definition.id));
-      if (!template) {
-        return [{
-          id: definition.id,
-          header: definition.label,
-          sortable: false,
-          cell: () => (
-            <Text fontSize="sm" color="ink.400">
-              —
-            </Text>
-          ),
-        }];
+    const built: DataTableColumn<Service>[] = [];
+    let actionsColumn: DataTableColumn<Service> | null = null;
+    for (const definition of serviceListCatalogue) {
+      if (!visibleColumnIds.includes(definition.id)) continue;
+      const cellKey = serviceListCellKey(definition.id);
+      const template = byCell.get(cellKey);
+      const column: DataTableColumn<Service> = template
+        ? {
+            ...template,
+            id: definition.id,
+            header: definition.label,
+            sortable:
+              definition.sortable !== false && Boolean(template.sortable),
+          }
+        : {
+            id: definition.id,
+            header: definition.label,
+            sortable: false,
+            cell: renderEmptyServiceCell,
+          };
+      // API catalogue lists actions second; keep it last like other admin tables.
+      if (cellKey === "actions") {
+        actionsColumn = column;
+      } else {
+        built.push(column);
       }
-      return [{
-        ...template,
-        id: definition.id,
-        header: definition.label,
-        sortable: definition.sortable !== false && Boolean(template.sortable),
-      }];
-    });
+    }
+    if (actionsColumn) built.push(actionsColumn);
+    return built;
   }, [columnTemplates, serviceListCatalogue, visibleColumnIds]);
 
   const serviceForm = (

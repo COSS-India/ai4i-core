@@ -8,17 +8,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   SERVICE_LIST_COLUMNS,
   serviceListCellKey,
-  serviceListFilterParams,
   serviceListSortAccessors,
   type ServiceListColumnDef,
 } from "../components/services-management/serviceListColumns";
+import {
+  fetchRegistryServicesPage,
+  serviceIdsFromItems,
+  shouldReplaceFullServiceIds,
+} from "../components/services-management/serviceRegistryFetch";
 import { useDeferredColumnSort } from "../utils/tableSort";
 import { resolveTaskType } from "../utils/platformService";
 import {
-  fetchAllServicesMatchingFilters,
   fetchExistingServiceIds,
   getServiceListColumns,
-  listServicesPaginated,
   createService,
   getServiceById,
   updateService,
@@ -191,10 +193,104 @@ const shouldValidateHardwareDescription = (
 const hardwareDescriptionUpdate = (
   form: Partial<Service>,
   editing: Service,
-): Partial<Service> =>
-  isHardwareDescriptionEdited(form, editing)
-    ? { hardwareDescription: form.hardwareDescription?.trim() || null }
-    : {};
+): Partial<Service> => {
+  if (!isHardwareDescriptionEdited(form, editing)) return {};
+  return { hardwareDescription: form.hardwareDescription?.trim() || null };
+};
+
+type ServiceFormPrices = {
+  pricePerUnit: string;
+  cachedInputPricePerUnit: string;
+  outputPricePerUnit: string;
+  unitSize: string;
+  isLlmTaskType: boolean;
+};
+
+function llmPriceFields(
+  prices: ServiceFormPrices,
+): Pick<Service, "cachedInputCostPerUnit" | "outputCostPerUnit"> {
+  if (!prices.isLlmTaskType) return {};
+  return {
+    cachedInputCostPerUnit: parsePricePerUnit(prices.cachedInputPricePerUnit),
+    outputCostPerUnit: parsePricePerUnit(prices.outputPricePerUnit),
+  };
+}
+
+function buildServiceUpdatePayload(options: {
+  editingService: Service;
+  formData: Partial<Service>;
+  prices: ServiceFormPrices;
+  authToken: string;
+  savedAuthTokenMask: string;
+  selectedTiers: string[];
+}): Partial<Service> {
+  const {
+    editingService,
+    formData,
+    prices,
+    authToken,
+    savedAuthTokenMask,
+    selectedTiers,
+  } = options;
+  const serviceId =
+    editingService.serviceId || editingService.service_id || "";
+  const updateData: Partial<Service> = {
+    serviceId,
+    serviceDescription: formData.serviceDescription,
+    task_type: formData.task_type,
+    costPerUnit: parsePricePerUnit(prices.pricePerUnit),
+    ...llmPriceFields(prices),
+    ...hardwareDescriptionUpdate(formData, editingService),
+    unitSize: prices.unitSize ? Number(prices.unitSize) : undefined,
+    tierIds: selectedTiers,
+  };
+  const storedEndpoint =
+    editingService.endpoint || editingService.endpoint_url || "";
+  if (formData.endpoint !== storedEndpoint) {
+    updateData.endpoint = formData.endpoint;
+  }
+  const trimmedToken = authToken.trim();
+  const tokenIsSavedMask =
+    !!savedAuthTokenMask && trimmedToken === savedAuthTokenMask;
+  const isLlm = (formData.task_type || "").trim().toLowerCase() === "llm";
+  if (isLlm && trimmedToken && !tokenIsSavedMask) {
+    updateData.authToken = trimmedToken;
+  }
+  return updateData;
+}
+
+function buildServiceCreatePayload(options: {
+  formData: Partial<Service>;
+  prices: ServiceFormPrices;
+  authToken: string;
+  selectedTiers: string[];
+}): Partial<Service> {
+  const { formData, prices, authToken, selectedTiers } = options;
+  const serviceId = formData.serviceId?.trim() || "";
+  const taskIsLlm = (formData.task_type || "").trim().toLowerCase() === "llm";
+  const serviceName = taskIsLlm ? serviceId : formData.name?.trim() || "";
+  const serviceFormData: Partial<Service> = { ...formData };
+  delete serviceFormData.modelSubmissionDate;
+  const trimmedToken = authToken.trim();
+  const serviceData: Partial<Service> = {
+    ...serviceFormData,
+    name: serviceName,
+    serviceId,
+    publishedOn: Math.floor(Date.now() / 1000),
+    serviceDescription: formData.serviceDescription?.trim() || undefined,
+    hardwareDescription: formData.hardwareDescription?.trim() || undefined,
+    api_key: "",
+    status: "active",
+    costPerUnit: parsePricePerUnit(prices.pricePerUnit),
+    ...llmPriceFields(prices),
+    unitSize: prices.unitSize ? Number(prices.unitSize) : undefined,
+    tierIds: selectedTiers,
+  };
+  if (taskIsLlm && trimmedToken) {
+    serviceData.authToken = trimmedToken;
+  }
+  return serviceData;
+}
 
 export function useServicesManagement() {
   const [services, setServices] = useState<Service[]>([]);
@@ -272,6 +368,10 @@ export function useServicesManagement() {
     staleTime: 5 * 60 * 1000,
     retry: false,
   });
+  useEffect(() => {
+    if (!columnsQuery.isError || !columnsQuery.error) return;
+    showError(columnsQuery.error);
+  }, [columnsQuery.isError, columnsQuery.error]);
   const serviceListCatalogue: readonly ServiceListColumnDef[] =
     columnsQuery.data?.columns ?? SERVICE_LIST_COLUMNS;
   const serviceListUsesServer = columnsQuery.data?.source === "api";
@@ -470,6 +570,32 @@ export function useServicesManagement() {
   );
   const isLoadingModels = modelsQuery.isLoading || isLoadingModelDetails;
 
+  const commitFetchedServices = useCallback(
+    (
+      items: Service[],
+      total: number,
+      statusFilter: string,
+      taskTypeFilter: string,
+    ) => {
+      setServices(items);
+      if (serviceListUsesServer) {
+        setServerTotal(total);
+        return;
+      }
+      const ids = serviceIdsFromItems(items);
+      if (
+        shouldReplaceFullServiceIds(statusFilter, taskTypeFilter, taskTypeNames)
+      ) {
+        setFullServiceIds(ids);
+        return;
+      }
+      setFullServiceIds((prev) =>
+        Array.from(new Set([...(prev ?? []), ...ids])),
+      );
+    },
+    [serviceListUsesServer, taskTypeNames],
+  );
+
   const fetchServices = useCallback(async (options?: {
     silent?: boolean;
     /** When false, return items without writing React state (for refreshUntil polls). */
@@ -478,86 +604,51 @@ export function useServicesManagement() {
     status?: string;
   }): Promise<Service[]> => {
     const commit = options?.commit !== false;
-    if (!options?.silent && commit) setIsLoading(true);
+    const showLoading = !options?.silent && commit;
+    if (showLoading) setIsLoading(true);
     try {
-      const statusFilter = options?.status !== undefined ? options.status : filterStatus;
+      const statusFilter =
+        options?.status !== undefined ? options.status : filterStatus;
       const taskTypeFilter =
         options?.taskType !== undefined ? options.taskType : filterTaskType;
-      const isPublishedFilter =
-        statusFilter === "published"
-          ? true
-          : statusFilter === "unpublished"
-            ? false
-            : undefined;
-
-      if (serviceListUsesServer) {
-        const filters = { ...serverFilters };
-        if (options?.taskType !== undefined && taskFilterColumnId) {
-          filters[taskFilterColumnId] = options.taskType;
-        }
-        if (options?.status !== undefined && statusFilterColumnId) {
-          filters[statusFilterColumnId] =
-            options.status === "published"
-              ? "true"
-              : options.status === "unpublished"
-                ? "false"
-                : "";
-        }
-        const sortActive =
-          registrySort.mode === "sorted" && Boolean(registrySort.sort.key);
-        const result = await listServicesPaginated({
-          offset: (registryPage - 1) * registryPageSize,
-          limit: registryPageSize,
-          query: serviceListFilterParams({
-            columns: serviceListCatalogue,
-            filters,
-            enabledTaskTypes: enabledTaskTypesParam,
-            sortBy: sortActive ? registrySort.sort.key : undefined,
-            sortOrder: sortActive ? registrySort.sort.direction : undefined,
-          }),
-        });
-        if (commit) {
-          setServices(result.items);
-          setServerTotal(result.total);
-        }
-        return result.items;
-      }
-
-      // Backend query-filters by the frontend-enabled task types (task_types=),
-      // so the list comes back already scoped — no client-side filter here.
-      const result = await fetchAllServicesMatchingFilters({
-        taskType: taskTypeFilter || undefined,
-        taskTypes: enabledTaskTypesParam,
-        isPublished: isPublishedFilter,
-      });
+      const page = await fetchRegistryServicesPage(
+        {
+          filterStatus,
+          filterTaskType,
+          enabledTaskTypesParam,
+          taskTypeNames,
+          serviceListUsesServer,
+          serverFilters,
+          taskFilterColumnId,
+          statusFilterColumnId,
+          serviceListCatalogue,
+          registryPage,
+          registryPageSize,
+          sortMode: registrySort.mode,
+          sortKey: registrySort.sort.key,
+          sortDirection: registrySort.sort.direction,
+        },
+        options,
+      );
       if (commit) {
-        setServices(result.items);
-        const statusNarrows = statusFilter === "published" || statusFilter === "unpublished";
-        const onlyEnabledTask =
-          taskTypeNames.length === 1 && taskTypeFilter === taskTypeNames[0];
-        const taskNarrows = Boolean(taskTypeFilter) && !onlyEnabledTask;
-        const ids = result.items
-          .map((s) => s.serviceId || s.service_id || "")
-          .filter((id): id is string => Boolean(id));
-        if (!statusNarrows && !taskNarrows) {
-          setFullServiceIds(ids);
-        } else {
-          setFullServiceIds((prev) => {
-            const merged = new Set([...(prev ?? []), ...ids]);
-            return Array.from(merged);
-          });
-        }
+        commitFetchedServices(
+          page.items,
+          page.total,
+          statusFilter,
+          taskTypeFilter,
+        );
       }
-      return result.items;
+      return page.items;
     } catch (error: any) {
       console.error("Failed to fetch services:", error);
       showError(error);
       if (commit) setServices([]);
       return [];
     } finally {
-      if (!options?.silent && commit) setIsLoading(false);
+      if (showLoading) setIsLoading(false);
     }
   }, [
+    commitFetchedServices,
     filterTaskType,
     filterStatus,
     enabledTaskTypesParam,
@@ -602,24 +693,31 @@ export function useServicesManagement() {
       const apply = (s: Service): Service => {
         if (s.serviceId !== serviceId) return s;
         if (freshService) return freshService;
-        return {
-          ...s,
-          isPublished,
-          ...(isPublished
-            ? { publishedOn: Math.floor(Date.now() / 1000) }
-            : {}),
-        };
+        if (isPublished) {
+          return {
+            ...s,
+            isPublished,
+            publishedOn: Math.floor(Date.now() / 1000),
+          };
+        }
+        return { ...s, isPublished };
       };
 
       const serverStatus = statusFilterColumnId
         ? serverFilters[statusFilterColumnId]
-        : undefined;
-      const publishedOnly = filterStatus === "published" || serverStatus === "true";
-      const unpublishedOnly = filterStatus === "unpublished" || serverStatus === "false";
+        : "";
+      const publishedOnly =
+        filterStatus === "published" || serverStatus === "true";
+      const unpublishedOnly =
+        filterStatus === "unpublished" || serverStatus === "false";
       setServices((prev) => {
         const next = prev.map(apply);
-        if (publishedOnly) return next.filter((s) => s.isPublished === true);
-        if (unpublishedOnly) return next.filter((s) => s.isPublished !== true);
+        if (publishedOnly) {
+          return next.filter((service) => service.isPublished === true);
+        }
+        if (unpublishedOnly) {
+          return next.filter((service) => service.isPublished !== true);
+        }
         return next;
       });
 
@@ -1016,19 +1114,98 @@ export function useServicesManagement() {
     setCreateReturnTo(path);
   }, [router.query.returnTo]);
 
-  /** The LLM-only prices, or nothing: the API rejects them for other task types. */
-  const llmPrices = (): Pick<Service, "cachedInputCostPerUnit" | "outputCostPerUnit"> =>
-    isLlmTaskType
-      ? {
-          cachedInputCostPerUnit: parsePricePerUnit(cachedInputPricePerUnit),
-          outputCostPerUnit: parsePricePerUnit(outputPricePerUnit),
-        }
-      : {};
+  const formPrices = (): ServiceFormPrices => ({
+    pricePerUnit,
+    cachedInputPricePerUnit,
+    outputPricePerUnit,
+    unitSize,
+    isLlmTaskType,
+  });
+
+  const alignFiltersAfterMutation = (options: {
+    submittedTaskType: string;
+    wasCreate: boolean;
+  }): { listTaskType: string; listStatus: string } => {
+    let listTaskType = filterTaskType;
+    let listStatus = filterStatus;
+    const serverTask = taskFilterColumnId
+      ? serverFilters[taskFilterColumnId]
+      : "";
+    const serverStatus = statusFilterColumnId
+      ? serverFilters[statusFilterColumnId]
+      : "";
+    const { submittedTaskType, wasCreate } = options;
+    const activeTask = serverTask || filterTaskType;
+    if (
+      submittedTaskType &&
+      activeTask &&
+      submittedTaskType.toLowerCase() !== activeTask.toLowerCase()
+    ) {
+      listTaskType = submittedTaskType;
+      setFilterTaskType(submittedTaskType);
+      if (taskFilterColumnId) {
+        setServerFilters((prev) => ({
+          ...prev,
+          [taskFilterColumnId]: submittedTaskType,
+        }));
+      }
+      setRegistryPage(1);
+    }
+    if (
+      wasCreate &&
+      (filterStatus === "published" || serverStatus === "true")
+    ) {
+      listStatus = "";
+      setFilterStatus("");
+      if (statusFilterColumnId) {
+        setServerFilters((prev) => ({
+          ...prev,
+          [statusFilterColumnId]: "",
+        }));
+      }
+      setRegistryPage(1);
+    }
+    return { listTaskType, listStatus };
+  };
+
+  const refreshRegistryAfterMutation = async (options: {
+    targetId: string;
+    apiReturnedServiceId: string;
+    submittedTaskType: string;
+    wasCreate: boolean;
+  }) => {
+    const { targetId, apiReturnedServiceId, submittedTaskType, wasCreate } =
+      options;
+    if (!targetId) {
+      await fetchServices({ silent: true });
+      return;
+    }
+    if (apiReturnedServiceId) {
+      try {
+        upsertLocalService(await getServiceById(apiReturnedServiceId));
+      } catch (err) {
+        console.warn("Failed to refresh service after create/update:", err);
+      }
+    }
+    const { listTaskType, listStatus } = alignFiltersAfterMutation({
+      submittedTaskType,
+      wasCreate,
+    });
+    const items = await refreshUntil(
+      () =>
+        fetchServices({
+          silent: true,
+          commit: false,
+          taskType: listTaskType,
+          status: listStatus,
+        }),
+      (rows) => rows.some((s) => serviceKey(s) === targetId),
+    );
+    setServices(items);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    // Check session expiry before submitting
     if (!checkSessionExpiry()) return;
 
     setIsSubmitting(true);
@@ -1038,38 +1215,18 @@ export function useServicesManagement() {
       let apiReturnedServiceId = "";
       const submittedTaskType = (formData.task_type || "").trim();
       const wasCreate = !editingService;
+      const prices = formPrices();
 
       if (editingService) {
-        // Edit mode: PATCH only the fields the edit form allows changing
-        const serviceId =
-          editingService.serviceId || editingService.service_id || "";
-        const updateData: Partial<Service> = {
-          serviceId,
-          serviceDescription: formData.serviceDescription,
-          task_type: formData.task_type,
-          costPerUnit: parsePricePerUnit(pricePerUnit),
-          ...llmPrices(),
-          ...hardwareDescriptionUpdate(formData, editingService),
-          unitSize: unitSize ? Number(unitSize) : undefined,
-          tierIds: selectedTiers,
-        };
-        const storedEndpoint =
-          editingService.endpoint || editingService.endpoint_url || "";
-        if (formData.endpoint !== storedEndpoint) {
-          updateData.endpoint = formData.endpoint;
-        }
-        const trimmedToken = authToken.trim();
-        // An untouched field still holds the backend's mask ("***"); sending
-        // it would overwrite the stored token with the mask.
-        const tokenIsSavedMask =
-          !!savedAuthTokenMask && trimmedToken === savedAuthTokenMask;
-        if (
-          (formData.task_type || "").trim().toLowerCase() === "llm" &&
-          trimmedToken &&
-          !tokenIsSavedMask
-        ) {
-          updateData.authToken = trimmedToken;
-        }
+        const updateData = buildServiceUpdatePayload({
+          editingService,
+          formData,
+          prices,
+          authToken,
+          savedAuthTokenMask,
+          selectedTiers,
+        });
+        const serviceId = updateData.serviceId || "";
         // PATCH returns only `{ serviceId }` — do not treat it as a full Service
         await updateService(updateData);
         mutatedServiceId = serviceId;
@@ -1080,59 +1237,29 @@ export function useServicesManagement() {
           serviceId,
           task_type: formData.task_type || editingService.task_type,
         });
-
         showToast({
           type: "success",
           message: "Service has been updated successfully.",
         });
       } else {
-        // Use the user-provided serviceId.
-        const serviceId = formData.serviceId?.trim() || "";
-        const taskIsLlm =
-          (formData.task_type || "").trim().toLowerCase() === "llm";
-        // For LLM, Service ID is copied to Service Name
-        const serviceName = taskIsLlm
-          ? serviceId
-          : formData.name?.trim() || "";
-
-        // Prepare service data with the user-provided serviceId.
-        // Do not send modelSubmissionDate because backend owns this field.
-        const serviceFormData: Partial<Service> = { ...formData };
-        delete serviceFormData.modelSubmissionDate;
-        const tierIds = selectedTiers; // selectedTiers stores tier IDs directly
-
-        const trimmedToken = authToken.trim();
-        const serviceData: Partial<Service> = {
-          ...serviceFormData,
-          name: serviceName,
-          serviceId: serviceId,
-          publishedOn: Math.floor(Date.now() / 1000),
-          // Trimmed so the length the user was validated against is the
-          // length the backend measures. Both are optional: a blank field is
-          // omitted from the payload rather than sent as "".
-          serviceDescription: formData.serviceDescription?.trim() || undefined,
-          hardwareDescription: formData.hardwareDescription?.trim() || undefined,
-          api_key: "",
-          status: "active",
-          costPerUnit: parsePricePerUnit(pricePerUnit),
-          ...llmPrices(),
-          unitSize: unitSize ? Number(unitSize) : undefined,
-          tierIds,
-          ...(taskIsLlm && trimmedToken ? { authToken: trimmedToken } : {}),
-        };
-
+        const serviceData = buildServiceCreatePayload({
+          formData,
+          prices,
+          authToken,
+          selectedTiers,
+        });
         const created = await createService(serviceData);
         apiReturnedServiceId =
           created.serviceId || created.service_id || "";
-        mutatedServiceId = apiReturnedServiceId || serviceId;
+        mutatedServiceId =
+          apiReturnedServiceId || serviceData.serviceId || "";
         upsertLocalService({
           ...serviceData,
           serviceId: mutatedServiceId,
-          name: created.name || serviceName,
+          name: created.name || serviceData.name,
           isPublished: false,
           task_type: formData.task_type,
         } as Service);
-
         showToast({
           type: "success",
           message: "Service has been created successfully.",
@@ -1152,59 +1279,12 @@ export function useServicesManagement() {
         { shallow: true },
       );
 
-      const targetId = mutatedServiceId;
-      if (targetId) {
-        // Only GET by id when the API returned a registry key — typed form
-        // fallbacks can 404 and never satisfy refreshUntil.
-        if (apiReturnedServiceId) {
-          try {
-            upsertLocalService(await getServiceById(apiReturnedServiceId));
-          } catch (e) {
-            console.warn("Failed to refresh service after create/update:", e);
-          }
-        }
-
-        // Align list filters with the mutated row so refreshUntil can succeed
-        // (creates are unpublished; task type may differ from the active filter).
-        let listTaskType = filterTaskType;
-        let listStatus = filterStatus;
-        const serverTask = taskFilterColumnId ? serverFilters[taskFilterColumnId] : "";
-        const serverStatus = statusFilterColumnId ? serverFilters[statusFilterColumnId] : "";
-        if (
-          submittedTaskType &&
-          (filterTaskType || serverTask) &&
-          submittedTaskType.toLowerCase() !== (serverTask || filterTaskType).toLowerCase()
-        ) {
-          listTaskType = submittedTaskType;
-          setFilterTaskType(submittedTaskType);
-          if (taskFilterColumnId) {
-            setServerFilters((prev) => ({ ...prev, [taskFilterColumnId]: submittedTaskType }));
-          }
-          setRegistryPage(1);
-        }
-        if (wasCreate && (filterStatus === "published" || serverStatus === "true")) {
-          listStatus = "";
-          setFilterStatus("");
-          if (statusFilterColumnId) {
-            setServerFilters((prev) => ({ ...prev, [statusFilterColumnId]: "" }));
-          }
-          setRegistryPage(1);
-        }
-
-        const items = await refreshUntil(
-          () =>
-            fetchServices({
-              silent: true,
-              commit: false,
-              taskType: listTaskType,
-              status: listStatus,
-            }),
-          (rows) => rows.some((s) => serviceKey(s) === targetId),
-        );
-        setServices(items);
-      } else {
-        await fetchServices({ silent: true });
-      }
+      await refreshRegistryAfterMutation({
+        targetId: mutatedServiceId,
+        apiReturnedServiceId,
+        submittedTaskType,
+        wasCreate,
+      });
       await queryClient.invalidateQueries({ queryKey: SERVICES_ALL_QUERY_KEY });
     } catch (error: any) {
       showError(error);

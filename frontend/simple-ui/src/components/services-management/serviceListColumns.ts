@@ -219,34 +219,59 @@ export function saveServiceListColumns(
   return resolved;
 }
 
-function parseColumnFilter(raw: unknown): ServiceListColumnFilter | null {
-  if (!raw || typeof raw !== "object") return null;
-  const row = raw as Record<string, unknown>;
-  const params = Array.isArray(row.params)
-    ? row.params.filter((param): param is string => typeof param === "string" && param.length > 0)
-    : [];
-  if (params.length === 0) return null;
-  const options = Array.isArray(row.options)
-    ? row.options.flatMap((option) => {
-        if (!option || typeof option !== "object") return [];
-        const value = (option as { value?: unknown }).value;
-        const label = (option as { label?: unknown }).label;
-        if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
-          return [];
-        }
-        const text = String(value);
-        return [{ value: text, label: typeof label === "string" ? label : text }];
-      })
-    : null;
+function parseFilterOption(
+  option: unknown,
+): { value: string; label: string } | null {
+  if (!option || typeof option !== "object") return null;
+  const value = (option as { value?: unknown }).value;
+  const label = (option as { label?: unknown }).label;
+  if (
+    typeof value !== "string" &&
+    typeof value !== "number" &&
+    typeof value !== "boolean"
+  ) {
+    return null;
+  }
+  const text = String(value);
   return {
-    type: typeof row.type === "string" ? row.type : "text",
-    params,
-    options: options && options.length > 0 ? options : null,
+    value: text,
+    label: typeof label === "string" ? label : text,
   };
 }
 
-/** Parse `GET /services/columns`. Returns null when the body is not that contract. */
-export function parseServiceListColumnsPayload(raw: unknown): ServiceListColumnDef[] | null {
+function parseFilterOptions(
+  raw: unknown,
+): { value: string; label: string }[] | null {
+  if (!Array.isArray(raw)) return null;
+  const options: { value: string; label: string }[] = [];
+  for (const entry of raw) {
+    const parsed = parseFilterOption(entry);
+    if (parsed) options.push(parsed);
+  }
+  if (options.length === 0) return null;
+  return options;
+}
+
+function parseFilterParams(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(
+    (param): param is string => typeof param === "string" && param.length > 0,
+  );
+}
+
+function parseColumnFilter(raw: unknown): ServiceListColumnFilter | null {
+  if (!raw || typeof raw !== "object") return null;
+  const row = raw as Record<string, unknown>;
+  const params = parseFilterParams(row.params);
+  if (params.length === 0) return null;
+  return {
+    type: typeof row.type === "string" ? row.type : "text",
+    params,
+    options: parseFilterOptions(row.options),
+  };
+}
+
+function unwrapColumnsPayload(raw: unknown): unknown {
   let data = raw;
   if (data && typeof data === "object" && "data" in data) {
     data = (data as { data: unknown }).data;
@@ -254,27 +279,38 @@ export function parseServiceListColumnsPayload(raw: unknown): ServiceListColumnD
   if (data && typeof data === "object" && "columns" in data) {
     data = (data as { columns: unknown }).columns;
   }
+  return data;
+}
+
+function parseColumnDef(entry: unknown): ServiceListColumnDef | null {
+  if (!entry || typeof entry !== "object") return null;
+  const row = entry as Record<string, unknown>;
+  if (typeof row.id !== "string" || !row.id) return null;
+  if (typeof row.label !== "string" || !row.label) return null;
+  const filter = parseColumnFilter(row.filter);
+  const mandatory = row.mandatory === true;
+  return {
+    id: row.id,
+    label: row.label,
+    mandatory,
+    defaultVisible: mandatory || row.defaultVisible === true,
+    sortable: row.sortable === true,
+    filterable: row.filterable === true && Boolean(filter),
+    filter,
+  };
+}
+
+/** Parse `GET /services/columns`. Returns null when the body is not that contract. */
+export function parseServiceListColumnsPayload(raw: unknown): ServiceListColumnDef[] | null {
+  const data = unwrapColumnsPayload(raw);
   if (!Array.isArray(data)) return null;
   const columns: ServiceListColumnDef[] = [];
   for (const entry of data) {
-    if (!entry || typeof entry !== "object") continue;
-    const row = entry as Record<string, unknown>;
-    if (typeof row.id !== "string" || !row.id || typeof row.label !== "string" || !row.label) {
-      continue;
-    }
-    const filter = parseColumnFilter(row.filter);
-    const mandatory = row.mandatory === true;
-    columns.push({
-      id: row.id,
-      label: row.label,
-      mandatory,
-      defaultVisible: mandatory || row.defaultVisible === true,
-      sortable: row.sortable === true,
-      filterable: row.filterable === true && Boolean(filter),
-      filter,
-    });
+    const column = parseColumnDef(entry);
+    if (column) columns.push(column);
   }
-  return columns.length > 0 ? columns : null;
+  if (columns.length === 0) return null;
+  return columns;
 }
 
 /** Parse `GET /preferences/columns/service-list`. */
@@ -283,11 +319,18 @@ export function parseVisibleColumnsPayload(raw: unknown): string[] | null {
   if (data && typeof data === "object" && "data" in data) {
     data = (data as { data: unknown }).data;
   }
-  const list = Array.isArray(data)
-    ? data
-    : data && typeof data === "object" && Array.isArray((data as { visibleColumns?: unknown }).visibleColumns)
-      ? (data as { visibleColumns: unknown[] }).visibleColumns
-      : null;
+
+  let list: unknown[] | null = null;
+  if (Array.isArray(data)) {
+    list = data;
+  } else if (
+    data &&
+    typeof data === "object" &&
+    Array.isArray((data as { visibleColumns?: unknown }).visibleColumns)
+  ) {
+    list = (data as { visibleColumns: unknown[] }).visibleColumns;
+  }
+
   if (!list) return null;
   return list.filter((id): id is string => typeof id === "string");
 }
@@ -297,6 +340,56 @@ export function parseVisibleColumnsPayload(raw: unknown): string[] | null {
  * An empty task-type filter sends the UI allowlist. Other empty filters are omitted.
  * Pass `sortBy` / `sortOrder` when the user has chosen a column sort.
  */
+/**
+ * Convert a `YYYY-MM-DD` date-picker value to an ISO instant for `GET /services`.
+ * The API treats a bare date as a UTC day, which drifts from local `toLocaleString`
+ * cells — local midnight (and next-day midnight for an exclusive upper bound) keep
+ * the filter aligned with what the user sees.
+ */
+export function serviceListDateFilterInstant(
+  dateValue: string,
+  bound: "from" | "to",
+): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateValue)) return null;
+  const local = new Date(`${dateValue}T00:00:00`);
+  if (Number.isNaN(local.getTime())) return null;
+  if (bound === "to") {
+    local.setDate(local.getDate() + 1);
+  }
+  return local.toISOString();
+}
+
+function applyDateRangeFilterParams(
+  column: ServiceListColumnDef,
+  filters: Record<string, string>,
+  params: Record<string, string>,
+): void {
+  const filterParams = column.filter?.params ?? [];
+  if (filterParams.length < 2) return;
+  const keys = serviceListRangeFilterKeys(column.id);
+  const from = (filters[keys.from] ?? "").trim();
+  const to = (filters[keys.to] ?? "").trim();
+  const fromIso = from ? serviceListDateFilterInstant(from, "from") : null;
+  const toIso = to ? serviceListDateFilterInstant(to, "to") : null;
+  if (fromIso) params[filterParams[0]] = fromIso;
+  if (toIso) params[filterParams[1]] = toIso;
+}
+
+function applyColumnFilterParam(
+  column: ServiceListColumnDef,
+  filters: Record<string, string>,
+  params: Record<string, string>,
+): string | null {
+  const param = column.filter?.params[0];
+  if (!param) return null;
+  const value = (filters[column.id] ?? "").trim();
+  const isTask =
+    serviceListCellKey(column.id) === "task" || param === "task_types";
+  if (value) params[param] = value;
+  if (isTask) return param;
+  return null;
+}
+
 export function serviceListFilterParams(options: {
   columns: readonly ServiceListColumnDef[];
   filters: Record<string, string>;
@@ -308,29 +401,16 @@ export function serviceListFilterParams(options: {
   let taskParam: string | null = null;
   for (const column of options.columns) {
     if (!column.filterable || !column.filter) continue;
-    const { type, params: filterParams } = column.filter;
-    if (type === "date_range" && filterParams.length >= 2) {
-      const keys = serviceListRangeFilterKeys(column.id);
-      const from = (options.filters[keys.from] ?? "").trim();
-      const to = (options.filters[keys.to] ?? "").trim();
-      if (from) params[filterParams[0]] = from;
-      if (to) params[filterParams[1]] = to;
+    if (column.filter.type === "date_range") {
+      applyDateRangeFilterParams(column, options.filters, params);
       continue;
     }
-    const param = filterParams[0];
-    if (!param) continue;
-    const value = (options.filters[column.id] ?? "").trim();
-    if (serviceListCellKey(column.id) === "task" || param === "task_types") {
-      taskParam = param;
-      if (value) params[param] = value;
-      continue;
-    }
-    if (value) params[param] = value;
+    const maybeTask = applyColumnFilterParam(column, options.filters, params);
+    if (maybeTask) taskParam = maybeTask;
   }
   if (taskParam && !params[taskParam] && options.enabledTaskTypes) {
     params[taskParam] = options.enabledTaskTypes;
-  }
-  if (!taskParam && options.enabledTaskTypes) {
+  } else if (!taskParam && options.enabledTaskTypes) {
     params.task_types = options.enabledTaskTypes;
   }
   if (options.sortBy) {
