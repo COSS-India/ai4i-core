@@ -102,7 +102,10 @@ export function useEmailAvailabilityField({
     });
     patchError("email", result.error);
     setStatus(result.status);
-    return !result.error && result.status === "available";
+    return (
+      !result.error &&
+      (result.status === "available" || result.status === "unchecked")
+    );
   }, [email, getCheckOptions, patchError]);
 
   useEffect(() => {

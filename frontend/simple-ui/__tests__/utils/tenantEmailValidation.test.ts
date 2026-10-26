@@ -2,15 +2,14 @@ import {
   EMAIL_ALREADY_EXISTS_MSG,
   EMAIL_INVALID_FORMAT_MSG,
   EMAIL_USER_ALREADY_EXISTS_MSG,
-  emailSetHas,
   extractApiErrorCode,
   isTenantContactEmailEditable,
   mapTenantEmailConflictToFieldError,
-  normalizeEmail,
   resolveTenantEmailUpdateFeedback,
   validateTenantContactEmail,
 } from "../../src/utils/tenantEmailValidation";
 import { INSTITUTION, TENANT } from "../../src/config/constants";
+import { runEmailAvailabilityCheck } from "../../src/utils/tenantEmailAvailability";
 
 describe("isTenantContactEmailEditable (AI4IDS-3401)", () => {
   it("allows PENDING and ACTIVE only", () => {
@@ -123,11 +122,31 @@ describe("mapTenantEmailConflictToFieldError (AI4IDS-3401)", () => {
         conflict("TENANT_EMAIL_EDIT_NOT_ALLOWED", "Locked"),
       ),
     ).toBeUndefined();
+  });
+
+  it("falls back to EMAIL_ALREADY_EXISTS_MSG when detail has no message", () => {
     expect(
       mapTenantEmailConflictToFieldError({
-        response: { status: 409, data: { detail: { code: "DUPLICATE_EMAIL" } } },
+        message: "Request failed with status code 409",
+        response: {
+          status: 409,
+          data: { detail: { code: "DUPLICATE_EMAIL" } },
+        },
       }),
     ).toBe(EMAIL_ALREADY_EXISTS_MSG);
+  });
+});
+
+describe("runEmailAvailabilityCheck skipUserCollision (AI4IDS-3401)", () => {
+  it("returns unchecked — not available — when user checks are deferred to PATCH", async () => {
+    const result = await runEmailAvailabilityCheck({
+      email: "new@acme.com",
+      mode: "tenant_contact",
+      tenantEmails: new Set(),
+      userEmails: new Set(["other@acme.com"]),
+      skipUserCollision: true,
+    });
+    expect(result).toEqual({ status: "unchecked" });
   });
 });
 
@@ -163,14 +182,5 @@ describe("validateTenantContactEmail", () => {
         userEmails,
       ),
     ).toBe(EMAIL_ALREADY_EXISTS_MSG);
-  });
-});
-
-describe("emailSetHas", () => {
-  it("matches normalized emails in a Set or array", () => {
-    expect(emailSetHas(new Set(["a@x.com"]), "A@X.com")).toBe(true);
-    expect(emailSetHas(["a@x.com"], "A@X.com")).toBe(true);
-    expect(emailSetHas(new Set(["a@x.com"]), "b@x.com")).toBe(false);
-    expect(normalizeEmail(" A@X.com ")).toBe("a@x.com");
   });
 });

@@ -4,7 +4,6 @@ import authService from "../services/authService";
 import {
   EMAIL_ALREADY_EXISTS_MSG,
   EMAIL_USER_ALREADY_EXISTS_MSG,
-  emailSetHas,
   normalizeEmail,
   validateEmailFormatOnly,
   validateTenantContactEmail,
@@ -13,7 +12,15 @@ import {
   type EmailUniquenessExclusions,
 } from "./tenantEmailValidation";
 
-export type EmailAvailabilityStatus = "idle" | "checking" | "available";
+/**
+ * `unchecked` = format/tenant checks passed, user uniqueness deferred to PATCH
+ * (edit contact email — listUsers emails stay masked).
+ */
+export type EmailAvailabilityStatus =
+  | "idle"
+  | "checking"
+  | "available"
+  | "unchecked";
 
 export const EMAIL_CHECK_DEBOUNCE_MS = 400;
 
@@ -87,7 +94,7 @@ export async function runEmailAvailabilityCheck(
   }
 
   if (skipUserCollision) {
-    return { status: "available" };
+    return { status: "unchecked" };
   }
 
   if (skipRemoteCheck) {
@@ -104,9 +111,8 @@ export async function runEmailAvailabilityCheck(
 
   const lower = normalizeEmail(email);
   const skipExcludedUser =
-    (Boolean(exclusions?.excludeUserEmail) &&
-      lower === normalizeEmail(exclusions?.excludeUserEmail ?? "")) ||
-    emailSetHas(exclusions?.allowedUserEmails, lower);
+    Boolean(exclusions?.excludeUserEmail) &&
+    lower === normalizeEmail(exclusions?.excludeUserEmail ?? "");
 
   try {
     const exists = await authService.checkEmailExists(email);

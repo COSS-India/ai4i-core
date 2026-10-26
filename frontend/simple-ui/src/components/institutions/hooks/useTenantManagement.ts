@@ -1030,7 +1030,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   ) => {
     if (!email.trim()) return false;
     if (validateEmailFormatOnly(email)) return false;
-    return status === "available";
+    // `unchecked` = edit flow deferred user check to PATCH (no "available" hint).
+    return status === "available" || status === "unchecked";
   };
 
   const canSubmitTenantForm = useMemo(() => {

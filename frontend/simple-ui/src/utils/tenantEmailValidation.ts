@@ -77,17 +77,17 @@ export function extractApiErrorCode(error: unknown): string | null {
   return code != null ? String(code).toUpperCase() : null;
 }
 
+/** Message from API `detail` only — never axios's top-level `error.message`. */
 export function extractApiErrorMessage(error: unknown): string | undefined {
   const detail = (
-    error as { response?: { data?: { detail?: unknown }; message?: string } } | null
+    error as { response?: { data?: { detail?: unknown } } } | null
   )?.response?.data?.detail;
   if (typeof detail === "string" && detail.trim()) return detail;
   if (detail && typeof detail === "object" && !Array.isArray(detail)) {
     const message = (detail as { message?: unknown }).message;
     if (typeof message === "string" && message.trim()) return message;
   }
-  const top = (error as { message?: unknown } | null)?.message;
-  return typeof top === "string" && top.trim() ? top : undefined;
+  return undefined;
 }
 
 /** Inline form message for PATCH email uniqueness 409s; undefined for other errors. */
@@ -150,17 +150,6 @@ export function resolveTenantEmailUpdateFeedback(
   };
 }
 
-export function emailSetHas(
-  emails: Set<string> | readonly string[] | undefined,
-  email: string,
-): boolean {
-  if (!emails) return false;
-  const lower = normalizeEmail(email);
-  if (!lower) return false;
-  if (emails instanceof Set) return emails.has(lower);
-  return emails.some((e) => normalizeEmail(e) === lower);
-}
-
 /**
  * When editing, skip collision checks for the record's current email.
  * Contact-email edit uniqueness for users is decided by PATCH (emails stay masked).
@@ -168,8 +157,6 @@ export function emailSetHas(
 export interface EmailUniquenessExclusions {
   excludeTenantEmail?: string;
   excludeUserEmail?: string;
-  /** Optional allow-list for create/add-user flows that have plain emails. */
-  allowedUserEmails?: Set<string> | readonly string[];
 }
 
 function isExcludedEmail(lower: string, exclusions?: EmailUniquenessExclusions): {
@@ -182,11 +169,9 @@ function isExcludedEmail(lower: string, exclusions?: EmailUniquenessExclusions):
   const excludedUser = exclusions?.excludeUserEmail
     ? normalizeEmail(exclusions.excludeUserEmail)
     : "";
-  const allowedUser = emailSetHas(exclusions?.allowedUserEmails, lower);
   return {
     tenant: Boolean(excludedTenant) && lower === excludedTenant,
-    user:
-      (Boolean(excludedUser) && lower === excludedUser) || allowedUser,
+    user: Boolean(excludedUser) && lower === excludedUser,
   };
 }
 
