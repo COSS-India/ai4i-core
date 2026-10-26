@@ -42,19 +42,38 @@ import {
 
 type TenantManagement = ReturnType<typeof useTenantManagement>;
 
+type DetailSubTab = "overview" | "users" | "applications";
+
+const DETAIL_SUB_TABS: readonly DetailSubTab[] = [
+  "overview",
+  "users",
+  "applications",
+];
+
+function detailSubTabIndex(tab: string): number {
+  const idx = DETAIL_SUB_TABS.indexOf(tab as DetailSubTab);
+  return idx >= 0 ? idx : 0;
+}
+
+function detailSubTabFromIndex(idx: number): DetailSubTab {
+  return DETAIL_SUB_TABS[idx] ?? "applications";
+}
+
+type InstitutionWorkspaceProps = Readonly<{
+  tm: TenantManagement;
+  tenant: TenantView;
+  tierOptions: TierOption[];
+  tenantTierAssignments: TenantTierAssignment[];
+  usersTable: React.ReactNode;
+}>;
+
 export function InstitutionWorkspace({
   tm,
   tenant,
   tierOptions,
   tenantTierAssignments,
   usersTable,
-}: {
-  tm: TenantManagement;
-  tenant: TenantView;
-  tierOptions: TierOption[];
-  tenantTierAssignments: TenantTierAssignment[];
-  usersTable: React.ReactNode;
-}) {
+}: InstitutionWorkspaceProps) {
     const t = tenant;
     const tierAssignment =
       tenantTierAssignments.find(
@@ -106,17 +125,9 @@ export function InstitutionWorkspace({
           <Tabs
             colorScheme="blue"
             variant="enclosed"
-            index={
-              tm.tenantDetailSubTab === "overview"
-                ? 0
-                : tm.tenantDetailSubTab === "users"
-                  ? 1
-                  : 2
-            }
+            index={detailSubTabIndex(tm.tenantDetailSubTab)}
             onChange={(idx) =>
-              tm.setTenantDetailSubTab(
-                idx === 0 ? "overview" : idx === 1 ? "users" : "applications",
-              )
+              tm.setTenantDetailSubTab(detailSubTabFromIndex(idx))
             }
           >
             <TabList>

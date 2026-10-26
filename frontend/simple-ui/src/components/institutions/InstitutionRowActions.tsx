@@ -88,11 +88,11 @@ function renderOverflowActionMenu(
   );
 }
 
-type InstitutionTenantRowActionsProps = {
+type InstitutionTenantRowActionsProps = Readonly<{
   tm: TenantManagement;
   tenant: TenantView;
   onOpenPlan: (tenant: TenantView) => void;
-};
+}>;
 
 export function InstitutionTenantRowActions({
   tm,
@@ -240,11 +240,11 @@ export function InstitutionTenantRowActions({
   );
 }
 
-type InstitutionUserRowActionsProps = {
+type InstitutionUserRowActionsProps = Readonly<{
   tm: TenantManagement;
   user: TenantUserView;
   resolveUserDisplayStatus: (user: TenantUserView) => TenantUserStatusValue;
-};
+}>;
 
 export function InstitutionUserRowActions({
   tm,

@@ -47,12 +47,7 @@ const registrationColumn: DataTableColumn<TenantUserView> = {
   cell: (u) => <RegistrationMethodBadge user={u} />,
 };
 
-export function InstitutionUsersTable({
-  tm,
-  sortedTenantUsers,
-  userSort,
-  resolveUserDisplayStatus,
-}: {
+type InstitutionUsersTableProps = Readonly<{
   tm: TenantManagement;
   sortedTenantUsers: TenantUserView[];
   userSort: {
@@ -60,7 +55,14 @@ export function InstitutionUsersTable({
     onSortChange: (next: DataTableSortState) => void;
   };
   resolveUserDisplayStatus: (user: TenantUserView) => TenantUserStatusValue;
-}) {
+}>;
+
+export function InstitutionUsersTable({
+  tm,
+  sortedTenantUsers,
+  userSort,
+  resolveUserDisplayStatus,
+}: InstitutionUsersTableProps) {
   // Registration Method only applies to the Default Institution: every user in
   // other institutions is admin-created.
   const showRegistrationMethod = tm.isDefaultTenantUsersView;

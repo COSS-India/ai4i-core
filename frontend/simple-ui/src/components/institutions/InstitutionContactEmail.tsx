@@ -18,15 +18,7 @@ export default function InstitutionContactEmail({
 }: InstitutionContactEmailProps) {
   const pending = pendingEmail?.trim() || null;
 
-  if (!pending) {
-    return (
-      <Text fontSize="sm" isTruncated={compact} maxW={compact ? "260px" : undefined}>
-        {dash(email)}
-      </Text>
-    );
-  }
-
-  if (compact) {
+  if (pending && compact) {
     return (
       <VStack align="start" spacing={0.5} maxW="280px">
         <Text fontSize="sm" isTruncated maxW="280px">
@@ -44,25 +36,36 @@ export default function InstitutionContactEmail({
     );
   }
 
-  return (
-    <Box>
-      <Text fontSize="sm" color="ink.800" wordBreak="break-word">
-        {dash(email)}
-      </Text>
-      <HStack mt={1} spacing={2} align="center" flexWrap="wrap">
-        <Text fontSize="sm" color="ink.600" wordBreak="break-word">
-          {pending}
+  if (pending) {
+    return (
+      <Box>
+        <Text fontSize="sm" color="ink.800" wordBreak="break-word">
+          {dash(email)}
         </Text>
-        <Badge colorScheme="orange">
-          {FIELD_HINTS.tenant.emailVerificationPending}
-        </Badge>
-      </HStack>
-    </Box>
+        <HStack mt={1} spacing={2} align="center" flexWrap="wrap">
+          <Text fontSize="sm" color="ink.600" wordBreak="break-word">
+            {pending}
+          </Text>
+          <Badge colorScheme="orange">
+            {FIELD_HINTS.tenant.emailVerificationPending}
+          </Badge>
+        </HStack>
+      </Box>
+    );
+  }
+
+  return (
+    <Text fontSize="sm" isTruncated={compact} maxW={compact ? "260px" : undefined}>
+      {dash(email)}
+    </Text>
   );
 }
 
-/** Table cell renderer — kept module-scoped so it is not redefined inside the list. */
-export function InstitutionEmailTableCell(tenant: TenantView) {
+/**
+ * Table cell renderer — module-scoped (not redefined inside the list).
+ * camelCase so Sonar does not treat it as a React component needing Readonly props.
+ */
+export function renderInstitutionEmailTableCell(tenant: TenantView) {
   return (
     <InstitutionContactEmail
       email={tenant.email}

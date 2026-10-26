@@ -29,7 +29,7 @@ import FieldHint from "../common/FieldHint";
 import FieldLabel from "../common/FieldLabel";
 import TierSelect from "./TierSelect";
 
-type ManageTierDrawerProps = {
+type ManageTierDrawerProps = Readonly<{
   isOpen: boolean;
   onClose: () => void;
   manageTenant: TenantView | null;
@@ -59,7 +59,7 @@ type ManageTierDrawerProps = {
   servicesLoading: boolean;
   servicesError: boolean;
   planExpired: boolean;
-};
+}>;
 
 export default function ManageTierDrawer({
   isOpen,

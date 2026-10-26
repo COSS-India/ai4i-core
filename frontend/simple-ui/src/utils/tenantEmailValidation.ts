@@ -135,7 +135,7 @@ export function resolveTenantEmailUpdateFeedback(
   const sent = Boolean(updated.email_verification_sent);
   const effectiveEmail = updated.email || previousEmail;
 
-  if (pending && sent) {
+  if (sent && pending) {
     return {
       toastType: "info",
       message:
@@ -145,7 +145,7 @@ export function resolveTenantEmailUpdateFeedback(
     };
   }
 
-  if (!pending && sent) {
+  if (sent) {
     return {
       toastType: "info",
       message:
@@ -167,10 +167,10 @@ export function resolveTenantEmailUpdateFeedback(
  * When editing, skip collision checks for the record's current email.
  * Contact-email edit uniqueness for users is decided by PATCH (emails stay masked).
  */
-export interface EmailUniquenessExclusions {
+export type EmailUniquenessExclusions = Readonly<{
   excludeTenantEmail?: string;
   excludeUserEmail?: string;
-}
+}>;
 
 function isExcludedEmail(lower: string, exclusions?: EmailUniquenessExclusions): {
   tenant: boolean;

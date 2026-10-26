@@ -19,7 +19,7 @@ import { dash, fmtDate } from "../../utils/valueFormatters";
 import type { TenantView } from "../../types/tenant";
 import type { TenantTierAssignment } from "../../services/tierManagementService";
 import { useTenantManagement } from "./hooks/useTenantManagement";
-import { InstitutionEmailTableCell } from "./InstitutionContactEmail";
+import { renderInstitutionEmailTableCell } from "./InstitutionContactEmail";
 import {
   getTenantAvatarBg,
   getTenantInitials,
@@ -29,17 +29,7 @@ import {
 
 type TenantManagement = ReturnType<typeof useTenantManagement>;
 
-export function InstitutionAdopterList({
-  tm,
-  sortedTenants,
-  tenantSort,
-  isAdmin,
-  tierOptions,
-  tenantTierAssignmentsById,
-  tierFilterOptions,
-  handleTierFilterChange,
-  openTenantPlan,
-}: {
+type InstitutionAdopterListProps = Readonly<{
   tm: TenantManagement;
   sortedTenants: TenantView[];
   tenantSort: {
@@ -52,7 +42,19 @@ export function InstitutionAdopterList({
   tierFilterOptions: TierOption[];
   handleTierFilterChange: (next: string) => void;
   openTenantPlan: (tenant: TenantView) => void;
-}) {
+}>;
+
+export function InstitutionAdopterList({
+  tm,
+  sortedTenants,
+  tenantSort,
+  isAdmin,
+  tierOptions,
+  tenantTierAssignmentsById,
+  tierFilterOptions,
+  handleTierFilterChange,
+  openTenantPlan,
+}: InstitutionAdopterListProps) {
   const tenantColumns = useMemo((): DataTableColumn<TenantView>[] => {
     return [
       {
@@ -126,7 +128,7 @@ export function InstitutionAdopterList({
         header: "Email",
         sortable: true,
         sortAccessor: (t) => t.email ?? "",
-        cell: InstitutionEmailTableCell,
+        cell: renderInstitutionEmailTableCell,
       },
       {
         id: "status",
