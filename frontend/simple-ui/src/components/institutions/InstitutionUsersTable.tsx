@@ -89,7 +89,7 @@ export function InstitutionUsersTable({
       {
         id: "roles",
         header: "Roles",
-        cell: (u) => <TenantUserRoleBadges role={u.role} roles={u.roles} />,
+        cell: (u) => <TenantUserRoleBadges roles={u.roles} />,
       },
       ...(showRegistrationMethod ? [registrationColumn] : []),
       {

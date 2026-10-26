@@ -306,11 +306,7 @@ function RoleField({ mode, tm }: InstitutionUserFormProps) {
   if (mode === "view" && viewUser) {
     return (
       <ReadOnlyField label="Roles">
-        <TenantUserRoleBadges
-          role={viewUser.role}
-          roles={viewUser.roles}
-          badgeFontSize="sm"
-        />
+        <TenantUserRoleBadges roles={viewUser.roles} badgeFontSize="sm" />
       </ReadOnlyField>
     );
   }
