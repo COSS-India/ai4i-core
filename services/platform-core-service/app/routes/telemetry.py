@@ -2,11 +2,21 @@
 import re
 import asyncio
 import logging
-from typing import Annotated, Optional
+from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
-from app.schemas.telemetry import SearchTracesResponse, TraceResponse
+from app.schemas.telemetry import (
+    ALL_SPAN_TYPES,
+    COLUMN_DEFINITIONS,
+    COLUMN_SPAN_DEP,
+    DEFAULT_COLUMN_KEYS,
+    VALID_COLUMN_KEYS,
+    ColumnDefinition,
+    SearchTracesResponse,
+    SearchTraceSummary,
+    TraceResponse,
+)
 from app.utils.opensearch_client import OpenSearchTraceClient
 from app.core.exceptions import InsufficientPermissionsError
 from app.core.config import settings
@@ -109,6 +119,7 @@ def _collect_all_trace_ids(opensearch_client: OpenSearchTraceClient, filter_quer
 _KEYWORD_IGNORE_ABOVE = 256
 
 
+
 def _exact_attribute_match(attribute: str, value: str) -> dict:
     """Exact-value, case-insensitive filter on one span attribute.
 
@@ -184,6 +195,75 @@ def _build_traces_map(hits: list, tenant_filter: Optional[str]) -> dict:
     return traces_map
 
 
+def _required_span_types(selected_columns: frozenset) -> set:
+    """Return the set of span types needed to serve the selected columns."""
+    required: set = {"request"}
+    for col in selected_columns:
+        dep = COLUMN_SPAN_DEP.get(col)
+        if dep:
+            required.add(dep)
+    return required
+
+
+def _build_page_data(
+    traces_map: dict,
+    hits: list,
+    selected_columns: frozenset,
+    paginated_trace_ids: list,
+) -> list:
+    """Build response rows containing only the selected columns.
+
+    trace_id is always included as the row identifier regardless of selection.
+    Indexes spans by trace_id once so attribute lookup is O(1) per trace.
+    """
+    request_attrs: dict = {}
+    model_attrs: dict = {}
+    any_attrs: dict = {}
+
+    for hit in hits:
+        source = hit.get("_source", {})
+        tid = source.get("context", {}).get("trace_id")
+        if not tid:
+            continue
+        attrs = source.get("attributes", {})
+        span_name = source.get("name")
+        if tid not in any_attrs:
+            any_attrs[tid] = attrs
+        if span_name == "request" and tid not in request_attrs:
+            request_attrs[tid] = attrs
+        elif span_name == "model" and tid not in model_attrs:
+            model_attrs[tid] = attrs
+
+    result = []
+    for tid in paginated_trace_ids:
+        if tid not in traces_map:
+            continue
+        base = traces_map[tid]
+        req  = request_attrs.get(tid, {})
+        mdl  = model_attrs.get(tid, {})
+        any_ = any_attrs.get(tid, {})
+
+        row: dict = {"trace_id": tid}
+        if "timestamp"   in selected_columns: row["timestamp"]   = base.get("timestamp")
+        if "status"      in selected_columns: row["status"]      = base.get("status", "unknown")
+        if "task_type"   in selected_columns: row["task_type"]   = base.get("task_type")
+        if "url"         in selected_columns: row["url"]         = base.get("url")
+        if "institution" in selected_columns: row["tenant_id"] = base.get("tenant_id")
+        if "service"     in selected_columns: row["service"]     = base.get("service")
+        if "status_code" in selected_columns: row["status_code"] = req.get("status_code")
+        if "error"       in selected_columns: row["error"]       = req.get("error")
+        if "latency"     in selected_columns: row["latency"]     = req.get("total_time_ms")
+        if "method"      in selected_columns: row["method"]      = req.get("method")
+        if "model"       in selected_columns: row["model"]       = mdl.get("model_name")
+        if "application" in selected_columns: row["application"] = any_.get("app_id")
+        if "api_key"     in selected_columns: row["api_key"]     = any_.get("api_key_id")
+        if "end_user"    in selected_columns: row["end_user"]    = any_.get("enduser.id")
+        if "metadata"    in selected_columns: row["metadata"]    = any_.get("metadata_kv")
+        result.append(row)
+
+    return result
+
+
 # Spans-per-trace ceiling used when sizing Step 3's per-page span fetch below.
 # Keeps page_size * this under OpenSearch's default 10k result-window limit.
 _SPAN_CEILING_PER_TRACE = 50
@@ -201,6 +281,20 @@ _BREAKDOWN_BATCH_SIZE = max(1, 10000 // _BREAKDOWN_SPAN_CEILING_PER_TRACE)
 # bounds how many worker threads - and how much concurrent load on the
 # OpenSearch cluster - one dashboard request can use at a time.
 _BREAKDOWN_CONCURRENCY = 5
+
+# Maps sort_by parameter values to their OpenSearch field names.
+# URL and status_code are keyword/numeric fields on the request span.
+_SORT_FIELD_MAP = {
+    "timestamp": "@timestamp",
+    "url": "attributes.url.keyword",
+    "latency": "attributes.total_time_ms",
+    "status_code": "attributes.status_code",
+}
+
+# AC-17: keyword searches matching more than this many traces return 400.
+# _collect_all_trace_ids is called with limit=_MAX_KEYWORD_TRACE_IDS + 1; if it
+# returns more than _MAX_KEYWORD_TRACE_IDS IDs the caller must narrow their search.
+_MAX_KEYWORD_TRACE_IDS = 20000
 
 
 async def _compute_full_breakdown(opensearch_client: OpenSearchTraceClient, trace_ids: list, tenant_filter: Optional[str]) -> tuple:
@@ -356,7 +450,7 @@ def _get_opensearch_client(request: Request) -> OpenSearchTraceClient:
 async def search_traces_opensearch(
     request: Request,
     task_types: Optional[str] = Query(None, description="Comma-separated task type filter (e.g. nmt,llm,asr)"),
-    status_filter: Optional[str] = Query(None, description="Filter by status (success, failure, etc.)"),
+    status_filter: Optional[str] = Query(None, description="Filter by status (success, failed) — legacy alias for `status`"),
     tenant_id: Optional[str] = Query(None, description="Filter by tenant_id (ADMIN only for other tenants)"),
     start_date: Optional[str] = Query(None, description="Start date in ISO format"),
     end_date: Optional[str] = Query(None, description="End date in ISO format"),
@@ -375,20 +469,43 @@ async def search_traces_opensearch(
     metadata_value: Annotated[Optional[str], Query(
         max_length=512, description="Exact value for metadata_key",
     )] = None,
+    # New parameters for the Logs Dashboard
+    q: Annotated[Optional[str], Query(
+        min_length=1, max_length=256,
+        description="Keyword search across all span fields",
+    )] = None,
+    log_status: Annotated[Optional[str], Query(
+        alias="status",
+        description="Filter by status: success or failed",
+    )] = None,
+    status_code: Annotated[Optional[str], Query(
+        description="Comma-separated HTTP status codes 100-599, max 10 values",
+    )] = None,
+    service_id: Optional[str] = Query(None, description="Exact match on service ID"),
+    sort_by: Optional[str] = Query(None, description="Sort field: timestamp, url, latency, status_code"),
+    sort_order: Optional[str] = Query(None, description="Sort direction: desc (default) or asc"),
+    columns: Annotated[Optional[str], Query(
+        description=(
+            "Comma-separated column keys to include in each response row. "
+            f"Defaults to: {','.join(sorted(DEFAULT_COLUMN_KEYS))}. "
+            f"Valid keys: {','.join(sorted(VALID_COLUMN_KEYS))}"
+        ),
+    )] = None,
 ):
     """
     Search traces from OpenSearch for the Logs Dashboard.
 
     Returns one page of matching logs (`data`) plus the true pagination
-    `total`, and separately, summary counts (`aggregations`: total,
-    by_level, by_task) covering EVERY log that matches the filters - not
-    just the page being returned. The two are computed differently: `data`
-    and `total` come from a single query (Step 2 below); the summary counts
-    require looking at every matching log, so they're built via
-    _collect_all_trace_ids + _compute_full_breakdown further down.
+    `total`, a `summary` of success/failure counts across all matched traces,
+    and `aggregations` (by_level, by_task) covering every log that matches
+    the filters — not just the page being returned.
+
+    When `q` is given a keyword pre-query resolves matching trace IDs across
+    all span types first; the main query then gates on that set. If the
+    keyword matches more than 20,000 distinct traces a 400 is returned
+    immediately so the caller can narrow the search.
     """
 
-    # Validate user has one of the allowed roles (1, 2, or 5)
     _validate_telemetry_access(request)
 
     if (metadata_key is None) != (metadata_value is None):
@@ -396,6 +513,54 @@ async def search_traces_opensearch(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="metadata_key and metadata_value must be given together",
         )
+
+    if sort_by is not None and sort_by not in _SORT_FIELD_MAP:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"sort_by must be one of: {', '.join(_SORT_FIELD_MAP)}",
+        )
+    if sort_order is not None and sort_order not in {"asc", "desc"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="sort_order must be 'asc' or 'desc'",
+        )
+
+    # Parse and validate selected columns
+    if columns:
+        requested_keys = {k.strip() for k in columns.split(",") if k.strip()}
+        unknown = requested_keys - VALID_COLUMN_KEYS
+        if unknown:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Unknown column keys: {', '.join(sorted(unknown))}. Valid keys: {', '.join(sorted(VALID_COLUMN_KEYS))}",
+            )
+        selected_columns = frozenset(requested_keys)
+    else:
+        selected_columns = DEFAULT_COLUMN_KEYS
+
+    # Validate and parse status_code values
+    status_code_list: list[int] = []
+    if status_code:
+        raw_codes = [c.strip() for c in status_code.split(",") if c.strip()]
+        if len(raw_codes) > 10:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="status_code accepts at most 10 values",
+            )
+        for c in raw_codes:
+            try:
+                code_int = int(c)
+                if not (100 <= code_int <= 599):
+                    raise ValueError()
+                status_code_list.append(code_int)
+            except ValueError:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Invalid status_code value '{c}': must be an integer 100-599",
+                )
+
+    # `status` (log_status) takes precedence over the legacy `status_filter` alias
+    effective_status = log_status or status_filter
 
     try:
         is_admin = _is_admin(request)
@@ -416,11 +581,62 @@ async def search_traces_opensearch(
                 )
             logger.info(f"Tenant-scoped trace read - tenant_id={tenant_filter}")
 
-        # Build OpenSearch query to find matching traces, then return ALL spans for those traces
-        filter_clauses = []
-
+        # --- Base filter clauses (tenant + date range) ---
+        # Used in the keyword pre-query before span-type-specific filters are applied,
+        # so the keyword search scans all span types within the time window.
+        base_filter_clauses = []
         if tenant_filter:
-            filter_clauses.append({"match_phrase": {"attributes.tenantId": tenant_filter}})
+            base_filter_clauses.append({"match_phrase": {"attributes.tenantId": tenant_filter}})
+        if start_date or end_date:
+            range_query: dict = {}
+            if start_date:
+                range_query["gte"] = start_date
+            if end_date:
+                range_query["lte"] = end_date
+            base_filter_clauses.append({"range": {"@timestamp": range_query}})
+
+        # --- Keyword pre-query ---
+        # q= matches across all span types. When the main query is anchored to the
+        # request span (for sort by latency/url or status_code filtering), those two
+        # constraints can't be expressed on the same document. Resolve q to a set of
+        # trace IDs first, then gate the main query on that set.
+
+        keyword_trace_ids: Optional[list] = None
+        if q:
+            pre_query: dict = {
+                "bool": {
+                    "filter": base_filter_clauses,
+                    "must": [{"multi_match": {"query": q, "fields": ["*"], "type": "phrase", "lenient": True}}],
+                }
+            }
+            keyword_trace_ids = _collect_all_trace_ids(opensearch_client, pre_query, limit=_MAX_KEYWORD_TRACE_IDS + 1)
+            if len(keyword_trace_ids) > _MAX_KEYWORD_TRACE_IDS:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Too many results. Please narrow your date range or refine your search.",
+                )
+
+        if keyword_trace_ids is not None and not keyword_trace_ids:
+            return SearchTracesResponse(
+                data=[],
+                total=0,
+                page=page,
+                pageSize=page_size,
+                aggregations={"total": 0, "by_level": {}, "by_task": {}, "partial": False},
+                summary=SearchTraceSummary(success=0, failure=0),
+            )
+
+        # --- Request-span anchor ---
+        # status_code and non-timestamp sort fields live on the request span.
+        # Adding name="request" pins those conditions to that span type so they
+        # are evaluated on the same document.
+        needs_request_anchor = bool(
+            status_code_list
+            or (sort_by and sort_by in {"latency", "url", "status_code"})
+        )
+
+        # --- Full filter clause list ---
+        filter_clauses = list(base_filter_clauses)
 
         if task_types:
             types_list = [t.strip() for t in task_types.split(",") if t.strip()]
@@ -434,16 +650,8 @@ async def search_traces_opensearch(
                     }
                 })
 
-        if status_filter:
-            filter_clauses.append({"match_phrase": {"attributes.status": status_filter}})
-
-        if start_date or end_date:
-            range_query = {}
-            if start_date:
-                range_query["gte"] = start_date
-            if end_date:
-                range_query["lte"] = end_date
-            filter_clauses.append({"range": {"@timestamp": range_query}})
+        if effective_status:
+            filter_clauses.append({"match_phrase": {"attributes.status": effective_status}})
 
         # Caller tags are on every span of an LLM request (inference-service's
         # get_context_attributes), so matching any span finds the trace.
@@ -457,22 +665,35 @@ async def search_traces_opensearch(
                 _exact_attribute_match("metadata_kv", f"{metadata_key}={metadata_value}")
             )
 
-        # Step 1: Find trace_ids that match the filters
-        if filter_clauses:
-            filter_query = {"bool": {"must": filter_clauses}}
-        else:
-            filter_query = {"match_all": {}}
+        if service_id:
+            filter_clauses.append(_exact_attribute_match("service_id", service_id))
 
-        # Tag values are tenant end-user data: log only whether they were used.
+        if status_code_list:
+            filter_clauses.append({"terms": {"attributes.status_code": status_code_list}})
+
+        if needs_request_anchor:
+            filter_clauses.append({"term": {"name": "request"}})
+
+        if keyword_trace_ids is not None:
+            filter_clauses.append({"terms": {"context.trace_id.keyword": keyword_trace_ids}})
+
+        filter_query = {"bool": {"must": filter_clauses}} if filter_clauses else {"match_all": {}}
+
+        # --- Sort ---
+        sort_field = _SORT_FIELD_MAP.get(sort_by or "timestamp", "@timestamp")
+        sort_dir = sort_order if sort_order in {"asc", "desc"} else "desc"
+        sort_clause = [{sort_field: {"order": sort_dir}}]
+
         logger.info(
-            f"Searching traces - task_types={task_types}, status={status_filter}, tenant={tenant_filter}, "
+            f"Searching traces - task_types={task_types}, status={effective_status}, "
+            f"tenant={tenant_filter}, service_id={service_id}, status_code={status_code}, "
+            f"q={'set' if q else None}, sort_by={sort_by}, sort_order={sort_order}, "
             f"user_filter={user is not None}, metadata_filter={metadata_key is not None}"
         )
 
-        # Step 2: page the matching traces at the TRACE level, newest-first.
+        # Step 2: page the matching traces at the TRACE level.
         # Collapsing on trace_id makes each result row one trace (not one span), so
-        # from/size paginate over traces; sorting by @timestamp desc (the client
-        # default) orders them by recency; the cardinality agg yields the distinct
+        # from/size paginate over traces; the cardinality agg yields the distinct
         # trace count so page math reflects traces, not spans.
         offset = (page - 1) * page_size
         ids_response = opensearch_client.search_traces(
@@ -481,6 +702,7 @@ async def search_traces_opensearch(
             from_=offset,
             source_fields=["context.trace_id"],
             collapse={"field": "context.trace_id.keyword"},
+            sort=sort_clause,
             aggs={"trace_count": {"cardinality": {
                 "field": "context.trace_id.keyword",
                 "precision_threshold": _TOTAL_PRECISION_THRESHOLD,
@@ -492,28 +714,37 @@ async def search_traces_opensearch(
 
         _NULL_TRACE_ID = "0x" + "0" * 32
 
-        # Preserve the newest-first order from the collapse result
+        # Preserve the sort order from the collapse result
         paginated_trace_ids = []
         for hit in ids_response.get("hits", {}).get("hits", []):
             trace_id = hit.get("_source", {}).get("context", {}).get("trace_id")
             if trace_id and trace_id != _NULL_TRACE_ID and trace_id not in paginated_trace_ids:
                 paginated_trace_ids.append(trace_id)
 
-        # Step 3: fetch ALL spans for the paged traces. Filters target single span
-        # types (task_type on the 'model' span, url on 'request'), so we re-fetch the
-        # full set per trace — unfiltered — to assemble complete metadata.
-        traces_map = {}
+        # Step 3: fetch spans for the paged traces. Filtered to only the span types
+        # required by the selected columns to reduce OpenSearch I/O; always includes
+        # 'request' since status/timestamp/url live there.
+        data: list = []
         if paginated_trace_ids:
             trace_id_clauses = [{"match_phrase": {"context.trace_id": tid}} for tid in paginated_trace_ids]
+            required_spans = _required_span_types(selected_columns)
+            if required_spans < ALL_SPAN_TYPES:
+                step3_query: dict = {
+                    "bool": {
+                        "must": [{"bool": {"should": trace_id_clauses, "minimum_should_match": 1}}],
+                        "filter": [{"terms": {"name": sorted(required_spans)}}],
+                    }
+                }
+            else:
+                step3_query = {"bool": {"should": trace_id_clauses, "minimum_should_match": 1}}
             spans_response = opensearch_client.search_traces(
-                query={"bool": {"should": trace_id_clauses, "minimum_should_match": 1}},
+                query=step3_query,
                 size=len(paginated_trace_ids) * _SPAN_CEILING_PER_TRACE,
                 source_fields=["@timestamp", "name", "context.trace_id", "attributes", "service_name"],
             )
-            traces_map = _build_traces_map(spans_response.get("hits", {}).get("hits", []), tenant_filter)
-
-        # Emit in the newest-first order established by the collapse page
-        data = [traces_map[tid] for tid in paginated_trace_ids if tid in traces_map]
+            hits = spans_response.get("hits", {}).get("hits", [])
+            traces_map = _build_traces_map(hits, tenant_filter)
+            data = _build_page_data(traces_map, hits, selected_columns, paginated_trace_ids)
 
         # Calculate aggregations across ALL matching traces (not just this page) so the
         # summary cards match the pagination footer's total instead of the page size.
@@ -527,8 +758,12 @@ async def search_traces_opensearch(
         by_level, by_task, breakdown_truncated = await _compute_full_breakdown(opensearch_client, all_trace_ids, tenant_filter)
         is_partial = is_capped or breakdown_truncated
 
-        return SearchTracesResponse(
+        summary = SearchTraceSummary(
+            success=by_level.get("success", 0),
+            failure=by_level.get("failed", 0) + by_level.get("failure", 0),
+        )
 
+        return SearchTracesResponse(
             data=data,
             total=total,
             page=page,
@@ -538,7 +773,8 @@ async def search_traces_opensearch(
                 "by_level": by_level,
                 "by_task": by_task,
                 "partial": is_partial,
-            }
+            },
+            summary=summary,
         )
 
     except HTTPException:
@@ -550,6 +786,17 @@ async def search_traces_opensearch(
             detail=f"Error searching OpenSearch: {str(e)}",
         )
 
+
+
+@router.get("/traces/columns", response_model=List[ColumnDefinition])
+async def get_trace_columns(request: Request):
+    """Return all available column definitions for the trace search column picker.
+
+    Frontend calls this once on page load to render the column picker UI.
+    span routing hint is intentionally excluded from the response.
+    """
+    _validate_telemetry_access(request)
+    return COLUMN_DEFINITIONS
 
 
 @router.get("/traces/{trace_id}", response_model=TraceResponse)

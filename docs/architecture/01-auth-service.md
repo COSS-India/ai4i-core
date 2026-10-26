@@ -118,8 +118,10 @@ below show the domain-level paths. Source: `services/auth-service/app/routes/`.
 | GET | `/auth/api-keys/all` | List all keys (admin) |
 | PATCH | `/auth/api-keys/{api_key}` | Update name / permissions / expiry / active |
 | DELETE | `/auth/api-keys/{api_key}` | Revoke / delete key |
-| POST | `/auth/api-keys/{key_id}/rotate` | Issue a new key value (returned once); the previous value keeps working for `ROTATED_API_KEY_EXPIRE_DAYS` |
-| DELETE | `/auth/api-keys/{key_id}/rotated-key` | Stop the previous value now, before its window ends; the current value keeps working |
+| POST | `/auth/api-keys/{key_id}/rotate` | Issue a new key value (returned once); the previous value keeps working for the required `grace_days` |
+| PATCH | `/auth/api-keys/{key_id}/rotated-key` | Move the previous value's window end later, while it still works; never past the key's expiry |
+| DELETE | `/auth/api-keys/{key_id}/rotated-key` | Stop the previous value now, before its window ends; the current value keeps working (if it was already revoked, the whole key is revoked) |
+| DELETE | `/auth/api-keys/{key_id}/current-key` | Stop the current value now, during a rotation; the previous value keeps working until its window ends, then the key has no working value |
 
 ### Tenants — `/auth/tenants`
 | Method | Path | Purpose |
@@ -177,7 +179,7 @@ Source: `services/auth-service/app/models/`.
 | Database | `AUTH_DB_USER/PASSWORD/HOST/PORT`, `AUTH_SERVICE_DB_NAME` (`ai4iplatform_auth`) or `DATABASE_URL`; `DB_POOL_SIZE`, `DB_MAX_OVERFLOW` |
 | Redis | `REDIS_HOST/PORT/PASSWORD/DB`, `REDIS_TIMEOUT` |
 | JWT / keys | `RS256_KEY_DIRECTORY`, `RS256_MIN_KEY_COUNT`, `RS256_ACTIVE_KEY_INDEX`, `JWT_ISSUER`, `JWT_AUDIENCE` |
-| Token expiry | `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS`, `API_KEY_EXPIRE_DAYS`, `ROTATED_API_KEY_EXPIRE_DAYS`, `SETUP_TOKEN_EXPIRE_HOURS`, `RESET_TOKEN_EXPIRE_MINUTES` |
+| Token expiry | `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS`, `API_KEY_EXPIRE_DAYS`, `SETUP_TOKEN_EXPIRE_HOURS`, `RESET_TOKEN_EXPIRE_MINUTES` |
 | Password (Argon2id) | `ARGON2_TIME_COST`, `ARGON2_MEMORY_COST`, `ARGON2_PARALLELISM`, `PASSWORD_HASH_MAX_WORKERS` |
 | OAuth2 | `GOOGLE_CLIENT_ID/SECRET`, `OAUTH_REDIRECT_BASE_URL`, `OAUTH_ALLOWED_REDIRECT_URIS`, `OAUTH_STATE_TTL_SECONDS`, `OAUTH_EXCHANGE_CODE_TTL_SECONDS` |
 | Email / SMTP | `EMAIL_PROVIDER`, `EMAIL_FROM`, `SMTP_HOST/PORT/USERNAME/PASSWORD`, `SMTP_USE_TLS`, `SETUP_LINK_BASE_URL`, `VERIFY_LINK_BASE_URL`, `RESET_LINK_BASE_URL`, `RESET_REQUEST_LIMIT_PER_HOUR` |

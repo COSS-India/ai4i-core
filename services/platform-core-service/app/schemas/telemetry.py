@@ -4,6 +4,43 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
 
+class ColumnDefinition(BaseModel):
+    """User-facing metadata for one column in the trace search column picker."""
+    key: str
+    label: str
+    default: bool
+    filterable: bool
+    sortable: bool
+    keyword_searchable: bool
+
+
+# Static column definitions — single source of truth for the column picker.
+# span is used by _required_span_types to decide which span types to fetch per request.
+# The /traces/columns endpoint exposes only the user-facing fields via ColumnDefinition.
+COLUMN_DEFINITIONS: List[Dict[str, Any]] = [
+    {"key": "timestamp",   "label": "Timestamp",   "default": True,  "filterable": False, "sortable": True,  "keyword_searchable": False, "span": None},
+    {"key": "status",      "label": "Status",      "default": True,  "filterable": True,  "sortable": False, "keyword_searchable": True,  "span": None},
+    {"key": "task_type",   "label": "Task Type",   "default": True,  "filterable": True,  "sortable": False, "keyword_searchable": True,  "span": "model"},
+    {"key": "url",         "label": "URL",         "default": True,  "filterable": False, "sortable": True,  "keyword_searchable": True,  "span": "request"},
+    {"key": "institution", "label": "Institution", "default": True,  "filterable": True,  "sortable": False, "keyword_searchable": False, "span": None},
+    {"key": "status_code", "label": "Status Code", "default": False, "filterable": True,  "sortable": True,  "keyword_searchable": True,  "span": "request"},
+    {"key": "error",       "label": "Error",       "default": False, "filterable": False, "sortable": False, "keyword_searchable": True,  "span": "request"},
+    {"key": "service",     "label": "Service",     "default": False, "filterable": True,  "sortable": False, "keyword_searchable": True,  "span": None},
+    {"key": "model",       "label": "Model",       "default": False, "filterable": False, "sortable": False, "keyword_searchable": True,  "span": "model"},
+    {"key": "latency",     "label": "Latency (ms)","default": False, "filterable": False, "sortable": True,  "keyword_searchable": False, "span": "request"},
+    {"key": "application", "label": "Application", "default": False, "filterable": False, "sortable": False, "keyword_searchable": True,  "span": None},
+    {"key": "api_key",     "label": "API Key",     "default": False, "filterable": False, "sortable": False, "keyword_searchable": True,  "span": None},
+    {"key": "end_user",    "label": "End User",    "default": False, "filterable": True,  "sortable": False, "keyword_searchable": True,  "span": None},
+    {"key": "metadata",    "label": "Metadata",    "default": False, "filterable": True,  "sortable": False, "keyword_searchable": True,  "span": None},
+    {"key": "method",      "label": "Method",      "default": False, "filterable": False, "sortable": False, "keyword_searchable": False, "span": "request"},
+]
+
+VALID_COLUMN_KEYS: frozenset = frozenset(col["key"] for col in COLUMN_DEFINITIONS)
+DEFAULT_COLUMN_KEYS: frozenset = frozenset(col["key"] for col in COLUMN_DEFINITIONS if col["default"])
+COLUMN_SPAN_DEP: Dict[str, Optional[str]] = {col["key"]: col["span"] for col in COLUMN_DEFINITIONS}
+ALL_SPAN_TYPES: frozenset = frozenset({"request", "model", "ai-inference"})
+
+
 class TraceSpanContext(BaseModel):
     """Span context information."""
     trace_id: str
@@ -53,17 +90,6 @@ class TraceResponse(BaseModel):
     spans: List[Dict[str, Any]] = []
 
 
-class SearchTraceItem(BaseModel):
-    """Single trace item in search results."""
-    trace_id: str
-    service: Optional[str] = None
-    task_type: Optional[str] = None
-    status: str
-    url: Optional[str] = None
-    tenant_id: Optional[str] = None
-    timestamp: Optional[str] = None
-
-
 class SearchTraceAggregations(BaseModel):
     """Aggregation stats for search results."""
     total: int
@@ -75,10 +101,17 @@ class SearchTraceAggregations(BaseModel):
     partial: bool = False
 
 
+class SearchTraceSummary(BaseModel):
+    """Success/failure counts for the full matching result set."""
+    success: int = 0
+    failure: int = 0
+
+
 class SearchTracesResponse(BaseModel):
     """Paginated search traces response."""
-    data: List[SearchTraceItem]
+    data: List[Dict[str, Any]]  # fields vary per selected columns
     total: int
     page: int
     pageSize: int
     aggregations: SearchTraceAggregations
+    summary: SearchTraceSummary = Field(default_factory=SearchTraceSummary)

@@ -16,6 +16,8 @@ import {
   ACTIVE_TIERS_STALE_MS,
   type TenantTierAssignment,
   adjustTenantBudget,
+  type AdjustTenantBudgetPayload,
+  type AdjustTenantBudgetResponse,
 } from "../../services/tierManagementService";
 import * as tenantService from "../../services/tenantService";
 import { fetchAllServicesMatchingFilters } from "../../services/servicesManagementService";
@@ -91,6 +93,94 @@ function isBudgetAssignmentExpired(tenant: TenantView | null | undefined): boole
 // the Manage Tier drawer, and the server doesn't gate tier changes on it.
 function hasTierAssignment(tenant: TenantView | null | undefined): boolean {
   return Boolean(tenant?.tier_id);
+}
+
+/** `detail.message`, or a plain string `detail`, from an API error body. */
+function apiErrorDetail(err: unknown): string | undefined {
+  const detail = (err as { response?: { data?: { detail?: unknown } } })
+    ?.response?.data?.detail;
+  if (typeof detail === "object" && detail !== null && "message" in detail) {
+    return String((detail as { message?: string }).message);
+  }
+  return typeof detail === "string" ? detail : undefined;
+}
+
+type BudgetWindowEdit = {
+  windowActive: boolean;
+  toChanged: boolean;
+  effectiveFrom: string;
+  effectiveTo: string;
+};
+
+// From is never user-settable in Manage Tier — openTenantPlan seeds it to the
+// stored window's From, or today when there is no stored window — so only To
+// needs checking.
+function budgetWindowError({
+  windowActive,
+  toChanged,
+  effectiveFrom,
+  effectiveTo,
+}: BudgetWindowEdit): string | null {
+  if (!windowActive && !effectiveTo) {
+    return "Set a Budget Effective To date to open a new budget window.";
+  }
+  const toMovable = toChanged || !windowActive;
+  if (
+    toMovable &&
+    effectiveFrom &&
+    effectiveTo < budgetWindowToMinDate(effectiveFrom, todayDateInputValue())
+  ) {
+    return "Budget Effective To must be later than today, and at least a day after Budget Effective From.";
+  }
+  return null;
+}
+
+/**
+ * The endpoint takes action/amount and the dates independently, so a
+ * date-only revision (`amount` null) is a valid call.
+ */
+function budgetRevisionPayload(
+  tenant: TenantView,
+  amount: number | null,
+  windowChanged: boolean,
+  effectiveFrom: string,
+  effectiveTo: string,
+): AdjustTenantBudgetPayload {
+  const payload: AdjustTenantBudgetPayload = {
+    tenant_id: String(tenant.tenant_id),
+  };
+  if (amount !== null) {
+    payload.action = "top-up";
+    payload.amount = amount;
+  }
+  // Mirrors the service's `has_existing_window`: AI4IDS-2995 locks From once
+  // one is on file at all, lapsed window included (422 effective_from_locked
+  // if sent), so From only goes out when this call founds the tenant's very
+  // first window.
+  if (!tenant.budget_effective_from) {
+    payload.budget_effective_from = dateInputToStartOfDayIso(effectiveFrom);
+  }
+  if (windowChanged) {
+    payload.budget_effective_to = dateInputToEndOfDayIso(effectiveTo);
+  }
+  return payload;
+}
+
+// A tenant budget revision never moves any Application's own ₹ (or,
+// therefore, any Key's — keys_recomputed is always literally 0 now and would
+// be misleading to surface). Only each Application's % share of the new total
+// is recalculated; their ₹ allocations are untouched.
+function budgetRevisionDescription(
+  amount: number | null,
+  appsRecomputed: number | undefined,
+): string {
+  const base =
+    amount === null
+      ? "Budget window updated."
+      : `Budget increased by ${formatRupees(amount)}.`;
+  if (!appsRecomputed) return base;
+  const verb = appsRecomputed === 1 ? "was" : "were";
+  return `${base} ${appsRecomputed} Application(s)' Budget % ${verb} recalculated to reflect the new total — their ₹ allocations were not changed.`;
 }
 
 export interface TenantManagementTabProps {
@@ -313,9 +403,6 @@ export default function TenantManagementTab({
   const [originalTierId, setOriginalTierId] = useState("");
   const [manageBudget, setManageBudget] = useState(0);
   const [isSavingPlan, setIsSavingPlan] = useState(false);
-  const [budgetAction, setBudgetAction] = useState<"topup" | "topdown">(
-    "topup",
-  );
   const [isEditingTier, setIsEditingTier] = useState(false);
   const [budgetAmount, setBudgetAmount] = useState("");
   const [manageEffectiveFrom, setManageEffectiveFrom] = useState("");
@@ -373,7 +460,6 @@ export default function TenantManagementTab({
     setIsEditingTier(!tierId);
     setManageBudget(tenantBudgetNumber(tenant) ?? 0);
     setBudgetAmount("");
-    setBudgetAction("topup");
     // From is read-only here, so whatever is seeded is what gets sent.
     // Manage Tier always shows the stored From, lapsed window included — a
     // reassignment keeps its original start date. Only Assign Tier, which
@@ -399,7 +485,6 @@ export default function TenantManagementTab({
     setIsEditingTier(false);
 
     setBudgetAmount("");
-    setBudgetAction("topup");
     setManageEffectiveFrom("");
     setManageEffectiveTo("");
     setOriginalEffectiveTo("");
@@ -478,6 +563,25 @@ export default function TenantManagementTab({
     }
   };
 
+  const applyCommittedBudget = (
+    tenantId: string,
+    res: AdjustTenantBudgetResponse,
+  ) => {
+    const nextBudget = Number(res.allocated_budget);
+    if (Number.isFinite(nextBudget)) {
+      setManageBudget(nextBudget);
+      tm.patchTenantLocal(tenantId, { allocated_budget: nextBudget });
+    }
+    setBudgetAmount("");
+    const committedFrom = isoToDateInputValue(res.budget_effective_from);
+    const committedTo = isoToDateInputValue(res.budget_effective_to);
+    if (committedFrom) setManageEffectiveFrom(committedFrom);
+    if (committedTo) {
+      setManageEffectiveTo(committedTo);
+      setOriginalEffectiveTo(committedTo);
+    }
+  };
+
   const handleApplyBudget = async () => {
     if (!manageTenant) return;
 
@@ -491,96 +595,46 @@ export default function TenantManagementTab({
     const windowActive =
       Boolean(manageTenant.budget_effective_to) &&
       !isBudgetAssignmentExpired(manageTenant);
-    // Mirrors the service's `has_existing_window`: AI4IDS-2995 locks From
-    // once one is on file at all, lapsed window included (422
-    // effective_from_locked if sent), so From only goes out when this call
-    // founds the tenant's very first window.
-    const hasStoredFrom = Boolean(manageTenant.budget_effective_from);
     const toChanged = manageEffectiveTo !== originalEffectiveTo;
 
-    // From is never user-settable here — openTenantPlan seeds it to the
-    // stored window's From, or today when there is no stored window — so
-    // only To needs checking.
-    if (!windowActive && !manageEffectiveTo) {
-      setWindowError(
-        "Set a Budget Effective To date to open a new budget window.",
-      );
-      return;
-    }
-    if (
-      (toChanged || !windowActive) &&
-      manageEffectiveFrom &&
-      manageEffectiveTo <
-        budgetWindowToMinDate(manageEffectiveFrom, todayDateInputValue())
-    ) {
-      setWindowError(
-        "Budget Effective To must be later than today, and at least a day after Budget Effective From.",
-      );
+    const dateError = budgetWindowError({
+      windowActive,
+      toChanged,
+      effectiveFrom: manageEffectiveFrom,
+      effectiveTo: manageEffectiveTo,
+    });
+    if (dateError) {
+      setWindowError(dateError);
       return;
     }
 
-    // A window edit stands on its own — the endpoint takes action/amount and
-    // the dates independently, so a date-only revision is a valid call.
+    // A window edit stands on its own, so a date-only revision is valid.
     const windowChanged = toChanged || !windowActive;
     if (!amountEntered && !windowChanged) return;
     if (amountEntered && !(amount > 0)) {
-      setWindowError("Enter a top-up or top-down amount greater than ₹0.");
+      setWindowError("Enter a top-up amount greater than ₹0.");
       return;
     }
+    const topUp = amountEntered ? amount : null;
 
     try {
-      const res = await adjustTenantBudget({
-        tenant_id: String(manageTenant.tenant_id),
-        ...(amountEntered
-          ? {
-              action: budgetAction === "topup" ? "top-up" : "top-down",
-              amount,
-            }
-          : {}),
-        ...(hasStoredFrom
-          ? {}
-          : {
-              budget_effective_from: dateInputToStartOfDayIso(
-                manageEffectiveFrom,
-              ),
-            }),
-        ...(windowChanged
-          ? { budget_effective_to: dateInputToEndOfDayIso(manageEffectiveTo) }
-          : {}),
-      });
-
-      const nextBudget = Number(res.allocated_budget);
-      if (Number.isFinite(nextBudget)) {
-        setManageBudget(nextBudget);
-        tm.patchTenantLocal(manageTenant.tenant_id, {
-          allocated_budget: nextBudget,
-        });
-      }
-      setBudgetAmount("");
-      const committedFrom = isoToDateInputValue(res.budget_effective_from);
-      const committedTo = isoToDateInputValue(res.budget_effective_to);
-      if (committedFrom) setManageEffectiveFrom(committedFrom);
-      if (committedTo) {
-        setManageEffectiveTo(committedTo);
-        setOriginalEffectiveTo(committedTo);
-      }
-
-      // A tenant budget revision never moves any Application's own ₹ (or,
-      // therefore, any Key's — keys_recomputed is always literally 0 now
-      // and would be misleading to surface). Only each Application's %
-      // share of the new total is recalculated; their ₹ allocations are
-      // untouched.
-      const apps = res.applications_recomputed;
-      let description = amountEntered
-        ? `Budget ${budgetAction === "topup" ? "increased" : "decreased"} by ${formatRupees(amount)}.`
-        : "Budget window updated.";
-      if (apps) {
-        description += ` ${apps} Application(s)' Budget % ${apps === 1 ? "was" : "were"} recalculated to reflect the new total — their ₹ allocations were not changed.`;
-      }
+      const res = await adjustTenantBudget(
+        budgetRevisionPayload(
+          manageTenant,
+          topUp,
+          windowChanged,
+          manageEffectiveFrom,
+          manageEffectiveTo,
+        ),
+      );
+      applyCommittedBudget(manageTenant.tenant_id, res);
 
       toast({
         title: amountEntered ? "Budget updated" : "Budget window updated",
-        description,
+        description: budgetRevisionDescription(
+          topUp,
+          res.applications_recomputed,
+        ),
         status: "success",
         duration: 5000,
         isClosable: true,
@@ -589,17 +643,11 @@ export default function TenantManagementTab({
       await queryClient.refetchQueries({ queryKey: ["tenant-tiers"] });
       await syncTenantAfterPlanChange(manageTenant.tenant_id);
     } catch (err: unknown) {
-      const detail = (err as { response?: { data?: { detail?: unknown } } })
-        ?.response?.data?.detail;
-
       toast({
         title: amountEntered
           ? "Failed to update budget"
           : "Failed to update budget window",
-        description:
-          typeof detail === "object" && detail !== null && "message" in detail
-            ? String((detail as { message?: string }).message)
-            : (typeof detail === "string" ? detail : "Something went wrong."),
+        description: apiErrorDetail(err) ?? "Something went wrong.",
         status: "error",
         duration: 5000,
         isClosable: true,
@@ -819,8 +867,6 @@ export default function TenantManagementTab({
         setManageEffectiveTo={setManageEffectiveTo}
         setWindowError={setWindowError}
         windowError={windowError}
-        budgetAction={budgetAction}
-        setBudgetAction={setBudgetAction}
         budgetAmount={budgetAmount}
         setBudgetAmount={setBudgetAmount}
         onApplyBudget={handleApplyBudget}

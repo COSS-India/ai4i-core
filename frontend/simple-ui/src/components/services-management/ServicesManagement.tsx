@@ -157,7 +157,7 @@ const ServicesManagement: React.FC = () => {
       },
       {
         id: "task",
-        header: "Model Task Type",
+        header: "Task Type",
         cell: (service) => {
           const taskType = resolveTaskType(service);
           return (
@@ -210,20 +210,6 @@ const ServicesManagement: React.FC = () => {
           >
             {service.isPublished === true ? "Published" : "Unpublished"}
           </Badge>
-        ),
-      },
-      {
-        id: "created",
-        header: "Created At",
-        sortable: true,
-        sortAccessor: (service) =>
-          service.createdAt ? new Date(service.createdAt).getTime() : 0,
-        cell: (service) => (
-          <Text fontSize="sm" color="ink.600">
-            {service.createdAt
-              ? new Date(service.createdAt).toLocaleDateString()
-              : "N/A"}
-          </Text>
         ),
       },
       createActionsColumn<Service>({

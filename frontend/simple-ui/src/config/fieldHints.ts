@@ -69,19 +69,37 @@ export const FIELD_HINTS = {
   },
   model: {
     jsonUpload: {
-      helper:
-        ".json files only. Validated before the model is created — refer to the sample JSON for exact field formats.",
+      helper: "JSON only · validated before creation.",
+      /**
+       * Shown beside the sample, never inside it, so the downloaded JSON stays spec-only.
+       * hrefs come from getModelSpecUrls() (ULCA_MODEL_SPEC_URL / OPENAI_SPEC_URL).
+       */
+      specReferences: [
+        {
+          id: "ulca",
+          badge: "NLP",
+          shortLabel: "ULCA spec",
+          text: "NLP model details must follow the ULCA Model specification.",
+          linkLabel: "View ULCA Model specification",
+        },
+        {
+          id: "openai",
+          badge: "LLM",
+          shortLabel: "OpenAI spec",
+          text: "LLM model details must follow the OpenAI specification.",
+          linkLabel: "View OpenAI specification",
+        },
+      ],
     },
   },
   service: {
-    taskType: { placeholder: "Select a model task type" },
+    taskType: { placeholder: "Select a task type" },
     modelName: {
       placeholder: "Select model",
       loading: "Loading models...",
       needTaskType: "Select a task type first",
     },
-    modelId: { helper: "Auto-filled", empty: "Select a model above" },
-    submissionDate: { helper: "Auto-filled" },
+    modelId: { empty: "Select a model above" },
     name: {
       placeholder: "Enter service name",
       helper:
@@ -90,9 +108,9 @@ export const FIELD_HINTS = {
     serviceId: {
       placeholder: "Enter service ID",
       helper:
-        "Pre-filled with the model prefix. Letters, numbers, hyphens, underscores, and slashes only. 5–255 characters. e.g: [model-name]/[GPU]",
+        "Format: model-name/service-name (e.g., model-name/service-01). Pre-filled with the model prefix. Use 5–255 characters: letters, numbers, hyphens (-), underscores (_), and slashes (/) only.",
       llmHelper:
-        "Pre-filled with the model prefix. Letters, numbers, hyphens, and slashes only. 5–255 characters. e.g: [model-name]/[GPU]",
+        "Format: model-name/service-name (e.g., model-name/service-01). Pre-filled with the model prefix. Use 5–255 characters: letters, numbers, hyphens (-), and slashes (/) only.",
     },
     description: {
       placeholder: "Provide a brief description of what this service does",
@@ -146,10 +164,23 @@ export const FIELD_HINTS = {
     tierSearch: { placeholder: "Search tiers..." },
   },
   logs: {
-    search: { placeholder: "Search by trace ID, URL, task type, or status" },
+    search: {
+      placeholder: "Search keyword across log fields",
+      helper: "Applies with filters when you click Search or press Enter",
+      tooLong: "Keyword must be at most 256 characters",
+    },
     startTime: { helper: "Filter logs from this date & time" },
     endTime: { helper: "Filter logs up to this date & time; must be after Start Time" },
     tenant: { helper: `Filter logs by ${org}.` },
+    service: {
+      placeholder: "e.g. openai-service",
+      helper: "Exact service id on the request",
+    },
+    statusCode: {
+      placeholder: "e.g. 500,503",
+      helper: "Comma-separated codes (100–599), up to 10",
+      invalid: "Use up to 10 comma-separated integers between 100 and 599",
+    },
     endUser: {
       placeholder: "e.g. customer-8812",
       helper: "end-user ID sent as user",
@@ -164,7 +195,12 @@ export const FIELD_HINTS = {
       keyTooLong: "Key must be at most 64 characters",
       valueTooLong: "Value must be at most 512 characters",
     },
-    autoRefresh: { helper: "Automatically refresh this list at regular intervals." },
+    autoRefresh: {
+      helper: "Refresh while the end time is the present. Disabled for past ranges.",
+    },
+    narrowDateRange:
+      "Too many results. Please narrow your date range or refine your search.",
+    columns: { helper: "Choose which fields appear as columns" },
   },
   profile: {
     fullName: {
@@ -192,7 +228,7 @@ export const FIELD_HINTS = {
       placeholder: "Enter tier description",
       helper: "e.g. Enterprise tier for high usage.",
     },
-    quotaUnit: { helper: "Auto-filled based on Model Task Type (e.g., tokens for LLM)" },
+    quotaUnit: { helper: "Auto-filled based on Task Type (e.g., tokens for LLM)" },
     rateLimit: {
       placeholder: "Enter rate limit",
       helper: "Requests per minute across all inference APIs. Leave empty to use the platform default.",

@@ -30,7 +30,6 @@ import { formatModelTaskTypeLabel, getTaskColorScheme } from "../../config/const
 import { FIELD_HINTS } from "../../config/fieldHints";
 import FieldHint from "../common/FieldHint";
 import FieldLabel from "../common/FieldLabel";
-import FormSection from "../common/FormSection";
 import ReadOnlyField from "../common/ReadOnlyField";
 import type { Service } from "../../services/servicesManagementService";
 import type { ModelDetails } from "../../types/platform";
@@ -294,12 +293,13 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
 
   const showServiceName = !isLlmTaskType;
 
+  // Field groups are separated by spacing alone — no section headers.
   const sections = (
-          <VStack spacing={0} align="stretch">
-            <FormSection title="Select Model">
+          <VStack spacing={8} align="stretch">
+            <VStack align="stretch" spacing={4}>
             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
               {isView ? (
-                <ReadOnlyField label="Model Task Type">
+                <ReadOnlyField label="Task Type">
                   <Badge
                     colorScheme={getTaskColorScheme(formData.task_type)}
                     fontSize="sm"
@@ -313,7 +313,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 </ReadOnlyField>
               ) : (
               <FormControl isRequired>
-                <FieldLabel>Model Task Type</FieldLabel>
+                <FieldLabel>Task Type</FieldLabel>
                 {editingService ? (
                   <Input
                     value={formatModelTaskTypeLabel(formData.task_type || "")}
@@ -393,7 +393,6 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                 >
                   {formData.modelId || FIELD_HINTS.service.modelId.empty}
                 </Text>
-                <FieldHint>{FIELD_HINTS.service.modelId.helper}</FieldHint>
               </FormControl>
               )}
               {isView ? (
@@ -417,13 +416,12 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
                       )
                     : FIELD_HINTS.service.modelId.empty}
                 </Text>
-                <FieldHint>{FIELD_HINTS.service.submissionDate.helper}</FieldHint>
               </FormControl>
               )}
             </SimpleGrid>
-            </FormSection>
+            </VStack>
 
-            <FormSection title="Service Details">
+            <VStack align="stretch" spacing={4}>
             {showServiceName && isView ? (
               <ReadOnlyField label="Service Name">{formData.name || "—"}</ReadOnlyField>
             ) : null}
@@ -518,9 +516,9 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
             </FormControl>
             )}
 
-            </FormSection>
+            </VStack>
 
-            <FormSection title="Deployment">
+            <VStack align="stretch" spacing={4}>
             {isView ? (
               <ReadOnlyField label="Endpoint" fullWidth>
                 {formData.endpoint || "—"}
@@ -626,9 +624,9 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
               )}
             </FormControl>
             )}
-            </FormSection>
+            </VStack>
 
-            <FormSection title="Pricing & Access">
+            <VStack align="stretch" spacing={4}>
             <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
                 {isView ? (
                   <ReadOnlyField label="Unit Type">{unitType || "—"}</ReadOnlyField>
@@ -860,7 +858,7 @@ const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
               <FieldHint>{FIELD_HINTS.service.tier.helper}</FieldHint>
             </FormControl>
             )}
-            </FormSection>
+            </VStack>
           </VStack>
   );
 

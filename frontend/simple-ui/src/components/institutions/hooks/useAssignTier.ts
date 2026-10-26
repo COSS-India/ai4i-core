@@ -13,6 +13,7 @@ import {
 } from "../../../utils/helpers";
 import type { ServiceMappingsStatus } from "../../profile/types";
 import type { TenantView } from "../../../types/tenant";
+import { formatRupees } from "../institutionDisplay";
 
 /** Mirrors auth-service's MAX_TENANT_BUDGET (NUMERIC(15, 2) -> 10^13 - 0.01). */
 const MAX_BUDGET = 9_999_999_999_999.99;
@@ -26,7 +27,9 @@ const MESSAGES = {
   budgetNotPositive: "Budget must be a positive value.",
   budgetTooLarge: `Budget cannot exceed ₹${MAX_BUDGET.toLocaleString("en-IN")}.`,
   budgetUnchanged:
-    "This is already the current budget. Enter a different amount — the effective window can only be set alongside a budget change.",
+    "This is already the current budget. Enter a higher amount — the effective window can only be set alongside a budget change.",
+  budgetBelowCurrent: (current: number) =>
+    `Budget cannot be lower than the current budget of ${formatRupees(current)}.`,
   effectiveFromRequired: "Select a Budget Effective From date.",
   effectiveFromBackdated: "Budget Effective From cannot be in the past.",
   effectiveToRequired: "Select a Budget Effective To date.",
@@ -66,10 +69,18 @@ function sanitizeBudgetInput(raw: string): string {
   return Number(next) > MAX_BUDGET ? String(MAX_BUDGET) : next;
 }
 
+function currentBudgetValue(currentBudget: number | null | undefined): number {
+  const current = Number(currentBudget ?? 0);
+  return Number.isFinite(current) ? current : 0;
+}
+
 /**
  * Turn the absolute budget the admin typed into the delta the budget endpoint
- * actually takes (`current + (±amount)`), so "Budget: 50,000" means the total
+ * actually takes (`current + amount`), so "Budget: 50,000" means the total
  * is 50,000 regardless of what was there before.
+ *
+ * The endpoint only tops up, so a budget can never be lowered here —
+ * validateBudget rejects anything below the current budget first.
  *
  * Returns null when nothing needs to move — which is NOT automatically fine:
  * a tenant re-founding a lapsed window still needs the dates written, and
@@ -78,15 +89,14 @@ function sanitizeBudgetInput(raw: string): string {
 function budgetRevisionFor(
   enteredBudget: number,
   currentBudget: number | null | undefined,
-): { action: "top-up" | "top-down"; amount: number } | null {
-  const current = Number(currentBudget ?? 0);
-  const delta = enteredBudget - (Number.isFinite(current) ? current : 0);
+): { action: "top-up"; amount: number } | null {
+  const delta = enteredBudget - currentBudgetValue(currentBudget);
   // Float dust from the subtraction is no change at all, and the endpoint
   // would reject it (gt=0) anyway.
-  if (Math.abs(delta) < 0.005) return null;
+  if (delta < 0.005) return null;
   return {
-    action: delta > 0 ? "top-up" : "top-down",
-    amount: Math.round(Math.abs(delta) * 100) / 100,
+    action: "top-up",
+    amount: Math.round(delta * 100) / 100,
   };
 }
 
@@ -130,6 +140,10 @@ function validateBudget(
   const value = Number(budget);
   if (!Number.isFinite(value) || value <= 0) return MESSAGES.budgetNotPositive;
   if (value > MAX_BUDGET) return MESSAGES.budgetTooLarge;
+  // Checked even once the budget has settled: a retry after a failed tier
+  // change must not lower what was just committed.
+  const current = currentBudgetValue(currentBudget);
+  if (value < current - 0.005) return MESSAGES.budgetBelowCurrent(current);
   if (!budgetSettled && budgetRevisionFor(value, currentBudget) === null)
     return MESSAGES.budgetUnchanged;
   return undefined;

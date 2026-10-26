@@ -5,6 +5,7 @@ import {
   HStack,
   IconButton,
   Tooltip,
+  VStack,
 } from "@chakra-ui/react";
 import { MdOutlineCheckCircle, MdOutlineUnpublished } from "react-icons/md";
 import React from "react";
@@ -114,7 +115,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
       }
       footer={<FormActions hideSubmit cancelLabel="Close" onCancel={onClose} pt={0} />}
     >
-      <FormSection title="Availability">
+      <VStack align="stretch" spacing={4}>
         <ReadOnlyField label="Status">
           <HStack spacing={2}>
             {isRegistryReadOnly ? (
@@ -132,7 +133,7 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
             </Badge>
           </HStack>
         </ReadOnlyField>
-      </FormSection>
+      </VStack>
 
       <ServiceFormTab
         mode="view"

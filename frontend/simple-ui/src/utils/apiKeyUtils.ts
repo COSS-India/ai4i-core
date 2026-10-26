@@ -43,3 +43,67 @@ export function isRotationInProgress(
   const until = new Date(key.rotated_key_expires_at).getTime();
   return Number.isFinite(until) && until > now;
 }
+
+/** Preset extensions for a previous key's grace period, added to its current end. */
+export const GRACE_EXTENSION_OPTIONS = [
+  { id: "24h", label: "24h", hours: 24 },
+  { id: "48h", label: "48 hours", hours: 48 },
+  { id: "7d", label: "7d", hours: 168 },
+] as const;
+
+export type GraceExtensionOption = (typeof GRACE_EXTENSION_OPTIONS)[number]["id"] | "custom";
+
+/** Preset selected when the extend dialog opens. */
+export const DEFAULT_GRACE_EXTENSION: GraceExtensionOption = "48h";
+
+/** New grace end: the current end plus a preset, or a custom datetime-local value. */
+export function graceExtensionEnd(
+  currentEnd: string | undefined,
+  option: GraceExtensionOption,
+  customUntil: string,
+): Date | null {
+  if (option === "custom") {
+    if (!customUntil) return null;
+    const custom = new Date(customUntil);
+    return Number.isFinite(custom.getTime()) ? custom : null;
+  }
+  if (!currentEnd) return null;
+  const base = new Date(currentEnd).getTime();
+  const preset = GRACE_EXTENSION_OPTIONS.find((o) => o.id === option);
+  if (!Number.isFinite(base) || !preset) return null;
+  return new Date(base + preset.hours * 3_600_000);
+}
+
+/** Why ``newEnd`` can't be used (same rules as the backend), or null when it can. */
+export function graceExtensionError(
+  newEnd: Date | null,
+  currentEnd: string | undefined,
+  keyExpiresAt: string | undefined,
+): string | null {
+  if (!newEnd) return "Choose when the previous key should stop working.";
+  if (currentEnd && newEnd.getTime() <= new Date(currentEnd).getTime()) {
+    return "The new end must be later than the current one.";
+  }
+  if (keyExpiresAt && newEnd.getTime() > new Date(keyExpiresAt).getTime()) {
+    return `The previous key can't outlive the key, which expires ${new Date(keyExpiresAt).toLocaleString()}.`;
+  }
+  return null;
+}
+
+/** "26 hours" / "3 days" until ``to``, for grace-period copy. */
+export function formatTimeUntil(to: string | Date, now: number = Date.now()): string {
+  const ms = new Date(to).getTime() - now;
+  if (!Number.isFinite(ms) || ms <= 0) return "now";
+  const hours = Math.round(ms / 3_600_000);
+  if (hours < 1) return "less than an hour";
+  if (hours < 48) return `${hours} ${hours === 1 ? "hour" : "hours"}`;
+  const days = Math.round(hours / 24);
+  return `${days} days`;
+}
+
+/** Hours between two instants, rounded, for "extended by N hours" copy. */
+export function formatExtension(from: string, to: Date): string {
+  const hours = Math.round((to.getTime() - new Date(from).getTime()) / 3_600_000);
+  if (hours % 24 === 0 && hours >= 48) return `${hours / 24} days`;
+  return `${hours} ${hours === 1 ? "hour" : "hours"}`;
+}

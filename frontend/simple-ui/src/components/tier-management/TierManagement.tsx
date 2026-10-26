@@ -131,7 +131,7 @@ const TIER_TASK_TYPES_VISIBLE_COUNT = 4;
 
 const TIER_TASK_TYPES_COLUMN: DataTableColumn<Tier> = {
   id: "taskTypes",
-  header: "Model Task Types",
+  header: "Task Types",
   cell: (tier) => (
     <HStack spacing={1} flexWrap="wrap">
       {(tier.quotas ?? []).slice(0, TIER_TASK_TYPES_VISIBLE_COUNT).map((q) => (
@@ -543,7 +543,7 @@ const TierManagement: React.FC = () => {
       size="wide"
       lockDismiss={isSubmitting}
       title="Create Tier"
-      description={`Configure access and usage limits for ${INSTITUTIONS.toLowerCase()}.`}
+      description="Define the rate limit and quotas for this tier."
       footer={
         <FormActions
           cancelLabel="Cancel"
@@ -618,7 +618,7 @@ const TierManagement: React.FC = () => {
         filterDefs={[
           {
             id: "taskType",
-            label: "Model Task Type",
+            label: "Task Type",
             type: "select",
             param: "model_task_type",
             value: filterTaskType,
@@ -659,6 +659,7 @@ const TierManagement: React.FC = () => {
         size="wide"
         lockDismiss={isSubmitting}
         title={editingTier?.name ? `Edit Tier: ${editingTier.name}` : "Edit Tier"}
+        description="Define the rate limit and quotas for this tier."
         footer={
           <FormActions
             submitLabel="Save Changes"
