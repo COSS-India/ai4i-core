@@ -37,7 +37,7 @@ const UNAVAILABLE = "Unavailable";
 /** "99,999,999 audio minutes/month" — the unit's underscores read as spaces. */
 function formatMonthlyQuota(quota: TierQuotaLimit): string {
   const amount = quota.monthly_quota.toLocaleString("en-US", { maximumFractionDigits: 2 });
-  return `${amount} ${quota.unit.replace(/_/g, " ")}/month`;
+  return `${amount} ${quota.unit.replaceAll("_", " ")}/month`;
 }
 
 const QUOTA_COLUMNS: DataTableColumn<TierQuotaLimit>[] = [
@@ -84,7 +84,7 @@ function TierUsageLimits({ tierLimits }: Readonly<{ tierLimits: TierLimits | nul
               Rate Limit
             </Text>
             <Text>
-              {rateLimit != null ? `${rateLimit.toLocaleString("en-US")} requests/min` : EMPTY_VALUE}
+              {rateLimit == null ? EMPTY_VALUE : `${rateLimit.toLocaleString("en-US")} requests/min`}
             </Text>
           </Box>
           <Box mt={4}>
