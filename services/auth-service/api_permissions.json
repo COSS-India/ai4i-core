@@ -196,8 +196,11 @@
 
     { "endpoint": "POST:/api/v1/pii/simulate",                            "permissionRequired": 1,   "description": "Run a PII policy against sample text in the Playground (admin sentinel — ADMIN only)" },
 
-    { "endpoint": "GET:/api/v1/preferences/columns/{view_key}",            "permissionRequired": 51, "description": "Get the caller's saved table columns for a view (service.read)" },
-    { "endpoint": "PUT:/api/v1/preferences/columns/{view_key}",            "permissionRequired": 51, "description": "Save the caller's table columns for a view (service.read)" },
-    { "endpoint": "DELETE:/api/v1/preferences/columns/{view_key}",         "permissionRequired": 51, "description": "Reset the caller's table columns for a view to default (service.read)" }
+    { "endpoint": "GET:/api/v1/preferences/columns/service-list",          "permissionRequired": 51, "description": "Get the caller's saved Service List columns (service.read)" },
+    { "endpoint": "PUT:/api/v1/preferences/columns/service-list",          "permissionRequired": 51, "description": "Save the caller's Service List columns (service.read)" },
+    { "endpoint": "DELETE:/api/v1/preferences/columns/service-list",       "permissionRequired": 51, "description": "Reset the caller's Service List columns to default (service.read)" },
+    { "endpoint": "GET:/api/v1/preferences/columns/{view_key}",            "permissionRequired": 1,  "description": "Fallback for a view with no entry of its own (admin sentinel — ADMIN only); each view lists its own GET/PUT/DELETE with the permission of the page it belongs to" },
+    { "endpoint": "PUT:/api/v1/preferences/columns/{view_key}",            "permissionRequired": 1,  "description": "Fallback for a view with no entry of its own (admin sentinel — ADMIN only)" },
+    { "endpoint": "DELETE:/api/v1/preferences/columns/{view_key}",         "permissionRequired": 1,  "description": "Fallback for a view with no entry of its own (admin sentinel — ADMIN only)" }
   ]
 }
