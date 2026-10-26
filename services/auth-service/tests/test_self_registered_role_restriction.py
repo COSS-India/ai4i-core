@@ -156,6 +156,55 @@ class TestAssignRoleRoute:
         svc._roles.assign_role.assert_awaited_once()
 
 
+class TestProvisionUserCreationType:
+    """provision_user used to turn an unknown creation_type into DEFAULT, which
+    is how admin-created users ended up stored as self-registered (2026-04-29
+    → 2026-05-22). With the role guard, that silently locks them to USER."""
+
+    @staticmethod
+    def _service() -> TenantService:
+        user_repo = AsyncMock()
+        user_repo.email_exists = AsyncMock(return_value=False)
+        user_repo.get_by_username = AsyncMock(return_value=None)
+        return TenantService(
+            tenant_repo=AsyncMock(),
+            user_repo=user_repo,
+            role_service=AsyncMock(),
+            verification_repo=AsyncMock(),
+            credentials_repo=AsyncMock(),
+            token_service=AsyncMock(),
+            email_client=AsyncMock(),
+        )
+
+    @pytest.mark.asyncio
+    async def test_admin_created_user_can_then_be_given_another_role(self) -> None:
+        # AI4IDS-3412: the Adopter Admin can change the role of a user they created.
+        svc = self._service()
+        await svc.provision_user(
+            email="invitee@example.invalid", username="invitee", tenant_id="2",
+            email_kind="none", created_by=uuid4(),
+        )
+        created = svc._users.create.await_args.args[0]
+        assert created.creation_type == CreationType.TENANT
+
+        role_service = _make_role_service(created)
+        await role_service.assign_role(created.id, RoleName.MODERATOR)
+
+        role_service._roles.assign_role.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_unknown_creation_type_raises_instead_of_becoming_default(self) -> None:
+        svc = self._service()
+
+        with pytest.raises(ValueError):
+            await svc.provision_user(
+                email="invitee@example.invalid", username="invitee",
+                creation_type="tennant", email_kind="none",
+            )
+
+        svc._users.create.assert_not_awaited()
+
+
 class TestUpdateTenantUserRole:
     """Second grant path: PATCH /tenants/{id}/users/{uid} with ``role``. A
     self-registered user can sit in a real tenant (registration accepts a
