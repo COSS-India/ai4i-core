@@ -84,10 +84,13 @@ import {
   convertToISOFormat,
   defaultTimeRange,
   formatDateTimeLocal,
+  formatMetadataCell,
+  isAdminOnlyColumnKey,
   isFailureStatus,
   isSuccessStatus,
   KEYWORD_MAX_LENGTH,
   END_USER_MAX_LENGTH,
+  normalizeColumnDefs,
   parseMetadataFilter,
   parseStatusCodeFilter,
   readStoredColumns,
@@ -320,7 +323,7 @@ const LogsPage: React.FC = () => {
       try {
         return await getTelemetryTraceColumns();
       } catch {
-        // Endpoint may not be deployed yet (AI4IDS-3529); use contract fallback.
+        // Keep a contract-aligned fallback if /traces/columns is unreachable.
         return { columns: FALLBACK_COLUMN_DEFS };
       }
     },
@@ -330,21 +333,18 @@ const LogsPage: React.FC = () => {
   });
 
   const columnDefs = useMemo(() => {
-    const fromApi = columnsResponse?.columns;
-    if (fromApi && fromApi.length > 0) {
-      return isAdmin ? fromApi : fromApi.filter((c) => !c.admin_only);
-    }
+    const raw =
+      columnsResponse?.columns && columnsResponse.columns.length > 0
+        ? columnsResponse.columns
+        : FALLBACK_COLUMN_DEFS;
+    const normalized = normalizeColumnDefs(raw);
+    // Error column is admin-only on the screen (AC-6); BE catalogue has no admin_only flag.
     return isAdmin
-      ? FALLBACK_COLUMN_DEFS
-      : FALLBACK_COLUMN_DEFS.filter((c) => !c.admin_only);
+      ? normalized
+      : normalized.filter((c) => !isAdminOnlyColumnKey(c.key));
   }, [columnsResponse, isAdmin]);
 
-  const columnDefByKey = useMemo(
-    () => new Map(columnDefs.map((c) => [c.key, c])),
-    [columnDefs]
-  );
-
-  // Hydrate after auth + catalogue settle so admin-only columns (e.g. Error) are kept.
+  // Hydrate once after auth + catalogue settle so admin-only columns (e.g. Error) are kept.
   const didHydrateColumns = useRef(false);
   useEffect(() => {
     if (didHydrateColumns.current) return;
@@ -638,6 +638,10 @@ const LogsPage: React.FC = () => {
 
   const traceRows = tracesData?.data ?? [];
   const aggregationStats = tracesData?.aggregations;
+  const successCount =
+    tracesData?.summary?.success ?? aggregationStats?.by_level.success ?? 0;
+  const failureCount =
+    tracesData?.summary?.failure ?? aggregationStats?.by_level.failure ?? 0;
 
   const openTraceDetail = useCallback((traceId: string) => {
     if (!traceId?.trim()) return;
@@ -650,32 +654,24 @@ const LogsPage: React.FC = () => {
     setSelectedTraceId(null);
   }, []);
 
-  const toggleColumn = useCallback(
-    (key: string, checked: boolean) => {
-      if (!columnDefByKey.has(key)) return;
-
-      setSelectedColumns((prev) => {
-        let next: string[];
-        if (checked) {
-          next = prev.includes(key) ? prev : [...prev, key];
-        } else {
-          const remaining = prev.filter((k) => k !== key);
-          // Never leave the table with zero data columns.
-          if (remaining.length === 0) return prev;
-          next = remaining;
-        }
-        writeStoredColumns(next);
-        return next;
-      });
+  const applyColumnSelection = useCallback(
+    (keys: string[]) => {
+      const allowed = new Set(columnDefs.map((c) => c.key));
+      const ordered = columnDefs
+        .map((c) => c.key)
+        .filter((k) => keys.includes(k) && allowed.has(k));
+      // Never leave the table with zero data columns.
+      if (ordered.length === 0) return;
+      setSelectedColumns(ordered);
+      writeStoredColumns(ordered);
     },
-    [columnDefByKey]
+    [columnDefs]
   );
 
   const resetColumns = useCallback(() => {
     const defaults = columnDefs.filter((c) => c.default).map((c) => c.key);
-    setSelectedColumns(defaults);
-    writeStoredColumns(defaults);
-  }, [columnDefs]);
+    applyColumnSelection(defaults);
+  }, [columnDefs, applyColumnSelection]);
 
   const handleSortChange = useCallback((next: DataTableSortState) => {
     // Only API-supported sorts; ignore non-sortable clicks.
@@ -686,12 +682,13 @@ const LogsPage: React.FC = () => {
 
   const renderStatusCell = useCallback(
     (row: TelemetryTraceRecord) => {
-      const failed = isFailureStatus(row.status);
-      const ok = isSuccessStatus(row.status);
+      const statusText = row.status ?? "unknown";
+      const failed = isFailureStatus(statusText);
+      const ok = isSuccessStatus(statusText);
       let label =
         failed && row.status_code != null
-          ? `${row.status} (${row.status_code})`
-          : row.status;
+          ? `${statusText} (${row.status_code})`
+          : statusText;
       // AC-6: admins see the error without opening the trace (tooltip on default view).
       if (failed && isAdmin && row.error) {
         label = `${label}: ${row.error}`;
@@ -786,31 +783,31 @@ const LogsPage: React.FC = () => {
         case "service":
           return (
             <Text fontSize="sm" color="ink.700">
-              {row.service || row.service_id || "—"}
+              {row.service || "—"}
             </Text>
           );
         case "model":
           return (
             <Text fontSize="sm" color="ink.700">
-              {row.model_name || "—"}
+              {row.model || "—"}
             </Text>
           );
         case "latency":
           return (
             <Text fontSize="sm" color="ink.700">
-              {row.latency_ms != null ? row.latency_ms : "—"}
+              {row.latency != null ? row.latency : "—"}
             </Text>
           );
-        case "app_id":
+        case "application":
           return (
             <Text fontSize="sm" color="ink.700" fontFamily="mono">
-              {row.app_id || "—"}
+              {row.application || "—"}
             </Text>
           );
         case "api_key":
           return (
             <Text fontSize="sm" color="ink.700" fontFamily="mono">
-              {row.api_key_id || "—"}
+              {row.api_key || "—"}
             </Text>
           );
         case "end_user":
@@ -822,7 +819,7 @@ const LogsPage: React.FC = () => {
         case "metadata":
           return (
             <Text fontSize="sm" color="ink.700" noOfLines={2} maxW="240px">
-              {row.metadata?.length ? row.metadata.join(", ") : "—"}
+              {formatMetadataCell(row.metadata)}
             </Text>
           );
         case "method":
@@ -847,7 +844,7 @@ const LogsPage: React.FC = () => {
     const cols: DataTableColumn<TelemetryTraceRecord>[] = visible.map((def) => ({
       id: def.key,
       header: def.label,
-      sortable: Boolean(SORTABLE_API_KEYS[def.key]),
+      sortable: Boolean(def.sortable && SORTABLE_API_KEYS[def.key]),
       cell: (row) => cellForColumn(def.key, row),
     }));
 
@@ -1015,7 +1012,7 @@ const LogsPage: React.FC = () => {
                           fontWeight="bold"
                           color="green.500"
                         >
-                          {aggregationStats.by_level.success.toLocaleString()}
+                          {successCount.toLocaleString()}
                         </StatNumber>
                       </Stat>
                     </CardBody>
@@ -1040,7 +1037,7 @@ const LogsPage: React.FC = () => {
                           fontWeight="bold"
                           color="red.500"
                         >
-                          {aggregationStats.by_level.failure.toLocaleString()}
+                          {failureCount.toLocaleString()}
                         </StatNumber>
                       </Stat>
                     </CardBody>
@@ -1299,20 +1296,32 @@ const LogsPage: React.FC = () => {
                           </Text>
                           {columnDefs.map((col) => {
                             const checked = selectedColumns.includes(col.key);
-                            const onlyOne = selectedColumns.length === 1 && checked;
+                            const onlyOne =
+                              selectedColumns.length === 1 && checked;
                             return (
                               <MenuItem
+                                as="div"
                                 key={col.key}
                                 closeOnSelect={false}
-                                onClick={(e) => e.preventDefault()}
+                                isDisabled={onlyOne}
+                                onClick={() => {
+                                  if (onlyOne) return;
+                                  // Absolute next set (not flip) so a double-fired
+                                  // click cannot cancel the selection.
+                                  const next = checked
+                                    ? selectedColumns.filter((k) => k !== col.key)
+                                    : [...selectedColumns, col.key];
+                                  applyColumnSelection(next);
+                                }}
                                 py={1.5}
+                                cursor={onlyOne ? "not-allowed" : "pointer"}
                               >
                                 <Checkbox
                                   isChecked={checked}
                                   isDisabled={onlyOne}
-                                  onChange={(e) =>
-                                    toggleColumn(col.key, e.target.checked)
-                                  }
+                                  pointerEvents="none"
+                                  colorScheme="blue"
+                                  mr={2}
                                 >
                                   <Text as="span" fontSize="sm">
                                     {col.label}
