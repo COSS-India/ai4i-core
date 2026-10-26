@@ -705,7 +705,7 @@ export function useServicesManagement() {
         }),
       );
       setSelectedService((prev) => {
-        if (!prev || prev.serviceId !== serviceId) return prev;
+        if (prev?.serviceId !== serviceId) return prev;
         return applyServicePublishPatch(
           prev,
           serviceId,

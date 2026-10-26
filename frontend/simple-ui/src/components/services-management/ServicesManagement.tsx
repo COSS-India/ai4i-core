@@ -1,7 +1,7 @@
 // Services Management: registry list stays mounted. Create, edit, and view use FormDrawer.
 import { DeleteIcon, EditIcon } from "@chakra-ui/icons";
 import { MdOutlineCheckCircle, MdOutlineUnpublished } from "react-icons/md";
-import React, { useCallback, useLayoutEffect, useMemo, useState } from "react";
+import React, { useMemo } from "react";
 import ManagementPageHeader from "../common/ManagementPageHeader";
 import CreateButton from "../common/CreateButton";
 import FormActions from "../common/FormActions";
@@ -16,22 +16,15 @@ import type { Service } from "../../services/servicesManagementService";
 import ConfirmDialog from "../common/ConfirmDialog";
 import { useAuth } from "../../hooks/useAuth";
 import { useServicesManagement } from "../../hooks/useServicesManagement";
-import { authService } from "../../services/authService";
 import ServiceListColumnPicker from "./ServiceListColumnPicker";
 import ServiceRegistryTab from "./ServiceRegistryTab";
 import ServiceFormTab from "./ServiceFormTab";
 import ServiceDetailTab from "./ServiceDetailTab";
 import {
-  defaultServiceListColumnIds,
   serviceListCellKey,
   type ServiceListColumnDef,
 } from "./serviceListColumns";
-import {
-  loadVisibleServiceColumns,
-  nextVisibleColumnIds,
-  persistVisibleServiceColumns,
-  resetVisibleServiceColumns,
-} from "./serviceColumnPreferences";
+import { useServiceListVisibleColumns } from "./useServiceListVisibleColumns";
 import {
   renderEmptyServiceCell,
   renderServiceCachedInputPriceCell,
@@ -46,6 +39,16 @@ import {
   renderServiceTaskTypeCell,
   renderServiceTierCell,
 } from "./serviceListCells";
+
+const READ_ONLY_PAGE_DESCRIPTION =
+  "Browse services in the registry. You can open a service to view its configuration.";
+const EDITOR_PAGE_DESCRIPTION =
+  "Find a service, open it to view or edit, or create a new one. Publish when it should appear for users.";
+
+function pageDescriptionForRole(isRegistryReadOnly: boolean): string {
+  if (isRegistryReadOnly) return READ_ONLY_PAGE_DESCRIPTION;
+  return EDITOR_PAGE_DESCRIPTION;
+}
 
 const CREATE_SERVICE_FORM_ID = "create-service-form";
 const EDIT_SERVICE_FORM_ID = "edit-service-form";
@@ -289,84 +292,18 @@ const ServicesManagement: React.FC = () => {
   );
 
   const { user } = useAuth();
-  const userId = user?.user_id ?? "";
-  const [visibleColumnIds, setVisibleColumnIds] = useState<string[]>(
-    defaultServiceListColumnIds,
-  );
-  const catalogueKey = serviceListCatalogue.map((column) => column.id).join("|");
-
-  const preferenceUserId = useCallback(
-    () => userId || authService.getStoredUser()?.user_id || "",
-    [userId],
-  );
-
-  useLayoutEffect(() => {
-    const id = preferenceUserId();
-    if (!id) return;
-    let cancelled = false;
-    void loadVisibleServiceColumns({
-      userId: id,
-      usesServer: serviceListUsesServer,
-      catalogue: serviceListCatalogue,
-    }).then((next) => {
-      if (cancelled) return;
-      setVisibleColumnIds((current) => nextVisibleColumnIds(current, next));
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [preferenceUserId, serviceListUsesServer, catalogueKey, serviceListCatalogue]);
-
-  const handleRegistrySortChange = useCallback(
-    (next: { key: string; direction: "asc" | "desc" }) => {
-      if (serviceListUsesServer) setRegistryPage(1);
-      registrySort.onSortChange(next);
-    },
-    [registrySort, serviceListUsesServer, setRegistryPage],
-  );
-
-  const resetSortIfColumnHidden = useCallback(
-    (visibleIds: readonly string[]) => {
-      if (registrySort.mode !== "sorted" || !registrySort.sort.key) return;
-      if (visibleIds.includes(registrySort.sort.key)) return;
-      handleRegistrySortChange({ key: "name", direction: "asc" });
-    },
-    [handleRegistrySortChange, registrySort.mode, registrySort.sort.key],
-  );
-
-  const applyVisibleColumns = useCallback(
-    (next: readonly string[]) => {
-      const resolved = persistVisibleServiceColumns({
-        userId: preferenceUserId(),
-        usesServer: serviceListUsesServer,
-        catalogue: serviceListCatalogue,
-        columnIds: next,
-      });
-      setVisibleColumnIds(resolved);
-      resetSortIfColumnHidden(resolved);
-    },
-    [
-      preferenceUserId,
-      resetSortIfColumnHidden,
-      serviceListCatalogue,
-      serviceListUsesServer,
-    ],
-  );
-
-  const resetVisibleColumns = useCallback(() => {
-    const defaults = resetVisibleServiceColumns({
-      userId: preferenceUserId(),
-      usesServer: serviceListUsesServer,
-      catalogue: serviceListCatalogue,
-    });
-    setVisibleColumnIds(defaults);
-    resetSortIfColumnHidden(defaults);
-  }, [
-    preferenceUserId,
-    resetSortIfColumnHidden,
+  const {
+    visibleColumnIds,
+    applyVisibleColumns,
+    resetVisibleColumns,
+    handleRegistrySortChange,
+  } = useServiceListVisibleColumns({
+    userId: user?.user_id ?? "",
     serviceListCatalogue,
     serviceListUsesServer,
-  ]);
+    registrySort,
+    setRegistryPage,
+  });
 
   const actionsContext = useMemo(
     (): ServiceActionsContext => ({
@@ -528,12 +465,7 @@ const ServicesManagement: React.FC = () => {
   const showServiceView = Boolean(isViewingService && selectedService);
   const showServiceEdit = Boolean(editingService) && !isRegistryReadOnly && !showServiceView;
   const showServiceCreate = isCreateOpen && !showServiceEdit && !showServiceView;
-  let pageDescription =
-    "Find a service, open it to view or edit, or create a new one. Publish when it should appear for users.";
-  if (isRegistryReadOnly) {
-    pageDescription =
-      "Browse services in the registry. You can open a service to view its configuration.";
-  }
+  const pageDescription = pageDescriptionForRole(isRegistryReadOnly);
   const showCreateAction = !isRegistryReadOnly && !isCreateServiceTabDisabled;
 
   return (
