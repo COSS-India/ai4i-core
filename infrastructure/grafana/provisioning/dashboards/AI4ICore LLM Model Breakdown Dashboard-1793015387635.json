@@ -38,7 +38,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "Prometheus"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -116,7 +116,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "Prometheus"
+            "uid": "prometheus"
           },
           "editorMode": "code",
           "expr": "sum by (service_id) (\n  increase(telemetry_obsv_requests_total{tenant=~\"$tenant\", service=\"inference-service\", exported_endpoint=~\"/api/v1/chat/completions|/api/v1/chat\", service_id=~\"$model\", service_id!=\"\"}[$__range])\n)",
@@ -133,7 +133,7 @@
     {
       "datasource": {
         "type": "prometheus",
-        "uid": "Prometheus"
+        "uid": "prometheus"
       },
       "fieldConfig": {
         "defaults": {
@@ -211,7 +211,7 @@
         {
           "datasource": {
             "type": "prometheus",
-            "uid": "Prometheus"
+            "uid": "prometheus"
           },
           "editorMode": "code",
           "expr": "sum by (service_id) (\n  increase(telemetry_obsv_llm_tokens_processed_sum{tenant=~\"$tenant\", token_type=\"total\", service_id=~\"$model\", service_id!=\"\"}[$__range])\n)",
@@ -247,7 +247,7 @@
         },
         "datasource": {
           "type": "prometheus",
-          "uid": "Prometheus"
+          "uid": "prometheus"
         },
         "definition": "label_values(telemetry_obsv_requests_total, tenant)",
         "includeAll": true,
@@ -268,7 +268,7 @@
         },
         "datasource": {
           "type": "prometheus",
-          "uid": "Prometheus"
+          "uid": "prometheus"
         },
         "definition": "label_values(telemetry_obsv_requests_total{tenant=~\"$tenant\", service=\"inference-service\", exported_endpoint=~\"/api/v1/chat/completions|/api/v1/chat\", service_id!=\"\"}, service_id)",
         "includeAll": true,
