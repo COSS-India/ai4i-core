@@ -470,7 +470,6 @@ def test_columns_endpoint_response_fields_per_entry():
 
     for col in response.json():
         assert set(col.keys()) == {"key", "label", "default", "filterable", "sortable", "keyword_searchable"}
-        assert "os_field" not in col
         assert "span" not in col
 
 
@@ -538,12 +537,12 @@ def test_http_default_columns_on_no_columns_param():
 
     assert response.status_code == 200, response.text
     rows = response.json()["data"]
-    if rows:
-        row_keys = set(rows[0].keys())
-        assert {"timestamp", "status", "task_type", "url", "institution"}.issubset(row_keys)
-        assert "latency" not in row_keys
-        assert "model" not in row_keys
-        assert "error" not in row_keys
+    assert rows, "expected at least one row in response"
+    row_keys = set(rows[0].keys())
+    assert {"timestamp", "status", "task_type", "url", "institution"}.issubset(row_keys)
+    assert "latency" not in row_keys
+    assert "model" not in row_keys
+    assert "error" not in row_keys
 
 
 def test_http_columns_response_contains_only_selected_keys():
@@ -562,9 +561,9 @@ def test_http_columns_response_contains_only_selected_keys():
 
     assert response.status_code == 200, response.text
     rows = response.json()["data"]
-    if rows:
-        row_keys = set(rows[0].keys())
-        assert "timestamp" in row_keys
-        assert "latency" in row_keys
-        assert "status" not in row_keys
-        assert "url" not in row_keys
+    assert rows, "expected at least one row in response"
+    row_keys = set(rows[0].keys())
+    assert "timestamp" in row_keys
+    assert "latency" in row_keys
+    assert "status" not in row_keys
+    assert "url" not in row_keys
