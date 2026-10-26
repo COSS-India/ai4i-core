@@ -40,7 +40,16 @@ export type RuntimeConfig = {
   adopterLogoUrl: string;
   /** Raw ROTATED_API_KEY_DEFAULT_GRACE_DAYS; parsed by getDefaultRotationGraceDays. */
   rotationGraceDays: string;
+  /** Raw ULCA_MODEL_SPEC_URL; empty/invalid ⇒ DEFAULT_ULCA_MODEL_SPEC_URL via getModelSpecUrls. */
+  ulcaModelSpecUrl: string;
+  /** Raw OPENAI_SPEC_URL; empty/invalid ⇒ DEFAULT_OPENAI_SPEC_URL via getModelSpecUrls. */
+  openaiSpecUrl: string;
 };
+
+export const DEFAULT_ULCA_MODEL_SPEC_URL =
+  "https://github.com/bhashini-dibd/ulca/blob/master/specs/model-schema.yml";
+export const DEFAULT_OPENAI_SPEC_URL =
+  "https://developers.openai.com/api/reference/overview?site_locale=en";
 
 export const EMPTY_RUNTIME_CONFIG: RuntimeConfig = {
   apiUrl: "",
@@ -49,6 +58,8 @@ export const EMPTY_RUNTIME_CONFIG: RuntimeConfig = {
   platformName: DEFAULT_PLATFORM_NAME,
   adopterLogoUrl: "",
   rotationGraceDays: "",
+  ulcaModelSpecUrl: "",
+  openaiSpecUrl: "",
 };
 
 let cached: RuntimeConfig = { ...EMPTY_RUNTIME_CONFIG };
@@ -80,6 +91,8 @@ export function getServerRuntimeConfig(): RuntimeConfig {
     ),
     adopterLogoUrl: firstEnv("ADOPTER_LOGO_URL", "NEXT_PUBLIC_ADOPTER_LOGO_URL"),
     rotationGraceDays: firstEnv("ROTATED_API_KEY_DEFAULT_GRACE_DAYS"),
+    ulcaModelSpecUrl: firstEnv("ULCA_MODEL_SPEC_URL"),
+    openaiSpecUrl: firstEnv("OPENAI_SPEC_URL"),
   };
 }
 
@@ -95,6 +108,8 @@ export function applyRuntimeConfig(config: RuntimeConfig): void {
     platformName: resolvePlatformName(config.platformName),
     adopterLogoUrl: (config.adopterLogoUrl ?? "").trim(),
     rotationGraceDays: (config.rotationGraceDays ?? "").trim(),
+    ulcaModelSpecUrl: (config.ulcaModelSpecUrl ?? "").trim(),
+    openaiSpecUrl: (config.openaiSpecUrl ?? "").trim(),
   };
   if (typeof window !== "undefined") {
     window.__RUNTIME_CONFIG__ = cached;
@@ -136,6 +151,28 @@ export function getDefaultRotationGraceDays(): number | null {
   const raw = cached.rotationGraceDays;
   if (!/^\d+$/.test(raw)) return null;
   return Number(raw);
+}
+
+/** Absolute http(s) URL only — the value lands in an href, so anything else falls back. */
+function resolveExternalUrl(raw: string, fallback: string): string {
+  try {
+    const { protocol } = new URL(raw);
+    if (protocol === "http:" || protocol === "https:") return raw;
+  } catch {
+    /* use fallback */
+  }
+  return fallback;
+}
+
+/**
+ * Spec links shown on Create Model (ULCA for NLP models, OpenAI for LLMs).
+ * ULCA_MODEL_SPEC_URL / OPENAI_SPEC_URL override the defaults without a rebuild.
+ */
+export function getModelSpecUrls(): { ulca: string; openai: string } {
+  return {
+    ulca: resolveExternalUrl(cached.ulcaModelSpecUrl, DEFAULT_ULCA_MODEL_SPEC_URL),
+    openai: resolveExternalUrl(cached.openaiSpecUrl, DEFAULT_OPENAI_SPEC_URL),
+  };
 }
 
 /** Parsed allowlist; empty array ⇒ no filter (full catalog). */

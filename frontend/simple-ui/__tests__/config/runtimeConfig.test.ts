@@ -1,10 +1,13 @@
 import {
   applyRuntimeConfig,
   DEFAULT_ADOPTER_LOGO_SRC,
+  DEFAULT_OPENAI_SPEC_URL,
   DEFAULT_PLATFORM_NAME,
+  DEFAULT_ULCA_MODEL_SPEC_URL,
   EMPTY_RUNTIME_CONFIG,
   getAdopterLogoSrc,
   getBranding,
+  getModelSpecUrls,
   getPlatformName,
   getServerRuntimeConfig,
 } from '../../src/config/runtimeConfig';
@@ -20,6 +23,8 @@ const ENV_KEYS = [
   'NEXT_PUBLIC_PLATFORM_NAME',
   'ADOPTER_LOGO_URL',
   'NEXT_PUBLIC_ADOPTER_LOGO_URL',
+  'ULCA_MODEL_SPEC_URL',
+  'OPENAI_SPEC_URL',
 ] as const;
 
 describe('branding resolvers', () => {
@@ -160,6 +165,46 @@ describe('getAdopterLogoSrc', () => {
   });
 });
 
+describe('getModelSpecUrls', () => {
+  afterEach(() => {
+    applyRuntimeConfig(EMPTY_RUNTIME_CONFIG);
+  });
+
+  it('falls back to the ULCA and OpenAI defaults when unset', () => {
+    expect(getModelSpecUrls()).toEqual({
+      ulca: DEFAULT_ULCA_MODEL_SPEC_URL,
+      openai: DEFAULT_OPENAI_SPEC_URL,
+    });
+  });
+
+  it('uses ConfigMap URLs when set', () => {
+    applyRuntimeConfig({
+      ...EMPTY_RUNTIME_CONFIG,
+      ulcaModelSpecUrl: 'https://specs.example.com/ulca.yml',
+      openaiSpecUrl: 'https://specs.example.com/openai',
+    });
+    expect(getModelSpecUrls()).toEqual({
+      ulca: 'https://specs.example.com/ulca.yml',
+      openai: 'https://specs.example.com/openai',
+    });
+  });
+
+  it.each(['javascript:alert(1)', '/relative/spec.yml', '//evil.com/spec', 'not a url'])(
+    'rejects %s',
+    (raw) => {
+      applyRuntimeConfig({
+        ...EMPTY_RUNTIME_CONFIG,
+        ulcaModelSpecUrl: raw,
+        openaiSpecUrl: raw,
+      });
+      expect(getModelSpecUrls()).toEqual({
+        ulca: DEFAULT_ULCA_MODEL_SPEC_URL,
+        openai: DEFAULT_OPENAI_SPEC_URL,
+      });
+    },
+  );
+});
+
 describe('getBranding', () => {
   afterEach(() => {
     applyRuntimeConfig(EMPTY_RUNTIME_CONFIG);
@@ -228,5 +273,13 @@ describe('getServerRuntimeConfig platformName', () => {
     expect(getServerRuntimeConfig().adopterLogoUrl).toBe(
       'https://cdn.example.com/logo.png',
     );
+  });
+
+  it('reads ULCA_MODEL_SPEC_URL and OPENAI_SPEC_URL', () => {
+    process.env.ULCA_MODEL_SPEC_URL = 'https://specs.example.com/ulca.yml';
+    process.env.OPENAI_SPEC_URL = 'https://specs.example.com/openai';
+    const config = getServerRuntimeConfig();
+    expect(config.ulcaModelSpecUrl).toBe('https://specs.example.com/ulca.yml');
+    expect(config.openaiSpecUrl).toBe('https://specs.example.com/openai');
   });
 });

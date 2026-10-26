@@ -6,18 +6,23 @@ import {
   Button,
   Center,
   Code,
+  Collapse,
   FormControl,
   Heading,
   HStack,
   Input,
   Link,
+  SimpleGrid,
   Spinner,
   Text,
+  useDisclosure,
   VStack,
 } from "@chakra-ui/react";
-import { CopyIcon, ExternalLinkIcon } from "@chakra-ui/icons";
+import { CopyIcon } from "@chakra-ui/icons";
 import React, { useEffect, useState } from "react";
+import { FiArrowUpRight, FiChevronDown, FiDownload, FiInfo } from "react-icons/fi";
 import { FIELD_HINTS } from "../../config/fieldHints";
+import { getModelSpecUrls } from "../../config/runtimeConfig";
 import FieldHint from "../common/FieldHint";
 import FieldLabel from "../common/FieldLabel";
 import FormSection from "../common/FormSection";
@@ -61,6 +66,8 @@ export default function ModelForm({
 }: ModelFormProps) {
   const [fileName, setFileName] = useState("");
   const isBusy = isUploading || isValidating;
+  const specUrls = getModelSpecUrls();
+  const requirements = useDisclosure();
 
   useEffect(() => {
     if (createdModel) setFileName("");
@@ -81,29 +88,59 @@ export default function ModelForm({
       {mode === "create" ? (
         <FormSection title="Upload Model Definition">
           {/* isExternal opens a new tab so the admin keeps what's already in the drawer. */}
-          <VStack mb={4} spacing={1} align="stretch">
+          <SimpleGrid mb={5} columns={2} spacing={3}>
             {FIELD_HINTS.model.jsonUpload.specReferences.map((spec) => (
-              <Text key={spec.id} fontSize="sm" color="ink.600" lineHeight="1.5">
-                {spec.text}{" "}
-                <Link
-                  href={spec.href}
-                  isExternal
-                  color="blue.600"
+              <Box
+                key={spec.id}
+                title={spec.text}
+                p={3}
+                borderWidth="1px"
+                borderColor="blue.100"
+                borderRadius="md"
+                bg="blue.50"
+              >
+                <Text
+                  as="span"
+                  display="inline-block"
+                  mb={2}
+                  px={2}
+                  py="1px"
+                  fontSize="xs"
                   fontWeight="600"
+                  color="ink.700"
+                  bg="ink.200"
+                  borderRadius="md"
+                >
+                  {spec.badge}
+                </Text>
+                <Link
+                  href={specUrls[spec.id]}
+                  isExternal
+                  display="flex"
+                  alignItems="center"
+                  gap={1}
+                  fontSize="sm"
+                  fontWeight="600"
+                  color="blue.600"
                   aria-label={`${spec.linkLabel} (opens in a new tab)`}
                 >
-                  View specification
-                  <ExternalLinkIcon mx="2px" mb="2px" />
+                  {spec.shortLabel}
+                  <FiArrowUpRight aria-hidden />
                 </Link>
-              </Text>
+              </Box>
             ))}
-          </VStack>
+          </SimpleGrid>
           <FormControl>
             <HStack justify="space-between" mb={2} align="center">
               <FieldLabel formLabelProps={{ mb: 0, htmlFor: "model-json-file" }}>
                 Upload JSON File
               </FieldLabel>
-              <Button size="sm" variant="outline" onClick={onDownloadSample}>
+              <Button
+                size="sm"
+                variant="outline"
+                leftIcon={<FiDownload aria-hidden />}
+                onClick={onDownloadSample}
+              >
                 Download Sample JSON
               </Button>
             </HStack>
@@ -163,15 +200,51 @@ export default function ModelForm({
               </HStack>
             </Box>
             <FieldHint mt={2}>{FIELD_HINTS.model.jsonUpload.helper}</FieldHint>
-            <Text mt={2} fontSize="xs" color="ink.500" lineHeight="1.5">
-              Required (ULCA): name (5–100 chars, no spaces), version, description
-              (25–1000 chars), task.type, license (closed enum), domain (closed enum,
-              at least one), trainingDataset.description, submitter.name. Optional:
-              refUrl, languages (Indic and English codes only), licenseUrl,
-              isLangDetectionEnabled, isMultilingual, adapterConfig, schema,
-              benchmarks. modelId is generated from name:version. submittedOn and
-              updatedOn are server-set unless you override them.
-            </Text>
+            <Box mt={4} bg="ink.50" borderRadius="md">
+              <Button
+                variant="unstyled"
+                display="flex"
+                alignItems="center"
+                w="full"
+                h="auto"
+                px={3}
+                py={2.5}
+                fontSize="sm"
+                fontWeight="500"
+                color="ink.600"
+                onClick={requirements.onToggle}
+                aria-expanded={requirements.isOpen}
+                aria-controls="model-field-requirements"
+              >
+                <Box as={FiInfo} aria-hidden mr={2} />
+                Field requirements
+                <Box
+                  as={FiChevronDown}
+                  aria-hidden
+                  ml="auto"
+                  transform={requirements.isOpen ? "rotate(180deg)" : undefined}
+                  transition="transform 0.2s"
+                />
+              </Button>
+              <Collapse in={requirements.isOpen} animateOpacity>
+                <Text
+                  id="model-field-requirements"
+                  px={3}
+                  pb={3}
+                  fontSize="xs"
+                  color="ink.500"
+                  lineHeight="1.5"
+                >
+                  Required (ULCA): name (5–100 chars, no spaces), version, description
+                  (25–1000 chars), task.type, license (closed enum), domain (closed enum,
+                  at least one), trainingDataset.description, submitter.name. Optional:
+                  refUrl, languages (Indic and English codes only), licenseUrl,
+                  isLangDetectionEnabled, isMultilingual, adapterConfig, schema,
+                  benchmarks. modelId is generated from name:version. submittedOn and
+                  updatedOn are server-set unless you override them.
+                </Text>
+              </Collapse>
+            </Box>
           </FormControl>
         </FormSection>
       ) : null}

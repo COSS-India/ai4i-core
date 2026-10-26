@@ -69,21 +69,25 @@ export const FIELD_HINTS = {
   },
   model: {
     jsonUpload: {
-      helper:
-        ".json files only. Validated before the model is created — refer to the sample JSON for exact field formats.",
-      /** Shown beside the sample, never inside it, so the downloaded JSON stays spec-only. */
+      helper: "JSON only · validated before creation.",
+      /**
+       * Shown beside the sample, never inside it, so the downloaded JSON stays spec-only.
+       * hrefs come from getModelSpecUrls() (ULCA_MODEL_SPEC_URL / OPENAI_SPEC_URL).
+       */
       specReferences: [
         {
           id: "ulca",
+          badge: "NLP",
+          shortLabel: "ULCA spec",
           text: "NLP model details must follow the ULCA Model specification.",
           linkLabel: "View ULCA Model specification",
-          href: "https://github.com/bhashini-dibd/ulca/blob/master/specs/model-schema.yml",
         },
         {
           id: "openai",
+          badge: "LLM",
+          shortLabel: "OpenAI spec",
           text: "LLM model details must follow the OpenAI specification.",
           linkLabel: "View OpenAI specification",
-          href: "https://developers.openai.com/api/reference/overview?site_locale=en",
         },
       ],
     },
