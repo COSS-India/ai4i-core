@@ -4,6 +4,7 @@ import {
   Badge,
   Box,
   HStack,
+  Skeleton,
   Switch,
   Text,
   useDisclosure,
@@ -231,12 +232,20 @@ const ModelManagementPage: React.FC = () => {
     fetchModels();
   }, [fetchModels, taskTypeFilterReady]);
 
-  const { data: allServices } = useQuery({
+  const {
+    data: allServices,
+    isPending: isServicesPending,
+    isError: isServicesError,
+  } = useQuery({
     queryKey: SERVICES_ALL_QUERY_KEY,
     queryFn: listServicesForModels,
     staleTime: SERVICES_ALL_STALE_MS,
   });
-  /** Service counts per model from the existing services list (FE-owned; no BE field required). */
+  /** Counts are unknown, not zero, until the services list resolves. */
+  const isServiceCountLoading = isServicesPending;
+  const hasServiceCountError = isServicesError;
+
+  /** Service counts per model from the existing services list (FE-owned). */
   const serviceCountByModelId = useMemo(() => {
     const counts = new Map<string, number>();
     (allServices || []).forEach(
@@ -250,13 +259,26 @@ const ModelManagementPage: React.FC = () => {
     return counts;
   }, [allServices]);
 
+  /** Models that have at least one published service (BE rejects deprecate with 409). */
+  const modelIdsWithPublishedService = useMemo(() => {
+    const ids = new Set<string>();
+    (allServices || []).forEach(
+      (s: {
+        modelId?: string;
+        model_id?: string;
+        isPublished?: boolean;
+        is_published?: boolean;
+      }) => {
+        const id = s.modelId ?? s.model_id;
+        const published = s.isPublished === true || s.is_published === true;
+        if (id && published) ids.add(String(id));
+      },
+    );
+    return ids;
+  }, [allServices]);
+
   const getServiceCount = useCallback(
-    (model: Model): number => {
-      if (typeof model.serviceCount === "number" && Number.isFinite(model.serviceCount)) {
-        return model.serviceCount;
-      }
-      return serviceCountByModelId.get(model.modelId) ?? 0;
-    },
+    (model: Model): number => serviceCountByModelId.get(model.modelId) ?? 0,
     [serviceCountByModelId],
   );
 
@@ -264,6 +286,23 @@ const ModelManagementPage: React.FC = () => {
     (model: Model) => getServiceCount(model) > 0,
     [getServiceCount],
   );
+
+  const hasPublishedService = useCallback(
+    (model: Model) => modelIdsWithPublishedService.has(model.modelId),
+    [modelIdsWithPublishedService],
+  );
+
+  const isModelActive = useCallback((model: Model) => {
+    return (
+      model.versionStatus?.toLowerCase() === "active" || !model.versionStatus
+    );
+  }, []);
+
+  const isModelDeprecated = useCallback((model: Model) => {
+    return Boolean(
+      model.versionStatus && model.versionStatus.toLowerCase() !== "active",
+    );
+  }, []);
 
   const registryTableItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -657,6 +696,18 @@ const ModelManagementPage: React.FC = () => {
         id: "serviceCount",
         header: "No. of Services",
         cell: (model) => {
+          if (isServiceCountLoading) {
+            return <Skeleton height="20px" width="28px" borderRadius="md" />;
+          }
+          if (hasServiceCountError) {
+            return (
+              <Tooltip label="Could not load services" placement="top" hasArrow>
+                <Text fontSize="sm" color="gray.400">
+                  —
+                </Text>
+              </Tooltip>
+            );
+          }
           const count = getServiceCount(model);
           return (
             <Text fontSize="sm" color="ink.600">
@@ -670,34 +721,22 @@ const ModelManagementPage: React.FC = () => {
         header: "Activate/Deprecate",
         tdProps: { onClick: (e) => e.stopPropagation() },
         cell: (model) => {
-          if (!hasLinkedServices(model)) {
-            return (
-              <Text fontSize="sm" color="ink.600">
-                NA
-              </Text>
-            );
+          if (isServiceCountLoading) {
+            return <Skeleton height="20px" width="36px" borderRadius="md" />;
           }
-          if (isRegistryReadOnly) return null;
-
-          const isActive =
-            model.versionStatus?.toLowerCase() === "active" || !model.versionStatus;
-          if (isActive) {
+          if (hasServiceCountError) {
             return (
-              <Tooltip label="Deprecate model" placement="top" hasArrow>
-                <Box as="span" display="inline-flex" alignItems="center">
-                  <Switch
-                    size="md"
-                    colorScheme="green"
-                    isChecked={true}
-                    onChange={() => openConfirmDialog("deprecate", model)}
-                    isDisabled={updatingModelId !== null}
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                </Box>
+              <Tooltip label="Could not load services" placement="top" hasArrow>
+                <Text fontSize="sm" color="gray.400">
+                  —
+                </Text>
               </Tooltip>
             );
           }
-          if (model.versionStatus) {
+
+          // Deprecated models must stay activatable even with 0 services
+          // (Create Service is hidden for deprecated models).
+          if (!isRegistryReadOnly && isModelDeprecated(model)) {
             return (
               <Tooltip label="Activate model" placement="top" hasArrow>
                 <Box as="span" display="inline-flex" alignItems="center">
@@ -713,12 +752,59 @@ const ModelManagementPage: React.FC = () => {
               </Tooltip>
             );
           }
-          return null;
+
+          if (isModelActive(model) && !hasLinkedServices(model)) {
+            return (
+              <Text fontSize="sm" color="ink.600">
+                NA
+              </Text>
+            );
+          }
+
+          if (isRegistryReadOnly || !isModelActive(model)) return null;
+
+          const blockedByPublished = hasPublishedService(model);
+          return (
+            <Tooltip
+              label={
+                blockedByPublished
+                  ? "Unpublish its services to deprecate"
+                  : "Deprecate model"
+              }
+              placement="top"
+              hasArrow
+            >
+              <Box as="span" display="inline-flex" alignItems="center">
+                <Switch
+                  size="md"
+                  colorScheme="green"
+                  isChecked={true}
+                  onChange={() => {
+                    if (blockedByPublished) return;
+                    openConfirmDialog("deprecate", model);
+                  }}
+                  isDisabled={updatingModelId !== null || blockedByPublished}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              </Box>
+            </Tooltip>
+          );
         },
       },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelSort, getServiceCount, hasLinkedServices, updatingModelId, isRegistryReadOnly]);
+  }, [
+    modelSort,
+    getServiceCount,
+    hasLinkedServices,
+    hasPublishedService,
+    isModelActive,
+    isModelDeprecated,
+    isServiceCountLoading,
+    hasServiceCountError,
+    updatingModelId,
+    isRegistryReadOnly,
+  ]);
 
   return (
     <>
@@ -833,24 +919,9 @@ const ModelManagementPage: React.FC = () => {
                   </CreateButton>
                 )}
                 {!isRegistryReadOnly &&
-                hasLinkedServices(selectedModel) &&
-                (selectedModel.versionStatus?.toLowerCase() === "active" ||
-                  !selectedModel.versionStatus) ? (
-                  <Tooltip label="Deprecate model" placement="top" hasArrow>
-                    <Box as="span" display="inline-flex" alignItems="center">
-                      <Switch
-                        size="md"
-                        colorScheme="green"
-                        isChecked={true}
-                        onChange={() => openConfirmDialog("deprecate", selectedModel)}
-                        isDisabled={updatingModelId !== null}
-                      />
-                    </Box>
-                  </Tooltip>
-                ) : !isRegistryReadOnly &&
-                  hasLinkedServices(selectedModel) &&
-                  selectedModel.versionStatus?.toLowerCase() !== "active" &&
-                  selectedModel.versionStatus ? (
+                !isServiceCountLoading &&
+                !hasServiceCountError &&
+                isModelDeprecated(selectedModel) ? (
                   <Tooltip label="Activate model" placement="top" hasArrow>
                     <Box as="span" display="inline-flex" alignItems="center">
                       <Switch
@@ -859,6 +930,36 @@ const ModelManagementPage: React.FC = () => {
                         isChecked={false}
                         onChange={() => openConfirmDialog("activate", selectedModel)}
                         isDisabled={updatingModelId !== null}
+                      />
+                    </Box>
+                  </Tooltip>
+                ) : !isRegistryReadOnly &&
+                  !isServiceCountLoading &&
+                  !hasServiceCountError &&
+                  isModelActive(selectedModel) &&
+                  hasLinkedServices(selectedModel) ? (
+                  <Tooltip
+                    label={
+                      hasPublishedService(selectedModel)
+                        ? "Unpublish its services to deprecate"
+                        : "Deprecate model"
+                    }
+                    placement="top"
+                    hasArrow
+                  >
+                    <Box as="span" display="inline-flex" alignItems="center">
+                      <Switch
+                        size="md"
+                        colorScheme="green"
+                        isChecked={true}
+                        onChange={() => {
+                          if (hasPublishedService(selectedModel)) return;
+                          openConfirmDialog("deprecate", selectedModel);
+                        }}
+                        isDisabled={
+                          updatingModelId !== null ||
+                          hasPublishedService(selectedModel)
+                        }
                       />
                     </Box>
                   </Tooltip>
