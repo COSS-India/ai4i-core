@@ -236,7 +236,7 @@ const ModelManagementPage: React.FC = () => {
     queryFn: listServicesForModels,
     staleTime: SERVICES_ALL_STALE_MS,
   });
-  /** Client-side service counts per model until BE returns `serviceCount` on the models list. */
+  /** Service counts per model from the existing services list (FE-owned; no BE field required). */
   const serviceCountByModelId = useMemo(() => {
     const counts = new Map<string, number>();
     (allServices || []).forEach(
