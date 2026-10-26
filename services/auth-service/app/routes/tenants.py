@@ -152,7 +152,9 @@ async def get_tenant(
     svc: TenantService = Depends(get_tenant_service),
     platform_core_db: Optional[AsyncSession] = Depends(get_platform_core_db),
 ):
-    """Return one tenant by id, including its assigned ``tier_name``.
+    """Return one tenant by id, including its assigned ``tier_name`` and
+    ``tier_limits`` (rate limit in requests/min and monthly quota per task
+    type) for the read-only "Tier and usage limits" section.
 
     Tenant admins are limited to their own tenant. Pass `unmask=true` only
     for the edit form (ADMIN / TENANT_ADMIN).
@@ -161,6 +163,7 @@ async def get_tenant(
     tenant = await svc.get_tenant(current_user, tenant_id, unmask=unmask, is_admin=is_admin)
     data = svc.build_tenant_response(tenant, unmask=unmask)
     data["tier_name"] = await svc.resolve_tier_name(tenant.tier_id, platform_core_db)
+    data["tier_limits"] = await svc.resolve_tier_limits(tenant.tier_id, platform_core_db)
     return GetTenantResponse(data=data)
 
 
