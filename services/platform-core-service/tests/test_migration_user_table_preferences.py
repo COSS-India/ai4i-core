@@ -39,7 +39,7 @@ def _sql(step) -> str:
 def test_revision_ids():
     m = _load()
     assert m.revision == "b8d2f4a6c0e1"
-    assert m.down_revision == "e2f4a6c8b0d3"
+    assert m.down_revision == "b7d9f1a3c5e8"
 
 
 def test_upgrade_creates_table_with_unique_constraint():
