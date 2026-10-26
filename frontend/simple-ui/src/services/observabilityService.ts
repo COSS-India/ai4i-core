@@ -56,12 +56,12 @@ export function telemetryTraceIdForApi(traceId: string): string {
   return encodeURIComponent(traceId.trim());
 }
 
-/** Map UI status filter to OpenSearch `attributes.status` values. */
+/** Map UI status filter to OpenSearch `attributes.status` values (success | failure). */
 function mapStatusFilter(level?: string): string | undefined {
   if (!level?.trim()) return undefined;
   const v = level.trim().toLowerCase();
   if (v === 'success') return 'success';
-  if (v === 'fail' || v === 'failure') return 'failure';
+  if (v === 'fail' || v === 'failed' || v === 'failure') return 'failure';
   return v;
 }
 
@@ -309,7 +309,8 @@ export const searchTelemetryTraces = async (
     const queryParams = new URLSearchParams();
     if (params.taskType) queryParams.append('task_types', params.taskType.toUpperCase());
     const statusFilter = mapStatusFilter(params.level);
-    if (statusFilter) queryParams.append('status_filter', statusFilter);
+    // Prefer `status` (AI4IDS-3526); `status_filter` remains a BE legacy alias.
+    if (statusFilter) queryParams.append('status', statusFilter);
     if (params.startDate) queryParams.append('start_date', params.startDate);
     if (params.endDate) queryParams.append('end_date', params.endDate);
     if (params.tenant_id) queryParams.append('tenant_id', params.tenant_id);

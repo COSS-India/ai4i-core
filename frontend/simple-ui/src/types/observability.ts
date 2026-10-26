@@ -82,38 +82,39 @@ export interface TraceSearchResponse {
   offset: number;
 }
 
-/** Row from GET /telemetry/traces/search (unified search + aggregations). */
+/**
+ * Row from GET /telemetry/traces/search.
+ * Only `trace_id` is always present; other fields depend on the `columns` param
+ * (AI4IDS-3529). Keys match the column catalogue (`model`, `latency`, …).
+ */
 export interface TelemetryTraceRecord {
   trace_id: string;
-  task_type: string;
-  status: string;
-  url: string;
-  tenant_id: string;
-  timestamp: string;
+  task_type?: string | null;
+  status?: string | null;
+  url?: string | null;
+  tenant_id?: string | null;
+  timestamp?: string | null;
   service?: string | null;
-  /** Present when `status_code` is in `columns` (or merged for status display). */
   status_code?: number | null;
-  /** Admins only; present when `error` is in `columns`. */
+  /** Requested for admins (AC-6); column is hidden from non-admin pickers. */
   error?: string | null;
-  service_id?: string | null;
-  model_name?: string | null;
-  latency_ms?: number | null;
-  app_id?: string | null;
-  api_key_id?: string | null;
+  model?: string | null;
+  latency?: number | null;
+  application?: string | null;
+  api_key?: string | null;
   end_user?: string | null;
-  metadata?: string[] | null;
+  metadata?: string[] | string | null;
   method?: string | null;
 }
 
-/** Column metadata from GET /telemetry/traces/columns. */
+/** Column metadata from GET /telemetry/traces/columns (AI4IDS-3529). */
 export interface TelemetryTraceColumnDef {
   key: string;
   label: string;
   default: boolean;
-  filter: string | null;
-  keyword: boolean;
-  sort: boolean;
-  admin_only: boolean;
+  filterable: boolean;
+  sortable: boolean;
+  keyword_searchable: boolean;
 }
 
 export interface TelemetryTraceColumnsResponse {
@@ -134,6 +135,13 @@ export interface TelemetryTraceSearchAggregations {
     failure: number;
   };
   by_task?: Record<string, number>;
+  /** True when by_level/by_task cover only a capped subset of `total`. */
+  partial?: boolean;
+}
+
+export interface TelemetryTraceSearchSummary {
+  success: number;
+  failure: number;
 }
 
 export interface TelemetryTraceSearchResponse {
@@ -142,6 +150,8 @@ export interface TelemetryTraceSearchResponse {
   page: number;
   pageSize: number;
   aggregations: TelemetryTraceSearchAggregations;
+  /** Preferred success/failure totals for the matching set (AI4IDS-3526). */
+  summary?: TelemetryTraceSearchSummary;
 }
 
 export interface TelemetrySpanContext {

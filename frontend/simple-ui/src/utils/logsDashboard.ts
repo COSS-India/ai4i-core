@@ -23,35 +23,50 @@ export const STATUS_CODE_MAX_COUNT = 10;
 
 export const COLUMN_STORAGE_KEY = "logs-dashboard-columns";
 
-/** Contract fallback when GET /telemetry/traces/columns is not deployed yet. */
+/**
+ * Offline fallback matching platform-core COLUMN_DEFINITIONS (AI4IDS-3529).
+ * Prefer GET /telemetry/traces/columns when the API is available.
+ */
 export const FALLBACK_COLUMN_DEFS: TelemetryTraceColumnDef[] = [
-  { key: "timestamp", label: "Timestamp", default: true, filter: "date_range", keyword: false, sort: true, admin_only: false },
-  { key: "status", label: "Status", default: true, filter: "status", keyword: true, sort: false, admin_only: false },
-  { key: "task_type", label: "Task Type", default: true, filter: "task_type", keyword: true, sort: false, admin_only: false },
-  { key: "url", label: "URL", default: true, filter: null, keyword: true, sort: true, admin_only: false },
-  { key: "institution", label: INSTITUTION, default: true, filter: "institution", keyword: false, sort: false, admin_only: false },
-  { key: "status_code", label: "Status Code", default: false, filter: "status_code", keyword: true, sort: true, admin_only: false },
-  { key: "error", label: "Error", default: false, filter: null, keyword: true, sort: false, admin_only: true },
-  { key: "service", label: "Service", default: false, filter: "service", keyword: true, sort: false, admin_only: false },
-  { key: "model", label: "Model", default: false, filter: null, keyword: true, sort: false, admin_only: false },
-  { key: "latency", label: "Latency (ms)", default: false, filter: null, keyword: false, sort: true, admin_only: false },
-  { key: "app_id", label: "Application", default: false, filter: null, keyword: true, sort: false, admin_only: false },
-  { key: "api_key", label: "API Key", default: false, filter: null, keyword: true, sort: false, admin_only: false },
-  { key: "end_user", label: "End User", default: false, filter: "user", keyword: true, sort: false, admin_only: false },
-  { key: "metadata", label: "Metadata", default: false, filter: "metadata", keyword: true, sort: false, admin_only: false },
-  { key: "method", label: "Method", default: false, filter: null, keyword: false, sort: false, admin_only: false },
+  { key: "timestamp", label: "Timestamp", default: true, filterable: false, sortable: true, keyword_searchable: false },
+  { key: "status", label: "Status", default: true, filterable: true, sortable: false, keyword_searchable: true },
+  { key: "task_type", label: "Task Type", default: true, filterable: true, sortable: false, keyword_searchable: true },
+  { key: "url", label: "URL", default: true, filterable: false, sortable: true, keyword_searchable: true },
+  { key: "institution", label: INSTITUTION, default: true, filterable: true, sortable: false, keyword_searchable: false },
+  { key: "status_code", label: "Status Code", default: false, filterable: true, sortable: true, keyword_searchable: true },
+  { key: "error", label: "Error", default: false, filterable: false, sortable: false, keyword_searchable: true },
+  { key: "service", label: "Service", default: false, filterable: true, sortable: false, keyword_searchable: true },
+  { key: "model", label: "Model", default: false, filterable: false, sortable: false, keyword_searchable: true },
+  { key: "latency", label: "Latency (ms)", default: false, filterable: false, sortable: true, keyword_searchable: false },
+  { key: "application", label: "Application", default: false, filterable: false, sortable: false, keyword_searchable: true },
+  { key: "api_key", label: "API Key", default: false, filterable: false, sortable: false, keyword_searchable: true },
+  { key: "end_user", label: "End User", default: false, filterable: true, sortable: false, keyword_searchable: true },
+  { key: "metadata", label: "Metadata", default: false, filterable: true, sortable: false, keyword_searchable: true },
+  { key: "method", label: "Method", default: false, filterable: false, sortable: false, keyword_searchable: false },
 ];
 
 export const DEFAULT_COLUMN_KEYS = FALLBACK_COLUMN_DEFS.filter((c) => c.default).map(
   (c) => c.key
 );
 
+/** Column keys the search API accepts for `sort_by`. */
 export const SORTABLE_API_KEYS: Record<string, TelemetryTraceSortBy> = {
   timestamp: "timestamp",
   url: "url",
   latency: "latency",
   status_code: "status_code",
 };
+
+/** Error column is admin-only on the screen (parent AC-6 / design). */
+export const isAdminOnlyColumnKey = (key: string): boolean => key === "error";
+
+/** Normalise API column labels (e.g. brand Institution). */
+export const normalizeColumnDefs = (
+  columns: TelemetryTraceColumnDef[]
+): TelemetryTraceColumnDef[] =>
+  columns.map((col) =>
+    col.key === "institution" ? { ...col, label: INSTITUTION } : col
+  );
 
 export const formatDateTimeLocal = (date: Date): string => {
   const year = date.getFullYear();
@@ -99,11 +114,21 @@ export const isLiveEndTime = (endTime: string): boolean => {
 
 export const isFailureStatus = (status: string): boolean => {
   const s = status.toLowerCase();
-  return s === "fail" || s === "failure" || s === "error";
+  return s === "fail" || s === "failed" || s === "failure" || s === "error";
 };
 
 export const isSuccessStatus = (status: string): boolean =>
   status.toLowerCase() === "success";
+
+export const formatMetadataCell = (
+  metadata: string[] | string | null | undefined
+): string => {
+  if (metadata == null || metadata === "") return "—";
+  if (Array.isArray(metadata)) {
+    return metadata.length ? metadata.join(", ") : "—";
+  }
+  return String(metadata);
+};
 
 export const parseMetadataFilter = (
   raw: string
@@ -144,6 +169,11 @@ export const parseStatusCodeFilter = (
   return { value: parts.join(",") };
 };
 
+/** Earlier FE scaffold used app_id; BE column key is application. */
+const LEGACY_COLUMN_KEY_MAP: Record<string, string> = {
+  app_id: "application",
+};
+
 export const readStoredColumns = (): string[] | null => {
   if (typeof window === "undefined") return null;
   try {
@@ -153,7 +183,7 @@ export const readStoredColumns = (): string[] | null => {
     if (!Array.isArray(parsed) || !parsed.every((k) => typeof k === "string")) {
       return null;
     }
-    return parsed as string[];
+    return (parsed as string[]).map((k) => LEGACY_COLUMN_KEY_MAP[k] ?? k);
   } catch {
     return null;
   }
@@ -169,9 +199,9 @@ export const writeStoredColumns = (keys: string[]) => {
 };
 
 /**
- * Build `columns` query value: visible keys + status_code for failed-row display.
- * When `includeError` is set (admins), always request `error` so AC-6 can show it
- * on failed rows without requiring the Error column to be selected.
+ * Build `columns` query value from the picker selection.
+ * Always includes `status_code` for failed-row display; includes `error` for admins (AC-6).
+ * Always includes `status` when status_code is requested so the status cell can render.
  */
 export const buildColumnsQueryParam = (
   selectedColumns: string[],
@@ -180,11 +210,15 @@ export const buildColumnsQueryParam = (
 ): string => {
   const keys = new Set(selectedColumns);
   keys.add("status_code");
+  keys.add("status");
   if (options?.includeError) {
     keys.add("error");
   }
   const order = [...columnOrder];
-  if (!order.includes("status_code")) order.push("status_code");
-  if (options?.includeError && !order.includes("error")) order.push("error");
+  for (const required of ["status", "status_code", "error"] as const) {
+    if (keys.has(required) && !order.includes(required)) {
+      order.push(required);
+    }
+  }
   return order.filter((k) => keys.has(k)).join(",");
 };
