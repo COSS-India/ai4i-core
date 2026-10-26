@@ -3,11 +3,9 @@
 from typing import TYPE_CHECKING, Optional
 from uuid import UUID
 
-from fastapi import HTTPException, status
-
 from app.core.config import settings
 from app.core.constants import RoleName
-from app.core.exceptions import EntityNotFoundError, ValidationError
+from app.core.exceptions import AppError, EntityNotFoundError, ValidationError
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User
 from app.repositories.tenant_repository import TenantRepository
@@ -124,15 +122,13 @@ EMAIL_LOCKED_STATUSES: frozenset[TenantStatus] = frozenset(
 
 def assert_tenant_email_editable(tenant: Tenant) -> None:
     if tenant.status in EMAIL_LOCKED_STATUSES:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": "TENANT_EMAIL_EDIT_NOT_ALLOWED",
-                "message": (
-                    "The email cannot be changed while the institution "
-                    f"is {tenant.status.value.lower()}."
-                ),
-            },
+        raise AppError(
+            message=(
+                "The email cannot be changed while the institution "
+                f"is {tenant.status.value.lower()}."
+            ),
+            code="TENANT_EMAIL_EDIT_NOT_ALLOWED",
+            status_code=409,
         )
     # Its contact is the seeded platform admin — changing the email would
     # hand that account over.
@@ -153,15 +149,13 @@ async def assert_not_platform_admin(role_service: "RoleService", user: User) -> 
     # Re-aligning would move (and on confirmation, hand over) a platform
     # administrator's account.
     if RoleName.ADMIN.value in await role_service.get_user_roles(user.id):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": "TENANT_EMAIL_EDIT_NOT_ALLOWED",
-                "message": (
-                    "The email cannot be changed: the institution's contact "
-                    "is a platform administrator."
-                ),
-            },
+        raise AppError(
+            message=(
+                "The email cannot be changed: the institution's contact "
+                "is a platform administrator."
+            ),
+            code="TENANT_EMAIL_EDIT_NOT_ALLOWED",
+            status_code=409,
         )
 
 
@@ -180,12 +174,10 @@ async def assert_email_available(
     """
     existing_tenant = await tenant_repo.get_by_email(email)
     if existing_tenant and existing_tenant.id != tenant_id:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": "DUPLICATE_TENANT_EMAIL",
-                "message": "A tenant with this email already exists.",
-            },
+        raise AppError(
+            message="A tenant with this email already exists.",
+            code="DUPLICATE_TENANT_EMAIL",
+            status_code=409,
         )
     existing_user = await user_repo.get_by_email(email)
     if existing_user is None:
@@ -201,10 +193,8 @@ async def assert_email_available(
         # Only reject cross-tenant.
         collides = existing_user.tenant_id != tenant_id
     if collides:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "code": "DUPLICATE_EMAIL",
-                "message": "This email is already in use.",
-            },
+        raise AppError(
+            message="This email is already in use.",
+            code="DUPLICATE_EMAIL",
+            status_code=409,
         )

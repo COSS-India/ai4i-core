@@ -117,7 +117,7 @@ class TestPendingEmailReissue:
                                     background_tasks=MagicMock())
 
         assert exc.value.status_code == 409
-        assert exc.value.detail["code"] == "DUPLICATE_EMAIL"
+        assert exc.value.code == "DUPLICATE_EMAIL"
         svc._tenants.commit.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -133,7 +133,7 @@ class TestPendingEmailReissue:
                                     background_tasks=MagicMock())
 
         assert exc.value.status_code == 409
-        assert exc.value.detail["code"] == "DUPLICATE_TENANT_EMAIL"
+        assert exc.value.code == "DUPLICATE_TENANT_EMAIL"
         svc._tenants.commit.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -168,5 +168,5 @@ class TestPendingEmailReissue:
                                     background_tasks=MagicMock())
 
         assert exc.value.status_code == 409
-        assert exc.value.detail["code"] == "DUPLICATE_EMAIL"
+        assert exc.value.code == "DUPLICATE_EMAIL"
         svc._tenants.commit.assert_not_awaited()
