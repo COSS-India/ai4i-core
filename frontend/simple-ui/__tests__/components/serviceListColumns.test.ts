@@ -7,13 +7,17 @@ import {
   parseVisibleColumnsPayload,
   resolveServiceListColumns,
   saveServiceListColumns,
+  formatServiceListPrice,
+  serviceListCellKey,
   serviceListColumnStorageKey,
   serviceListFilterParams,
+  servicePublishedOnMillis,
   toggleServiceListColumn,
   type ServiceListColumnDef,
   type ServiceListColumnId,
   type ServiceListColumnPreferenceStore,
 } from "../../src/components/services-management/serviceListColumns";
+import type { Service } from "../../src/types/platform";
 
 const memoryStore = (): ServiceListColumnPreferenceStore & { data: Map<string, string[]> } => {
   const data = new Map<string, string[]>();
@@ -156,6 +160,57 @@ describe("service list columns", () => {
       parseVisibleColumnsPayload({ data: { visibleColumns: ["task_type", "tier"] } }),
     ).toEqual(["task_type", "tier"]);
     expect(parseVisibleColumnsPayload({ data: {} })).toBeNull();
+  });
+
+  it("maps published_at to the Published On cell and reads publishedAt", () => {
+    expect(serviceListCellKey("published_at")).toBe("publishedOn");
+    expect(
+      servicePublishedOnMillis({
+        publishedAt: "2026-10-26T10:00:00.000Z",
+      } as Service),
+    ).toBe(Date.parse("2026-10-26T10:00:00.000Z"));
+    expect(
+      servicePublishedOnMillis({
+        publishedOn: 1_729_936_800,
+      } as Service),
+    ).toBe(1_729_936_800_000);
+  });
+
+  it("keeps eight decimals for service prices", () => {
+    expect(formatServiceListPrice(0.00000025)).toContain("0.00000025");
+  });
+
+  it("maps date_range filters to from and to query params", () => {
+    const columns: ServiceListColumnDef[] = [
+      {
+        id: "created_at",
+        label: "Created At",
+        mandatory: false,
+        defaultVisible: true,
+        filterable: true,
+        filter: {
+          type: "date_range",
+          params: ["created_from", "created_to"],
+          options: null,
+        },
+      },
+    ];
+    expect(
+      serviceListFilterParams({
+        columns,
+        filters: {
+          created_at__from: "2026-10-01",
+          created_at__to: "2026-10-26",
+        },
+        sortBy: "created_at",
+        sortOrder: "desc",
+      }),
+    ).toEqual({
+      created_from: "2026-10-01",
+      created_to: "2026-10-26",
+      sort_by: "created_at",
+      sort_order: "desc",
+    });
   });
 
   it("keys browser storage by user id", () => {

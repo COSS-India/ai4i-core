@@ -309,11 +309,10 @@ export function useServicesManagement() {
   const viewTabIndex = 1;
 
   // Offline catalogue: name + tier filter, then sort, over the full fetched list.
-  // When GET /services/columns is available, those filters are query params and
-  // the rows are already one server page. Sort still applies to that page until
-  // the list API exposes a sort parameter.
+  // When GET /services/columns is available, filters and sort are query params
+  // and the rows are already one server page.
   const registryTableItems = useMemo(() => {
-    if (serviceListUsesServer) return registrySort.apply(services);
+    if (serviceListUsesServer) return services;
     const q = searchQuery.trim().toLowerCase();
     let filtered = q
       ? services.filter((s) => (s.name ?? "").toLowerCase().includes(q))
@@ -504,6 +503,8 @@ export function useServicesManagement() {
                 ? "false"
                 : "";
         }
+        const sortActive =
+          registrySort.mode === "sorted" && Boolean(registrySort.sort.key);
         const result = await listServicesPaginated({
           offset: (registryPage - 1) * registryPageSize,
           limit: registryPageSize,
@@ -511,6 +512,8 @@ export function useServicesManagement() {
             columns: serviceListCatalogue,
             filters,
             enabledTaskTypes: enabledTaskTypesParam,
+            sortBy: sortActive ? registrySort.sort.key : undefined,
+            sortOrder: sortActive ? registrySort.sort.direction : undefined,
           }),
         });
         if (commit) {
@@ -566,6 +569,9 @@ export function useServicesManagement() {
     serviceListCatalogue,
     registryPage,
     registryPageSize,
+    registrySort.mode,
+    registrySort.sort.key,
+    registrySort.sort.direction,
   ]);
 
   const serviceKey = (s: Pick<Service, "serviceId"> & { service_id?: string }) =>

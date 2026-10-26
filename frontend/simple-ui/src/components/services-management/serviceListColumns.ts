@@ -61,6 +61,7 @@ const CELL_KEYS: Record<string, string> = {
   outputPrice: "outputPrice",
   cached_input_price: "cachedInputPrice",
   cachedInputPrice: "cachedInputPrice",
+  published_at: "publishedOn",
   published_on: "publishedOn",
   publishedOn: "publishedOn",
 };
@@ -162,23 +163,25 @@ export function serviceListColumnStorageKey(userId: string): string {
 
 export const browserServiceListColumnStore: ServiceListColumnPreferenceStore = {
   read(userId) {
-    if (typeof window === "undefined" || !userId) return null;
+    if (globalThis.window === undefined || !userId) return null;
     try {
-      const raw = window.localStorage.getItem(serviceListColumnStorageKey(userId));
+      const raw = globalThis.window.localStorage.getItem(
+        serviceListColumnStorageKey(userId),
+      );
       if (!raw) return null;
-      const parsed = JSON.parse(raw);
+      const parsed: unknown = JSON.parse(raw);
       if (!Array.isArray(parsed) || !parsed.every((id) => typeof id === "string")) {
         return null;
       }
-      return parsed as string[];
+      return parsed;
     } catch {
       return null;
     }
   },
   write(userId, columnIds) {
-    if (typeof window === "undefined" || !userId) return;
+    if (globalThis.window === undefined || !userId) return;
     try {
-      window.localStorage.setItem(
+      globalThis.window.localStorage.setItem(
         serviceListColumnStorageKey(userId),
         JSON.stringify(columnIds),
       );
@@ -187,6 +190,14 @@ export const browserServiceListColumnStore: ServiceListColumnPreferenceStore = {
     }
   },
 };
+
+/** Keys used when a column filter is `date_range` (from / to). */
+export function serviceListRangeFilterKeys(columnId: string): {
+  from: string;
+  to: string;
+} {
+  return { from: `${columnId}__from`, to: `${columnId}__to` };
+}
 
 export function loadServiceListColumns(
   userId: string,
@@ -284,18 +295,30 @@ export function parseVisibleColumnsPayload(raw: unknown): string[] | null {
 /**
  * Query params for `GET /services` from the columns payload.
  * An empty task-type filter sends the UI allowlist. Other empty filters are omitted.
- * The sort parameter is not part of this contract yet.
+ * Pass `sortBy` / `sortOrder` when the user has chosen a column sort.
  */
 export function serviceListFilterParams(options: {
   columns: readonly ServiceListColumnDef[];
   filters: Record<string, string>;
   enabledTaskTypes?: string;
+  sortBy?: string;
+  sortOrder?: "asc" | "desc";
 }): Record<string, string> {
   const params: Record<string, string> = {};
   let taskParam: string | null = null;
   for (const column of options.columns) {
-    const param = column.filter?.params[0];
-    if (!column.filterable || !param) continue;
+    if (!column.filterable || !column.filter) continue;
+    const { type, params: filterParams } = column.filter;
+    if (type === "date_range" && filterParams.length >= 2) {
+      const keys = serviceListRangeFilterKeys(column.id);
+      const from = (options.filters[keys.from] ?? "").trim();
+      const to = (options.filters[keys.to] ?? "").trim();
+      if (from) params[filterParams[0]] = from;
+      if (to) params[filterParams[1]] = to;
+      continue;
+    }
+    const param = filterParams[0];
+    if (!param) continue;
     const value = (options.filters[column.id] ?? "").trim();
     if (serviceListCellKey(column.id) === "task" || param === "task_types") {
       taskParam = param;
@@ -310,6 +333,10 @@ export function serviceListFilterParams(options: {
   if (!taskParam && options.enabledTaskTypes) {
     params.task_types = options.enabledTaskTypes;
   }
+  if (options.sortBy) {
+    params.sort_by = options.sortBy;
+    params.sort_order = options.sortOrder ?? "asc";
+  }
   return params;
 }
 
@@ -321,13 +348,26 @@ export function serviceCreatedAtMillis(service: Service): number {
 }
 
 export function servicePublishedOnMillis(service: Service): number {
+  // List API emits ISO `publishedAt`; `publishedOn` is only set by the local
+  // publish/unpublish optimistic patch in this tab.
+  const iso = service.publishedAt;
+  if (typeof iso === "string" && iso.trim()) {
+    const ms = Date.parse(iso);
+    if (!Number.isNaN(ms)) return ms;
+  }
   const raw = service.publishedOn;
   if (raw == null || !Number.isFinite(raw) || raw <= 0) return 0;
   return raw < 1e12 ? raw * 1000 : raw;
 }
 
 export function serviceModelName(service: Service): string {
-  return service.model?.name || service.modelName || "";
+  return (
+    service.model?.name ||
+    service.modelName ||
+    service.modelId ||
+    service.model_id ||
+    ""
+  );
 }
 
 export function serviceListServiceId(service: Service): string {
@@ -348,7 +388,7 @@ export function formatServiceListPrice(value: number | null | undefined): string
       style: "currency",
       currency: "INR",
       minimumFractionDigits: 2,
-      maximumFractionDigits: 6,
+      maximumFractionDigits: 8,
     }).format(value);
   } catch {
     return `₹${value}`;

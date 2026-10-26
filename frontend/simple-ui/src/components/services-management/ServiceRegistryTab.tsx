@@ -11,6 +11,7 @@ import type { ServiceTierFilterOption } from "../../hooks/useServicesManagement"
 import type { Service } from "../../services/servicesManagementService";
 import {
   serviceListCellKey,
+  serviceListRangeFilterKeys,
   type ServiceListColumnDef,
 } from "./serviceListColumns";
 
@@ -119,16 +120,28 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
             ],
           }];
         }
-        if (kind === "date" || kind === "datetime" || kind === "datetime-local") {
-          return [{
-            id: column.id,
-            label: column.label,
-            type: "date" as const,
-            param: column.filter.params[0],
-            inputType: kind === "date" ? "date" as const : "datetime-local" as const,
-            value,
-            onChange: (next: string) => onServerFilterChange?.(column.id, next),
-          }];
+        if (kind === "date_range" && column.filter.params.length >= 2) {
+          const keys = serviceListRangeFilterKeys(column.id);
+          return [
+            {
+              id: keys.from,
+              label: `${column.label} from`,
+              type: "date" as const,
+              param: column.filter.params[0],
+              inputType: "date" as const,
+              value: serverFilterValues?.[keys.from] ?? "",
+              onChange: (next: string) => onServerFilterChange?.(keys.from, next),
+            },
+            {
+              id: keys.to,
+              label: `${column.label} to`,
+              type: "date" as const,
+              param: column.filter.params[1],
+              inputType: "date" as const,
+              value: serverFilterValues?.[keys.to] ?? "",
+              onChange: (next: string) => onServerFilterChange?.(keys.to, next),
+            },
+          ];
         }
         if (kind !== "text") return [];
         return [{

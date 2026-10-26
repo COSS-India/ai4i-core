@@ -63,6 +63,86 @@ function isServiceModelDeprecated(
   );
 }
 
+function ServiceNameCell({ service }: { service: Service }) {
+  return (
+    <Text fontSize="sm" fontWeight="medium" noOfLines={1} title={service.name}>
+      {service.name || "N/A"}
+    </Text>
+  );
+}
+
+function ServiceTaskTypeCell({ service }: { service: Service }) {
+  const taskType = resolveTaskType(service);
+  return (
+    <Badge colorScheme={getTaskColorScheme(taskType)} fontSize="sm" p={1}>
+      {taskType ? taskType.toUpperCase() : "N/A"}
+    </Badge>
+  );
+}
+
+function ServiceTierCell({ service }: { service: Service }) {
+  const names = service.tierNames;
+  if (!names || names.length === 0) {
+    return (
+      <Text fontSize="sm" color="ink.400">
+        —
+      </Text>
+    );
+  }
+  return (
+    <HStack spacing={1} flexWrap="wrap">
+      {names.map((name) => (
+        <Badge key={name} colorScheme="gray" fontSize="xs" px={2} py={0.5}>
+          {name}
+        </Badge>
+      ))}
+    </HStack>
+  );
+}
+
+function ServiceStatusCell({ service }: { service: Service }) {
+  return (
+    <Badge
+      colorScheme={service.isPublished === true ? "green" : "gray"}
+      fontSize="sm"
+      p={1}
+    >
+      {service.isPublished === true ? "Published" : "Unpublished"}
+    </Badge>
+  );
+}
+
+function ServiceDateCell({ valueMs }: { valueMs: number }) {
+  const label = formatServiceListDate(valueMs);
+  return (
+    <Text fontSize="sm" color={label === "—" ? "ink.400" : undefined} noOfLines={1}>
+      {label}
+    </Text>
+  );
+}
+
+function ServiceTextCell({ value }: { value: string }) {
+  const label = value || "—";
+  return (
+    <Text
+      fontSize="sm"
+      color={label === "—" ? "ink.400" : undefined}
+      noOfLines={1}
+      title={label}
+    >
+      {label}
+    </Text>
+  );
+}
+
+function ServicePriceCell({ value }: { value: number | null | undefined }) {
+  return (
+    <Text fontSize="sm" color={value == null ? "ink.400" : undefined}>
+      {formatServiceListPrice(value)}
+    </Text>
+  );
+}
+
 const ServicesManagement: React.FC = () => {
   const {
     isRegistryReadOnly,
@@ -219,21 +299,43 @@ const ServicesManagement: React.FC = () => {
         ? resolveServiceListColumns(next, serviceListCatalogue)
         : saveServiceListColumns(preferenceUserId(), next, undefined, serviceListCatalogue);
       setVisibleColumnIds(resolved);
+      if (
+        registrySort.mode === "sorted" &&
+        registrySort.sort.key &&
+        !resolved.includes(registrySort.sort.key)
+      ) {
+        registrySort.onSortChange({ key: "name", direction: "asc" });
+      }
       if (!serviceListUsesServer) return;
       saveServiceColumnPreference(resolved).catch((error) => showError(error));
     },
-    [preferenceUserId, serviceListCatalogue, serviceListUsesServer],
+    [preferenceUserId, registrySort, serviceListCatalogue, serviceListUsesServer],
   );
 
   const resetVisibleColumns = useCallback(() => {
     const defaults = defaultServiceListColumnIds(serviceListCatalogue);
     setVisibleColumnIds(defaults);
+    if (
+      registrySort.mode === "sorted" &&
+      registrySort.sort.key &&
+      !defaults.includes(registrySort.sort.key)
+    ) {
+      registrySort.onSortChange({ key: "name", direction: "asc" });
+    }
     if (!serviceListUsesServer) {
       saveServiceListColumns(preferenceUserId(), defaults, undefined, serviceListCatalogue);
       return;
     }
     resetServiceColumnPreference().catch((error) => showError(error));
-  }, [preferenceUserId, serviceListCatalogue, serviceListUsesServer]);
+  }, [preferenceUserId, registrySort, serviceListCatalogue, serviceListUsesServer]);
+
+  const handleRegistrySortChange = useCallback(
+    (next: { key: string; direction: "asc" | "desc" }) => {
+      if (serviceListUsesServer) setRegistryPage(1);
+      registrySort.onSortChange(next);
+    },
+    [registrySort, serviceListUsesServer, setRegistryPage],
+  );
 
   const columnTemplates = useMemo((): DataTableColumn<Service>[] => {
     const columns: DataTableColumn<Service>[] = [
@@ -242,129 +344,55 @@ const ServicesManagement: React.FC = () => {
         header: "Name",
         sortable: true,
         sortAccessor: (service) => service.name ?? "",
-        cell: (service) => (
-          <Text fontSize="sm" fontWeight="medium" noOfLines={1} title={service.name}>
-            {service.name || "N/A"}
-          </Text>
-        ),
+        cell: (service) => <ServiceNameCell service={service} />,
       },
       {
         id: "task",
         header: "Model Task Type",
         sortable: true,
-        cell: (service) => {
-          const taskType = resolveTaskType(service);
-          return (
-            <Badge colorScheme={getTaskColorScheme(taskType)} fontSize="sm" p={1}>
-              {taskType ? taskType.toUpperCase() : "N/A"}
-            </Badge>
-          );
-        },
+        cell: (service) => <ServiceTaskTypeCell service={service} />,
       },
       {
         id: "tier",
         header: "Tier",
         sortable: true,
         truncate: false,
-        cell: (service) => {
-          const names = service.tierNames;
-          if (!names || names.length === 0) {
-            return (
-              <Text fontSize="sm" color="ink.400">
-                —
-              </Text>
-            );
-          }
-          return (
-            <HStack spacing={1} flexWrap="wrap">
-              {names.map((name) => (
-                <Badge
-                  key={name}
-                  colorScheme="gray"
-                  fontSize="xs"
-                  px={2}
-                  py={0.5}
-                >
-                  {name}
-                </Badge>
-              ))}
-            </HStack>
-          );
-        },
+        cell: (service) => <ServiceTierCell service={service} />,
       },
       {
         id: "status",
         header: "Status",
         sortable: true,
-        cell: (service) => (
-          <Badge
-            colorScheme={service.isPublished === true ? "green" : "gray"}
-            fontSize="sm"
-            p={1}
-          >
-            {service.isPublished === true ? "Published" : "Unpublished"}
-          </Badge>
-        ),
+        cell: (service) => <ServiceStatusCell service={service} />,
       },
       {
         id: "createdAt",
         header: "Created At",
         sortable: true,
-        cell: (service) => {
-          const label = formatServiceListDate(serviceCreatedAtMillis(service));
-          return (
-            <Text fontSize="sm" color={label === "—" ? "ink.400" : undefined} noOfLines={1}>
-              {label}
-            </Text>
-          );
-        },
+        cell: (service) => (
+          <ServiceDateCell valueMs={serviceCreatedAtMillis(service)} />
+        ),
       },
       {
         id: "modelName",
         header: "Model Name",
         sortable: true,
-        cell: (service) => {
-          const label = serviceModelName(service) || "—";
-          return (
-            <Text
-              fontSize="sm"
-              color={label === "—" ? "ink.400" : undefined}
-              noOfLines={1}
-              title={label}
-            >
-              {label}
-            </Text>
-          );
-        },
+        cell: (service) => <ServiceTextCell value={serviceModelName(service)} />,
       },
       {
         id: "serviceId",
         header: "Service ID",
         sortable: true,
-        cell: (service) => {
-          const label = serviceListServiceId(service) || "—";
-          return (
-            <Text
-              fontSize="sm"
-              color={label === "—" ? "ink.400" : undefined}
-              noOfLines={1}
-              title={label}
-            >
-              {label}
-            </Text>
-          );
-        },
+        cell: (service) => (
+          <ServiceTextCell value={serviceListServiceId(service)} />
+        ),
       },
       {
         id: "inputPrice",
         header: "Input Price",
         sortable: true,
         isNumeric: true,
-        cell: (service) => (
-          <Text fontSize="sm" color={service.costPerUnit == null ? "ink.400" : undefined}>
-            {formatServiceListPrice(service.costPerUnit)}
-          </Text>
-        ),
+        cell: (service) => <ServicePriceCell value={service.costPerUnit} />,
       },
       {
         id: "outputPrice",
@@ -372,9 +400,7 @@ const ServicesManagement: React.FC = () => {
         sortable: true,
         isNumeric: true,
         cell: (service) => (
-          <Text fontSize="sm" color={service.outputCostPerUnit == null ? "ink.400" : undefined}>
-            {formatServiceListPrice(service.outputCostPerUnit)}
-          </Text>
+          <ServicePriceCell value={service.outputCostPerUnit} />
         ),
       },
       {
@@ -383,26 +409,16 @@ const ServicesManagement: React.FC = () => {
         sortable: true,
         isNumeric: true,
         cell: (service) => (
-          <Text
-            fontSize="sm"
-            color={service.cachedInputCostPerUnit == null ? "ink.400" : undefined}
-          >
-            {formatServiceListPrice(service.cachedInputCostPerUnit)}
-          </Text>
+          <ServicePriceCell value={service.cachedInputCostPerUnit} />
         ),
       },
       {
         id: "publishedOn",
         header: "Published On",
         sortable: true,
-        cell: (service) => {
-          const label = formatServiceListDate(servicePublishedOnMillis(service));
-          return (
-            <Text fontSize="sm" color={label === "—" ? "ink.400" : undefined} noOfLines={1}>
-              {label}
-            </Text>
-          );
-        },
+        cell: (service) => (
+          <ServiceDateCell valueMs={servicePublishedOnMillis(service)} />
+        ),
       },
       createActionsColumn<Service>({
         getActions: (service) => {
@@ -563,7 +579,7 @@ const ServicesManagement: React.FC = () => {
         items={registryTableItems}
         columns={serviceColumns}
         sort={registrySort.sort}
-        onSortChange={registrySort.onSortChange}
+        onSortChange={handleRegistrySortChange}
         isLoading={isLoading}
         totalServicesCount={totalServicesCount}
         onRowClick={(service) =>
