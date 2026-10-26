@@ -218,11 +218,6 @@ export interface ModelResponse {
   updatedBy?: string | null;
   updatedOn?: number | null;
   createdAt?: string | null;
-  /**
-   * Optional service count from the models API (future optimisation).
-   * FE currently derives counts from the services list; use this when BE adds it.
-   */
-  serviceCount?: number | null;
 }
 
 export type ModelListItem = ModelResponse;
