@@ -70,7 +70,7 @@ class TestUpdateTenantEmailUniqueness:
             await svc.update_tenant(_acting_admin(), 1, body)
 
         assert exc_info.value.status_code == 409
-        assert exc_info.value.detail["code"] == "DUPLICATE_TENANT_EMAIL"
+        assert exc_info.value.code == "DUPLICATE_TENANT_EMAIL"
 
     @pytest.mark.asyncio
     async def test_update_keeping_own_email_is_allowed(self) -> None:
@@ -104,7 +104,7 @@ class TestUpdateTenantEmailUniqueness:
             await svc.update_tenant(_acting_admin(), 1, body)
 
         assert exc_info.value.status_code == 409
-        assert exc_info.value.detail["code"] == "DUPLICATE_EMAIL"
+        assert exc_info.value.code == "DUPLICATE_EMAIL"
 
     @pytest.mark.asyncio
     async def test_update_to_email_of_user_in_another_tenant_raises_409(self) -> None:
@@ -120,7 +120,7 @@ class TestUpdateTenantEmailUniqueness:
             await svc.update_tenant(_acting_admin(), 1, body)
 
         assert exc_info.value.status_code == 409
-        assert exc_info.value.detail["code"] == "DUPLICATE_EMAIL"
+        assert exc_info.value.code == "DUPLICATE_EMAIL"
 
     @pytest.mark.asyncio
     async def test_update_to_email_of_own_tenant_admin_is_allowed(self) -> None:
@@ -162,7 +162,7 @@ class TestUpdateTenantEmailUniqueness:
         with pytest.raises(HTTPException) as exc_info:
             await svc.update_tenant(_acting_admin(), 1, body)
 
-        assert exc_info.value.detail["code"] == "DUPLICATE_EMAIL"
+        assert exc_info.value.code == "DUPLICATE_EMAIL"
         svc._tenants.update.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -179,4 +179,4 @@ class TestUpdateTenantEmailUniqueness:
             await svc.update_tenant(_acting_admin(), 1, body)
 
         assert exc_info.value.status_code == 409
-        assert exc_info.value.detail["code"] == "DUPLICATE_TENANT_EMAIL"
+        assert exc_info.value.code == "DUPLICATE_TENANT_EMAIL"

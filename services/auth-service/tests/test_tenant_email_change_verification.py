@@ -158,7 +158,7 @@ class TestUpdateTenantEmailChange:
                                     _body(email="former.admin@tenant.com"),
                                     background_tasks=MagicMock())
         # Verify path would move the contact onto an address another user holds.
-        assert exc.value.detail["code"] == "DUPLICATE_EMAIL"
+        assert exc.value.code == "DUPLICATE_EMAIL"
         svc._tenants.update.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -200,7 +200,7 @@ class TestUpdateTenantEmailChange:
         with pytest.raises(HTTPException) as exc:
             await svc.update_tenant(MagicMock(id=uuid4()), 1, _body(email="other.admin@tenant.com"),
                                     background_tasks=MagicMock())
-        assert exc.value.detail["code"] == "DUPLICATE_EMAIL"
+        assert exc.value.code == "DUPLICATE_EMAIL"
         svc._tenants.commit.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -213,7 +213,7 @@ class TestUpdateTenantEmailChange:
         with pytest.raises(HTTPException) as exc:
             await svc.update_tenant(MagicMock(id=uuid4()), 1, _body(email="x@other.com"),
                                     background_tasks=MagicMock())
-        assert exc.value.detail["code"] == "DUPLICATE_EMAIL"
+        assert exc.value.code == "DUPLICATE_EMAIL"
         svc._tenants.commit.assert_not_awaited()
 
 
@@ -258,7 +258,7 @@ class TestProtectedContacts:
             await svc.update_tenant(MagicMock(id=uuid4()), 1, _body(email="new@tenant.com"),
                                     background_tasks=MagicMock())
         assert exc.value.status_code == 409
-        assert exc.value.detail["code"] == "TENANT_EMAIL_EDIT_NOT_ALLOWED"
+        assert exc.value.code == "TENANT_EMAIL_EDIT_NOT_ALLOWED"
         svc._tokens.create_email_change_token.assert_not_called()
 
 
@@ -274,7 +274,7 @@ class TestEmailEditLockedStatuses:
                                     background_tasks=MagicMock())
 
         assert exc.value.status_code == 409
-        assert exc.value.detail["code"] == "TENANT_EMAIL_EDIT_NOT_ALLOWED"
+        assert exc.value.code == "TENANT_EMAIL_EDIT_NOT_ALLOWED"
         svc._tenants.update.assert_not_awaited()
         svc._tokens.create_email_change_token.assert_not_called()
 
@@ -432,7 +432,7 @@ class TestConfirmTenantEmailChange:
 
         with pytest.raises(HTTPException) as exc:
             await svc.verify_email_token("tok")
-        assert exc.value.detail["code"] == "TENANT_EMAIL_EDIT_NOT_ALLOWED"
+        assert exc.value.code == "TENANT_EMAIL_EDIT_NOT_ALLOWED"
         assert admin.email == "old@tenant.com"
         svc._credentials.delete.assert_not_awaited()
         svc._users.commit.assert_not_awaited()
@@ -445,7 +445,7 @@ class TestConfirmTenantEmailChange:
 
         with pytest.raises(HTTPException) as exc:
             await svc.verify_email_token("tok")
-        assert exc.value.detail["code"] == "TENANT_EMAIL_EDIT_NOT_ALLOWED"
+        assert exc.value.code == "TENANT_EMAIL_EDIT_NOT_ALLOWED"
         assert tenant.email == "old@tenant.com"
         svc._users.commit.assert_not_awaited()
 
@@ -458,7 +458,7 @@ class TestConfirmTenantEmailChange:
 
         with pytest.raises(HTTPException) as exc:
             await svc.verify_email_token("tok")
-        assert exc.value.detail["code"] == "DUPLICATE_EMAIL"
+        assert exc.value.code == "DUPLICATE_EMAIL"
         assert tenant.email == "old@tenant.com"
         svc._credentials.delete.assert_not_awaited()
         svc._users.commit.assert_not_awaited()
@@ -493,7 +493,7 @@ class TestConfirmTenantEmailChange:
 
         with pytest.raises(HTTPException) as exc:
             await svc.verify_email_token("tok")
-        assert exc.value.detail["code"] == "DUPLICATE_EMAIL"
+        assert exc.value.code == "DUPLICATE_EMAIL"
         assert tenant.email == "orphan@tenant.com"
 
     @pytest.mark.asyncio
