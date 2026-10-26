@@ -16,6 +16,11 @@ import {
 } from "../../config/constants";
 import { dash, fmtDate } from "../../utils/valueFormatters";
 import type { TenantUserView } from "../../types/tenant";
+import {
+  getRegistrationMethodOption,
+  REGISTRATION_METHOD_OPTIONS,
+  resolveRegistrationMethod,
+} from "../../utils/registrationMethod";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 
 type TenantManagement = ReturnType<typeof useTenantManagement>;
@@ -34,7 +39,25 @@ export function InstitutionUsersTable({
   };
   resolveUserDisplayStatus: (user: TenantUserView) => TenantUserStatusValue;
 }) {
+  // Registration Method only applies to the Default Institution: every user in
+  // other institutions is admin-created.
+  const showRegistrationMethod = tm.isDefaultTenantUsersView;
+
   const userColumns = useMemo((): DataTableColumn<TenantUserView>[] => {
+    const registrationColumn: DataTableColumn<TenantUserView> = {
+      id: "registration_method",
+      header: "Registration Method",
+      cell: (u) => {
+        const option = getRegistrationMethodOption(resolveRegistrationMethod(u));
+        return option ? (
+          <Badge colorScheme={option.colorScheme} textTransform="none">
+            {option.label}
+          </Badge>
+        ) : (
+          dash(null)
+        );
+      },
+    };
     return [
       {
         id: "username",
@@ -66,6 +89,7 @@ export function InstitutionUsersTable({
         header: "Roles",
         cell: (u) => <TenantUserRoleBadges role={u.role} roles={u.roles} />,
       },
+      ...(showRegistrationMethod ? [registrationColumn] : []),
       {
         id: "status",
         header: "Status",
@@ -103,7 +127,7 @@ export function InstitutionUsersTable({
       },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tm]);
+  }, [tm, showRegistrationMethod]);
 
   return (
       <DataTable
@@ -122,6 +146,7 @@ export function InstitutionUsersTable({
         hasActiveFilters={
           tm.userFilterStatus !== "all" ||
           tm.userFilterRole !== "all" ||
+          tm.userFilterRegistration !== "all" ||
           tm.userSearch.trim() !== ""
         }
         onClearFilters={tm.handleResetUserFilters}
@@ -167,6 +192,26 @@ export function InstitutionUsersTable({
               })),
             ],
           },
+          ...(showRegistrationMethod
+            ? [
+                {
+                  id: "registration_method",
+                  label: "Registration Method",
+                  type: "select" as const,
+                  param: "registration_method",
+                  value: tm.userFilterRegistration,
+                  onChange: tm.setUserFilterRegistration,
+                  width: { base: "full", sm: "200px" },
+                  options: [
+                    { label: "All", value: "all" },
+                    ...REGISTRATION_METHOD_OPTIONS.map((opt) => ({
+                      label: opt.label,
+                      value: opt.value,
+                    })),
+                  ],
+                },
+              ]
+            : []),
         ]}
       />
     );

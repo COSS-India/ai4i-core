@@ -139,5 +139,6 @@ export function tenantUsersToAuthUsers(rows: TenantUserView[]): User[] {
     is_active: u.is_active,
     is_tenant_active: u.is_tenant_active ?? undefined,
     roles: u.roles ?? [],
+    creation_type: u.creation_type ?? null,
   }));
 }

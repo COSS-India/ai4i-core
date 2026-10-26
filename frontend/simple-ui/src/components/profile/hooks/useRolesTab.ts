@@ -8,6 +8,10 @@ import {
   isDefaultTenantAssignableRole,
 } from "../../../utils/defaultTenant";
 import { isAdopterAdminUser, isPlatformAdminUser } from "../../../utils/rbac";
+import {
+  isSelfRegisteredUser,
+  SELF_REGISTERED_ROLE_LOCKED_MESSAGE,
+} from "../../../utils/registrationMethod";
 import type { UserSearchablePick } from "../../common/UserSearchableSelect";
 
 export interface UseRolesTabOptions {
@@ -78,6 +82,13 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     }
   };
 
+  /** Self-registered (email / Google) users are unvetted and must stay on USER. */
+  const isSelectedUserSelfRegistered = useMemo(() => {
+    if (!selectedUser) return false;
+    const row = users.find((u) => u.user_id === selectedUser.user_id);
+    return row != null && isSelfRegisteredUser(row);
+  }, [selectedUser, users]);
+
   /** Adopter / Default tenant scope — see DEFAULT_TENANT_ASSIGNABLE_ROLES. */
   const availableRoles = useMemo(() => [...DEFAULT_TENANT_ASSIGNABLE_ROLES], []);
 
@@ -90,6 +101,10 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
       return;
     }
     if (!isAdmin || isModeratorOnly) return;
+    if (isSelectedUserSelfRegistered) {
+      showToast({ type: "info", message: SELF_REGISTERED_ROLE_LOCKED_MESSAGE });
+      return;
+    }
     if (selectedUserRoles.length > 1) {
       showToast({
         type: "info",
@@ -115,6 +130,10 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
   const saveManageRoles = async () => {
     if (!selectedUser) return;
     if (!isAdmin || isModeratorOnly) return;
+    if (isSelectedUserSelfRegistered) {
+      showToast({ type: "warning", message: SELF_REGISTERED_ROLE_LOCKED_MESSAGE });
+      return;
+    }
     if (!draftRole) {
       showToast({
         type: "warning",
@@ -196,6 +215,7 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     isLoadingUserRoles,
     isAdmin,
     isModeratorOnly,
+    isSelectedUserSelfRegistered,
     isManageRolesOpen,
     draftRole,
     setDraftRole,

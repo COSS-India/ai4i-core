@@ -2,6 +2,7 @@ import { INSTITUTION } from "./constants";
 import { EMAIL_AVAILABLE_MSG } from "../utils/tenantEmailValidation";
 import { PRICE_PER_UNIT_MAX_LABEL } from "../components/services-management/serviceFormValidation";
 import { QUOTA_LIMIT_MAX_LABEL } from "../components/tier-management/tierFormValidation";
+import { SELF_REGISTERED_ROLE_LOCKED_MESSAGE } from "../utils/registrationMethod";
 
 const org = INSTITUTION.toLowerCase();
 
@@ -55,6 +56,7 @@ export const FIELD_HINTS = {
     rolesLoadFailed: "Roles could not be loaded; role changes are disabled.",
     onlyAdminLocked:
       "You are the only Admin in the default organisation and cannot change your role.",
+    selfRegisteredRoleLocked: SELF_REGISTERED_ROLE_LOCKED_MESSAGE,
   },
   assignTier: {
     budget: {

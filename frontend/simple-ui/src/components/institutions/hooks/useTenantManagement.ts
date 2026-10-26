@@ -80,6 +80,11 @@ import {
   enrichDefaultOrgTenantUser,
   syncDefaultOrgUserRole,
 } from "../../../utils/defaultOrgUserRoles";
+import {
+  isSelfRegisteredUser,
+  resolveRegistrationMethod,
+  SELF_REGISTERED_ROLE_LOCKED_MESSAGE,
+} from "../../../utils/registrationMethod";
 import type { TenantAssignableRole } from "../../../types/tenant";
 import type { TenantUserFormRole } from "../../profile/types";
 import {
@@ -140,6 +145,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const [tenantSearch, setTenantSearch] = useState("");
   const [userFilterStatus, setUserFilterStatus] = useState<string>("all");
   const [userFilterRole, setUserFilterRole] = useState<string>("all");
+  const [userFilterRegistration, setUserFilterRegistration] =
+    useState<string>("all");
   const [userSearch, setUserSearch] = useState("");
 
   // Create tenant modal
@@ -240,6 +247,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const [editUserInitialFormRole, setEditUserInitialFormRole] = useState("");
   /** True if the user being edited is the only Admin in the default org. */
   const [isEditUserOnlyAdmin, setIsEditUserOnlyAdmin] = useState(false);
+  /** True if the default-org user being edited self-registered (role locked to USER). */
+  const [isEditUserSelfRegistered, setIsEditUserSelfRegistered] =
+    useState(false);
 
   // Delete user confirmation
   const [deleteUserTarget, setDeleteUserTarget] =
@@ -287,6 +297,12 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         if (userFilterRole !== "all" && !tenantUserHasRole(u, userFilterRole)) {
           return false;
         }
+        if (
+          userFilterRegistration !== "all" &&
+          resolveRegistrationMethod(u) !== userFilterRegistration
+        ) {
+          return false;
+        }
         if (!tenantUserMatchesSearch(u, userSearch)) {
           return false;
         }
@@ -296,6 +312,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       tenantUsers,
       userFilterStatus,
       userFilterRole,
+      userFilterRegistration,
       userSearch,
       activeUserListTenant?.status,
     ],
@@ -316,6 +333,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   useEffect(() => {
     setUserFilterRole("all");
+    setUserFilterRegistration("all");
   }, [activeUserListTenant?.tenant_id]);
 
   useEffect(() => {
@@ -480,12 +498,14 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setTenantSearch("");
     setUserFilterStatus("all");
     setUserFilterRole("all");
+    setUserFilterRegistration("all");
     setUserSearch("");
   };
 
   const handleResetUserFilters = () => {
     setUserFilterStatus("all");
     setUserFilterRole("all");
+    setUserFilterRegistration("all");
     setUserSearch("");
   };
 
@@ -1531,6 +1551,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       setEditUserRolesLoaded(rolesLoaded);
       setEditUserInitialFormRole(role);
       setIsEditUserOnlyAdmin(isOnlyAdmin);
+      setIsEditUserSelfRegistered(
+        editingDefaultOrg && isSelfRegisteredUser(unmasked),
+      );
       setEditUserForm({
         tenant_id: tenantId,
         user_id: unmasked.user_id,
@@ -1612,6 +1635,11 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       });
       return;
     }
+    // Self-registered users are unvetted and must stay on the USER role.
+    if (isDefaultOrg && isEditUserSelfRegistered && isEditUserRoleChanged()) {
+      showToast({ type: "warning", message: SELF_REGISTERED_ROLE_LOCKED_MESSAGE });
+      return;
+    }
     setIsSubmittingEditUser(true);
     try {
       let didSyncDefaultOrgRole = false;
@@ -1689,6 +1717,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setEditUserRolesLoaded(true);
     setEditUserInitialFormRole("");
     setIsEditUserOnlyAdmin(false);
+    setIsEditUserSelfRegistered(false);
   };
 
   // ----- Delete tenant user -----
@@ -1752,6 +1781,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setUserFilterStatus,
     userFilterRole,
     setUserFilterRole,
+    userFilterRegistration,
+    setUserFilterRegistration,
     userSearch,
     setUserSearch,
     handleResetTenantFilters,
@@ -1862,6 +1893,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     closeEditUserModal,
     isEditingSelfUser,
     isEditUserOnlyAdmin,
+    isEditUserSelfRegistered,
     // Delete user
     deleteUserTarget,
     isDeleteUserDialogOpen,

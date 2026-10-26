@@ -4,7 +4,8 @@ import type { TenantStatusValue, TenantUserStatusValue } from '../config/constan
 
 export type TenantStatus = TenantStatusValue;
 export type TenantUserStatus = TenantUserStatusValue;
-export type CreationType = 'direct' | 'google' | 'tenant';
+/** auth-service `users.creation_type`: default = email sign-up, google = OAuth, tenant = admin-created. */
+export type CreationType = 'default' | 'google' | 'tenant';
 
 export interface TenantView {
   tenant_id: string; // UUID
