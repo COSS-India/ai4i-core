@@ -538,6 +538,8 @@ export default function ApiKeyManagementTab({
         ),
       },
       createActionsColumn<ApiKeyTableRow>({
+        // Parent rows: edit + budget (+ rotate/revoke when enabled). Row click opens details.
+        actionCount: SHOW_API_KEY_ROTATION_ACTIONS ? 4 : 3,
         getActions: (key) =>
           (key.subRow ? subRowActions[key.subRow] : keyActions)(key),
       }),

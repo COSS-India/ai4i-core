@@ -236,6 +236,7 @@ function makeTierActionsColumn(
   onStatusChange: (tier: Tier) => void,
 ): DataTableColumn<Tier> {
   return createActionsColumn<Tier>({
+    actionCount: 3,
     getActions: (tier) => {
       const statusAction = getTierStatusAction(tier.status);
       const canDelete = tier.status === "DEACTIVATED";

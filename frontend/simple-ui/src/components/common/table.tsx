@@ -36,6 +36,7 @@ export {
 export {
   DataTableActions,
   createActionsColumn,
+  actionsColumnSize,
   type DataTableAction,
   type DataTableActionId,
   type DataTableActionsProps,

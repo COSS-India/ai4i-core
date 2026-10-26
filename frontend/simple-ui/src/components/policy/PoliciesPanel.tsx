@@ -13,8 +13,9 @@ import {
 } from "@chakra-ui/react";
 import { showToast } from "../../utils/toast";
 import ConfirmDialog from "../common/ConfirmDialog";
-import DataTableActions from "../common/DataTableActions";
 import DataTable, {
+  DataTableActions,
+  actionsColumnSize,
   DEFAULT_PAGE_SIZE_OPTIONS,
   type DataTableColumn,
 } from "../common/table";
@@ -311,7 +312,9 @@ export function PoliciesPanel({
     {
       id: "actions",
       header: "Actions",
-      tdProps: { onClick: (e) => e.stopPropagation() },
+      // 2 icon buttons + status switch
+      ...actionsColumnSize(3),
+      tdProps: { onClick: (e) => e.stopPropagation(), whiteSpace: "nowrap" },
       cell: (row) => (
         <HStack spacing={3} align="center">
           <DataTableActions

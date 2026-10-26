@@ -62,7 +62,6 @@ import {
 import {
   AddIcon,
   DeleteIcon,
-  ViewIcon,
   EditIcon,
   LockIcon,
 } from "@chakra-ui/icons";
@@ -540,8 +539,8 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       cell: (d) => <Text fontSize="sm">{new Date(d.created_at).toLocaleDateString()}</Text>,
     },
     createActionsColumn<AlertDefinition>({
+      actionCount: 2,
       getActions: (d) => [
-        { id: "view", label: "View", icon: <ViewIcon />, onClick: () => defs.openView(d) },
         { id: "edit", label: "Edit", icon: <EditIcon />, onClick: () => defs.openUpdate(d) },
         { id: "delete", label: "Delete", icon: <DeleteIcon />, onClick: () => defs.openDelete(d) },
       ],
@@ -596,8 +595,8 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       cell: (r) => <Text fontSize="sm">{new Date(r.created_at).toLocaleDateString()}</Text>,
     },
     createActionsColumn<NotificationReceiver>({
+      actionCount: 2,
       getActions: (r) => [
-        { id: "view", label: "View", icon: <ViewIcon />, onClick: () => recvs.openView(r) },
         { id: "edit", label: "Edit", icon: <EditIcon />, onClick: () => recvs.openUpdate(r) },
         { id: "delete", label: "Delete", icon: <DeleteIcon />, onClick: () => recvs.openDelete(r) },
       ],
@@ -650,16 +649,8 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       ),
     },
     createActionsColumn<NotificationReceiver>({
+      actionCount: 2,
       getActions: (rule) => [
-        {
-          id: "view",
-          label: "View",
-          icon: <ViewIcon />,
-          onClick: () => {
-            defs.fetchDefinitions();
-            rules.openView(rule);
-          },
-        },
         {
           id: "edit",
           label: "Edit",
@@ -727,11 +718,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
         </Text>
       ),
     },
-    createActionsColumn<AlertHistoryItem>({
-      getActions: (row) => [
-        { id: "view", label: "View", icon: <ViewIcon />, onClick: () => history.openView(row) },
-      ],
-    }),
+    // Row click + chevron open history detail; no separate View action.
   ];
 
   // ═══════════════════════════════════════════════

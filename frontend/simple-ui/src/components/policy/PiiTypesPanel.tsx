@@ -18,12 +18,13 @@ import {
 } from "@chakra-ui/react";
 import { showToast } from "../../utils/toast";
 import StandardModal, { CreateModal } from "../common/StandardModal";
-import DataTableActions from "../common/DataTableActions";
 import ConfirmDialog from "../common/ConfirmDialog";
 import CreateButton from "../common/CreateButton";
 import FormActions from "../common/FormActions";
 import FieldLabel from "../common/FieldLabel";
 import DataTable, {
+  DataTableActions,
+  actionsColumnSize,
   DEFAULT_PAGE_SIZE_OPTIONS,
   type DataTableColumn,
 } from "../common/table";
@@ -317,7 +318,8 @@ export function PiiTypesPanel() {
     {
       id: "actions",
       header: "Actions",
-      tdProps: { onClick: (e) => e.stopPropagation() },
+      ...actionsColumnSize(2),
+      tdProps: { onClick: (e) => e.stopPropagation(), whiteSpace: "nowrap" },
       cell: (row) => (
         <DataTableActions
           actions={[

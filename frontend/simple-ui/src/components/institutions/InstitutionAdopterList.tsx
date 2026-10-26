@@ -198,7 +198,8 @@ export function InstitutionAdopterList({
       {
         id: "actions",
         header: "Actions",
-        tdProps: { onClick: (e) => e.stopPropagation() },
+        width: "1%",
+        tdProps: { onClick: (e) => e.stopPropagation(), whiteSpace: "nowrap" },
         cell: (t) => (
           <InstitutionTenantRowActions
             tm={tm}

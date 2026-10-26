@@ -122,7 +122,8 @@ export function InstitutionUsersTable({
       {
         id: "actions",
         header: "",
-        tdProps: { onClick: (e) => e.stopPropagation() },
+        width: "1%",
+        tdProps: { onClick: (e) => e.stopPropagation(), whiteSpace: "nowrap" },
         cell: (u) => (
           <InstitutionUserRowActions
             tm={tm}

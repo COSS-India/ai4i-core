@@ -130,12 +130,38 @@ export function DataTableActions({
 /** Compact Actions width under `table-layout: fixed` (fits ~3–4 icon buttons). */
 export const DATA_TABLE_ACTIONS_COLUMN_WIDTH = ADMIN_ACTIONS_COLUMN_WIDTH;
 
+/** sm IconButton + HStack spacing={1}; sizes the column to the action count. */
+const ACTION_BTN_PX = 32;
+const ACTION_GAP_PX = 4;
+const ACTION_CELL_PAD_PX = 16;
+/** Enough for the "Actions" header label when only one icon is present. */
+const ACTIONS_HEADER_MIN_PX = 72;
+
+/**
+ * Width/minWidth for an actions column with `count` visible icon buttons.
+ * Prefer this over a hard-coded pixel width so columns stay tight.
+ */
+export function actionsColumnSize(count: number): { width: string; minWidth: string } {
+  const n = Math.max(0, Math.floor(count));
+  if (n === 0) {
+    return { width: "1%", minWidth: "1%" };
+  }
+  const content = n * ACTION_BTN_PX + (n - 1) * ACTION_GAP_PX;
+  const px = Math.max(content + ACTION_CELL_PAD_PX, ACTIONS_HEADER_MIN_PX);
+  return { width: `${px}px`, minWidth: `${px}px` };
+}
+
 export type CreateActionsColumnOptions<T> = {
   header?: React.ReactNode;
   id?: string;
   width?: string;
   minWidth?: string;
   maxW?: string;
+  /**
+   * Max number of visible action icons in the column. When set (and width /
+   * minWidth are omitted), sizes the column to fit that many buttons.
+   */
+  actionCount?: number;
   align?: "left" | "center" | "right";
   getActions: (row: T, index: number) => DataTableAction[];
 };
@@ -153,15 +179,21 @@ export function createActionsColumn<T>(
   options: CreateActionsColumnOptions<T>,
 ): DataTableColumn<T> {
   const align = options.align ?? "right";
-  const width = options.width ?? DATA_TABLE_ACTIONS_COLUMN_WIDTH;
   const justify = resolveActionsJustify(align);
+  const counted =
+    options.actionCount != null && options.width == null && options.minWidth == null
+      ? actionsColumnSize(options.actionCount)
+      : undefined;
+  const width = options.width ?? counted?.width ?? DATA_TABLE_ACTIONS_COLUMN_WIDTH;
+  const minWidth = options.minWidth ?? counted?.minWidth ?? width;
+  const maxW = options.maxW ?? (width === "1%" ? undefined : width);
   return {
     id: options.id ?? "actions",
     header: options.header ?? "Actions",
     truncate: false,
     width,
-    minWidth: options.minWidth ?? width,
-    maxW: options.maxW ?? width,
+    minWidth,
+    maxW,
     align,
     thProps: {
       textAlign: align,

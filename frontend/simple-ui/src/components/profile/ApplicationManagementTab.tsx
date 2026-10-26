@@ -152,6 +152,8 @@ export default function ApplicationManagementTab({
       cell: (app) => <ApplicationStatusText status={app.status} />,
     },
     createActionsColumn<Application>({
+      align: "right",
+      actionCount: 2,
       getActions: (app) => {
         const budgetActionLabel = editBudgetForName(app.name);
         const budgetDisabled = app.status !== "ACTIVE";

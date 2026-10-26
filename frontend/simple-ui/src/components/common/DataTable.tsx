@@ -58,6 +58,7 @@ import {
   getTruncateCellProps,
   resolveAdminColumnLayouts,
   shouldAutoTruncateColumn,
+  shrinkToContentWidth,
   type AdminColumnLayout,
 } from "./dataTableUtils";
 
@@ -734,10 +735,11 @@ function CardLayoutDataTable<T>({
               return (
                 <Th
                   key={col.id}
-                  w={col.width}
+                  w={shrinkToContentWidth(col)}
                   minW={col.minWidth}
                   isNumeric={col.isNumeric}
                   sx={headerSx}
+                  whiteSpace={shouldAutoTruncateColumn(col) ? undefined : "nowrap"}
                 >
                   {sortingEnabled && col.sortable ? (
                     <AdminSortableHeader
@@ -790,6 +792,9 @@ function CardLayoutDataTable<T>({
                       py={cellPy}
                       isNumeric={col.isNumeric}
                       textAlign={col.align}
+                      w={shrinkToContentWidth(col)}
+                      minW={col.minWidth}
+                      whiteSpace={shouldAutoTruncateColumn(col) ? undefined : "nowrap"}
                     >
                       {col.cell(row, index)}
                     </Td>
@@ -1661,7 +1666,10 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
  *   getRowKey={(r) => r.id}
  *   columns={[
  *     { id: "name", header: "Name", sortable: true, cell: (r) => r.name },
- *     createActionsColumn({ getActions: (r) => [{ id: "view", label: "View", icon: <ViewIcon />, onClick: () => open(r) }] }),
+ *     createActionsColumn({ actionCount: 2, getActions: (r) => [
+ *       { id: "edit", label: "Edit", onClick: () => edit(r) },
+ *       { id: "delete", label: "Delete", onClick: () => remove(r) },
+ *     ]}),
  *   ]}
  *   search={{ value: q, onChange: setQ, placeholder: "Search…", fields: ["name"] }}
  *   filterDefs={[{ id: "status", label: "Status", type: "select", value: status, onChange: setStatus, options: [...] }]}

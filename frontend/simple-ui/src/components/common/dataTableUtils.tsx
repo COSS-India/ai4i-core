@@ -88,6 +88,21 @@ export function shouldAutoTruncateColumn(col: { id: string; truncate?: boolean }
   return !(NO_AUTO_TRUNCATE_IDS.has(id) || NO_AUTO_TRUNCATE_IDS.has(compactColumnId(col.id)));
 }
 
+/**
+ * Non-truncating columns (actions, toggles) without an explicit width should
+ * shrink to their content in `table-layout: fixed` tables. `1%` is the usual
+ * hint; content + nowrap then sets the real width from the action count.
+ */
+export function shrinkToContentWidth(col: {
+  id: string;
+  truncate?: boolean;
+  width?: string;
+}): string | undefined {
+  if (col.width != null) return col.width;
+  if (!shouldAutoTruncateColumn(col)) return "1%";
+  return undefined;
+}
+
 export function getTruncateCellProps(truncate: boolean, maxW?: TableCellProps["maxW"]): TableCellProps {
   if (!truncate) return {};
   return {

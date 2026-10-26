@@ -537,7 +537,7 @@ function TypeLibrary() {
         ),
       },
       createActionsColumn<EntityRow>({
-        ...POLICY_COL_ACTIONS,
+        actionCount: 2,
         getActions: (row) => {
           const type = row.type;
           if (!type) return [];

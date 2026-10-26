@@ -405,8 +405,9 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
       {
         id: "delete",
         header: "Delete",
+        width: "1%",
         thProps: { textAlign: "right" },
-        tdProps: { textAlign: "right" },
+        tdProps: { textAlign: "right", whiteSpace: "nowrap" },
         cell: (r) => (
           <DataTableActions
             actions={[
@@ -460,8 +461,9 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
       {
         id: "actions",
         header: "Actions",
+        width: "1%",
         thProps: { textAlign: "right" },
-        tdProps: { textAlign: "right" },
+        tdProps: { textAlign: "right", whiteSpace: "nowrap" },
         cell: (row) => (
           <DataTableActions
             actions={[

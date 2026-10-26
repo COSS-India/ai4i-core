@@ -562,6 +562,7 @@ const ServicesManagement: React.FC = () => {
         cell: renderServicePublishedOnCell,
       },
       createActionsColumn<Service>({
+        actionCount: actionsContext.isRegistryReadOnly ? 0 : 3,
         getActions: (service) => buildServiceActions(service, actionsContext),
       }),
     ];
