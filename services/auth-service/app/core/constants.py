@@ -36,6 +36,9 @@ class TokenType:
     SETUP = "setup"
     VERIFY = "verify"
     RESET = "reset"
+    # Confirms a new Institution Admin email on an ACTIVE tenant — the
+    # pending address rides in the ``email`` claim until it is verified.
+    EMAIL_CHANGE = "email_change"
 
 
 # ── Password policy ──────────────────────────────────────────────────

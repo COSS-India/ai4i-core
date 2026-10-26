@@ -97,11 +97,15 @@ def render_welcome(user: User) -> EmailMessage:
     )
 
 
-def render_verify_email(user: User, verify_token: str) -> EmailMessage:
+def render_verify_email(
+    user: User, verify_token: str, to: Optional[str] = None
+) -> EmailMessage:
+    """``to`` overrides the recipient — used by the tenant email-change flow,
+    where the address being verified isn't stored on the user yet."""
     name = _platform_name()
     return _render(
         "verify_email",
-        to=user.email,
+        to=to or user.email,
         subject=f"Verify your email — {name}",
         ctx={
             "display_name": _display_name(user),

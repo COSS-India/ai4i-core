@@ -105,8 +105,9 @@ async def list_tenants(
     """
     is_admin = has_permission_id(request, RoleId.ADMIN)
     tenants = await svc.list_tenants(current_user, offset, limit, status_filter, is_admin=is_admin)
+    pending = await svc.resolve_pending_emails(tenants)
     return ListTenantsResponse(
-        data=[mask_pii_in_dict(to_response(t, TenantResponse)) for t in tenants]
+        data=[svc.build_tenant_response(t, pending_email=pending.get(t.id)) for t in tenants]
     )
 
 
@@ -159,7 +160,8 @@ async def get_tenant(
     """
     is_admin = has_permission_id(request, RoleId.ADMIN)
     tenant = await svc.get_tenant(current_user, tenant_id, unmask=unmask, is_admin=is_admin)
-    data = svc.build_tenant_response(tenant, unmask=unmask)
+    pending = await svc.resolve_pending_emails([tenant])
+    data = svc.build_tenant_response(tenant, unmask=unmask, pending_email=pending.get(tenant.id))
     data["tier_name"] = await svc.resolve_tier_name(tenant.tier_id, platform_core_db)
     return GetTenantResponse(data=data)
 
@@ -180,11 +182,18 @@ async def update_tenant(
 
     Status changes go through PATCH /{tenant_id}/status. Duplicate
     organisation or email returns 409. Returned contact PII is masked.
+
+    Email changes are refused (409) while the tenant is SUSPENDED or
+    DEACTIVATED. Changing the email to an existing Institution Admin of this
+    tenant applies immediately. Otherwise (non-PENDING tenant) a verification link
+    is sent to the new address and ``email`` stays unchanged until it is
+    confirmed — ``pending_email`` / ``email_verification_sent`` report this.
     """
-    tenant = await svc.update_tenant(current_user, tenant_id, body, background)
-    return UpdateTenantResponse(
-        data=mask_pii_in_dict(to_response(tenant, TenantResponse))
-    )
+    result = await svc.update_tenant(current_user, tenant_id, body, background)
+    data = to_response(result.tenant, TenantResponse)
+    data["pending_email"] = result.pending_email
+    data["email_verification_sent"] = result.verification_sent
+    return UpdateTenantResponse(data=mask_pii_in_dict(data))
 
 
 @router.patch(
