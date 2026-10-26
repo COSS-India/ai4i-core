@@ -27,9 +27,8 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import AppError, DuplicateEntityError, EntityNotFoundError
+from app.core.exceptions import DuplicateEntityError, EntityNotFoundError
 from app.models.policy_management.category import Category
-from app.models.policy_management.policy import Policy
 from app.models.policy_management.sub_category import SubCategory
 from app.schemas.policy_management.category import (
     CategoryCreate,
@@ -37,6 +36,7 @@ from app.schemas.policy_management.category import (
     CategoryStatusUpdate,
     CategoryUpdate,
 )
+from app.services.policy_management.errors import in_use_error
 
 
 async def list_categories(session: AsyncSession) -> List[CategoryItem]:
@@ -87,7 +87,8 @@ async def update_category_status(
     await session.refresh(row)
 
     if redis is not None:
-        await _recache_policies(session, redis, row)
+        from app.services.policy_management.policy_cache import recache_policies
+        await recache_policies(session, redis, row)
 
     return CategoryItem.model_validate(row)
 
@@ -118,8 +119,7 @@ async def update_category(
 
     for field, value in fields.items():
         setattr(row, field, value)
-    row.updated_by = updated_by
-    row.updated_at = func.now()
+    row.updated_by = updated_by  # updated_at is set by the column's onupdate
     try:
         await session.commit()
     except IntegrityError as exc:
@@ -130,7 +130,8 @@ async def update_category(
     await session.refresh(row)
 
     if renamed and redis is not None:
-        await _recache_policies(session, redis, row)
+        from app.services.policy_management.policy_cache import recache_policies
+        await recache_policies(session, redis, row)
 
     return CategoryItem.model_validate(row)
 
@@ -143,45 +144,18 @@ async def delete_category(session: AsyncSession, category_id: int) -> None:
     count = await session.scalar(
         select(func.count()).select_from(SubCategory).where(SubCategory.category_id == category_id)
     )
-    name = row.name  # the row expires on rollback
+    entity = f"Category '{row.name}'"  # the row expires on rollback
     if count:
         await session.rollback()  # release the row lock
-        raise _in_use_error(name, count)
+        raise in_use_error(entity, count, "sub-category", "sub-categories")
 
-    # A bulk DELETE, so the ORM never nulls a child's foreign key; the database's
-    # RESTRICT rejects the delete if a child was added after the count.
-    await session.execute(delete(Category).where(Category.id == category_id))
+    # A bulk DELETE, so the ORM never nulls a child's foreign key. RESTRICT is
+    # checked when the statement runs, not at commit, so both are guarded.
     try:
+        await session.execute(delete(Category).where(Category.id == category_id))
         await session.commit()
     except IntegrityError as exc:
         await session.rollback()
         if "fk_sub_category_category_id" in str(exc.orig):
-            raise AppError(
-                f"Category '{name}' has sub-categories and cannot be deleted.",
-                code="ENTITY_IN_USE",
-                status_code=409,
-            )
+            raise in_use_error(entity, None, "sub-category", "sub-categories")
         raise
-
-
-def _in_use_error(name: str, count: int) -> AppError:
-    noun = "sub-category" if count == 1 else "sub-categories"
-    return AppError(
-        f"Category '{name}' has {count} {noun} and cannot be deleted; "
-        f"delete or move them first.",
-        code="ENTITY_IN_USE",
-        status_code=409,
-    )
-
-
-async def _recache_policies(session: AsyncSession, redis, category: Category) -> None:
-    """Re-cache every policy under ``category``; their payload carries the
-    category's name and status."""
-    from app.services.policy_management.policy_cache import cache_policy
-    joined = await session.execute(
-        select(Policy, SubCategory)
-        .join(SubCategory, Policy.sub_category_id == SubCategory.id)
-        .where(SubCategory.category_id == category.id)
-    )
-    for policy, sub_cat in joined.all():
-        await cache_policy(policy, session, redis, sub_cat=sub_cat, category=category)

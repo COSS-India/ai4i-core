@@ -6,7 +6,7 @@ Covers the acceptance criteria that live in the API: an Adopter Admin can
 rename a category or sub-category, change its description and move a
 sub-category to another category; only the fields sent change; a name
 already taken in any case is 409 and a move to a missing category is 404;
-a rename or move re-caches the affected policies; a delete is refused with
+an enabled sub-category can't move under a disabled category (409); a rename or move re-caches the affected policies; a delete is refused with
 409 (naming how many children block it) while anything sits under the row
 and is 204 otherwise; an unknown id is 404, and only an Adopter Admin gets in.
 
@@ -154,7 +154,6 @@ class TestUpdateCategoryService:
         )
         session.get.assert_awaited_once_with(Category, 1, with_for_update=True)
         assert (row.name, row.description, row.updated_by) == ("Safety", "Keep", "42")
-        assert row.updated_at is not None
         session.commit.assert_awaited_once()
         assert item == CategoryItem(id=1, name="Safety", description="Keep", is_active=True)
 
@@ -245,11 +244,22 @@ class TestDeleteCategoryService:
 
     async def test_sub_category_added_meanwhile_is_a_conflict(self):
         session = _session(
-            _category(), count=0, commit_side_effect=_integrity_error("fk_sub_category_category_id")
+            _category(), results=[_integrity_error("fk_sub_category_category_id")], count=0
         )
         with pytest.raises(AppError) as exc:
             await category_service.delete_category(session, 1)
         assert exc.value.status_code == 409
+        assert exc.value.message == (
+            "Category 'Security & Privacy' has sub-categories and cannot be deleted; "
+            "delete or move them first."
+        )
+        session.commit.assert_not_awaited()
+        session.rollback.assert_awaited_once()
+
+    async def test_other_integrity_errors_are_re_raised(self):
+        session = _session(_category(), results=[_integrity_error("something_else")], count=0)
+        with pytest.raises(IntegrityError):
+            await category_service.delete_category(session, 1)
         session.rollback.assert_awaited_once()
 
     async def test_unknown_id_is_not_found(self):
@@ -262,22 +272,81 @@ class TestDeleteCategoryService:
 # ── Sub-category service ─────────────────────────────────────────────────────
 
 
+def _locked(*categories) -> MagicMock:
+    """Result of the move's SELECT ... FOR UPDATE on the categories."""
+    return _result(rows=categories)
+
+
+def _parent(is_active=True) -> Category:
+    return Category(id=1, name="Security & Privacy", is_active=is_active)
+
+
+def _target(is_active=True) -> Category:
+    return Category(id=2, name="Safety", is_active=is_active)
+
+
 @pytest.mark.asyncio
 class TestUpdateSubCategoryService:
     async def test_renames_moves_and_sets_audit_fields(self):
         row = _sub_category()
-        session = _session(row, results=[_FOUND, _MISSING])
+        session = _session(row, results=[_locked(_parent(), _target()), _MISSING])
         item = await sub_category_service.update_sub_category(
             session, 3, SubCategoryUpdate(name="Toxicity", category_id=2), updated_by="42"
         )
-        session.get.assert_awaited_once_with(SubCategory, 3, with_for_update=True)
         assert (row.name, row.category_id, row.description, row.updated_by) == (
             "Toxicity", 2, "Keep", "42"
         )
-        assert row.updated_at is not None
+        session.commit.assert_awaited_once()
         assert item == SubCategoryItem(
             id=3, name="Toxicity", description="Keep", category_id=2, is_active=True
         )
+
+    async def test_move_locks_both_categories_then_the_sub_category(self):
+        row = _sub_category()
+        session = _session(row, results=[_locked(_parent(), _target())])
+        await sub_category_service.update_sub_category(session, 3, SubCategoryUpdate(category_id=2))
+        session.get.assert_awaited_once_with(SubCategory, 3)
+        sql = str(session.execute.await_args_list[0].args[0].compile(compile_kwargs={"literal_binds": True}))
+        assert "category.id IN (1, 2)" in sql
+        assert "ORDER BY category.id" in sql and "FOR UPDATE" in sql
+        assert session.refresh.await_args_list[0].kwargs == {"with_for_update": True}
+
+    async def test_move_retries_when_the_parent_changed_before_the_lock(self):
+        row = _sub_category()
+        refreshes = []
+
+        async def _refresh(r, **kwargs):
+            refreshes.append(kwargs)
+            if len(refreshes) == 1:
+                r.category_id = 5  # another request moved it meanwhile
+
+        moved_parent = Category(id=5, name="Other", is_active=True)
+        session = _session(
+            row, results=[_locked(_parent(), _target()), _locked(_target(), moved_parent)]
+        )
+        session.refresh = AsyncMock(side_effect=_refresh)
+        await sub_category_service.update_sub_category(session, 3, SubCategoryUpdate(category_id=2))
+        sql = str(session.execute.await_args_list[1].args[0].compile(compile_kwargs={"literal_binds": True}))
+        assert "category.id IN (2, 5)" in sql
+        session.rollback.assert_awaited_once()
+        assert row.category_id == 2
+
+    async def test_enabled_sub_category_cannot_move_under_a_disabled_category(self):
+        row = _sub_category()
+        session = _session(row, results=[_locked(_parent(), _target(is_active=False))])
+        with pytest.raises(AppError) as exc:
+            await sub_category_service.update_sub_category(session, 3, SubCategoryUpdate(category_id=2))
+        assert (exc.value.status_code, exc.value.code) == (409, "CATEGORY_DISABLED")
+        session.commit.assert_not_awaited()
+        session.rollback.assert_awaited_once()
+        assert row.category_id == 1
+
+    async def test_disabled_sub_category_can_move_under_a_disabled_category(self):
+        row = SubCategory(id=3, name="PII Guardrails", category_id=1, is_active=False)
+        session = _session(row, results=[_locked(_parent(), _target(is_active=False))])
+        await sub_category_service.update_sub_category(session, 3, SubCategoryUpdate(category_id=2))
+        assert row.category_id == 2
+        session.commit.assert_awaited_once()
 
     async def test_description_only_runs_no_checks(self):
         row = _sub_category()
@@ -285,6 +354,7 @@ class TestUpdateSubCategoryService:
         await sub_category_service.update_sub_category(
             session, 3, SubCategoryUpdate(description="New")
         )
+        session.get.assert_awaited_once_with(SubCategory, 3, with_for_update=True)
         session.execute.assert_not_awaited()
         assert (row.name, row.category_id, row.description) == ("PII Guardrails", 1, "New")
 
@@ -306,7 +376,7 @@ class TestUpdateSubCategoryService:
 
     async def test_move_to_missing_category_is_not_found(self):
         row = _sub_category()
-        session = _session(row, results=[_MISSING])
+        session = _session(row, results=[_locked(_parent())])
         with pytest.raises(EntityNotFoundError, match="Category 42"):
             await sub_category_service.update_sub_category(session, 3, SubCategoryUpdate(category_id=42))
         session.commit.assert_not_awaited()
@@ -315,42 +385,49 @@ class TestUpdateSubCategoryService:
 
     @pytest.mark.parametrize(
         "constraint,error",
-        [
-            ("uq_sub_category_name_lower", DuplicateEntityError),
-            ("fk_sub_category_category_id", EntityNotFoundError),
-            ("some_other_constraint", IntegrityError),
-        ],
+        [("uq_sub_category_name_lower", DuplicateEntityError), ("some_other_constraint", IntegrityError)],
     )
     async def test_integrity_errors_on_commit(self, constraint, error):
         session = _session(
-            _sub_category(), results=[_FOUND, _MISSING],
-            commit_side_effect=_integrity_error(constraint),
+            _sub_category(), results=[_MISSING], commit_side_effect=_integrity_error(constraint)
         )
         with pytest.raises(error):
-            await sub_category_service.update_sub_category(
-                session, 3, SubCategoryUpdate(name="Toxicity", category_id=2)
-            )
+            await sub_category_service.update_sub_category(session, 3, SubCategoryUpdate(name="Toxicity"))
         session.rollback.assert_awaited_once()
 
-    async def test_unknown_id_is_not_found(self):
+    @pytest.mark.parametrize("body", [SubCategoryUpdate(name="X"), SubCategoryUpdate(category_id=2)])
+    async def test_unknown_id_is_not_found(self, body):
         session = _session(None)
-        with pytest.raises(EntityNotFoundError):
-            await sub_category_service.update_sub_category(session, 99, SubCategoryUpdate(name="X"))
+        with pytest.raises(EntityNotFoundError, match="Sub-category 99"):
+            await sub_category_service.update_sub_category(session, 99, body)
+        session.commit.assert_not_awaited()
 
     async def test_move_recaches_policies_with_the_new_category(self, monkeypatch):
         cache = AsyncMock()
         monkeypatch.setattr(
             "app.services.policy_management.policy_cache.cache_policy", cache
         )
-        row, new_parent, policy = _sub_category(), Category(id=2, name="Safety"), Policy(id=7)
-        session = _session(row, new_parent, results=[_FOUND, _result(rows=[policy])])
+        row, target, policy = _sub_category(), _target(), Policy(id=7)
+        session = _session(row, results=[_locked(_parent(), target), _result(rows=[(policy, row)])])
         await sub_category_service.update_sub_category(
             session, 3, SubCategoryUpdate(category_id=2), redis=MagicMock()
         )
-        assert session.get.await_args_list[1].args == (Category, 2)
+        sql = str(session.execute.await_args_list[1].args[0].compile(compile_kwargs={"literal_binds": True}))
+        assert "sub_category.id = 3" in sql
         cache.assert_awaited_once()
         assert cache.await_args.args[0] is policy
-        assert cache.await_args.kwargs == {"sub_cat": row, "category": new_parent}
+        assert cache.await_args.kwargs == {"sub_cat": row, "category": target}
+
+    async def test_description_change_does_not_recache(self, monkeypatch):
+        cache = AsyncMock()
+        monkeypatch.setattr(
+            "app.services.policy_management.policy_cache.cache_policy", cache
+        )
+        session = _session(_sub_category())
+        await sub_category_service.update_sub_category(
+            session, 3, SubCategoryUpdate(description="New"), redis=MagicMock()
+        )
+        cache.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -375,11 +452,17 @@ class TestDeleteSubCategoryService:
 
     async def test_policy_added_meanwhile_is_a_conflict(self):
         session = _session(
-            _sub_category(), count=0, commit_side_effect=_integrity_error("fk_policy_sub_category_id")
+            _sub_category(), results=[_integrity_error("fk_policy_sub_category_id")], count=0
         )
         with pytest.raises(AppError) as exc:
             await sub_category_service.delete_sub_category(session, 3)
         assert exc.value.status_code == 409
+        assert exc.value.message == (
+            "Sub-category 'PII Guardrails' has policies and cannot be deleted; "
+            "delete or move them first."
+        )
+        session.commit.assert_not_awaited()
+        session.rollback.assert_awaited_once()
 
     async def test_unknown_id_is_not_found(self):
         session = _session(None)
