@@ -217,6 +217,7 @@ def _build_page_data(
     Indexes spans by trace_id once so attribute lookup is O(1) per trace.
     """
     request_attrs: dict = {}
+    request_error: dict = {}
     model_attrs: dict = {}
     any_attrs: dict = {}
 
@@ -231,6 +232,7 @@ def _build_page_data(
             any_attrs[tid] = attrs
         if span_name == "request" and tid not in request_attrs:
             request_attrs[tid] = attrs
+            request_error[tid] = source.get("status", {}).get("description")
         elif span_name == "model" and tid not in model_attrs:
             model_attrs[tid] = attrs
 
@@ -251,7 +253,7 @@ def _build_page_data(
         if "institution" in selected_columns: row["tenant_id"] = base.get("tenant_id")
         if "service"     in selected_columns: row["service"]     = base.get("service")
         if "status_code" in selected_columns: row["status_code"] = req.get("status_code")
-        if "error"       in selected_columns: row["error"]       = req.get("error")
+        if "error"       in selected_columns: row["error"]       = request_error.get(tid)
         if "latency"     in selected_columns: row["latency"]     = req.get("total_time_ms")
         if "method"      in selected_columns: row["method"]      = req.get("method")
         if "model"       in selected_columns: row["model"]       = mdl.get("model_name")
