@@ -28,7 +28,7 @@ sys.modules["app.routes.service"] = _service_route_mod
 _spec.loader.exec_module(_service_route_mod)
 
 _filter_service_fields = _service_route_mod._filter_service_fields
-_is_platform_admin = _service_route_mod._is_platform_admin
+from app.core.permissions import is_platform_admin as _is_platform_admin  # noqa: E402
 list_services = _service_route_mod.list_services
 view_service = _service_route_mod.view_service
 list_try_it_services = _service_route_mod.list_try_it_services

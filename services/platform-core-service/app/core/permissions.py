@@ -27,6 +27,11 @@ def is_admin(request: Request) -> bool:
     return bool(permission_ids(request) & {ROLE_ADMIN})
 
 
+def is_platform_admin(request: Request) -> bool:
+    """Admin or Moderator — the callers who get the full (unfiltered) service view."""
+    return bool(permission_ids(request) & {ROLE_ADMIN, ROLE_MODERATOR})
+
+
 def require_usage_access(request: Request) -> None:
     """Admin or Tenant Admin may call a usage/metering-dashboard endpoint at all;
     which tenant(s) they may see within it is a separate, narrower check —
