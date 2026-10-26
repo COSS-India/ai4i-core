@@ -260,7 +260,6 @@ def _build_page_data(
         if "method"      in selected_columns: row["method"]      = req.get("method")
         if "model"       in selected_columns: row["model"]       = mdl.get("model_name")
         if "application" in selected_columns: row["application"] = any_.get("app_id")
-        if "api_key"     in selected_columns: row["api_key"]     = any_.get("api_key_id")
         if "end_user"    in selected_columns: row["end_user"]    = any_.get("enduser.id")
         if "metadata"    in selected_columns: row["metadata"]    = any_.get("metadata_kv")
         result.append(row)
