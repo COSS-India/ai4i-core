@@ -204,7 +204,7 @@ class TierQuotaLimit(BaseSchema):
     # The quota in effect this month.
     monthly_quota: Decimal
     # An edit to the quota, applied to monthly_quota on the 1st of next
-    # month; null when none is scheduled.
+    # month; null when none is scheduled or it would not change the quota.
     pending_monthly_quota: Optional[Decimal] = None
 
 

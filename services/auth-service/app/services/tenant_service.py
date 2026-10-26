@@ -823,7 +823,8 @@ class TenantService:
         live from platform-core so a tier edit or reassignment shows up on
         the next GET. Quotas are listed in task-type catalogue order.
         ``monthly_quota`` is the one in effect now; an edit waiting for the
-        1st-of-month promotion is returned as ``pending_monthly_quota``.
+        1st-of-month promotion is returned as ``pending_monthly_quota``, which
+        is None when nothing is scheduled or it equals ``monthly_quota``.
         Fails soft like resolve_tier_name: None when no tier is
         assigned or the tier can't be read — in that last case tier_name is
         already UNKNOWN_TIER_NAME, so the client can tell the two apart."""
@@ -855,7 +856,11 @@ class TenantService:
                     "task_type": q.task_type,
                     "unit": q.unit,
                     "monthly_quota": q.monthly_quota,
-                    "pending_monthly_quota": q.pending_monthly_quota,
+                    # platform-core stores the submitted limit on every tier save,
+                    # even an unchanged one, so equal means nothing is scheduled.
+                    "pending_monthly_quota": (
+                        None if q.pending_monthly_quota == q.monthly_quota else q.pending_monthly_quota
+                    ),
                 }
                 for q in quotas
             ],

@@ -116,6 +116,15 @@ class TestResolveTierLimits:
         }
 
     @pytest.mark.asyncio
+    async def test_pending_equal_to_current_quota_is_not_a_change(self) -> None:
+        """platform-core writes pending_monthly_quota on every tier save, even
+        when the limit is unchanged, so that must not read as a scheduled change."""
+        db = _tier_db(quotas=(("llm", "1000.0000", "tokens", "1000"),))
+        limits = await TenantService.resolve_tier_limits(uuid4(), db)
+        assert limits["quotas"][0]["pending_monthly_quota"] is None
+        assert limits["quotas"][0]["monthly_quota"] == Decimal("1000")
+
+    @pytest.mark.asyncio
     async def test_quotas_follow_catalogue_order(self) -> None:
         db = _tier_db(quotas=_QUOTAS)
         await TenantService.resolve_tier_limits(uuid4(), db)
