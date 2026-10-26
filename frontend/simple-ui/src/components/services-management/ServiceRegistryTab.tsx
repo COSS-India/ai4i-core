@@ -30,6 +30,8 @@ interface ServiceRegistryTabProps {
   tierFilterOptions: ServiceTierFilterOption[];
   hasActiveFilters: boolean;
   onClearFilters: () => void;
+  /** Column picker, rendered at the end of the filter toolbar. */
+  columnPicker?: React.ReactNode;
 }
 
 const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
@@ -53,6 +55,7 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
   tierFilterOptions,
   hasActiveFilters,
   onClearFilters,
+  columnPicker,
 }) => {
   return (
     <DataTable
@@ -74,6 +77,7 @@ const ServiceRegistryTab: React.FC<ServiceRegistryTabProps> = ({
       unfilteredCount={totalServicesCount}
       hasActiveFilters={hasActiveFilters}
       onClearFilters={onClearFilters}
+      filterToolbarRightContent={columnPicker}
       search={{
         label: "Search",
         value: searchQuery,

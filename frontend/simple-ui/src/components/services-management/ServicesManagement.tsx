@@ -7,7 +7,7 @@ import {
 } from "@chakra-ui/react";
 import { DeleteIcon, EditIcon } from "@chakra-ui/icons";
 import { MdOutlineCheckCircle, MdOutlineUnpublished } from "react-icons/md";
-import React, { useMemo } from "react";
+import React, { useCallback, useLayoutEffect, useMemo, useState } from "react";
 import ManagementPageHeader from "../common/ManagementPageHeader";
 import CreateButton from "../common/CreateButton";
 import FormActions from "../common/FormActions";
@@ -16,12 +16,27 @@ import { useFormPageLeave } from "../common/FormPage";
 import { createActionsColumn, type DataTableColumn } from "../common/table";
 import type { Service } from "../../services/servicesManagementService";
 import ConfirmDialog from "../common/ConfirmDialog";
+import { useAuth } from "../../hooks/useAuth";
 import { useServicesManagement } from "../../hooks/useServicesManagement";
+import { authService } from "../../services/authService";
+import ServiceListColumnPicker from "./ServiceListColumnPicker";
 import ServiceRegistryTab from "./ServiceRegistryTab";
 import ServiceFormTab from "./ServiceFormTab";
 import ServiceDetailTab from "./ServiceDetailTab";
 import { getTaskColorScheme } from "../../config/constants";
 import { resolveTaskType } from "../../utils/platformService";
+import {
+  defaultServiceListColumnIds,
+  formatServiceListDate,
+  formatServiceListPrice,
+  loadServiceListColumns,
+  saveServiceListColumns,
+  serviceCreatedAtMillis,
+  serviceListServiceId,
+  serviceModelName,
+  servicePublishedOnMillis,
+  type ServiceListColumnId,
+} from "./serviceListColumns";
 
 const CREATE_SERVICE_FORM_ID = "create-service-form";
 const EDIT_SERVICE_FORM_ID = "edit-service-form";
@@ -142,8 +157,42 @@ const ServicesManagement: React.FC = () => {
     releaseCreateForm,
   );
 
+  const { user } = useAuth();
+  const userId = user?.user_id ?? "";
+  const [visibleColumnIds, setVisibleColumnIds] = useState<ServiceListColumnId[]>(
+    defaultServiceListColumnIds,
+  );
+
+  const preferenceUserId = useCallback(
+    () => userId || authService.getStoredUser()?.user_id || "",
+    [userId],
+  );
+
+  useLayoutEffect(() => {
+    const id = preferenceUserId();
+    if (!id) return;
+    setVisibleColumnIds((current) => {
+      const next = loadServiceListColumns(id);
+      if (current.length === next.length && current.every((columnId, index) => columnId === next[index])) {
+        return current;
+      }
+      return next;
+    });
+  }, [preferenceUserId]);
+
+  const applyVisibleColumns = useCallback(
+    (next: readonly ServiceListColumnId[]) => {
+      setVisibleColumnIds(saveServiceListColumns(preferenceUserId(), next));
+    },
+    [preferenceUserId],
+  );
+
+  const resetVisibleColumns = useCallback(() => {
+    applyVisibleColumns(defaultServiceListColumnIds());
+  }, [applyVisibleColumns]);
+
   const serviceColumns = useMemo((): DataTableColumn<Service>[] => {
-    return [
+    const columns: DataTableColumn<Service>[] = [
       {
         id: "name",
         header: "Name",
@@ -156,8 +205,9 @@ const ServicesManagement: React.FC = () => {
         ),
       },
       {
-        id: "task",
-        header: "Task Type",
+        id: "modelTaskType",
+        header: "Model Task Type",
+        sortable: true,
         cell: (service) => {
           const taskType = resolveTaskType(service);
           return (
@@ -168,11 +218,10 @@ const ServicesManagement: React.FC = () => {
         },
       },
       {
-        id: "tiers",
-        header: "Tiers",
+        id: "tier",
+        header: "Tier",
         sortable: true,
-        sortAccessor: (service) =>
-          (service.tierNames ?? service.tiers ?? []).join(", ").toLowerCase(),
+        truncate: false,
         cell: (service) => {
           const names = service.tierNames;
           if (!names || names.length === 0) {
@@ -202,6 +251,7 @@ const ServicesManagement: React.FC = () => {
       {
         id: "status",
         header: "Status",
+        sortable: true,
         cell: (service) => (
           <Badge
             colorScheme={service.isPublished === true ? "green" : "gray"}
@@ -211,6 +261,104 @@ const ServicesManagement: React.FC = () => {
             {service.isPublished === true ? "Published" : "Unpublished"}
           </Badge>
         ),
+      },
+      {
+        id: "createdAt",
+        header: "Created At",
+        sortable: true,
+        cell: (service) => {
+          const label = formatServiceListDate(serviceCreatedAtMillis(service));
+          return (
+            <Text fontSize="sm" color={label === "—" ? "ink.400" : undefined} noOfLines={1}>
+              {label}
+            </Text>
+          );
+        },
+      },
+      {
+        id: "modelName",
+        header: "Model Name",
+        sortable: true,
+        cell: (service) => {
+          const label = serviceModelName(service) || "—";
+          return (
+            <Text
+              fontSize="sm"
+              color={label === "—" ? "ink.400" : undefined}
+              noOfLines={1}
+              title={label}
+            >
+              {label}
+            </Text>
+          );
+        },
+      },
+      {
+        id: "serviceId",
+        header: "Service ID",
+        sortable: true,
+        cell: (service) => {
+          const label = serviceListServiceId(service) || "—";
+          return (
+            <Text
+              fontSize="sm"
+              color={label === "—" ? "ink.400" : undefined}
+              noOfLines={1}
+              title={label}
+            >
+              {label}
+            </Text>
+          );
+        },
+      },
+      {
+        id: "inputPrice",
+        header: "Input Price",
+        sortable: true,
+        isNumeric: true,
+        cell: (service) => (
+          <Text fontSize="sm" color={service.costPerUnit == null ? "ink.400" : undefined}>
+            {formatServiceListPrice(service.costPerUnit)}
+          </Text>
+        ),
+      },
+      {
+        id: "outputPrice",
+        header: "Output Price",
+        sortable: true,
+        isNumeric: true,
+        cell: (service) => (
+          <Text fontSize="sm" color={service.outputCostPerUnit == null ? "ink.400" : undefined}>
+            {formatServiceListPrice(service.outputCostPerUnit)}
+          </Text>
+        ),
+      },
+      {
+        id: "cachedInputPrice",
+        header: "Cached Input Price",
+        sortable: true,
+        isNumeric: true,
+        cell: (service) => (
+          <Text
+            fontSize="sm"
+            color={service.cachedInputCostPerUnit == null ? "ink.400" : undefined}
+          >
+            {formatServiceListPrice(service.cachedInputCostPerUnit)}
+          </Text>
+        ),
+      },
+      {
+        id: "publishedOn",
+        header: "Published On",
+        sortable: true,
+        cell: (service) => {
+          const label = formatServiceListDate(servicePublishedOnMillis(service));
+          return (
+            <Text fontSize="sm" color={label === "—" ? "ink.400" : undefined} noOfLines={1}>
+              {label}
+            </Text>
+          );
+        },
       },
       createActionsColumn<Service>({
         getActions: (service) => {
@@ -267,6 +415,11 @@ const ServicesManagement: React.FC = () => {
         },
       }),
     ];
+    const byId = new Map(columns.map((column) => [column.id, column]));
+    return visibleColumnIds.flatMap((id) => {
+      const column = byId.get(id);
+      return column ? [column] : [];
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     unpublishingServiceUuid,
@@ -274,6 +427,7 @@ const ServicesManagement: React.FC = () => {
     deletingServiceUuid,
     isRegistryReadOnly,
     availableTiers,
+    visibleColumnIds,
   ]);
 
   const serviceForm = (
@@ -363,6 +517,13 @@ const ServicesManagement: React.FC = () => {
         tierFilterOptions={tierFilterOptions}
         hasActiveFilters={hasActiveFilters}
         onClearFilters={clearAllFilters}
+        columnPicker={
+          <ServiceListColumnPicker
+            visibleIds={visibleColumnIds}
+            onChange={applyVisibleColumns}
+            onReset={resetVisibleColumns}
+          />
+        }
       />
       <FormDrawer
         isOpen={showServiceCreate}

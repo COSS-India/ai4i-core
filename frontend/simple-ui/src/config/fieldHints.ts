@@ -186,6 +186,7 @@ export const FIELD_HINTS = {
     },
     tier: { placeholder: "Select applicable tier(s)", helper: "Select at least one" },
     tierSearch: { placeholder: "Search tiers..." },
+    columns: { helper: "Choose which columns appear in the list" },
   },
   logs: {
     search: {

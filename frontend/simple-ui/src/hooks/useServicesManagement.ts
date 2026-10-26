@@ -5,6 +5,7 @@ import { useRouter } from "next/router";
 import { safeFormReturnHref } from "../components/common/FormPage";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { serviceListSortAccessors } from "../components/services-management/serviceListColumns";
 import { useDeferredColumnSort } from "../utils/tableSort";
 import { resolveTaskType } from "../utils/platformService";
 import {
@@ -251,13 +252,7 @@ export function useServicesManagement() {
     if (taskTypeNames.length === 1) setFilterTaskType(taskTypeNames[0]);
     setTaskTypeFilterReady(true);
   }, [isLoadingTaskTypes, taskTypeNames]);
-  const registrySortAccessors = useMemo(
-    () => ({
-      name: (s: Service) => s.name ?? "",
-      tiers: (s: Service) => (s.tierNames ?? s.tiers ?? []).join(", ").toLowerCase(),
-    }),
-    [],
-  );
+  const registrySortAccessors = useMemo(() => serviceListSortAccessors(), []);
   const registrySort = useDeferredColumnSort("name", registrySortAccessors);
   const [confirmPublishService, setConfirmPublishService] =
     useState<Service | null>(null);
