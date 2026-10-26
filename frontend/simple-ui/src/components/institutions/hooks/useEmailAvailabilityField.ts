@@ -82,6 +82,9 @@ export function useEmailAvailabilityField({
 
       patchError("email", undefined);
       setStatus("checking");
+      // Invalidate in-flight verifyNow / prior checks as soon as the value
+      // changes — not only when the debounced runCheck starts.
+      requestIdRef.current += 1;
 
       timerRef.current = setTimeout(runCheck, EMAIL_CHECK_DEBOUNCE_MS);
     },
@@ -96,10 +99,18 @@ export function useEmailAvailabilityField({
   );
 
   const verifyNow = useCallback(async (): Promise<boolean> => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    const emailSnapshot = email;
+    const requestId = ++requestIdRef.current;
+    setStatus("checking");
     const result = await runEmailAvailabilityCheck({
-      ...getCheckOptions(email),
-      email,
+      ...getCheckOptions(emailSnapshot),
+      email: emailSnapshot,
     });
+    if (requestId !== requestIdRef.current) return false;
     patchError("email", result.error);
     setStatus(result.status);
     return (

@@ -1203,23 +1203,25 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       knownTenantEmails,
       editTenantEmail: editTenantRow?.email,
     });
-    if (isEditTenantEmailEditable) {
-      delete errors.email;
-      const emailOk = await editTenantEmailAvailability.verifyNow();
-      if (!emailOk) return;
-    }
-    if (Object.keys(errors).length > 0) {
-      setEditTenantFormErrors(errors);
-      return;
-    }
-    setEditTenantFormErrors({});
-    const nextEmail = normalizeEmail(editTenantForm.email ?? "");
-    const emailChanged =
-      isEditTenantEmailEditable &&
-      nextEmail !== normalizeEmail(editTenantRow?.email ?? "");
-
+    // Lock the form before the async email check so the field can't change
+    // while verifyNow awaits (avoids validating an older value than PATCH sends).
     setIsSubmittingEditTenant(true);
     try {
+      if (isEditTenantEmailEditable) {
+        delete errors.email;
+        const emailOk = await editTenantEmailAvailability.verifyNow();
+        if (!emailOk) return;
+      }
+      if (Object.keys(errors).length > 0) {
+        setEditTenantFormErrors(errors);
+        return;
+      }
+      setEditTenantFormErrors({});
+      const nextEmail = normalizeEmail(editTenantForm.email ?? "");
+      const emailChanged =
+        isEditTenantEmailEditable &&
+        nextEmail !== normalizeEmail(editTenantRow?.email ?? "");
+
       const patch = {
         tenant_id: editTenantForm.tenant_id,
         organisation: editTenantForm.organisation,

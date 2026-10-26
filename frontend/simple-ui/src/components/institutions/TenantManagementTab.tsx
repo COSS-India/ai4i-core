@@ -833,6 +833,7 @@ export default function TenantManagementTab({
           }}
           errors={tm.editTenantFormErrors}
           emailEditable={tm.isEditTenantEmailEditable}
+          emailDisabled={tm.isSubmittingEditTenant}
           pendingEmail={tm.editTenantRow?.pending_email}
           emailStatus={tm.editTenantEmailStatus}
           onOrganisationChange={tm.handleEditTenantOrganisationChange}

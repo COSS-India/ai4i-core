@@ -32,6 +32,8 @@ type InstitutionFormProps = Readonly<{
   errors?: InstitutionFormErrors;
   /** Edit only. Contact email editable for PENDING/ACTIVE (AI4IDS-3401). */
   emailEditable?: boolean;
+  /** Keeps the email input mounted but non-editable (e.g. while submit awaits). */
+  emailDisabled?: boolean;
   /** Pending verification address from GET/PATCH (shown in view + locked edit). */
   pendingEmail?: string | null;
   emailStatus?: string;
@@ -49,6 +51,7 @@ type InstitutionFormProps = Readonly<{
 type EditableEmailFieldProps = Readonly<{
   isCreate: boolean;
   emailEditable: boolean;
+  emailDisabled?: boolean;
   values: InstitutionFormValues;
   errors: InstitutionFormErrors;
   pendingEmail: string | null;
@@ -178,6 +181,7 @@ function EditEmailHints({
 function InstitutionEditableEmailField({
   isCreate,
   emailEditable,
+  emailDisabled = false,
   values,
   errors,
   pendingEmail,
@@ -194,6 +198,7 @@ function InstitutionEditableEmailField({
         <Input
           type="email"
           value={values.email}
+          isDisabled={emailDisabled}
           onChange={(e) => onEmailChange?.(e.target.value)}
           onBlur={isCreate ? onEmailBlur : undefined}
           placeholder={
@@ -232,6 +237,7 @@ export default function InstitutionForm({
   values,
   errors = {},
   emailEditable = false,
+  emailDisabled = false,
   pendingEmail = null,
   emailStatus,
   onOrganisationChange,
@@ -295,6 +301,7 @@ export default function InstitutionForm({
         <InstitutionEditableEmailField
           isCreate={isCreate}
           emailEditable={emailEditable}
+          emailDisabled={emailDisabled}
           values={values}
           errors={errors}
           pendingEmail={pendingEmail}
