@@ -390,6 +390,34 @@ def ensure_database_exists(name: str) -> None:
         raise ValueError(f"Unsupported database '{name}'. Supported values: {supported}")
     fn()  # type: ignore[operator]
 
+
+def get_redis_client():
+    """Sync Redis client from REDIS_HOST/PORT/DB/PASSWORD, or None when Redis
+    can't be reached. REDIS_PORT may be Kubernetes' injected tcp://ip:port;
+    an explicit REDIS_HOST still wins over the host in it."""
+    import redis
+    from urllib.parse import urlparse
+
+    try:
+        host = os.getenv("REDIS_HOST")
+        raw_port = os.getenv("REDIS_PORT", "6379")
+        if "://" in raw_port:
+            parsed = urlparse(raw_port)
+            port = parsed.port or 6379
+            host = host or parsed.hostname
+        else:
+            port = int(raw_port)
+        client = redis.Redis(
+            host=host or "localhost", port=port, db=int(os.getenv("REDIS_DB", "0")),
+            password=os.getenv("REDIS_PASSWORD") or None, decode_responses=True,
+            socket_timeout=5, socket_connect_timeout=5,
+        )
+        client.ping()
+        return client
+    except Exception:  # noqa: BLE001 - callers treat Redis as best-effort
+        return None
+
+
 if __name__ == "__main__":
     import argparse
 
