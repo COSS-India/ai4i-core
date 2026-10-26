@@ -198,6 +198,21 @@ class TenantStatusUpdate(BaseSchema):
     status: TenantStatus
 
 
+class TierQuotaLimit(BaseSchema):
+    task_type: str
+    # The quota in effect this month — an edit waiting in
+    # pending_monthly_quota only applies from the 1st, so it isn't shown yet.
+    monthly_quota: Decimal
+    unit: str
+
+
+class TierLimits(BaseSchema):
+    # Requests per minute shared across rate-limited inference APIs; null
+    # means the tier doesn't set one and the gateway default applies.
+    rate_limit: Optional[int] = None
+    quotas: list[TierQuotaLimit] = Field(default_factory=list)
+
+
 class TenantResponse(BaseSchema):
     tenant_id: int = Field(validation_alias="id")
     contact_name: str = Field(validation_alias="name")
@@ -220,6 +235,9 @@ class TenantResponse(BaseSchema):
     # Not a tenants column — resolved from platform-core's ``tiers`` table and
     # filled in by GET /auth/tenants/{tenant_id} only; null everywhere else.
     tier_name: Optional[str] = None
+    # Same as tier_name: read from platform-core's tiers / tier_quotas and
+    # filled in by GET /auth/tenants/{tenant_id} only.
+    tier_limits: Optional[TierLimits] = None
     allocated_budget: Optional[Decimal] = None
     budget_effective_from: Optional[datetime] = None
     budget_effective_to: Optional[datetime] = None

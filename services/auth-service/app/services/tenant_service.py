@@ -816,6 +816,43 @@ class TenantService:
         return row.name
 
     @staticmethod
+    async def resolve_tier_limits(
+        tier_id: Optional[UUID], platform_core_db: Optional[AsyncSession]
+    ) -> Optional[dict]:
+        """Rate limit and per-task-type monthly quotas of ``tier_id``, read
+        live from platform-core so a tier edit or reassignment shows up on
+        the next GET. Fails soft like resolve_tier_name: None when no tier is
+        assigned or the tier can't be read — in that last case tier_name is
+        already UNKNOWN_TIER_NAME, so the client can tell the two apart."""
+        if tier_id is None or platform_core_db is None:
+            return None
+        try:
+            tier = (
+                await platform_core_db.execute(text("SELECT rate_limit FROM tiers WHERE id = :tid"), {"tid": tier_id})
+            ).first()
+            if tier is None:
+                return None
+            quotas = (
+                await platform_core_db.execute(
+                    text(
+                        "SELECT it.name AS task_type, tq.monthly_quota, it.unit "
+                        "FROM tier_quotas tq JOIN inference_types it ON it.id = tq.inference_type_id "
+                        "WHERE tq.tier_id = :tid ORDER BY it.name"
+                    ),
+                    {"tid": tier_id},
+                )
+            ).all()
+        except Exception:
+            logger.exception("tier_limits lookup failed for tier %s", tier_id)
+            return None
+        return {
+            "rate_limit": tier.rate_limit,
+            "quotas": [
+                {"task_type": q.task_type, "monthly_quota": q.monthly_quota, "unit": q.unit} for q in quotas
+            ],
+        }
+
+    @staticmethod
     def build_tenant_response(tenant: Tenant, *, unmask: bool = False) -> dict:
         """Shape a tenant into its API dict, applying the PII-masking policy.
 
