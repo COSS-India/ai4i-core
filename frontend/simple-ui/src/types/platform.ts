@@ -418,6 +418,11 @@ export interface ServiceListParams {
   taskTypes?: string;
   isPublished?: boolean;
   createdBy?: string;
+  /**
+   * Extra query params from `GET /services/columns` filter.params.
+   * Applied after the structured fields above; a key already set is left as-is.
+   */
+  query?: Record<string, string>;
 }
 
 /** Legacy snake_case keys for backward compatibility. */

@@ -7,6 +7,13 @@ import {
   serviceSingleSchema,
   servicesListSchema,
 } from "./dto/schemas/platform";
+import {
+  parseServiceListColumnsPayload,
+  parseVisibleColumnsPayload,
+  SERVICE_LIST_COLUMNS,
+  SERVICE_LIST_PREFERENCE_VIEW,
+  type ServiceListColumnDef,
+} from "../components/services-management/serviceListColumns";
 import type {
   DeleteServiceResponse,
   PaginatedServices,
@@ -226,6 +233,11 @@ export const listServicesPaginated = async (
     if (params.isPublished !== undefined)
       queryParams.is_published = params.isPublished;
     if (params.createdBy) queryParams.created_by = params.createdBy;
+    if (params.query) {
+      for (const [key, value] of Object.entries(params.query)) {
+        if (value !== "" && queryParams[key] === undefined) queryParams[key] = value;
+      }
+    }
 
     const response = await apiService.get(apiEndpoints.platform.services.base, {
       params: queryParams,
@@ -250,6 +262,70 @@ export const listServicesPaginated = async (
     };
   } catch (error: any) {
     console.error("List services (paginated) error:", error);
+    throw error;
+  }
+};
+
+const httpStatus = (error: unknown): number | undefined =>
+  (error as { response?: { status?: number } } | null)?.response?.status;
+
+export type ServiceListColumnsResult = {
+  columns: ServiceListColumnDef[];
+  /** `api` when GET /services/columns answered; otherwise the offline catalogue. */
+  source: "api" | "fallback";
+};
+
+/**
+ * Column catalogue for the service registry picker.
+ * Falls back to the offline catalogue when the endpoint is not deployed yet.
+ */
+export const getServiceListColumns = async (): Promise<ServiceListColumnsResult> => {
+  try {
+    const response = await apiService.get(apiEndpoints.platform.services.columns, {
+      suppressErrorAlert: true,
+    });
+    const columns = parseServiceListColumnsPayload(response.data);
+    if (columns) return { columns, source: "api" };
+  } catch (error) {
+    if (httpStatus(error) !== 404 && httpStatus(error) !== 405) {
+      console.warn("GET /services/columns failed; using the offline catalogue.", error);
+    }
+  }
+  return { columns: [...SERVICE_LIST_COLUMNS], source: "fallback" };
+};
+
+/** Saved visible columns, or null when the user has no preference yet. */
+export const getServiceColumnPreference = async (): Promise<string[] | null> => {
+  try {
+    const response = await apiService.get(
+      apiEndpoints.platform.columnPreferences(SERVICE_LIST_PREFERENCE_VIEW),
+      { suppressErrorAlert: true },
+    );
+    return parseVisibleColumnsPayload(response.data);
+  } catch (error) {
+    if (httpStatus(error) === 404) return null;
+    throw error;
+  }
+};
+
+export const saveServiceColumnPreference = async (
+  visibleColumns: readonly string[],
+): Promise<void> => {
+  await apiService.put(
+    apiEndpoints.platform.columnPreferences(SERVICE_LIST_PREFERENCE_VIEW),
+    { visibleColumns: [...visibleColumns] },
+    { suppressErrorAlert: true },
+  );
+};
+
+export const resetServiceColumnPreference = async (): Promise<void> => {
+  try {
+    await apiService.delete(
+      apiEndpoints.platform.columnPreferences(SERVICE_LIST_PREFERENCE_VIEW),
+      { suppressErrorAlert: true },
+    );
+  } catch (error) {
+    if (httpStatus(error) === 404) return;
     throw error;
   }
 };

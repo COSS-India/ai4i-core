@@ -5,12 +5,20 @@ import { useRouter } from "next/router";
 import { safeFormReturnHref } from "../components/common/FormPage";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { serviceListSortAccessors } from "../components/services-management/serviceListColumns";
+import {
+  SERVICE_LIST_COLUMNS,
+  serviceListCellKey,
+  serviceListFilterParams,
+  serviceListSortAccessors,
+  type ServiceListColumnDef,
+} from "../components/services-management/serviceListColumns";
 import { useDeferredColumnSort } from "../utils/tableSort";
 import { resolveTaskType } from "../utils/platformService";
 import {
   fetchAllServicesMatchingFilters,
   fetchExistingServiceIds,
+  getServiceListColumns,
+  listServicesPaginated,
   createService,
   getServiceById,
   updateService,
@@ -252,7 +260,25 @@ export function useServicesManagement() {
     if (taskTypeNames.length === 1) setFilterTaskType(taskTypeNames[0]);
     setTaskTypeFilterReady(true);
   }, [isLoadingTaskTypes, taskTypeNames]);
-  const registrySortAccessors = useMemo(() => serviceListSortAccessors(), []);
+  const [registryPage, setRegistryPage] = useState(1);
+  const [registryPageSize, setRegistryPageSize] = useState(25);
+  const [serverFilters, setServerFilters] = useState<Record<string, string>>({});
+  const [serverTotal, setServerTotal] = useState(0);
+  const { user, isLoading: authLoading } = useAuth();
+  const columnsQuery = useQuery({
+    queryKey: ["service-list-columns", user?.user_id],
+    queryFn: getServiceListColumns,
+    enabled: Boolean(user?.user_id),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+  const serviceListCatalogue: readonly ServiceListColumnDef[] =
+    columnsQuery.data?.columns ?? SERVICE_LIST_COLUMNS;
+  const serviceListUsesServer = columnsQuery.data?.source === "api";
+  const registrySortAccessors = useMemo(
+    () => serviceListSortAccessors(serviceListCatalogue),
+    [serviceListCatalogue],
+  );
   const registrySort = useDeferredColumnSort("name", registrySortAccessors);
   const [confirmPublishService, setConfirmPublishService] =
     useState<Service | null>(null);
@@ -278,14 +304,16 @@ export function useServicesManagement() {
   } = useDisclosure();
   const cancelPublishRef = useRef<HTMLButtonElement>(null);
   const cancelUnpublishRef = useRef<HTMLButtonElement>(null);
-  const { user } = useAuth();
   const isRegistryReadOnly = isRegistryReadOnlyUser(user?.roles);
   // View is always the second tab. Edit is a StandardModal, not a tab.
   const viewTabIndex = 1;
 
-  // Name + tier filter, then sort, over the full fetched list. Tier is
-  // client-side because GET /services takes no tier param.
+  // Offline catalogue: name + tier filter, then sort, over the full fetched list.
+  // When GET /services/columns is available, those filters are query params and
+  // the rows are already one server page. Sort still applies to that page until
+  // the list API exposes a sort parameter.
   const registryTableItems = useMemo(() => {
+    if (serviceListUsesServer) return registrySort.apply(services);
     const q = searchQuery.trim().toLowerCase();
     let filtered = q
       ? services.filter((s) => (s.name ?? "").toLowerCase().includes(q))
@@ -294,7 +322,7 @@ export function useServicesManagement() {
       filtered = filtered.filter((s) => serviceMatchesTier(s, filterTier));
     }
     return registrySort.apply(filtered);
-  }, [services, searchQuery, filterTier, registrySort]);
+  }, [services, searchQuery, filterTier, registrySort, serviceListUsesServer]);
 
   const tiersQuery = useQuery({
     queryKey: ACTIVE_TIERS_QUERY_KEY,
@@ -337,17 +365,42 @@ export function useServicesManagement() {
   );
 
   const showTaskTypeAllOption = taskTypeNames.length > 1;
-  const hasActiveFilters =
-    filterStatus !== "" ||
-    (showTaskTypeAllOption && filterTaskType !== "") ||
-    filterTier !== SERVICE_TIER.FILTER.ALL ||
-    searchQuery.trim() !== "";
+  const taskFilterColumnId = serviceListCatalogue.find(
+    (column) => serviceListCellKey(column.id) === "task",
+  )?.id;
+  const statusFilterColumnId = serviceListCatalogue.find(
+    (column) => serviceListCellKey(column.id) === "status",
+  )?.id;
+  const hasActiveServerFilters = Object.entries(serverFilters).some(([id, value]) => {
+    const trimmed = value.trim();
+    if (!trimmed) return false;
+    if (
+      id === taskFilterColumnId &&
+      taskTypeNames.length === 1 &&
+      trimmed === taskTypeNames[0]
+    ) {
+      return false;
+    }
+    return true;
+  });
+  const hasActiveFilters = serviceListUsesServer
+    ? hasActiveServerFilters
+    : filterStatus !== "" ||
+      (showTaskTypeAllOption && filterTaskType !== "") ||
+      filterTier !== SERVICE_TIER.FILTER.ALL ||
+      searchQuery.trim() !== "";
   const clearAllFilters = () => {
     setSearchQuery("");
     setFilterStatus("");
     setFilterTaskType(taskTypeNames.length === 1 ? taskTypeNames[0] : "");
     setFilterTier(SERVICE_TIER.FILTER.ALL);
+    setServerFilters({});
+    setRegistryPage(1);
   };
+  const setServerFilterValue = useCallback((columnId: string, value: string) => {
+    setRegistryPage(1);
+    setServerFilters((prev) => ({ ...prev, [columnId]: value }));
+  }, []);
 
   const router = useRouter();
   const routerRef = useRef(router);
@@ -438,6 +491,35 @@ export function useServicesManagement() {
             ? false
             : undefined;
 
+      if (serviceListUsesServer) {
+        const filters = { ...serverFilters };
+        if (options?.taskType !== undefined && taskFilterColumnId) {
+          filters[taskFilterColumnId] = options.taskType;
+        }
+        if (options?.status !== undefined && statusFilterColumnId) {
+          filters[statusFilterColumnId] =
+            options.status === "published"
+              ? "true"
+              : options.status === "unpublished"
+                ? "false"
+                : "";
+        }
+        const result = await listServicesPaginated({
+          offset: (registryPage - 1) * registryPageSize,
+          limit: registryPageSize,
+          query: serviceListFilterParams({
+            columns: serviceListCatalogue,
+            filters,
+            enabledTaskTypes: enabledTaskTypesParam,
+          }),
+        });
+        if (commit) {
+          setServices(result.items);
+          setServerTotal(result.total);
+        }
+        return result.items;
+      }
+
       // Backend query-filters by the frontend-enabled task types (task_types=),
       // so the list comes back already scoped — no client-side filter here.
       const result = await fetchAllServicesMatchingFilters({
@@ -472,7 +554,19 @@ export function useServicesManagement() {
     } finally {
       if (!options?.silent && commit) setIsLoading(false);
     }
-  }, [filterTaskType, filterStatus, enabledTaskTypesParam, taskTypeNames]);
+  }, [
+    filterTaskType,
+    filterStatus,
+    enabledTaskTypesParam,
+    taskTypeNames,
+    serviceListUsesServer,
+    serverFilters,
+    taskFilterColumnId,
+    statusFilterColumnId,
+    serviceListCatalogue,
+    registryPage,
+    registryPageSize,
+  ]);
 
   const serviceKey = (s: Pick<Service, "serviceId"> & { service_id?: string }) =>
     s.serviceId || s.service_id || "";
@@ -511,14 +605,15 @@ export function useServicesManagement() {
         };
       };
 
+      const serverStatus = statusFilterColumnId
+        ? serverFilters[statusFilterColumnId]
+        : undefined;
+      const publishedOnly = filterStatus === "published" || serverStatus === "true";
+      const unpublishedOnly = filterStatus === "unpublished" || serverStatus === "false";
       setServices((prev) => {
         const next = prev.map(apply);
-        if (filterStatus === "published") {
-          return next.filter((s) => s.isPublished === true);
-        }
-        if (filterStatus === "unpublished") {
-          return next.filter((s) => s.isPublished !== true);
-        }
+        if (publishedOnly) return next.filter((s) => s.isPublished === true);
+        if (unpublishedOnly) return next.filter((s) => s.isPublished !== true);
         return next;
       });
 
@@ -526,13 +621,13 @@ export function useServicesManagement() {
         prev?.serviceId === serviceId ? apply(prev) : prev,
       );
     },
-    [filterStatus],
+    [filterStatus, serverFilters, statusFilterColumnId],
   );
 
   useEffect(() => {
-    if (!taskTypeFilterReady) return;
+    if (!taskTypeFilterReady || !columnsQuery.isFetched) return;
     fetchServices();
-  }, [fetchServices, taskTypeFilterReady]);
+  }, [fetchServices, taskTypeFilterReady, columnsQuery.isFetched]);
 
   /** AI4IDS-2949: block Create Service when the platform has no tiers. Edit remains allowed. */
   const isCreateServiceTabDisabled =
@@ -1067,17 +1162,27 @@ export function useServicesManagement() {
         // (creates are unpublished; task type may differ from the active filter).
         let listTaskType = filterTaskType;
         let listStatus = filterStatus;
+        const serverTask = taskFilterColumnId ? serverFilters[taskFilterColumnId] : "";
+        const serverStatus = statusFilterColumnId ? serverFilters[statusFilterColumnId] : "";
         if (
           submittedTaskType &&
-          filterTaskType &&
-          submittedTaskType.toLowerCase() !== filterTaskType.toLowerCase()
+          (filterTaskType || serverTask) &&
+          submittedTaskType.toLowerCase() !== (serverTask || filterTaskType).toLowerCase()
         ) {
           listTaskType = submittedTaskType;
           setFilterTaskType(submittedTaskType);
+          if (taskFilterColumnId) {
+            setServerFilters((prev) => ({ ...prev, [taskFilterColumnId]: submittedTaskType }));
+          }
+          setRegistryPage(1);
         }
-        if (wasCreate && filterStatus === "published") {
+        if (wasCreate && (filterStatus === "published" || serverStatus === "true")) {
           listStatus = "";
           setFilterStatus("");
+          if (statusFilterColumnId) {
+            setServerFilters((prev) => ({ ...prev, [statusFilterColumnId]: "" }));
+          }
+          setRegistryPage(1);
         }
 
         const items = await refreshUntil(
@@ -1590,10 +1695,23 @@ export function useServicesManagement() {
 
     // Registry tab
     registryTableItems,
-    totalServicesCount: services.length,
-    isLoading,
-    // Remounts the table so client pagination returns to page 1 on a filter change.
-    tableKey: `${filterStatus}-${filterTaskType}-${filterTier}-${registryEpoch}`,
+    totalServicesCount: serviceListUsesServer ? serverTotal : services.length,
+    isLoading: isLoading || authLoading || columnsQuery.isLoading,
+    // Remounts the client-paged table so pagination returns to page 1 on a filter change.
+    tableKey: serviceListUsesServer
+      ? `server-${registryEpoch}`
+      : `${filterStatus}-${filterTaskType}-${filterTier}-${registryEpoch}`,
+    serviceListCatalogue,
+    serviceListUsesServer,
+    registryPage,
+    registryPageSize,
+    setRegistryPage,
+    setRegistryPageSize: (size: number) => {
+      setRegistryPageSize(size);
+      setRegistryPage(1);
+    },
+    serverFilters,
+    setServerFilterValue,
     searchQuery,
     setSearchQuery,
     filterStatus,

@@ -19,6 +19,11 @@ import ConfirmDialog from "../common/ConfirmDialog";
 import { useAuth } from "../../hooks/useAuth";
 import { useServicesManagement } from "../../hooks/useServicesManagement";
 import { authService } from "../../services/authService";
+import {
+  getServiceColumnPreference,
+  resetServiceColumnPreference,
+  saveServiceColumnPreference,
+} from "../../services/servicesManagementService";
 import ServiceListColumnPicker from "./ServiceListColumnPicker";
 import ServiceRegistryTab from "./ServiceRegistryTab";
 import ServiceFormTab from "./ServiceFormTab";
@@ -30,13 +35,15 @@ import {
   formatServiceListDate,
   formatServiceListPrice,
   loadServiceListColumns,
+  resolveServiceListColumns,
   saveServiceListColumns,
   serviceCreatedAtMillis,
+  serviceListCellKey,
   serviceListServiceId,
   serviceModelName,
   servicePublishedOnMillis,
-  type ServiceListColumnId,
 } from "./serviceListColumns";
+import { showError } from "../../utils/errorHandler";
 
 const CREATE_SERVICE_FORM_ID = "create-service-form";
 const EDIT_SERVICE_FORM_ID = "edit-service-form";
@@ -77,6 +84,14 @@ const ServicesManagement: React.FC = () => {
     hasActiveFilters,
     clearAllFilters,
     registrySort,
+    serviceListCatalogue,
+    serviceListUsesServer,
+    registryPage,
+    registryPageSize,
+    setRegistryPage,
+    setRegistryPageSize,
+    serverFilters,
+    setServerFilterValue,
     handleViewService,
     handleEditService,
     handleDeleteClick,
@@ -159,9 +174,10 @@ const ServicesManagement: React.FC = () => {
 
   const { user } = useAuth();
   const userId = user?.user_id ?? "";
-  const [visibleColumnIds, setVisibleColumnIds] = useState<ServiceListColumnId[]>(
+  const [visibleColumnIds, setVisibleColumnIds] = useState<string[]>(
     defaultServiceListColumnIds,
   );
+  const catalogueKey = serviceListCatalogue.map((column) => column.id).join("|");
 
   const preferenceUserId = useCallback(
     () => userId || authService.getStoredUser()?.user_id || "",
@@ -171,27 +187,55 @@ const ServicesManagement: React.FC = () => {
   useLayoutEffect(() => {
     const id = preferenceUserId();
     if (!id) return;
-    setVisibleColumnIds((current) => {
-      const next = loadServiceListColumns(id);
-      if (current.length === next.length && current.every((columnId, index) => columnId === next[index])) {
-        return current;
-      }
-      return next;
-    });
-  }, [preferenceUserId]);
+    let cancelled = false;
+    const apply = (next: string[]) => {
+      if (cancelled) return;
+      setVisibleColumnIds((current) =>
+        current.length === next.length && current.every((columnId, index) => columnId === next[index])
+          ? current
+          : next,
+      );
+    };
+    if (!serviceListUsesServer) {
+      apply(loadServiceListColumns(id, undefined, serviceListCatalogue));
+      return () => {
+        cancelled = true;
+      };
+    }
+    getServiceColumnPreference()
+      .then((stored) => apply(resolveServiceListColumns(stored, serviceListCatalogue)))
+      .catch((error) => {
+        console.warn("Column preference could not be loaded.", error);
+        apply(loadServiceListColumns(id, undefined, serviceListCatalogue));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [preferenceUserId, serviceListUsesServer, catalogueKey, serviceListCatalogue]);
 
   const applyVisibleColumns = useCallback(
-    (next: readonly ServiceListColumnId[]) => {
-      setVisibleColumnIds(saveServiceListColumns(preferenceUserId(), next));
+    (next: readonly string[]) => {
+      const resolved = serviceListUsesServer
+        ? resolveServiceListColumns(next, serviceListCatalogue)
+        : saveServiceListColumns(preferenceUserId(), next, undefined, serviceListCatalogue);
+      setVisibleColumnIds(resolved);
+      if (!serviceListUsesServer) return;
+      saveServiceColumnPreference(resolved).catch((error) => showError(error));
     },
-    [preferenceUserId],
+    [preferenceUserId, serviceListCatalogue, serviceListUsesServer],
   );
 
   const resetVisibleColumns = useCallback(() => {
-    applyVisibleColumns(defaultServiceListColumnIds());
-  }, [applyVisibleColumns]);
+    const defaults = defaultServiceListColumnIds(serviceListCatalogue);
+    setVisibleColumnIds(defaults);
+    if (!serviceListUsesServer) {
+      saveServiceListColumns(preferenceUserId(), defaults, undefined, serviceListCatalogue);
+      return;
+    }
+    resetServiceColumnPreference().catch((error) => showError(error));
+  }, [preferenceUserId, serviceListCatalogue, serviceListUsesServer]);
 
-  const serviceColumns = useMemo((): DataTableColumn<Service>[] => {
+  const columnTemplates = useMemo((): DataTableColumn<Service>[] => {
     const columns: DataTableColumn<Service>[] = [
       {
         id: "name",
@@ -205,7 +249,7 @@ const ServicesManagement: React.FC = () => {
         ),
       },
       {
-        id: "modelTaskType",
+        id: "task",
         header: "Model Task Type",
         sortable: true,
         cell: (service) => {
@@ -415,11 +459,7 @@ const ServicesManagement: React.FC = () => {
         },
       }),
     ];
-    const byId = new Map(columns.map((column) => [column.id, column]));
-    return visibleColumnIds.flatMap((id) => {
-      const column = byId.get(id);
-      return column ? [column] : [];
-    });
+    return columns;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     unpublishingServiceUuid,
@@ -427,8 +467,33 @@ const ServicesManagement: React.FC = () => {
     deletingServiceUuid,
     isRegistryReadOnly,
     availableTiers,
-    visibleColumnIds,
   ]);
+
+  const serviceColumns = useMemo((): DataTableColumn<Service>[] => {
+    const byCell = new Map(columnTemplates.map((column) => [column.id, column]));
+    return serviceListCatalogue.flatMap((definition): DataTableColumn<Service>[] => {
+      if (!visibleColumnIds.includes(definition.id)) return [];
+      const template = byCell.get(serviceListCellKey(definition.id));
+      if (!template) {
+        return [{
+          id: definition.id,
+          header: definition.label,
+          sortable: false,
+          cell: () => (
+            <Text fontSize="sm" color="ink.400">
+              —
+            </Text>
+          ),
+        }];
+      }
+      return [{
+        ...template,
+        id: definition.id,
+        header: definition.label,
+        sortable: definition.sortable !== false && Boolean(template.sortable),
+      }];
+    });
+  }, [columnTemplates, serviceListCatalogue, visibleColumnIds]);
 
   const serviceForm = (
     <ServiceFormTab
@@ -517,8 +582,17 @@ const ServicesManagement: React.FC = () => {
         tierFilterOptions={tierFilterOptions}
         hasActiveFilters={hasActiveFilters}
         onClearFilters={clearAllFilters}
+        serverColumns={serviceListUsesServer ? serviceListCatalogue : undefined}
+        serverFilterValues={serverFilters}
+        onServerFilterChange={serviceListUsesServer ? setServerFilterValue : undefined}
+        serverPage={registryPage}
+        serverPageSize={registryPageSize}
+        serverTotal={totalServicesCount}
+        onServerPageChange={serviceListUsesServer ? setRegistryPage : undefined}
+        onServerPageSizeChange={serviceListUsesServer ? setRegistryPageSize : undefined}
         columnPicker={
           <ServiceListColumnPicker
+            columns={serviceListCatalogue}
             visibleIds={visibleColumnIds}
             onChange={applyVisibleColumns}
             onReset={resetVisibleColumns}

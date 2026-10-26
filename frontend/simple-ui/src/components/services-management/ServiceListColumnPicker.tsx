@@ -18,16 +18,18 @@ import {
   SERVICE_LIST_COLUMNS,
   canToggleOffServiceListColumn,
   toggleServiceListColumn,
-  type ServiceListColumnId,
+  type ServiceListColumnDef,
 } from "./serviceListColumns";
 
 type ServiceListColumnPickerProps = {
-  visibleIds: readonly ServiceListColumnId[];
-  onChange: (next: ServiceListColumnId[]) => void;
+  columns?: readonly ServiceListColumnDef[];
+  visibleIds: readonly string[];
+  onChange: (next: string[]) => void;
   onReset: () => void;
 };
 
 const ServiceListColumnPicker: React.FC<ServiceListColumnPickerProps> = ({
+  columns = SERVICE_LIST_COLUMNS,
   visibleIds,
   onChange,
   onReset,
@@ -58,11 +60,11 @@ const ServiceListColumnPicker: React.FC<ServiceListColumnPickerProps> = ({
           <Text px={3} pb={2} fontSize="xs" color="ink.400">
             Name and Actions stay visible. At least one other column must remain.
           </Text>
-          {SERVICE_LIST_COLUMNS.map((column) => {
+          {columns.map((column) => {
             const checked = visibleIds.includes(column.id);
             const locked =
               column.mandatory ||
-              (checked && !canToggleOffServiceListColumn(visibleIds, column.id));
+              (checked && !canToggleOffServiceListColumn(visibleIds, column.id, columns));
             return (
               <MenuItem
                 as="div"
@@ -71,7 +73,7 @@ const ServiceListColumnPicker: React.FC<ServiceListColumnPickerProps> = ({
                 isDisabled={locked}
                 onClick={() => {
                   if (locked) return;
-                  onChange(toggleServiceListColumn(visibleIds, column.id));
+                  onChange(toggleServiceListColumn(visibleIds, column.id, columns));
                 }}
                 py={1.5}
                 cursor={locked ? "not-allowed" : "pointer"}

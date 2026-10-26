@@ -1,10 +1,9 @@
 /**
  * Service List column catalogue and per-user selection (AI4IDS-3356).
  *
- * The catalogue is the frontend stand-in for the columns-metadata API
- * (AI4IDS-3565). `ServiceListColumnPreferenceStore` is the stand-in for
- * server-side preference storage (AI4IDS-3567): swap the store without
- * changing the table.
+ * `GET /services/columns` (AI4IDS-3565) replaces `SERVICE_LIST_COLUMNS` when
+ * that endpoint is available. Browser storage is the fallback for
+ * `GET/PUT/DELETE /preferences/columns/service-list` (AI4IDS-3567).
  */
 
 import type { Service } from "../../types/platform";
@@ -24,14 +23,51 @@ export type ServiceListColumnId =
   | "publishedOn"
   | "actions";
 
+export type ServiceListColumnFilter = {
+  type: string;
+  params: string[];
+  options: { value: string; label: string }[] | null;
+};
+
 export type ServiceListColumnDef = {
-  id: ServiceListColumnId;
+  id: string;
   label: string;
   /** Always visible. The picker cannot turn these off. */
   mandatory: boolean;
   /** Shown on the first visit and restored by Reset to default. */
   defaultVisible: boolean;
+  sortable?: boolean;
+  filterable?: boolean;
+  filter?: ServiceListColumnFilter | null;
 };
+
+/** Cell renderer key. API ids are snake_case; the offline catalogue is camelCase. */
+const CELL_KEYS: Record<string, string> = {
+  name: "name",
+  actions: "actions",
+  task_type: "task",
+  modelTaskType: "task",
+  tier: "tier",
+  status: "status",
+  created_at: "createdAt",
+  createdAt: "createdAt",
+  model_name: "modelName",
+  modelName: "modelName",
+  service_id: "serviceId",
+  serviceId: "serviceId",
+  input_price: "inputPrice",
+  inputPrice: "inputPrice",
+  output_price: "outputPrice",
+  outputPrice: "outputPrice",
+  cached_input_price: "cachedInputPrice",
+  cachedInputPrice: "cachedInputPrice",
+  published_on: "publishedOn",
+  publishedOn: "publishedOn",
+};
+
+export function serviceListCellKey(id: string): string {
+  return CELL_KEYS[id] ?? id;
+}
 
 /** Display order. Actions stay last, matching the rest of the admin tables. */
 export const SERVICE_LIST_COLUMNS: readonly ServiceListColumnDef[] = [
@@ -49,25 +85,18 @@ export const SERVICE_LIST_COLUMNS: readonly ServiceListColumnDef[] = [
   { id: "actions", label: "Actions", mandatory: true, defaultVisible: true },
 ];
 
-const COLUMN_IDS = new Set<string>(SERVICE_LIST_COLUMNS.map((column) => column.id));
-
-const MANDATORY_IDS = SERVICE_LIST_COLUMNS.filter((column) => column.mandatory).map(
-  (column) => column.id,
-);
-
 export const SERVICE_LIST_COLUMN_STORAGE_PREFIX = "service-list-columns";
+export const SERVICE_LIST_PREFERENCE_VIEW = "service-list";
 
 /** Missing dates and prices sort after real values when the column is ascending. */
 const MISSING_SORT_VALUE = Number.POSITIVE_INFINITY;
 
-export function defaultServiceListColumnIds(): ServiceListColumnId[] {
-  return SERVICE_LIST_COLUMNS.filter(
-    (column) => column.mandatory || column.defaultVisible,
-  ).map((column) => column.id);
-}
-
-export function isServiceListColumnId(value: string): value is ServiceListColumnId {
-  return COLUMN_IDS.has(value);
+export function defaultServiceListColumnIds(
+  catalogue: readonly ServiceListColumnDef[] = SERVICE_LIST_COLUMNS,
+): string[] {
+  return catalogue
+    .filter((column) => column.mandatory || column.defaultVisible)
+    .map((column) => column.id);
 }
 
 /**
@@ -77,48 +106,49 @@ export function isServiceListColumnId(value: string): value is ServiceListColumn
  */
 export function resolveServiceListColumns(
   selected: readonly string[] | null | undefined,
-): ServiceListColumnId[] {
-  const defaults = defaultServiceListColumnIds();
+  catalogue: readonly ServiceListColumnDef[] = SERVICE_LIST_COLUMNS,
+): string[] {
+  const defaults = defaultServiceListColumnIds(catalogue);
+  const mandatory = new Set(catalogue.filter((column) => column.mandatory).map((column) => column.id));
+  const known = new Set(catalogue.map((column) => column.id));
   if (!selected || selected.length === 0) return defaults;
 
   const picked = new Set(
-    selected.filter(
-      (id): id is ServiceListColumnId =>
-        isServiceListColumnId(id) && !MANDATORY_IDS.includes(id),
-    ),
+    selected.filter((id) => known.has(id) && !mandatory.has(id)),
   );
   if (picked.size === 0) return defaults;
 
-  return SERVICE_LIST_COLUMNS.filter(
-    (column) => column.mandatory || picked.has(column.id),
-  ).map((column) => column.id);
+  return catalogue
+    .filter((column) => column.mandatory || picked.has(column.id))
+    .map((column) => column.id);
 }
 
 export function canToggleOffServiceListColumn(
-  current: readonly ServiceListColumnId[],
-  id: ServiceListColumnId,
+  current: readonly string[],
+  id: string,
+  catalogue: readonly ServiceListColumnDef[] = SERVICE_LIST_COLUMNS,
 ): boolean {
-  const column = SERVICE_LIST_COLUMNS.find((entry) => entry.id === id);
+  const column = catalogue.find((entry) => entry.id === id);
   if (!column || column.mandatory) return false;
   if (!current.includes(id)) return true;
-  const flexibleCount = current.filter(
-    (columnId) => !MANDATORY_IDS.includes(columnId),
-  ).length;
+  const mandatory = new Set(catalogue.filter((entry) => entry.mandatory).map((entry) => entry.id));
+  const flexibleCount = current.filter((columnId) => !mandatory.has(columnId)).length;
   return flexibleCount > 1;
 }
 
 /** Turn a column on or off. Mandatory columns and the last flexible column stay. */
 export function toggleServiceListColumn(
-  current: readonly ServiceListColumnId[],
-  id: ServiceListColumnId,
-): ServiceListColumnId[] {
-  if (!canToggleOffServiceListColumn(current, id) && current.includes(id)) {
-    return resolveServiceListColumns(current);
+  current: readonly string[],
+  id: string,
+  catalogue: readonly ServiceListColumnDef[] = SERVICE_LIST_COLUMNS,
+): string[] {
+  if (!canToggleOffServiceListColumn(current, id, catalogue) && current.includes(id)) {
+    return resolveServiceListColumns(current, catalogue);
   }
   const next = current.includes(id)
     ? current.filter((columnId) => columnId !== id)
     : [...current, id];
-  return resolveServiceListColumns(next);
+  return resolveServiceListColumns(next, catalogue);
 }
 
 export type ServiceListColumnPreferenceStore = {
@@ -161,19 +191,126 @@ export const browserServiceListColumnStore: ServiceListColumnPreferenceStore = {
 export function loadServiceListColumns(
   userId: string,
   store: ServiceListColumnPreferenceStore = browserServiceListColumnStore,
-): ServiceListColumnId[] {
-  if (!userId) return defaultServiceListColumnIds();
-  return resolveServiceListColumns(store.read(userId));
+  catalogue: readonly ServiceListColumnDef[] = SERVICE_LIST_COLUMNS,
+): string[] {
+  if (!userId) return defaultServiceListColumnIds(catalogue);
+  return resolveServiceListColumns((store ?? browserServiceListColumnStore).read(userId), catalogue);
 }
 
 export function saveServiceListColumns(
   userId: string,
   columnIds: readonly string[],
   store: ServiceListColumnPreferenceStore = browserServiceListColumnStore,
-): ServiceListColumnId[] {
-  const resolved = resolveServiceListColumns(columnIds);
-  if (userId) store.write(userId, resolved);
+  catalogue: readonly ServiceListColumnDef[] = SERVICE_LIST_COLUMNS,
+): string[] {
+  const resolved = resolveServiceListColumns(columnIds, catalogue);
+  if (userId) (store ?? browserServiceListColumnStore).write(userId, resolved);
   return resolved;
+}
+
+function parseColumnFilter(raw: unknown): ServiceListColumnFilter | null {
+  if (!raw || typeof raw !== "object") return null;
+  const row = raw as Record<string, unknown>;
+  const params = Array.isArray(row.params)
+    ? row.params.filter((param): param is string => typeof param === "string" && param.length > 0)
+    : [];
+  if (params.length === 0) return null;
+  const options = Array.isArray(row.options)
+    ? row.options.flatMap((option) => {
+        if (!option || typeof option !== "object") return [];
+        const value = (option as { value?: unknown }).value;
+        const label = (option as { label?: unknown }).label;
+        if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") {
+          return [];
+        }
+        const text = String(value);
+        return [{ value: text, label: typeof label === "string" ? label : text }];
+      })
+    : null;
+  return {
+    type: typeof row.type === "string" ? row.type : "text",
+    params,
+    options: options && options.length > 0 ? options : null,
+  };
+}
+
+/** Parse `GET /services/columns`. Returns null when the body is not that contract. */
+export function parseServiceListColumnsPayload(raw: unknown): ServiceListColumnDef[] | null {
+  let data = raw;
+  if (data && typeof data === "object" && "data" in data) {
+    data = (data as { data: unknown }).data;
+  }
+  if (data && typeof data === "object" && "columns" in data) {
+    data = (data as { columns: unknown }).columns;
+  }
+  if (!Array.isArray(data)) return null;
+  const columns: ServiceListColumnDef[] = [];
+  for (const entry of data) {
+    if (!entry || typeof entry !== "object") continue;
+    const row = entry as Record<string, unknown>;
+    if (typeof row.id !== "string" || !row.id || typeof row.label !== "string" || !row.label) {
+      continue;
+    }
+    const filter = parseColumnFilter(row.filter);
+    const mandatory = row.mandatory === true;
+    columns.push({
+      id: row.id,
+      label: row.label,
+      mandatory,
+      defaultVisible: mandatory || row.defaultVisible === true,
+      sortable: row.sortable === true,
+      filterable: row.filterable === true && Boolean(filter),
+      filter,
+    });
+  }
+  return columns.length > 0 ? columns : null;
+}
+
+/** Parse `GET /preferences/columns/service-list`. */
+export function parseVisibleColumnsPayload(raw: unknown): string[] | null {
+  let data = raw;
+  if (data && typeof data === "object" && "data" in data) {
+    data = (data as { data: unknown }).data;
+  }
+  const list = Array.isArray(data)
+    ? data
+    : data && typeof data === "object" && Array.isArray((data as { visibleColumns?: unknown }).visibleColumns)
+      ? (data as { visibleColumns: unknown[] }).visibleColumns
+      : null;
+  if (!list) return null;
+  return list.filter((id): id is string => typeof id === "string");
+}
+
+/**
+ * Query params for `GET /services` from the columns payload.
+ * An empty task-type filter sends the UI allowlist. Other empty filters are omitted.
+ * The sort parameter is not part of this contract yet.
+ */
+export function serviceListFilterParams(options: {
+  columns: readonly ServiceListColumnDef[];
+  filters: Record<string, string>;
+  enabledTaskTypes?: string;
+}): Record<string, string> {
+  const params: Record<string, string> = {};
+  let taskParam: string | null = null;
+  for (const column of options.columns) {
+    const param = column.filter?.params[0];
+    if (!column.filterable || !param) continue;
+    const value = (options.filters[column.id] ?? "").trim();
+    if (serviceListCellKey(column.id) === "task" || param === "task_types") {
+      taskParam = param;
+      if (value) params[param] = value;
+      continue;
+    }
+    if (value) params[param] = value;
+  }
+  if (taskParam && !params[taskParam] && options.enabledTaskTypes) {
+    params[taskParam] = options.enabledTaskTypes;
+  }
+  if (!taskParam && options.enabledTaskTypes) {
+    params.task_types = options.enabledTaskTypes;
+  }
+  return params;
 }
 
 export function serviceCreatedAtMillis(service: Service): number {
@@ -226,11 +363,13 @@ function dateSortValue(ms: number): number {
   return ms > 0 ? ms : MISSING_SORT_VALUE;
 }
 
-/** Accessors for the registry sort hook. Keys match column ids. */
-export function serviceListSortAccessors(): Record<string, (service: Service) => string | number> {
-  return {
+/** Accessors for the registry sort hook. Keys match the active catalogue ids. */
+export function serviceListSortAccessors(
+  columns: readonly ServiceListColumnDef[] = SERVICE_LIST_COLUMNS,
+): Record<string, (service: Service) => string | number> {
+  const byCell: Record<string, (service: Service) => string | number> = {
     name: (service) => service.name ?? "",
-    modelTaskType: (service) => resolveTaskType(service).toLowerCase(),
+    task: (service) => resolveTaskType(service).toLowerCase(),
     tier: (service) => (service.tierNames ?? service.tiers ?? []).join(", ").toLowerCase(),
     status: (service) => (service.isPublished === true ? 1 : 0),
     createdAt: (service) => dateSortValue(serviceCreatedAtMillis(service)),
@@ -241,4 +380,11 @@ export function serviceListSortAccessors(): Record<string, (service: Service) =>
     cachedInputPrice: (service) => priceSortValue(service.cachedInputCostPerUnit),
     publishedOn: (service) => dateSortValue(servicePublishedOnMillis(service)),
   };
+  const accessors: Record<string, (service: Service) => string | number> = {};
+  for (const column of columns) {
+    if (column.sortable === false) continue;
+    const accessor = byCell[serviceListCellKey(column.id)];
+    if (accessor) accessors[column.id] = accessor;
+  }
+  return accessors;
 }
