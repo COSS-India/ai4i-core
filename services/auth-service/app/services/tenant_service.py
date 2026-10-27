@@ -170,6 +170,137 @@ def _validate_new_effective_to_not_in_past(budget_effective_to: datetime) -> Non
         )
 
 
+def _resolve_revised_window(
+    tenant: Tenant,
+    action: Optional[str],
+    budget_effective_from: Optional[datetime],
+    budget_effective_to: Optional[datetime],
+) -> tuple[datetime, Optional[datetime]]:
+    """The (From, To) a revise_tenant_budget call leaves on the tenant — see
+    that method's docstring for the full required-ness matrix."""
+    if tenant.budget_effective_from is not None:
+        return _resolve_existing_window(tenant, action, budget_effective_from, budget_effective_to)
+    if budget_effective_from is not None:
+        return _resolve_first_window(budget_effective_from, budget_effective_to)
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={
+            "error": "effective_window_required",
+            "message": (
+                "This tenant has never had a budget window assigned — "
+                "budget_effective_from and budget_effective_to are both "
+                "required to assign one."
+            ),
+        },
+    )
+
+
+def _resolve_existing_window(
+    tenant: Tenant,
+    action: Optional[str],
+    budget_effective_from: Optional[datetime],
+    budget_effective_to: Optional[datetime],
+) -> tuple[datetime, Optional[datetime]]:
+    # AI4IDS-2995: budget_effective_from is locked once a window is
+    # on file at all — active OR lapsed. It never moves again after
+    # the tenant's first assignment.
+    if budget_effective_from is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "effective_from_locked",
+                "message": (
+                    "budget_effective_from is locked once a budget window has "
+                    f"been assigned ({tenant.budget_effective_from} to "
+                    f"{tenant.budget_effective_to}), whether that window is "
+                    "still active or has since lapsed — omit it, or extend "
+                    "budget_effective_to instead."
+                ),
+            },
+        )
+    stored_from = tenant.budget_effective_from
+    window_active = tenant.budget_effective_to is not None and not is_budget_window_expired(
+        tenant.budget_effective_to
+    )
+
+    if budget_effective_to is None:
+        # A top-up that leaves the window lapsed would only grow a balance
+        # nobody can spend until it's reopened, so it must come with (or
+        # after) a new budget_effective_to. A NULL To is open-ended, not
+        # lapsed (see is_budget_window_expired), so it isn't refused here.
+        if action is not None and not window_active and tenant.budget_effective_to is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "budget_window_expired",
+                    "message": (
+                        "This tenant's budget window ended on "
+                        f"{as_utc_date(tenant.budget_effective_to).isoformat()} — "
+                        "give a new budget_effective_to with this top-up, or "
+                        "extend it first."
+                    ),
+                },
+            )
+        return stored_from, tenant.budget_effective_to
+
+    _validate_effective_to_after_from(stored_from, budget_effective_to)
+    if not window_active:
+        # Reactivating/extending a LAPSED window without moving its
+        # original start date — e.g. Sep 1-16 expired on Sep 17, caller
+        # now sends a later budget_effective_to (Sep 20) to reopen it.
+        # allocated_budget and spend are never window-scoped (see
+        # revise_tenant_budget's docstring), so the tenant's remaining
+        # balance carries over untouched.
+        _validate_new_effective_to_not_in_past(budget_effective_to)
+    return stored_from, budget_effective_to
+
+
+def _resolve_first_window(
+    budget_effective_from: datetime, budget_effective_to: Optional[datetime]
+) -> tuple[datetime, datetime]:
+    # Explicit fresh founding — only reachable when this tenant has
+    # never had a window on file before.
+    if budget_effective_to is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "effective_window_required",
+                "message": (
+                    "budget_effective_to is required when supplying a new "
+                    "budget_effective_from."
+                ),
+            },
+        )
+    _validate_new_effective_from(budget_effective_from)
+    _validate_effective_to_after_from(budget_effective_from, budget_effective_to)
+    return budget_effective_from, budget_effective_to
+
+
+def _revised_budget(
+    tenant: Tenant, action: Optional[str], amount: Optional[Decimal]
+) -> tuple[Decimal, Decimal]:
+    """(current, new) allocated_budget for a revise_tenant_budget call."""
+    current_budget = tenant.allocated_budget or Decimal("0")
+    if action is None:
+        # Pure window edit (e.g. reactivating a lapsed window) — the
+        # schema's own _validate_action_amount_pair guarantees amount is
+        # also None here, since the two are only ever given together.
+        return current_budget, current_budget
+    new_budget = current_budget + amount
+    if new_budget > MAX_TENANT_BUDGET:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "budget_limit_exceeded",
+                "message": (
+                    f"Top-up would raise the budget to {new_budget}, exceeding "
+                    f"the maximum allowed ({MAX_TENANT_BUDGET})"
+                ),
+            },
+        )
+    return current_budget, new_budget
+
+
 async def _seed_notification_subscriptions_for_new_tenant(
     platform_core_db: Optional[AsyncSession], tenant_id: int, admin_user_id: str
 ) -> None:
@@ -1559,120 +1690,11 @@ class TenantService:
 
         tenant = await self._load_tenant_for_update_or_404(tenant_id)
 
-        window_active = tenant.budget_effective_to is not None and not is_budget_window_expired(
-            tenant.budget_effective_to
+        new_effective_from, new_effective_to = _resolve_revised_window(
+            tenant, action, budget_effective_from, budget_effective_to
         )
-        has_existing_window = tenant.budget_effective_from is not None
-        if has_existing_window:
-            # AI4IDS-2995: budget_effective_from is locked once a window is
-            # on file at all — active OR lapsed. It never moves again after
-            # the tenant's first assignment.
-            if budget_effective_from is not None:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail={
-                        "error": "effective_from_locked",
-                        "message": (
-                            "budget_effective_from is locked once a budget window has "
-                            f"been assigned ({tenant.budget_effective_from} to "
-                            f"{tenant.budget_effective_to}), whether that window is "
-                            "still active or has since lapsed — omit it, or extend "
-                            "budget_effective_to instead."
-                        ),
-                    },
-                )
-            new_effective_from = tenant.budget_effective_from
-            if window_active:
-                new_effective_to = (
-                    budget_effective_to if budget_effective_to is not None else tenant.budget_effective_to
-                )
-                if budget_effective_to is not None:
-                    _validate_effective_to_after_from(new_effective_from, new_effective_to)
-            else:
-                # Reactivating/extending a LAPSED window without moving its
-                # original start date — e.g. Sep 1-16 expired on Sep 17,
-                # caller now sends a later budget_effective_to (Sep 20) to
-                # reopen it. allocated_budget and spend are never
-                # window-scoped (see this method's own docstring), so the
-                # tenant's remaining balance carries over untouched.
-                if budget_effective_to is not None:
-                    _validate_effective_to_after_from(new_effective_from, budget_effective_to)
-                    _validate_new_effective_to_not_in_past(budget_effective_to)
-                    new_effective_to = budget_effective_to
-                else:
-                    # A top-up that leaves the window lapsed would only grow
-                    # a balance nobody can spend until it's reopened, so it
-                    # must come with (or after) a new budget_effective_to.
-                    # A NULL To is open-ended, not lapsed (see
-                    # is_budget_window_expired), so it isn't refused here.
-                    if action is not None and tenant.budget_effective_to is not None:
-                        raise HTTPException(
-                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                            detail={
-                                "error": "budget_window_expired",
-                                "message": (
-                                    "This tenant's budget window ended on "
-                                    f"{as_utc_date(tenant.budget_effective_to).isoformat()} — "
-                                    "give a new budget_effective_to with this top-up, or "
-                                    "extend it first."
-                                ),
-                            },
-                        )
-                    new_effective_to = tenant.budget_effective_to
-        elif budget_effective_from is not None:
-            # Explicit fresh founding — only reachable when this tenant has
-            # never had a window on file before.
-            if budget_effective_to is None:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail={
-                        "error": "effective_window_required",
-                        "message": (
-                            "budget_effective_to is required when supplying a new "
-                            "budget_effective_from."
-                        ),
-                    },
-                )
-            _validate_new_effective_from(budget_effective_from)
-            _validate_effective_to_after_from(budget_effective_from, budget_effective_to)
-            new_effective_from = budget_effective_from
-            new_effective_to = budget_effective_to
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={
-                    "error": "effective_window_required",
-                    "message": (
-                        "This tenant has never had a budget window assigned — "
-                        "budget_effective_from and budget_effective_to are both "
-                        "required to assign one."
-                    ),
-                },
-            )
+        current_budget, new_budget = _revised_budget(tenant, action, amount)
 
-        current_budget = tenant.allocated_budget or Decimal("0")
-        if action is None:
-            # Pure window edit (e.g. reactivating a lapsed window) — the
-            # schema's own _validate_action_amount_pair guarantees amount is
-            # also None here, since the two are only ever given together.
-            new_budget = current_budget
-        else:
-            new_budget = current_budget + amount
-
-        if action == "top-up" and new_budget > MAX_TENANT_BUDGET:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={
-                    "error": "budget_limit_exceeded",
-                    "message": (
-                        f"Top-up would raise the budget to {new_budget}, exceeding "
-                        f"the maximum allowed ({MAX_TENANT_BUDGET})"
-                    ),
-                },
-            )
-        applications_recomputed = 0
-        keys_recomputed = 0
-        snapshot_writes: dict[int, Decimal] = {}
         if self._allocations is None:
             # Fail closed: an un-cascaded revision could silently leave
             # Applications or Keys out of sync with the Tenant's new total.
@@ -1718,6 +1740,21 @@ class TenantService:
                 revised_at=tenant.updated_at,
             )
 
+        snapshot_write_failed = await self._after_budget_revision(
+            tenant_id, new_budget, snapshot_writes, platform_core_db
+        )
+        return tenant, applications_recomputed, keys_recomputed, snapshot_write_failed
+
+    async def _after_budget_revision(
+        self,
+        tenant_id: int,
+        new_budget: Decimal,
+        snapshot_writes: dict[int, Decimal],
+        platform_core_db: Optional[AsyncSession],
+    ) -> bool:
+        """Best-effort follow-ups once revise_tenant_budget has committed —
+        none of them roll the revision back. Returns snapshot_write_failed
+        (see revise_tenant_budget's docstring)."""
         snapshot_write_failed = not await write_budget_snapshot(snapshot_writes, platform_core_db)
         if snapshot_write_failed:
             # budget_usage.api_key_budget_snap is now stale for these keys —
@@ -1750,7 +1787,7 @@ class TenantService:
                 "revision; tenants.budget_effective_to/_from were still updated.",
                 tenant_id,
             )
-        return tenant, applications_recomputed, keys_recomputed, snapshot_write_failed
+        return snapshot_write_failed
 
     async def list_tenant_tiers(
         self,
