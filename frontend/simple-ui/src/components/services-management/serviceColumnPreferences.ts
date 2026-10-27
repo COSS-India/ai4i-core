@@ -41,8 +41,9 @@ export async function loadVisibleServiceColumns(options: {
     return loadServiceListColumns(userId, undefined, catalogue);
   }
   try {
-    const stored = await getServiceColumnPreference();
-    return resolveServiceListColumns(stored, catalogue);
+    const preference = await getServiceColumnPreference();
+    // Prefer the API list (role defaults when isDefault, else saved selection).
+    return resolveServiceListColumns(preference?.visibleColumns, catalogue);
   } catch (error) {
     console.warn("Column preference could not be loaded.", error);
     return loadServiceListColumns(userId, undefined, catalogue);
@@ -64,17 +65,22 @@ export function persistVisibleServiceColumns(options: {
   return resolved;
 }
 
-export function resetVisibleServiceColumns(options: {
+export async function resetVisibleServiceColumns(options: {
   userId: string;
   usesServer: boolean;
   catalogue: readonly ServiceListColumnDef[];
-}): string[] {
+}): Promise<string[]> {
   const { userId, usesServer, catalogue } = options;
   const defaults = defaultServiceListColumnIds(catalogue);
   if (!usesServer) {
     saveServiceListColumns(userId, defaults, undefined, catalogue);
     return defaults;
   }
-  resetServiceColumnPreference().catch((error) => showError(error));
-  return defaults;
+  try {
+    const preference = await resetServiceColumnPreference();
+    return resolveServiceListColumns(preference?.visibleColumns ?? null, catalogue);
+  } catch (error) {
+    showError(error);
+    return defaults;
+  }
 }

@@ -68,11 +68,18 @@ export async function fetchRegistryServicesPage(
     return { items: result.items, total: result.total };
   }
 
+  // Server-side sort over the full dataset (incl. prices). Omit sort_by when
+  // the user has not chosen a column — BE default is published first, then newest.
   let sortBy: string | undefined;
   let sortOrder: "asc" | "desc" | undefined;
   if (context.sortMode === "sorted" && context.sortKey) {
-    sortBy = context.sortKey;
-    sortOrder = context.sortDirection;
+    const column = context.serviceListCatalogue.find(
+      (entry) => entry.id === context.sortKey,
+    );
+    if (column?.sortable) {
+      sortBy = column.id;
+      sortOrder = context.sortDirection;
+    }
   }
   const result = await listServicesPaginated({
     offset: (context.registryPage - 1) * context.registryPageSize,

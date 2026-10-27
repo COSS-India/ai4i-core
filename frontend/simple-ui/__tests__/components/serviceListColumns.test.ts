@@ -4,12 +4,14 @@ import {
   defaultServiceListColumnIds,
   loadServiceListColumns,
   parseServiceListColumnsPayload,
+  parseServiceColumnPreferencePayload,
   parseVisibleColumnsPayload,
   resolveServiceListColumns,
   saveServiceListColumns,
   formatServiceListPrice,
   serviceListCellKey,
   serviceListColumnStorageKey,
+  serviceListDateFilterInstant,
   serviceListFilterParams,
   servicePublishedOnMillis,
   toggleServiceListColumn,
@@ -160,6 +162,20 @@ describe("service list columns", () => {
       parseVisibleColumnsPayload({ data: { visibleColumns: ["task_type", "tier"] } }),
     ).toEqual(["task_type", "tier"]);
     expect(parseVisibleColumnsPayload({ data: {} })).toBeNull();
+    expect(
+      parseServiceColumnPreferencePayload({
+        success: true,
+        data: {
+          viewKey: "service-list",
+          visibleColumns: ["name", "actions", "task_type", "status"],
+          isDefault: true,
+        },
+      }),
+    ).toEqual({
+      viewKey: "service-list",
+      visibleColumns: ["name", "actions", "task_type", "status"],
+      isDefault: true,
+    });
   });
 
   it("maps published_at to the Published On cell and reads publishedAt", () => {
@@ -180,7 +196,7 @@ describe("service list columns", () => {
     expect(formatServiceListPrice(0.00000025)).toContain("0.00000025");
   });
 
-  it("maps date_range filters to local-midnight ISO bounds", () => {
+  it("maps date_range filters to local-offset ISO bounds", () => {
     const columns: ServiceListColumnDef[] = [
       {
         id: "created_at",
@@ -195,9 +211,10 @@ describe("service list columns", () => {
         },
       },
     ];
-    const fromIso = new Date("2026-10-01T00:00:00").toISOString();
-    const toExclusive = new Date("2026-10-26T00:00:00");
-    toExclusive.setDate(toExclusive.getDate() + 1);
+    const fromIso = serviceListDateFilterInstant("2026-10-01", "from");
+    const toIso = serviceListDateFilterInstant("2026-10-26", "to");
+    expect(fromIso).toMatch(/^\d{4}-\d{2}-\d{2}T00:00:00[+-]\d{2}:\d{2}$/);
+    expect(toIso).toMatch(/^\d{4}-\d{2}-\d{2}T00:00:00[+-]\d{2}:\d{2}$/);
     expect(
       serviceListFilterParams({
         columns,
@@ -210,10 +227,33 @@ describe("service list columns", () => {
       }),
     ).toEqual({
       created_from: fromIso,
-      created_to: toExclusive.toISOString(),
+      created_to: toIso,
       sort_by: "created_at",
       sort_order: "desc",
     });
+  });
+
+  it("normalizes multi_select values as comma-separated option ids", () => {
+    const columns: ServiceListColumnDef[] = [
+      {
+        id: "tier",
+        label: "Tier",
+        mandatory: false,
+        defaultVisible: true,
+        filterable: true,
+        filter: {
+          type: "multi_select",
+          params: ["tier_ids"],
+          options: null,
+        },
+      },
+    ];
+    expect(
+      serviceListFilterParams({
+        columns,
+        filters: { tier: " id-a , id-b " },
+      }),
+    ).toEqual({ tier_ids: "id-a,id-b" });
   });
 
   it("keys browser storage by user id", () => {

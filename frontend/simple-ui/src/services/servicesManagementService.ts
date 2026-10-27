@@ -9,7 +9,8 @@ import {
 } from "./dto/schemas/platform";
 import {
   parseServiceListColumnsPayload,
-  parseVisibleColumnsPayload,
+  parseServiceColumnPreferencePayload,
+  type ServiceColumnPreference,
   SERVICE_LIST_COLUMNS,
   SERVICE_LIST_PREFERENCE_VIEW,
   type ServiceListColumnDef,
@@ -314,15 +315,19 @@ export const getServiceListColumns = async (): Promise<ServiceListColumnsResult>
   }
 };
 
-/** Saved visible columns, or null when the user has no preference yet. */
-export const getServiceColumnPreference = async (): Promise<string[] | null> => {
+/**
+ * Column preference for the service list.
+ * GET always returns 200 with role defaults when nothing is saved (`isDefault: true`).
+ */
+export const getServiceColumnPreference = async (): Promise<ServiceColumnPreference | null> => {
   try {
     const response = await apiService.get(
       apiEndpoints.platform.columnPreferences(SERVICE_LIST_PREFERENCE_VIEW),
       { suppressErrorAlert: true },
     );
-    return parseVisibleColumnsPayload(response.data);
+    return parseServiceColumnPreferencePayload(response.data);
   } catch (error) {
+    // Legacy: older builds returned 404 when nothing was saved.
     if (httpStatus(error) === 404) return null;
     throw error;
   }
@@ -330,22 +335,25 @@ export const getServiceColumnPreference = async (): Promise<string[] | null> => 
 
 export const saveServiceColumnPreference = async (
   visibleColumns: readonly string[],
-): Promise<void> => {
-  await apiService.put(
+): Promise<ServiceColumnPreference | null> => {
+  const response = await apiService.put(
     apiEndpoints.platform.columnPreferences(SERVICE_LIST_PREFERENCE_VIEW),
     { visibleColumns: [...visibleColumns] },
     { suppressErrorAlert: true },
   );
+  return parseServiceColumnPreferencePayload(response.data);
 };
 
-export const resetServiceColumnPreference = async (): Promise<void> => {
+/** DELETE resets to role defaults and returns them with `isDefault: true`. */
+export const resetServiceColumnPreference = async (): Promise<ServiceColumnPreference | null> => {
   try {
-    await apiService.delete(
+    const response = await apiService.delete(
       apiEndpoints.platform.columnPreferences(SERVICE_LIST_PREFERENCE_VIEW),
       { suppressErrorAlert: true },
     );
+    return parseServiceColumnPreferencePayload(response.data);
   } catch (error) {
-    if (httpStatus(error) === 404) return;
+    if (httpStatus(error) === 404) return null;
     throw error;
   }
 };

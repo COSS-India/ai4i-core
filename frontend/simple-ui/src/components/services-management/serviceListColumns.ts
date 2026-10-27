@@ -313,38 +313,62 @@ export function parseServiceListColumnsPayload(raw: unknown): ServiceListColumnD
   return columns;
 }
 
+/** Preference body from GET/PUT/DELETE `/preferences/columns/service-list`. */
+export type ServiceColumnPreference = {
+  visibleColumns: string[];
+  /** True when nothing is saved for this user (role defaults). */
+  isDefault: boolean;
+  viewKey?: string;
+};
+
 /** Parse `GET /preferences/columns/service-list`. */
 export function parseVisibleColumnsPayload(raw: unknown): string[] | null {
+  return parseServiceColumnPreferencePayload(raw)?.visibleColumns ?? null;
+}
+
+/**
+ * Parse preference payloads. GET always returns 200 with this shape (never 404).
+ * `isDefault` means nothing saved — not “selection equals the defaults”.
+ */
+export function parseServiceColumnPreferencePayload(
+  raw: unknown,
+): ServiceColumnPreference | null {
   let data = raw;
   if (data && typeof data === "object" && "data" in data) {
     data = (data as { data: unknown }).data;
   }
 
   let list: unknown[] | null = null;
+  let isDefault = false;
+  let viewKey: string | undefined;
   if (Array.isArray(data)) {
     list = data;
-  } else if (
-    data &&
-    typeof data === "object" &&
-    Array.isArray((data as { visibleColumns?: unknown }).visibleColumns)
-  ) {
-    list = (data as { visibleColumns: unknown[] }).visibleColumns;
+  } else if (data && typeof data === "object") {
+    const row = data as {
+      visibleColumns?: unknown;
+      isDefault?: unknown;
+      viewKey?: unknown;
+    };
+    if (Array.isArray(row.visibleColumns)) list = row.visibleColumns;
+    if (row.isDefault === true) isDefault = true;
+    if (typeof row.viewKey === "string") viewKey = row.viewKey;
   }
 
   if (!list) return null;
-  return list.filter((id): id is string => typeof id === "string");
+  return {
+    visibleColumns: list.filter((id): id is string => typeof id === "string"),
+    isDefault,
+    viewKey,
+  };
 }
 
 /**
- * Query params for `GET /services` from the columns payload.
- * An empty task-type filter sends the UI allowlist. Other empty filters are omitted.
- * Pass `sortBy` / `sortOrder` when the user has chosen a column sort.
- */
-/**
- * Convert a `YYYY-MM-DD` date-picker value to an ISO instant for `GET /services`.
- * The API treats a bare date as a UTC day, which drifts from local `toLocaleString`
- * cells — local midnight (and next-day midnight for an exclusive upper bound) keep
- * the filter aligned with what the user sees.
+ * Convert a `YYYY-MM-DD` date-picker value to an ISO instant with local offset
+ * for `GET /services` date_range filters.
+ *
+ * Prefer offset form (e.g. `2026-10-26T00:00:00+05:30`) so the bound matches
+ * the local calendar day shown in the table. `to` is the next local midnight
+ * (exclusive). Bare `YYYY-MM-DD` on the API is a whole UTC day and drifts.
  */
 export function serviceListDateFilterInstant(
   dateValue: string,
@@ -356,7 +380,23 @@ export function serviceListDateFilterInstant(
   if (bound === "to") {
     local.setDate(local.getDate() + 1);
   }
-  return local.toISOString();
+  return formatLocalOffsetIso(local);
+}
+
+function pad2(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+/** Local wall time + numeric offset (`±HH:MM`), not UTC `Z`. */
+function formatLocalOffsetIso(date: Date): string {
+  const offsetMinutes = -date.getTimezoneOffset();
+  const sign = offsetMinutes >= 0 ? "+" : "-";
+  const abs = Math.abs(offsetMinutes);
+  return (
+    `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}` +
+    `T${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}` +
+    `${sign}${pad2(Math.floor(abs / 60))}:${pad2(abs % 60)}`
+  );
 }
 
 function applyDateRangeFilterParams(
@@ -375,6 +415,15 @@ function applyDateRangeFilterParams(
   if (toIso) params[filterParams[1]] = toIso;
 }
 
+/** multi_select: one or more option values, comma-separated (any-of). */
+function normalizeMultiSelectFilterValue(value: string): string {
+  return value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join(",");
+}
+
 function applyColumnFilterParam(
   column: ServiceListColumnDef,
   filters: Record<string, string>,
@@ -382,7 +431,10 @@ function applyColumnFilterParam(
 ): string | null {
   const param = column.filter?.params[0];
   if (!param) return null;
-  const value = (filters[column.id] ?? "").trim();
+  let value = (filters[column.id] ?? "").trim();
+  if (column.filter?.type === "multi_select" && value) {
+    value = normalizeMultiSelectFilterValue(value);
+  }
   const isTask =
     serviceListCellKey(column.id) === "task" || param === "task_types";
   if (value) params[param] = value;

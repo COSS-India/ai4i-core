@@ -100,13 +100,14 @@ export function useServiceListVisibleColumns(options: {
   );
 
   const resetVisibleColumns = useCallback(() => {
-    const defaults = resetVisibleServiceColumns({
+    void resetVisibleServiceColumns({
       userId: preferenceUserId(),
       usesServer: serviceListUsesServer,
       catalogue: serviceListCatalogue,
+    }).then((resolved) => {
+      setVisibleColumnIds((current) => nextVisibleColumnIds(current, resolved));
+      resetSortIfColumnHidden(resolved);
     });
-    setVisibleColumnIds(defaults);
-    resetSortIfColumnHidden(defaults);
   }, [
     preferenceUserId,
     resetSortIfColumnHidden,
