@@ -2,6 +2,7 @@ import {
   Box,
   Button,
   ButtonGroup,
+  FormControl,
   HStack,
   Select,
   Text,
@@ -13,9 +14,11 @@ import {
   METERING,
   type MeteringSubTab,
 } from "../../config/meteringConstants";
+import { INSTITUTION } from "../../config/constants";
 import type { MeteringPeriod, MeteringTopN } from "../../types/metering";
 import { istRangeEndingToday } from "../../utils/meteringDateRange";
 import { formatMeteringRefreshTime } from "../../utils/meteringFormatters";
+import FieldLabel from "../common/FieldLabel";
 import CustomRangePicker from "./CustomRangePicker";
 import SegmentedTabBar from "./SegmentedTabBar";
 
@@ -114,20 +117,23 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
     <HStack spacing={3} flexWrap="wrap" justify="space-between" align="flex-end">
       <HStack spacing={3} flexWrap="wrap" align="flex-end">
         {showTenantFilter ? (
-          <Select
-            size="sm"
-            w="200px"
-            value={selectedTenantId}
-            onChange={(e) => onTenantChange?.(e.target.value)}
-            bg="white"
-          >
-            <option value="">{METERING.CONTROLS.ALL_TENANTS}</option>
-            {tenantOptions.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.label}
-              </option>
-            ))}
-          </Select>
+          <FormControl w="200px">
+            <FieldLabel>{INSTITUTION}</FieldLabel>
+            <Select
+              size="sm"
+              value={selectedTenantId}
+              onChange={(e) => onTenantChange?.(e.target.value)}
+              bg="white"
+              aria-label={INSTITUTION}
+            >
+              <option value="">{METERING.CONTROLS.ALL_TENANTS}</option>
+              {tenantOptions.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.label}
+                </option>
+              ))}
+            </Select>
+          </FormControl>
         ) : null}
 
         {showSubTabs && subTab && onSubTabChange ? (

@@ -156,7 +156,6 @@ export default function ApplicationManagementTab({
       cell: (app) => <ApplicationStatusText status={app.status} />,
     },
     createActionsColumn<Application>({
-      align: "right",
       actionCount: 2,
       getActions: (app) => {
         const budgetActionLabel = editBudgetForName(app.name);
@@ -429,7 +428,6 @@ export default function ApplicationManagementTab({
         sort={appSort.sort}
         onSortChange={appSort.onSortChange}
         onRowClick={mgr.openView}
-        showRowChevron={false}
         paginate="server"
         paginationPosition="bottom"
         pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}

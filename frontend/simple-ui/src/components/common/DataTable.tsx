@@ -795,7 +795,7 @@ function AdminSortableHeader<T>({
 
   if (typeof col.header === "string" || hint) {
     return (
-      <FieldLabel variant="header" hint={hint}>
+      <FieldLabel variant="header" hint={hint} align={col.align ?? "left"}>
         {col.header}
       </FieldLabel>
     );
@@ -901,7 +901,7 @@ function CardLayoutDataTable<T>({
                       onSortChange={handleSortChange}
                     />
                   ) : hint ? (
-                    <FieldLabel variant="header" hint={hint}>
+                    <FieldLabel variant="header" hint={hint} align={col.align ?? "left"}>
                       {col.header}
                     </FieldLabel>
                   ) : (
@@ -954,7 +954,11 @@ function CardLayoutDataTable<T>({
                   ))}
                   {showRowChevron ? (
                     <Td py={cellPy} textAlign="right">
-                      <ChevronRightIcon className="data-table-chevron" boxSize={3.5} color="gray.300" />
+                      <ChevronRightIcon
+                        className="data-table-chevron"
+                        boxSize={3.5}
+                        color="ink.400"
+                      />
                     </Td>
                   ) : null}
                 </Tr>
@@ -1246,11 +1250,24 @@ function AdminTableDataRow<T>({
   onRowClick?: (row: T) => void;
   rowChevron: boolean;
 }>): React.ReactElement {
+  const clickable = Boolean(onRowClick);
   return (
     <Tr
       key={getRowKey(row)}
-      onClick={onRowClick ? () => onRowClick(row) : undefined}
-      cursor={onRowClick ? "pointer" : undefined}
+      role={clickable ? "button" : undefined}
+      tabIndex={clickable ? 0 : undefined}
+      onClick={clickable ? () => onRowClick?.(row) : undefined}
+      onKeyDown={
+        clickable
+          ? (e: React.KeyboardEvent) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onRowClick?.(row);
+              }
+            }
+          : undefined
+      }
+      cursor={clickable ? "pointer" : undefined}
       bg={isSubRow ? "ink.50" : undefined}
       _hover={{
         bg: "#FAFBFE",
@@ -1274,7 +1291,7 @@ function AdminTableDataRow<T>({
           <ChevronRightIcon
             className="data-table-chevron"
             boxSize={3.5}
-            color="gray.300"
+            color="ink.400"
           />
         </Td>
       ) : null}
@@ -1389,7 +1406,7 @@ function AdminTableHead<T>({
             <Th
               key={col.id}
               py={3}
-              overflow="hidden"
+              overflow={layout.whiteSpace === "nowrap" ? "visible" : "hidden"}
               w={layout.w}
               minW={layout.minW}
               maxW={layout.maxW}

@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Badge, Center, HStack, Text, Tooltip } from "@chakra-ui/react";
 import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
+  actionsColumnSize,
   type DataTableColumn,
   type DataTableSortState,
 } from "../common/table";
@@ -61,8 +62,8 @@ export function InstitutionAdopterList({
       {
         id: "organisation",
         header: INSTITUTION,
-        thProps: { w: "420px", maxW: "420px" },
-        tdProps: { maxW: "420px" },
+        thProps: { maxW: "300px" },
+        tdProps: { maxW: "300px" },
         sortable: true,
         sortAccessor: (t) => t.organisation ?? "",
         cell: (t) => (
@@ -85,7 +86,7 @@ export function InstitutionAdopterList({
               hasArrow
               openDelay={300}
             >
-              <HStack spacing={2} minW={0} maxW="340px">
+              <HStack spacing={2} minW={0} maxW="220px">
                 <Text fontWeight="medium" fontSize="sm" isTruncated>
                   {t.organisation}
                 </Text>
@@ -107,8 +108,8 @@ export function InstitutionAdopterList({
       {
         id: "contact",
         header: "Contact",
-        thProps: { w: "280px", maxW: "280px" },
-        tdProps: { maxW: "280px" },
+        thProps: { w: "180px", maxW: "180px" },
+        tdProps: { maxW: "180px" },
         sortable: true,
         sortAccessor: (t) => t.contact_name ?? "",
         cell: (t) => (
@@ -118,7 +119,7 @@ export function InstitutionAdopterList({
             hasArrow
             openDelay={300}
           >
-            <Text fontSize="sm" isTruncated maxW="260px">
+            <Text fontSize="sm" isTruncated maxW="160px">
               {dash(t.contact_name)}
             </Text>
           </Tooltip>
@@ -127,6 +128,8 @@ export function InstitutionAdopterList({
       {
         id: "email",
         header: "Email",
+        thProps: { maxW: "240px" },
+        tdProps: { maxW: "240px" },
         sortable: true,
         sortAccessor: (t) => t.email ?? "",
         cell: renderInstitutionEmailTableCell,
@@ -135,6 +138,7 @@ export function InstitutionAdopterList({
         id: "status",
         header: "Status",
         hint: FIELD_HINTS.tenantCol.status,
+        thProps: { w: "120px" },
         cell: (t) => (
           <Badge colorScheme={getTenantStatusColorScheme(t.status)}>
             {formatTenantStatusLabel(t.status)}
@@ -202,8 +206,16 @@ export function InstitutionAdopterList({
       {
         id: "actions",
         header: "Actions",
-        width: "1%",
-        tdProps: { onClick: (e) => e.stopPropagation(), whiteSpace: "nowrap" },
+        align: "right" as const,
+        truncate: false,
+        ...actionsColumnSize(3),
+        thProps: { textAlign: "right", whiteSpace: "nowrap", px: 2, overflow: "visible" },
+        tdProps: {
+          onClick: (e) => e.stopPropagation(),
+          whiteSpace: "nowrap",
+          textAlign: "right",
+          px: 2,
+        },
         cell: (t) => (
           <InstitutionTenantRowActions
             tm={tm}

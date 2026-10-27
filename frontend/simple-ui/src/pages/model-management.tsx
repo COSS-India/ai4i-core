@@ -46,6 +46,7 @@ import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
+  actionsColumnSize,
   type DataTableColumn,
 } from "../components/common/table";
 import { FIELD_HINTS } from "../config/fieldHints";
@@ -723,53 +724,69 @@ const ModelManagementPage: React.FC = () => {
       },
       {
         id: "actions",
-        header: "Activate/Deprecate",
-        tdProps: { onClick: (e) => e.stopPropagation() },
+        header: "Actions",
+        align: "right" as const,
+        truncate: false,
+        ...actionsColumnSize(1),
+        thProps: { textAlign: "right", whiteSpace: "nowrap", px: 2, overflow: "visible" },
+        tdProps: {
+          onClick: (e) => e.stopPropagation(),
+          textAlign: "right",
+          px: 2,
+        },
         cell: (model) => {
+          const rail = (child: React.ReactNode) => (
+            <Box display="flex" justifyContent="flex-end" alignItems="center" w="100%" minH="32px">
+              {child}
+            </Box>
+          );
           if (isServiceCountLoading) {
-            return <Skeleton height="20px" width="36px" borderRadius="md" />;
+            return rail(<Skeleton height="20px" width="36px" borderRadius="md" />);
           }
           if (hasServiceCountError) {
-            return (
+            return rail(
               <Tooltip label="Could not load services" placement="top" hasArrow>
                 <Text fontSize="sm" color="gray.400">
                   —
                 </Text>
-              </Tooltip>
+              </Tooltip>,
             );
           }
 
           // Deprecated models must stay activatable even with 0 services
           // (Create Service is hidden for deprecated models).
           if (!isRegistryReadOnly && isModelDeprecated(model)) {
-            return (
+            return rail(
               <Tooltip label="Activate model" placement="top" hasArrow>
                 <Box as="span" display="inline-flex" alignItems="center">
                   <Switch
                     size="md"
                     colorScheme="green"
                     isChecked={false}
+                    cursor="pointer"
                     onChange={() => openConfirmDialog("activate", model)}
                     isDisabled={updatingModelId !== null}
                     onClick={(e) => e.stopPropagation()}
                   />
                 </Box>
-              </Tooltip>
+              </Tooltip>,
             );
           }
 
           if (isModelActive(model) && !hasLinkedServices(model)) {
-            return (
+            return rail(
               <Text fontSize="sm" color="ink.600">
                 NA
-              </Text>
+              </Text>,
             );
           }
 
-          if (isRegistryReadOnly || !isModelActive(model)) return null;
+          if (isRegistryReadOnly || !isModelActive(model)) {
+            return rail(null);
+          }
 
           const blockedByPublished = hasPublishedService(model);
-          return (
+          return rail(
             <Tooltip
               label={
                 blockedByPublished
@@ -784,6 +801,7 @@ const ModelManagementPage: React.FC = () => {
                   size="md"
                   colorScheme="green"
                   isChecked={true}
+                  cursor="pointer"
                   onChange={() => {
                     if (blockedByPublished) return;
                     openConfirmDialog("deprecate", model);
@@ -792,7 +810,7 @@ const ModelManagementPage: React.FC = () => {
                   onClick={(e) => e.stopPropagation()}
                 />
               </Box>
-            </Tooltip>
+            </Tooltip>,
           );
         },
       },

@@ -28,7 +28,6 @@ import { ChevronDownIcon, SearchIcon, ViewIcon, ViewOffIcon } from "@chakra-ui/i
 import React, { useMemo, useState } from "react";
 import { formatModelTaskTypeLabel, getTaskColorScheme } from "../../config/constants";
 import { FIELD_HINTS } from "../../config/fieldHints";
-import FieldHint from "../common/FieldHint";
 import FieldLabel from "../common/FieldLabel";
 import ReadOnlyField from "../common/ReadOnlyField";
 import type { Service } from "../../services/servicesManagementService";
@@ -245,11 +244,7 @@ const ServiceFormTab: React.FC<Readonly<ServiceFormTabProps>> = ({
           max={PRICE_PER_UNIT_MAX}
           bg="white"
         />
-        {shownError ? (
-          <FormErrorMessage>{shownError}</FormErrorMessage>
-        ) : (
-          <FieldHint>{helper}</FieldHint>
-        )}
+        {shownError ? <FormErrorMessage>{shownError}</FormErrorMessage> : null}
       </FormControl>
     );
   };

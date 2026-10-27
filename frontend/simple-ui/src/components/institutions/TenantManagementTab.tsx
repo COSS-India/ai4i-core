@@ -832,7 +832,9 @@ export default function TenantManagementTab({
             phone_number: tm.editTenantForm.phone_number ?? "",
           }}
           errors={tm.editTenantFormErrors}
-          emailEditable={tm.isEditTenantEmailEditable}
+          // Demo feedback: leave contact email locked on edit for now.
+          // emailEditable={tm.isEditTenantEmailEditable}
+          emailEditable={false}
           emailDisabled={tm.isSubmittingEditTenant}
           pendingEmail={tm.editTenantRow?.pending_email}
           emailStatus={tm.editTenantEmailStatus}

@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Badge, Text } from "@chakra-ui/react";
 import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
+  actionsColumnSize,
   type DataTableColumn,
   type DataTableSortState,
 } from "../common/table";
@@ -121,9 +122,17 @@ export function InstitutionUsersTable({
       },
       {
         id: "actions",
-        header: "",
-        width: "1%",
-        tdProps: { onClick: (e) => e.stopPropagation(), whiteSpace: "nowrap" },
+        header: "Actions",
+        align: "right" as const,
+        truncate: false,
+        ...actionsColumnSize(2),
+        thProps: { textAlign: "right", whiteSpace: "nowrap", px: 2, overflow: "visible" },
+        tdProps: {
+          onClick: (e) => e.stopPropagation(),
+          whiteSpace: "nowrap",
+          textAlign: "right",
+          px: 2,
+        },
         cell: (u) => (
           <InstitutionUserRowActions
             tm={tm}

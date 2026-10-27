@@ -160,10 +160,11 @@ export const FIELD_HINTS = {
     },
     serviceId: {
       placeholder: "model-name/service-01",
-      tip: "Stable ID used in APIs and logs.",
+      tip: "Stable ID used in APIs and logs. 5–255 characters; prefilled from the model.",
       helper: "5–255 characters · prefilled from model",
       llmHelper: "5–255 characters · prefilled from model",
-      llmTip: "Stable ID used in APIs and logs (no underscores).",
+      llmTip:
+        "Stable ID used in APIs and logs (no underscores). 5–255 characters; prefilled from the model.",
     },
     description: {
       placeholder: "What this service does for callers",
@@ -201,22 +202,22 @@ export const FIELD_HINTS = {
     },
     price: {
       placeholder: "e.g. 600",
-      tip: "Charge per unit size for this service.",
+      tip: `Charge per unit size for this service (0–${PRICE_PER_UNIT_MAX_LABEL}).`,
       helper: `0–${PRICE_PER_UNIT_MAX_LABEL}`,
     },
     llmInputPrice: {
       placeholder: "e.g. 600",
-      tip: "Price for uncached input tokens (per unit size).",
+      tip: `Price for uncached input tokens per unit size (0–${PRICE_PER_UNIT_MAX_LABEL}).`,
       helper: `0–${PRICE_PER_UNIT_MAX_LABEL}`,
     },
     llmCachedInputPrice: {
       placeholder: "e.g. 150",
-      tip: "Price for prefix-cache input tokens (per unit size).",
+      tip: `Price for prefix-cache input tokens per unit size (0–${PRICE_PER_UNIT_MAX_LABEL}).`,
       helper: `0–${PRICE_PER_UNIT_MAX_LABEL}`,
     },
     llmOutputPrice: {
       placeholder: "e.g. 900",
-      tip: "Price for generated output tokens (per unit size).",
+      tip: `Price for generated output tokens per unit size (0–${PRICE_PER_UNIT_MAX_LABEL}).`,
       helper: `0–${PRICE_PER_UNIT_MAX_LABEL}`,
     },
     tier: {

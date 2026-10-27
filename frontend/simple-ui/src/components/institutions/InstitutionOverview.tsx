@@ -35,7 +35,7 @@ type OverviewCardProps = Readonly<{
 
 function OverviewCard({ title, icon, children }: OverviewCardProps) {
   return (
-    <Card variant="outline" borderRadius="xl">
+    <Card variant="outline" borderRadius="xl" h="full">
       <CardHeader pb={0}>
         <HStack spacing={3}>
           <Center
@@ -114,56 +114,66 @@ type InstitutionOverviewProps = Readonly<{
   tenant: TenantView;
   tierLabel: string;
   budgetLabel: string;
+  /** Extra content under the Tier & budget fields (rate limit, quotas, warnings). */
+  tierExtras?: React.ReactNode;
+  /** Full-width content under the two cards (e.g. view-only guidance). */
+  footer?: React.ReactNode;
 }>;
 
-/** Card layout for the Overview sub-tab of an institution's detail view. */
+/** Two-column card layout for an institution overview — adopter and tenant admin. */
 export default function InstitutionOverview({
   tenant: t,
   tierLabel,
   budgetLabel,
+  tierExtras,
+  footer,
 }: InstitutionOverviewProps) {
   const hasBudgetPeriod = Boolean(t.budget_effective_from || t.budget_effective_to);
   const rowDivider = <StackDivider borderColor="ink.100" />;
   return (
-    <SimpleGrid columns={{ base: 1, lg: 2 }} spacing={6}>
-      <OverviewCard title={`${INSTITUTION} details`} icon={FiUser}>
-        <VStack align="stretch" spacing={0} divider={rowDivider}>
-          <StackedField label="Contact name">
-            {t.contact_name?.trim() ? t.contact_name : <NotProvided />}
-          </StackedField>
-          <StackedField label="Email address">
-            <InstitutionContactEmail email={t.email} pendingEmail={t.pending_email} />
-          </StackedField>
-          <StackedField label="Phone number">
-            {t.phone_number?.trim() ? t.phone_number : <NotProvided />}
-          </StackedField>
-        </VStack>
-      </OverviewCard>
+    <VStack align="stretch" spacing={6} w="full">
+      <SimpleGrid columns={{ base: 1, lg: 2 }} spacing={6} w="full" alignItems="stretch">
+        <OverviewCard title={`${INSTITUTION} details`} icon={FiUser}>
+          <VStack align="stretch" spacing={0} divider={rowDivider}>
+            <StackedField label="Contact name">
+              {t.contact_name?.trim() ? t.contact_name : <NotProvided />}
+            </StackedField>
+            <StackedField label="Email address">
+              <InstitutionContactEmail email={t.email} pendingEmail={t.pending_email} />
+            </StackedField>
+            <StackedField label="Phone number">
+              {t.phone_number?.trim() ? t.phone_number : <NotProvided />}
+            </StackedField>
+          </VStack>
+        </OverviewCard>
 
-      <OverviewCard title="Tier & budget" icon={FiLayers}>
-        <VStack align="stretch" spacing={0} divider={rowDivider}>
-          <InlineField label={`${INSTITUTION} ID`}>{String(t.tenant_id)}</InlineField>
-          <InlineField label="Status">
-            <Badge
-              colorScheme={getTenantStatusColorScheme(t.status)}
-              borderRadius="full"
-              px={2.5}
-              py={0.5}
-              textTransform="none"
-            >
-              {formatTenantStatusLabel(t.status)}
-            </Badge>
-          </InlineField>
-          <InlineField label="Tier">{tierLabel}</InlineField>
-          <InlineField label="Created on">{fmtDate(t.created_at)}</InlineField>
-          <InlineField label="Allocated budget">{budgetLabel}</InlineField>
-          {hasBudgetPeriod ? (
-            <InlineField label="Budget period">
-              {`${fmtDate(t.budget_effective_from)} – ${fmtDate(t.budget_effective_to)}`}
+        <OverviewCard title="Tier & budget" icon={FiLayers}>
+          <VStack align="stretch" spacing={0} divider={rowDivider}>
+            <InlineField label={`${INSTITUTION} ID`}>{String(t.tenant_id)}</InlineField>
+            <InlineField label="Status">
+              <Badge
+                colorScheme={getTenantStatusColorScheme(t.status)}
+                borderRadius="full"
+                px={2.5}
+                py={0.5}
+                textTransform="none"
+              >
+                {formatTenantStatusLabel(t.status)}
+              </Badge>
             </InlineField>
-          ) : null}
-        </VStack>
-      </OverviewCard>
-    </SimpleGrid>
+            <InlineField label="Tier">{tierLabel}</InlineField>
+            <InlineField label="Created on">{fmtDate(t.created_at)}</InlineField>
+            <InlineField label="Allocated budget">{budgetLabel}</InlineField>
+            {hasBudgetPeriod ? (
+              <InlineField label="Budget period">
+                {`${fmtDate(t.budget_effective_from)} – ${fmtDate(t.budget_effective_to)}`}
+              </InlineField>
+            ) : null}
+            {tierExtras ? <Box pt={3}>{tierExtras}</Box> : null}
+          </VStack>
+        </OverviewCard>
+      </SimpleGrid>
+      {footer}
+    </VStack>
   );
 }

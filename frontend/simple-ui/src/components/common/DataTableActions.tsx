@@ -52,6 +52,10 @@ export type DataTableActionsProps = {
   className?: string;
   /** Stop row-click propagation (default true). */
   stopPropagation?: boolean;
+  /**
+   * Pack icons toward the chevron (end) by default — Actions is a right rail.
+   * Prefer `flex-end` unless a call site has a special layout.
+   */
   justify?: "flex-start" | "flex-end" | "center";
 };
 
@@ -64,16 +68,19 @@ export function DataTableActions({
   spacing = 1,
   className = "row-actions",
   stopPropagation = true,
-  justify,
+  justify = "flex-end",
 }: DataTableActionsProps) {
   const visible = actions.filter((a) => a.visible !== false);
-  if (visible.length === 0) return null;
+  if (visible.length === 0) {
+    // Keep vertical rhythm when some rows have no icons (e.g. MODEL PII types).
+    return <Box aria-hidden h="32px" w="100%" />;
+  }
 
   return (
     <HStack
       spacing={spacing}
       justify={justify}
-      w={justify ? "full" : undefined}
+      w="full"
       className={className}
       onClick={stopPropagation ? (e) => e.stopPropagation() : undefined}
     >
@@ -94,6 +101,7 @@ export function DataTableActions({
             size="sm"
             variant="ghost"
             color={color}
+            cursor={action.disabled ? "not-allowed" : "pointer"}
             isDisabled={action.disabled}
             isLoading={action.isLoading}
             _hover={{ color: hoverColor, bg: hoverBg }}
@@ -134,21 +142,25 @@ export const DATA_TABLE_ACTIONS_COLUMN_WIDTH = ADMIN_ACTIONS_COLUMN_WIDTH;
 const ACTION_BTN_PX = 32;
 const ACTION_GAP_PX = 4;
 const ACTION_CELL_PAD_PX = 16;
-/** Enough for the "Actions" header label when only one icon is present. */
-const ACTIONS_HEADER_MIN_PX = 72;
+/** Enough for the uppercase "Actions" header — never crush to "A". */
+const ACTIONS_HEADER_MIN_PX = 80;
+
+export type ActionsColumnSize = {
+  width: string;
+  minWidth: string;
+  maxW: string;
+};
 
 /**
- * Width/minWidth for an actions column with `count` visible icon buttons.
- * Prefer this over a hard-coded pixel width so columns stay tight.
+ * Pinned width for an actions column with `count` icon slots.
+ * Always sets maxW so the rail cannot absorb leftover table width.
  */
-export function actionsColumnSize(count: number): { width: string; minWidth: string } {
+export function actionsColumnSize(count: number): ActionsColumnSize {
   const n = Math.max(0, Math.floor(count));
-  if (n === 0) {
-    return { width: "1%", minWidth: "1%" };
-  }
-  const content = n * ACTION_BTN_PX + (n - 1) * ACTION_GAP_PX;
+  const content = n <= 0 ? 0 : n * ACTION_BTN_PX + (n - 1) * ACTION_GAP_PX;
   const px = Math.max(content + ACTION_CELL_PAD_PX, ACTIONS_HEADER_MIN_PX);
-  return { width: `${px}px`, minWidth: `${px}px` };
+  const width = `${px}px`;
+  return { width, minWidth: width, maxW: width };
 }
 
 export type CreateActionsColumnOptions<T> = {
@@ -162,16 +174,20 @@ export type CreateActionsColumnOptions<T> = {
    * minWidth are omitted), sizes the column to fit that many buttons.
    */
   actionCount?: number;
+  /**
+   * Pack header + icons toward the row chevron. Default `right` — Actions is a
+   * right-pinned rail, not a centered island in leftover space.
+   */
   align?: "left" | "center" | "right";
   getActions: (row: T, index: number) => DataTableAction[];
 };
 
 function resolveActionsJustify(
   align: "left" | "center" | "right",
-): "flex-start" | "flex-end" | "center" | undefined {
+): "flex-start" | "flex-end" | "center" {
   if (align === "right") return "flex-end";
   if (align === "center") return "center";
-  return undefined;
+  return "flex-start";
 }
 
 /** Builds a standard actions column that stops row-click propagation. */
@@ -186,7 +202,7 @@ export function createActionsColumn<T>(
       : undefined;
   const width = options.width ?? counted?.width ?? DATA_TABLE_ACTIONS_COLUMN_WIDTH;
   const minWidth = options.minWidth ?? counted?.minWidth ?? width;
-  const maxW = options.maxW ?? (width === "1%" ? undefined : width);
+  const maxW = options.maxW ?? counted?.maxW ?? (width === "1%" ? DATA_TABLE_ACTIONS_COLUMN_WIDTH : width);
   return {
     id: options.id ?? "actions",
     header: options.header ?? "Actions",
@@ -199,6 +215,7 @@ export function createActionsColumn<T>(
       textAlign: align,
       whiteSpace: "nowrap",
       px: 2,
+      overflow: "visible",
     },
     tdProps: {
       textAlign: align,

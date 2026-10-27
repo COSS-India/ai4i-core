@@ -373,7 +373,6 @@ function SubcategoryTable({
       asyncStateHeight="64px"
       onRowClick={onView}
       rowAriaLabel={(sub) => `View ${sub.name}`}
-      showRowChevron={false}
       renderAfterRow={(sub) =>
         expanded.has(sub.id) ? (
           <Tr>

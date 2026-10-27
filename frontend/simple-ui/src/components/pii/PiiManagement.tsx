@@ -34,6 +34,7 @@ import { INSTITUTION, INSTITUTIONS } from "../../config/constants";
 import { piiService } from "../../services/piiService";
 import DataTable, {
   DataTableActions,
+  actionsColumnSize,
   useAdminTableSurface,
   DEFAULT_PAGE_SIZE_OPTIONS,
   type DataTableColumn,
@@ -405,9 +406,11 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
       {
         id: "delete",
         header: "Delete",
-        width: "1%",
-        thProps: { textAlign: "right" },
-        tdProps: { textAlign: "right", whiteSpace: "nowrap" },
+        align: "right" as const,
+        truncate: false,
+        ...actionsColumnSize(1),
+        thProps: { textAlign: "right", whiteSpace: "nowrap", px: 2, overflow: "visible" },
+        tdProps: { textAlign: "right", whiteSpace: "nowrap", px: 2 },
         cell: (r) => (
           <DataTableActions
             actions={[
@@ -461,9 +464,11 @@ export default function PiiManagement({ isAdmin = false }: PiiManagementProps) {
       {
         id: "actions",
         header: "Actions",
-        width: "1%",
-        thProps: { textAlign: "right" },
-        tdProps: { textAlign: "right", whiteSpace: "nowrap" },
+        align: "right" as const,
+        truncate: false,
+        ...actionsColumnSize(1),
+        thProps: { textAlign: "right", whiteSpace: "nowrap", px: 2, overflow: "visible" },
+        tdProps: { textAlign: "right", whiteSpace: "nowrap", px: 2 },
         cell: (row) => (
           <DataTableActions
             actions={[

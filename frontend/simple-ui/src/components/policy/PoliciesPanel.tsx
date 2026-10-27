@@ -317,11 +317,19 @@ export function PoliciesPanel({
     {
       id: "actions",
       header: "Actions",
+      align: "right" as const,
+      truncate: false,
       // 2 icon buttons + status switch
       ...actionsColumnSize(3),
-      tdProps: { onClick: (e) => e.stopPropagation(), whiteSpace: "nowrap" },
+      thProps: { textAlign: "right", whiteSpace: "nowrap", px: 2, overflow: "visible" },
+      tdProps: {
+        onClick: (e) => e.stopPropagation(),
+        whiteSpace: "nowrap",
+        textAlign: "right",
+        px: 2,
+      },
       cell: (row) => (
-        <HStack spacing={3} align="center">
+        <HStack spacing={2} align="center" justify="flex-end" w="full">
           <DataTableActions
             actions={[
               {
@@ -352,6 +360,7 @@ export function PoliciesPanel({
               <Switch
                 size="md"
                 colorScheme="green"
+                cursor="pointer"
                 isChecked={row.is_active}
                 isDisabled={policyStatusBusyId === row.policy_id}
                 aria-label={

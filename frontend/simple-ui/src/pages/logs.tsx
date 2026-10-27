@@ -736,25 +736,18 @@ const LogsPage: React.FC = () => {
       );
 
       return (
-        <HStack spacing={2} align="center">
-          <Tooltip label={label} placement="top" hasArrow>
-            <Flex
-              align="center"
-              justify="center"
-              w={5}
-              h={5}
-              aria-label={label}
-              role="img"
-            >
-              {icon}
-            </Flex>
-          </Tooltip>
-          {failed && row.status_code != null && (
-            <Text fontSize="sm" color="red.600" fontWeight="medium">
-              {row.status_code}
-            </Text>
-          )}
-        </HStack>
+        <Tooltip label={label} placement="top" hasArrow>
+          <Flex
+            align="center"
+            justify="center"
+            w={5}
+            h={5}
+            aria-label={label}
+            role="img"
+          >
+            {icon}
+          </Flex>
+        </Tooltip>
       );
     },
     [isAdmin]

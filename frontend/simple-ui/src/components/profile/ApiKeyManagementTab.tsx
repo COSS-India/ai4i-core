@@ -466,10 +466,21 @@ export default function ApiKeyManagementTab({
       {
         id: "application",
         header: "Application",
+        thProps: { maxW: "200px" },
+        tdProps: { maxW: "200px" },
         sortable: true,
         sortAccessor: (key) => key.application_name ?? key.application_id ?? "",
         cell: (key) => (
-          <Text fontSize="sm">{key.application_name ?? key.application_id ?? "—"}</Text>
+          <Tooltip
+            label={key.application_name ?? key.application_id ?? "—"}
+            placement="top"
+            hasArrow
+            openDelay={300}
+          >
+            <Text fontSize="sm" isTruncated maxW="180px">
+              {key.application_name ?? key.application_id ?? "—"}
+            </Text>
+          </Tooltip>
         ),
       },
       {
@@ -656,7 +667,6 @@ export default function ApiKeyManagementTab({
       <DataTable
             layout="admin"
             toolbarAttached
-            showRowChevron={false}
             items={sortedApiKeys}
             columns={apiKeyColumns}
             getRowKey={(key) =>

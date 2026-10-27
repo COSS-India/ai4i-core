@@ -612,7 +612,7 @@ function TypeLibrary() {
       filterDefs={[
         {
           id: "mode",
-          label: "PII type",
+          label: "Mode",
           type: "select",
           value: modeFilter,
           onChange: (value) => setModeFilter(value === "custom" ? "custom" : value === "model" ? "model" : ""),

@@ -528,9 +528,6 @@ function ServiceIdField({
   if (isView) {
     return <ReadOnlyField label="Service ID">{formData.serviceId || "—"}</ReadOnlyField>;
   }
-  const serviceIdHelper = isLlmTaskType
-    ? FIELD_HINTS.service.serviceId.llmHelper
-    : FIELD_HINTS.service.serviceId.helper;
   const serviceIdTip = isLlmTaskType
     ? FIELD_HINTS.service.serviceId.llmTip
     : FIELD_HINTS.service.serviceId.tip;
@@ -555,11 +552,7 @@ function ServiceIdField({
         isReadOnly={!!editingService}
         maxLength={SERVICE_ID_MAX_LEN}
       />
-      {idError ? (
-        <FormErrorMessage>{idError}</FormErrorMessage>
-      ) : (
-        <FieldHint show={!editingService}>{serviceIdHelper}</FieldHint>
-      )}
+      {idError ? <FormErrorMessage>{idError}</FormErrorMessage> : null}
     </FormControl>
   );
 }

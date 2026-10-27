@@ -321,8 +321,16 @@ export function PiiTypesPanel() {
     {
       id: "actions",
       header: "Actions",
+      align: "right" as const,
+      truncate: false,
       ...actionsColumnSize(2),
-      tdProps: { onClick: (e) => e.stopPropagation(), whiteSpace: "nowrap" },
+      thProps: { textAlign: "right", whiteSpace: "nowrap", px: 2, overflow: "visible" },
+      tdProps: {
+        onClick: (e) => e.stopPropagation(),
+        whiteSpace: "nowrap",
+        textAlign: "right",
+        px: 2,
+      },
       cell: (row) => (
         <DataTableActions
           actions={[
