@@ -1591,30 +1591,33 @@ class TenantService:
             else:
                 # Reactivating/extending a LAPSED window without moving its
                 # original start date — e.g. Sep 1-16 expired on Sep 17,
-                # caller now sends only a later budget_effective_to (Sep 20)
-                # to reopen it. allocated_budget and spend are never
+                # caller now sends a later budget_effective_to (Sep 20) to
+                # reopen it. allocated_budget and spend are never
                 # window-scoped (see this method's own docstring), so the
-                # tenant's remaining balance carries over untouched; this
-                # branch only ever changes budget_effective_to, not the ₹.
+                # tenant's remaining balance carries over untouched.
                 if budget_effective_to is not None:
                     _validate_effective_to_after_from(new_effective_from, budget_effective_to)
                     _validate_new_effective_to_not_in_past(budget_effective_to)
                     new_effective_to = budget_effective_to
-                elif action is not None:
-                    # A plain amount top-up on a lapsed window would grow a
-                    # balance nobody can spend — refuse until the window is
-                    # extended (in this call or an earlier one).
-                    raise HTTPException(
-                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                        detail={
-                            "error": "budget_window_expired",
-                            "message": (
-                                f"This tenant's budget window ended on {tenant.budget_effective_to} "
-                                "— extend budget_effective_to before topping up."
-                            ),
-                        },
-                    )
                 else:
+                    # A top-up that leaves the window lapsed would only grow
+                    # a balance nobody can spend until it's reopened, so it
+                    # must come with (or after) a new budget_effective_to.
+                    # A NULL To is open-ended, not lapsed (see
+                    # is_budget_window_expired), so it isn't refused here.
+                    if action is not None and tenant.budget_effective_to is not None:
+                        raise HTTPException(
+                            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail={
+                                "error": "budget_window_expired",
+                                "message": (
+                                    "This tenant's budget window ended on "
+                                    f"{as_utc_date(tenant.budget_effective_to).isoformat()} — "
+                                    "give a new budget_effective_to with this top-up, or "
+                                    "extend it first."
+                                ),
+                            },
+                        )
                     new_effective_to = tenant.budget_effective_to
         elif budget_effective_from is not None:
             # Explicit fresh founding — only reachable when this tenant has

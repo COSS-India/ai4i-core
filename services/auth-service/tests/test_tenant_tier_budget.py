@@ -815,7 +815,27 @@ class TestReviseTenantBudgetEffectiveWindow:
         assert exc_info.value.status_code == 422
         assert exc_info.value.detail["error"] == "budget_window_expired"
         svc._tenants.update.assert_not_awaited()
-        assert expired_tenant.allocated_budget == Decimal("300")
+        svc._allocations.cascade_tenant_budget_revision.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_amount_only_top_up_with_open_ended_window_allowed(self) -> None:
+        """A NULL budget_effective_to is open-ended, never lapsed (see
+        is_budget_window_expired), so a plain top-up there must still go
+        through rather than 422 budget_window_expired."""
+        stored_from = _VALID_EFFECTIVE_FROM - timedelta(days=60)
+        tenant = _tenant(allocated_budget=Decimal("300"))
+        tenant.budget_effective_from = stored_from
+        tenant.budget_effective_to = None
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
+        svc._tenants.update = AsyncMock()
+
+        await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("200"))
+
+        written = svc._tenants.update.await_args.args[1]
+        assert written["budget_effective_from"] == stored_from
+        assert written["budget_effective_to"] is None
+        assert written["allocated_budget"] == Decimal("500")
 
     @pytest.mark.asyncio
     async def test_naive_datetime_treated_as_utc_not_local(self) -> None:
