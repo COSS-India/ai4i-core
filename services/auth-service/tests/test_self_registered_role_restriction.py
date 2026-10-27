@@ -17,7 +17,10 @@ from app.schemas.tenant import TenantUserRole, TenantUserUpdate
 from app.services.role_service import RoleService
 from app.services.tenant_service import TenantService
 
-SELF_REGISTERED = [CreationType.DEFAULT, CreationType.GOOGLE, None]
+SELF_REGISTERED = [CreationType.DEFAULT, CreationType.GOOGLE]
+# NULL is not a signup type: same as the role-reset migration and the
+# frontend's isSelfRegisteredUser, so it is treated like an admin-created user.
+NOT_SELF_REGISTERED = [CreationType.TENANT, None]
 NON_USER_ROLES = [RoleName.ADMIN, RoleName.MODERATOR, RoleName.TENANT_ADMIN, RoleName.GUEST]
 
 
@@ -88,14 +91,58 @@ class TestRoleServiceAssignRole:
         svc._users.get_by_id.assert_not_awaited()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("creation_type", NOT_SELF_REGISTERED)
     @pytest.mark.parametrize("role", NON_USER_ROLES)
-    async def test_tenant_created_user_can_receive_any_role(self, role) -> None:
-        target = _user(CreationType.TENANT)
+    async def test_non_self_registered_user_can_receive_any_role(self, role, creation_type) -> None:
+        target = _user(creation_type)
         svc = _make_role_service(target)
 
         await svc.assign_role(target.id, role)
 
         svc._roles.assign_role.assert_awaited_once()
+
+
+class TestRoleServiceRemoveRole:
+    """Self-registered users must always hold USER, so USER can't be removed
+    from them — but their stray non-USER roles can still be taken away."""
+
+    @staticmethod
+    def _service(target: User) -> RoleService:
+        svc = _make_role_service(target)
+        svc._roles.remove_role = AsyncMock(return_value=True)
+        return svc
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("creation_type", SELF_REGISTERED)
+    async def test_cannot_remove_user_from_self_registered(self, creation_type) -> None:
+        target = _user(creation_type)
+        svc = self._service(target)
+
+        with pytest.raises(AppError) as exc_info:
+            await svc.remove_role(target.id, RoleName.USER)
+
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.code == "SELF_REGISTERED_ROLE_RESTRICTED"
+        svc._roles.remove_role.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_stray_role_can_still_be_removed_from_self_registered(self) -> None:
+        target = _user(CreationType.DEFAULT)
+        svc = self._service(target)
+
+        await svc.remove_role(target.id, RoleName.USAGE_VIEWER)
+
+        svc._roles.remove_role.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("creation_type", NOT_SELF_REGISTERED)
+    async def test_user_can_be_removed_from_non_self_registered_user(self, creation_type) -> None:
+        target = _user(creation_type)
+        svc = self._service(target)
+
+        await svc.remove_role(target.id, RoleName.USER)
+
+        svc._roles.remove_role.assert_awaited_once()
 
 
 class TestAssignRoleRoute:
@@ -139,8 +186,11 @@ class TestAssignRoleRoute:
         assert "self-registered users can only hold the 'USER' role" in resp.json()["detail"]
         svc._roles.assign_role.assert_not_awaited()
 
-    def test_admin_can_make_tenant_created_user_moderator(self) -> None:
-        target = _user(CreationType.TENANT)
+    @pytest.mark.parametrize("creation_type", NOT_SELF_REGISTERED)
+    def test_admin_can_make_non_self_registered_user_moderator(self, creation_type) -> None:
+        # [None] is the review case: the UI shows a NULL user's role control
+        # enabled, so the backend must accept the change rather than 422.
+        target = _user(creation_type)
         client, svc = self._client(target)
         caller_roles = MagicMock()
         caller_roles.return_value.get_user_roles = AsyncMock(return_value=[RoleName.ADMIN.value])
@@ -154,6 +204,32 @@ class TestAssignRoleRoute:
 
         assert resp.status_code == 200
         svc._roles.assign_role.assert_awaited_once()
+
+
+class TestSelfRegisteredDefinition:
+    """One definition of "self-registered" across the backend guards, the
+    role-reset migration and the frontend (registrationMethod.ts)."""
+
+    @pytest.mark.parametrize("creation_type", SELF_REGISTERED)
+    def test_signup_types_are_self_registered(self, creation_type) -> None:
+        assert _user(creation_type).is_self_registered() is True
+
+    @pytest.mark.parametrize("creation_type", NOT_SELF_REGISTERED)
+    def test_other_types_are_not_self_registered(self, creation_type) -> None:
+        assert _user(creation_type).is_self_registered() is False
+
+    def test_role_reset_migration_uses_the_same_set(self) -> None:
+        from pathlib import Path
+
+        from app.models.user import SELF_REGISTERED_CREATION_TYPES
+
+        migration = (
+            Path(__file__).resolve().parents[3]
+            / "infrastructure/databases/migrations/postgres/alembic/versions/ai4iplatform_auth"
+            / "a7c3e9f15b28_reset_self_registered_users_to_user_role.py"
+        ).read_text()
+        values = ", ".join(f"'{v}'" for v in sorted(t.value for t in SELF_REGISTERED_CREATION_TYPES))
+        assert f"u.creation_type IN ({values})" in migration
 
 
 class TestProvisionUserCreationType:

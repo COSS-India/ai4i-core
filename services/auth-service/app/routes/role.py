@@ -97,7 +97,7 @@ async def assign_role(
 @router.post(
     "/remove",
     response_model=RemoveRoleResponse,
-    responses=error_responses(403, 404)
+    responses=error_responses(403, 404, 422)
 )
 async def remove_role(
     request: Request,
@@ -109,7 +109,9 @@ async def remove_role(
     """Remove a role from a user.
 
     Tenant admins may only act on users in their own tenant. Requires ADMIN
-    or TENANT_ADMIN. Returns 404 if the user does not have that role.
+    or TENANT_ADMIN. Returns 404 if the user does not have that role, and
+    422 ``SELF_REGISTERED_ROLE_RESTRICTED`` when removing USER from a
+    self-registered user.
     """
     await enforce_target_user_same_tenant(
         request, _admin, body.user_id, db, bypass_roles=(RoleName.ADMIN, RoleName.MODERATOR)

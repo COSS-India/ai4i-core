@@ -22,6 +22,9 @@ class CreationType(str, enum.Enum):
     TENANT = "tenant" # for tenant users
 
 
+SELF_REGISTERED_CREATION_TYPES = frozenset({CreationType.DEFAULT, CreationType.GOOGLE})
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -65,6 +68,15 @@ class User(Base):
     user_roles = relationship("UserRole", back_populates="user", cascade="all, delete-orphan")
     credentials = relationship("UserCredentials", back_populates="user", uselist=False, cascade="all, delete-orphan")
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
+
+    def is_self_registered(self) -> bool:
+        """Signed up on their own (email or Google), so locked to the USER role.
+
+        Exactly ``default``/``google`` — the same set the role-reset migration
+        (a7c3e9f15b28) and the frontend's ``isSelfRegisteredUser`` use. Any
+        other value, including NULL, is not self-registered.
+        """
+        return self.creation_type in SELF_REGISTERED_CREATION_TYPES
 
     def is_accessible(self) -> bool:
         """Account can be logged into: active and not soft-deleted."""
