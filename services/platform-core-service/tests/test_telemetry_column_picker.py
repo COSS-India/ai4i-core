@@ -243,22 +243,20 @@ def test_build_page_data_model_span_fields():
 
 
 def test_build_page_data_any_span_fields():
-    """application, api_key, end_user, metadata read from first available span."""
+    """application, end_user, metadata read from first available span."""
     result = _build_page_data(
         _base_traces_map("t1"),
         [_hit("t1", "request", {
             "app_id": "app-123",
-            "api_key_id": "key-abc",
             "enduser.id": "user-99",
             "metadata_kv": ["env=prod"],
         })],
-        frozenset({"application", "api_key", "end_user", "metadata"}),
+        frozenset({"application", "end_user", "metadata"}),
         ["t1"],
     )
     row = result[0]
 
     assert row["application"] == "app-123"
-    assert row["api_key"] == "key-abc"
     assert row["end_user"] == "user-99"
     assert row["metadata"] == ["env=prod"]
 
