@@ -393,3 +393,37 @@ def test_multipart_4xx_never_reads_the_fallback_map_and_all_failing_is_503():
     with patch("services.llm_service.get_fallbacks", AsyncMock(return_value=["llm-b"])):
         status, body = _run(proxy.proxy_multipart("/v1/audio/transcriptions", files=FILES, data={"model": "llm-a"}))
     assert status == 503 and body["error"]["type"] == "all_services_unavailable"
+
+
+# ── Triton call: what the task service raises ─────────────────────────────────
+
+def _triton_client(post):
+    client = MagicMock()
+    client.post = AsyncMock(side_effect=post)
+    return client
+
+
+def _triton_response(code: int) -> httpx.Response:
+    return httpx.Response(code, request=httpx.Request("POST", "http://triton/infer"), json={})
+
+
+def _call_triton(post):
+    from services.base.task_service import BaseTaskService
+
+    svc = BaseTaskService(service_info={"name": "m"})
+    with patch("services.base.task_service._get_triton_client", return_value=_triton_client(post)):
+        return _run(svc._call_triton_inference("http://triton/infer", [{"name": "x"}], ["out"]))
+
+
+@pytest.mark.parametrize("failure", [httpx.ConnectError("refused"), httpx.ReadTimeout("slow"), lambda *a, **k: _triton_response(503)])
+def test_triton_unreachable_or_5xx_is_marked_for_failover(failure):
+    with pytest.raises(UpstreamUnavailableError) as exc:
+        _call_triton(failure)
+    assert http_status_for(exc.value) == 502  # unchanged for the client when no fallback exists
+
+
+def test_triton_404_stays_a_client_404():
+    with pytest.raises(RuntimeError) as exc:
+        _call_triton(lambda *a, **k: _triton_response(404))
+    assert type(exc.value) is RuntimeError and type(exc.value.__cause__) is LookupError
+    assert http_status_for(exc.value) == 404

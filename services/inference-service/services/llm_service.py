@@ -387,6 +387,9 @@ class OpenAIProxyService:
                         request.state.service_id = fb_id
                     break
             if tried and status_code >= 500:
+                # Metrics label the failed request with the requested model,
+                # not the last fallback _prepare_request resolved.
+                set_llm_usage_model_id(service_info.get("model_id") or "")
                 status_code, body = 503, _all_unavailable(service_id)
 
         # ── PII guardrail: process response + fire-and-forget audit log ───
@@ -746,6 +749,7 @@ class OpenAIProxyService:
                         request.state.service_id = fb_id
                     break
             if tried and kind == "error" and status_code >= 500:
+                set_llm_usage_model_id(service_info.get("model_id") or "")
                 status_code, result = 503, _all_unavailable(service_id)
         if kind == "error":
             if guardrail_ctx.active:
@@ -961,6 +965,9 @@ class OpenAIProxyService:
                         request.state.service_id = fb_id
                     break
             if tried and status_code >= 500:
+                # Metrics label the failed request with the requested model,
+                # not the last fallback _prepare_request resolved.
+                set_llm_usage_model_id(service_info.get("model_id") or "")
                 status_code, body = 503, _all_unavailable(service_id)
         return status_code, body
 
