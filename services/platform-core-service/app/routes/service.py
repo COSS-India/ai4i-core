@@ -226,6 +226,16 @@ class ServiceListFilterParams:
                 ),
             ),
         ] = None,
+        tier_id: Annotated[
+            Optional[str],
+            Query(
+                description=(
+                    "Only services mapped to this one tier (services with no tier are left out). "
+                    "Open to every caller — the Application fallback picker uses it with the "
+                    "Institution's tier; tier_ids is the admin-only multi-tier filter."
+                ),
+            ),
+        ] = None,
         created_from: Annotated[
             Optional[DateOrDatetime],
             Query(
@@ -272,6 +282,7 @@ class ServiceListFilterParams:
         self.service_id = service_id
         self.model_name = model_name
         self.tier_ids = tier_ids
+        self.tier_id = tier_id
         self.created_from = created_from
         self.created_to = created_to
         self.published_from = published_from
@@ -420,6 +431,7 @@ async def list_services(
             service_id=filters.service_id or None,
             model_name=filters.model_name or None,
             tier_ids=_split_csv(filters.tier_ids) or None,
+            mapped_to_tier=(filters.tier_id or "").strip() or None,
             created_from=filters.created_from,
             created_to=filters.created_to,
             published_from=filters.published_from,
