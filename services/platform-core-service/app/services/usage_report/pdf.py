@@ -40,6 +40,7 @@ TEMPLATE = "usage_report.html"
 MAX_TASK_ROWS = 8
 NO_REQUESTS = "No requests in this period"
 NO_SPEND = "No spend in this period"
+BURN_RATE = "Burn rate (per day)"
 # A stacked-bar segment narrower than this (% of the bar) has no room for its
 # count; the legend still gives it.
 MIN_LABELLED_SEGMENT = 8.0
@@ -149,8 +150,7 @@ def _adoption(d: ReportData) -> dict:
         "requests": fmt.count(d.total_requests),
         "requests_change": fmt.signed_pct(change) if change is not None else None,
         "requests_change_up": change is not None and change >= 0,
-        # A period under a day has no per-day average.
-        "avg_daily": fmt.NA if d.total_requests is None else (fmt.NO_RATE if avg is None else fmt.count(avg)),
+        "avg_daily": _avg_daily(d.total_requests, avg),
         # Bar length is the task's share of all requests.
         "tasks": [{"name": name, "count": fmt.count(n), "width": _width(n, task_total)} for name, n in rows],
         "top_institutions": [
@@ -162,51 +162,81 @@ def _adoption(d: ReportData) -> dict:
     }
 
 
-def _budget(d: ReportData) -> dict:
+def _avg_daily(total: Optional[int], avg: Optional[float]) -> str:
+    """Average requests per day; a period under a day has none."""
+    if total is None:
+        return fmt.NA
+    if avg is None:
+        return fmt.NO_RATE
+    return fmt.count(avg)
+
+
+def _spend_cards(d: ReportData) -> tuple[dict, dict]:
+    """The Spent and Burn rate cards: spend in the period."""
     b, ps = d.budget, d.period_spend
-    span = d.period.short_label
+    spent_label = f"Spent ({d.period.short_label})"
     if ps is None:
         note = "" if "period_spend" in d.failed else "Usage not recorded for this period"
-        spent_card = _card(f"Spent ({span})", fmt.NA, note)
-        burn_card = _card("Burn rate (per day)", fmt.NA, note)
+        return _card(spent_label, fmt.NA, note), _card(BURN_RATE, fmt.NA, note)
+    if ps.since:
+        note = f"Recorded since {ps.since.astimezone(IST):%d %b}"
+    elif b:
+        note = f"Lifetime to date: {fmt.inr(b.spent)}"
     else:
-        note = (f"Recorded since {ps.since.astimezone(IST):%d %b}" if ps.since
-                else (f"Lifetime to date: {fmt.inr(b.spent)}" if b else ""))
-        spent_card = _card(f"Spent ({span})", fmt.inr(ps.amount), note)
-        burn_card = (
-            _card("Burn rate (per day)", fmt.NO_RATE, "Not calculated for periods under a day")
-            if ps.burn_rate is None
-            else _card("Burn rate (per day)", fmt.inr(ps.burn_rate), f"Average over {ps.covered_days} day(s)")
-        )
-    used = b.used_pct if b else None
+        note = ""
+    spent_card = _card(spent_label, fmt.inr(ps.amount), note)
+    if ps.burn_rate is None:
+        return spent_card, _card(BURN_RATE, fmt.NO_RATE, "Not calculated for periods under a day")
+    return spent_card, _card(BURN_RATE, fmt.inr(ps.burn_rate), f"Average over {ps.covered_days} day(s)")
+
+
+def _meter(b: Optional[collector.BudgetSummary]) -> dict:
+    """The spent-to-date meter: its fill, and the spent/remaining labels."""
     if b is None:
-        used_pct = remaining_pct = fmt.NA
-    else:  # used is None: nothing allocated to measure against
-        used_pct = fmt.share(used)
-        remaining_pct = fmt.share(max(0.0, 100 - used) if used is not None else None)
+        return {"used_width": None, "used_pct": fmt.NA, "remaining_pct": fmt.NA}
+    used = b.used_pct
+    if used is None:  # nothing allocated to measure against
+        return {"used_width": None, "used_pct": fmt.NO_RATE, "remaining_pct": fmt.NO_RATE}
+    return {"used_width": _width(used), "used_pct": fmt.share(used), "remaining_pct": fmt.share(max(0.0, 100 - used))}
+
+
+def _spend_css(used_pct: Optional[float]) -> str:
+    """Bar colour for an institution's share of its allocation used."""
+    if used_pct is None:
+        return ""
+    if used_pct >= collector.EXHAUSTED_PCT:
+        return "red"
+    if used_pct >= collector.NEARING_LIMIT_PCT:
+        return "amber"
+    return ""
+
+
+def _budget(d: ReportData) -> dict:
+    b = d.budget
+    spent_card, burn_card = _spend_cards(d)
+    if b is None:
+        allocated = remaining = exhausted = nearing = fmt.NA
+    else:
+        allocated, remaining = fmt.inr(b.allocated), fmt.inr(b.remaining)
+        exhausted, nearing = fmt.count(b.exhausted), fmt.count(b.nearing_limit)
     return {
         "cards": [
-            _card("Allocated", fmt.inr(b.allocated) if b else fmt.NA, "Sum of institution allocations"),
+            _card("Allocated", allocated, "Sum of institution allocations"),
             spent_card,
-            _card("Remaining", fmt.inr(b.remaining) if b else fmt.NA, "Allocation minus spend to date"),
+            _card("Remaining", remaining, "Allocation minus spend to date"),
             burn_card,
         ],
         "fy_allocation": fmt.NA,
-        "used_width": _width(used) if used is not None else None,
-        "used_pct": used_pct,
-        "remaining_pct": remaining_pct,
-        "exhausted": fmt.count(b.exhausted) if b else fmt.NA,
-        "nearing": fmt.count(b.nearing_limit) if b else fmt.NA,
+        **_meter(b),
+        "exhausted": exhausted,
+        "nearing": nearing,
         "nearing_pct": fmt.share(collector.NEARING_LIMIT_PCT),
         "top_spend": [
             {"name": s.name, "spent": fmt.inr(s.spent), "used": fmt.share(s.used_pct),
-             "width": _width(s.used_pct),
-             "css": "" if s.used_pct is None
-                    else "red" if s.used_pct >= collector.EXHAUSTED_PCT
-                    else "amber" if s.used_pct >= collector.NEARING_LIMIT_PCT else ""}
+             "width": _width(s.used_pct), "css": _spend_css(s.used_pct)}
             for s in d.top_by_spend
         ],
-        "top_spend_empty": _empty(ps is not None and "top_by_spend" not in d.failed, NO_SPEND),
+        "top_spend_empty": _empty(d.period_spend is not None and "top_by_spend" not in d.failed, NO_SPEND),
     }
 
 
