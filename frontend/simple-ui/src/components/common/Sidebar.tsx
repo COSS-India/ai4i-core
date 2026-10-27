@@ -63,9 +63,9 @@ interface NavItem {
 
 const NAV_SECTIONS: { id: NavSectionId; label: string }[] = [
   { id: "try", label: "Try" },
-  { id: "monitor", label: "Monitor" },
+  { id: "monitor", label: "Track" },
   { id: "manage", label: "Manage" },
-  { id: "orchestration", label: "Orchestration" },
+  { id: "orchestration", label: "Govern" },
 ];
 
 // Unsigned-in users only see Explore. Remaining top-nav items are role-gated.
@@ -144,7 +144,7 @@ const topNavItems: NavItem[] = [
   },
   {
     id: TABS.notificationsAlerts,
-    label: "Platform Settings",
+    label: "Alerts & Notifications",
     shortLabel: "Notifications",
     path: `/${TABS.notificationsAlerts}`,
     icon: IoNotificationsOutline,
@@ -158,7 +158,7 @@ const topNavItems: NavItem[] = [
     path: `/${TABS.tierManagement}`,
     icon: IoPricetagOutline,
     requiresAuth: true,
-    section: "manage",
+    section: "orchestration",
   },
   {
     id: TABS.policyManagement,

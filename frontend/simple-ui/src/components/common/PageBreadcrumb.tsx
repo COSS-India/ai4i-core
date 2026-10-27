@@ -23,7 +23,7 @@ export type Crumb = {
 
 /**
  * Breadcrumb rules:
- * - Top-level sidebar pages (e.g. Logs Dashboard, Platform Settings,
+ * - Top-level sidebar pages (e.g. Logs Dashboard, Alerts & Notifications,
  *   Institution Management) show no breadcrumb.
  * - The landing page (Usage Dashboard) is never prepended to another
  *   section's breadcrumb.
