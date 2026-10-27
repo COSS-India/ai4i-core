@@ -17,7 +17,9 @@ test_policy_category.py does.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
@@ -537,3 +539,38 @@ class TestRouteShape:
         )
         assert route.status_code == 204
         assert {403, 404, 409} <= set(route.responses)
+
+
+
+_API_PERMISSIONS = Path(__file__).resolve().parents[2] / "auth-service" / "api_permissions.json"
+# policies.read / create / update / delete. Not the admin sentinel (1), which
+# USAGE VIEWER also holds by seed (AI4IDS-3591).
+_POLICY_PERMISSION_BY_METHOD = {"GET": 100, "POST": 101, "PATCH": 102, "PUT": 102, "DELETE": 103}
+
+
+def _gateway_permissions() -> dict:
+    data = json.loads(_API_PERMISSIONS.read_text())
+    entries = data if isinstance(data, list) else next(v for v in data.values() if isinstance(v, list))
+    return {e["endpoint"]: e["permissionRequired"] for e in entries}
+
+
+class TestGatewayPermissions:
+    def test_no_policy_or_pii_entry_uses_the_admin_sentinel(self):
+        on_sentinel = [k for k, v in _gateway_permissions().items()
+                       if k.split(":", 1)[1].startswith(("/api/v1/policies", "/api/v1/pii")) and v == 1]
+        assert on_sentinel == []
+
+    @pytest.mark.parametrize("endpoint,permission", [
+        ("GET:/api/v1/pii/entities", 105),   # pii_types.read
+        ("POST:/api/v1/pii/simulate", 100),  # policies.read; inference-service require_admin keeps it ADMIN-only
+    ])
+    def test_pii_playground_entries(self, endpoint, permission):
+        assert _gateway_permissions().get(endpoint) == permission
+
+    @pytest.mark.parametrize("method,path", sorted(
+        (m, f"/api/v1{r.path}") for r in _policy_routes.router.routes for m in r.methods
+    ))
+    def test_every_policy_route_is_listed_with_its_method_permission(self, method, path):
+        # auth-service treats an endpoint missing from api_permissions.json as
+        # public, so an anonymous call reached the route and got 403, not 401.
+        assert _gateway_permissions().get(f"{method}:{path}") == _POLICY_PERMISSION_BY_METHOD[method]
