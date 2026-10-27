@@ -1,7 +1,7 @@
 import enum
 
 from sqlalchemy import Column, DateTime, Enum, ForeignKey, Index, Integer, Numeric, String, text
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -45,6 +45,10 @@ class Application(Base):
     # Ids of policies in the core DB (policy.id); cross-database, so no FK —
     # the application layer must validate them.
     policy_id = Column(ARRAY(Integer), nullable=True)
+    # {requested service_id: [fallback service_id, ...]} — tried in order by
+    # inference-service when the requested service's model is unreachable.
+    # Ids live in the core DB (mm_services), so no FK — validated on save.
+    service_fallbacks = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"), default=dict)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     created_by = Column(UUID(as_uuid=True), nullable=True)
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

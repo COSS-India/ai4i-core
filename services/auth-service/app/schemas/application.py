@@ -10,9 +10,9 @@ contract predates it and didn't include it.
 
 from datetime import datetime
 from decimal import Decimal
-from typing import List, Optional
+from typing import Annotated, Dict, List, Optional
 
-from pydantic import ConfigDict, Field, field_validator
+from pydantic import BeforeValidator, ConfigDict, Field, field_validator
 
 from app.models.application import ApplicationStatus
 from app.schemas.base import BaseSchema
@@ -20,6 +20,29 @@ from app.schemas.common import SuccessResponse
 
 # Matches applications.allocated_percentage — Numeric(5, 2): 0.00–100.00
 _MAX_PERCENTAGE = Decimal("100")
+
+
+def clean_service_fallbacks(v: Dict[str, List[str]]) -> Dict[str, List[str]]:
+    """Shape checks for ``service_fallbacks`` ({requested service_id: [fallback, ...]}):
+    ids stripped, empty lists dropped, no blank ids, and a list may not repeat
+    a service or name its own primary. Whether each id is a published service
+    in the Institution's Tier with its primary's task type is checked on save
+    (service_fallback_validator)."""
+    out: Dict[str, List[str]] = {}
+    for primary, fallbacks in v.items():
+        primary, fallbacks = primary.strip(), [f.strip() for f in fallbacks]
+        if not primary or "" in fallbacks:
+            raise ValueError("service ids must not be blank")
+        if primary in fallbacks or len(set(fallbacks)) != len(fallbacks):
+            raise ValueError(f"fallbacks of '{primary}' must not repeat a service or include '{primary}'")
+        if fallbacks:
+            out[primary] = fallbacks
+    return out
+
+
+# Response field: the column is NOT NULL default {}, but an Application not yet
+# flushed (tests, in-memory objects) carries None — never null in the API.
+ServiceFallbacks = Annotated[Dict[str, List[str]], BeforeValidator(lambda v: v or {})]
 
 
 _APPLICATION_CREATE_EXAMPLE = {
@@ -46,6 +69,12 @@ class ApplicationCreate(BaseSchema):
     description: Optional[str] = Field(None, max_length=500)
     domain: Optional[str] = Field(None, max_length=255)
     allocated_percentage: Optional[Decimal] = Field(None, ge=0, le=_MAX_PERCENTAGE)
+    service_fallbacks: Optional[Dict[str, List[str]]] = None
+
+    @field_validator("service_fallbacks", mode="after")
+    @classmethod
+    def _clean_service_fallbacks(cls, v):
+        return None if v is None else clean_service_fallbacks(v)
 
     @field_validator("name", mode="before")
     @classmethod
@@ -88,7 +117,7 @@ _APPLICATION_UPDATE_EXAMPLE = {
 
 
 class ApplicationUpdate(BaseSchema):
-    """PATCH body: name / domain / status only.
+    """PATCH body: name / domain / status / policy_id / service_fallbacks.
 
     ``extra="forbid"`` is what turns a client-sent ``allocated_percentage`` or
     ``allocated_budget`` into a 422 (contract: "allocation field sent —
@@ -103,6 +132,15 @@ class ApplicationUpdate(BaseSchema):
     domain: Optional[str] = Field(None, max_length=255)
     status: Optional[ApplicationStatus] = None
     policy_id: Optional[List[int]] = None
+    # Replaces the whole map; {} clears it. Omit to leave it unchanged.
+    service_fallbacks: Optional[Dict[str, List[str]]] = None
+
+    @field_validator("service_fallbacks", mode="after")
+    @classmethod
+    def _clean_service_fallbacks(cls, v):
+        if v is None:
+            raise ValueError("must not be null; send {} to clear")
+        return clean_service_fallbacks(v)
 
     @field_validator("name", mode="before")
     @classmethod
@@ -154,6 +192,7 @@ class ApplicationResponse(BaseSchema):
     allocated_budget: Optional[Decimal] = None
     status: ApplicationStatus
     policy_id: Optional[List[int]] = None
+    service_fallbacks: ServiceFallbacks = Field(default_factory=dict)
     created_at: datetime
 
 
@@ -168,6 +207,7 @@ class ApplicationListItem(BaseSchema):
     allocated_budget: Optional[Decimal] = None
     status: ApplicationStatus
     policy_id: Optional[List[int]] = None
+    service_fallbacks: ServiceFallbacks = Field(default_factory=dict)
 
 
 class ApplicationListData(BaseSchema):

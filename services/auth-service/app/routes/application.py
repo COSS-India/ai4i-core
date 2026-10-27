@@ -52,15 +52,17 @@ async def create_application(
     body: ApplicationCreate,
     current_user: User = Depends(get_current_user),
     svc: ApplicationService = Depends(get_application_service),
+    platform_core_db: Optional[AsyncSession] = Depends(get_platform_core_db),
 ):
     """Onboard an Application under a tenant as an independent entity.
 
     Only Adopter Admin / Institution Admin may call this. Name must be unique
     within the tenant (case-insensitive). Budget is optional; when given as
     allocated_percentage, the sum of every Application's percentage under
-    this tenant must stay <= 100%.
+    this tenant must stay <= 100%. ``service_fallbacks`` is optional and
+    validated against the service catalogue (``platform_core_db``).
     """
-    app = await svc.create_application(tenant_id, body, current_user)
+    app = await svc.create_application(tenant_id, body, current_user, platform_core_db)
     return CreateApplicationResponse(data=to_response(app, ApplicationResponse))
 
 

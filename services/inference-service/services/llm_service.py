@@ -8,6 +8,7 @@ from typing import Any, AsyncIterator, Dict, Optional, Tuple
 import httpx
 
 from ai4i_core.context import (
+    get_api_key_id,
     get_application_id,
     get_trace_id,
     set_llm_usage_input_tokens,
@@ -19,6 +20,7 @@ from ai4i_core.context import (
 from ai4i_core.observability.utils import get_llm_cached_tokens, get_llm_usage
 from config import settings
 from inference.inference_server_resolver import InferenceServerResolver
+from services.service_fallback import get_fallbacks
 from services.guardrail import (
     GuardrailContext,
     GuardrailError,
@@ -39,6 +41,16 @@ _resolver = InferenceServerResolver()
 # Shared by the buffered, streaming and multipart paths so upstream transport
 # failures read identically in the logs whichever entry point hit them.
 _UPSTREAM_FAILED_LOG = "LLM upstream request failed (path=%s): %s"
+
+
+def _all_unavailable(service_id: str) -> Dict[str, Any]:
+    """503 body when the requested service and every configured fallback failed."""
+    return {
+        "error": {
+            "message": f"Service '{service_id}' and its fallback service(s) are unavailable",
+            "type": "all_services_unavailable",
+        }
+    }
 
 # This service only ever proxies OpenAI-compatible LLM calls — task_type is
 # never derived per-request (unlike Orchestrator's task services, which read
@@ -360,6 +372,73 @@ class OpenAIProxyService:
             logger.info("Scope: %s", guardrail_ctx.scopes)
         # ─────────────────────────────────────────────────────────────────
 
+        status_code, body = await self._forward_traced(path, url, service_id, model_name, payload, service_info)
+        if status_code >= 500:
+            # The model server is unreachable or failed: the Application's
+            # fallbacks for it, in order. A 4xx is the client's and is returned.
+            tried = False
+            async for fb_id, fb_url, fb_model, fb_payload, fb_info in self._fallbacks_for(
+                path, payload, service_id, request, status_code
+            ):
+                tried = True
+                status_code, body = await self._forward_traced(path, fb_url, fb_id, fb_model, fb_payload, fb_info)
+                if status_code < 500:
+                    if request is not None:
+                        request.state.service_id = fb_id
+                    break
+            if tried and status_code >= 500:
+                status_code, body = 503, _all_unavailable(service_id)
+
+        # ── PII guardrail: process response + fire-and-forget audit log ───
+        if guardrail_ctx.active:
+            if status_code == 200 and isinstance(body, dict):
+                try:
+                    choices = body.get("choices") or []
+                    if choices and isinstance((choices[0].get("message") or {}).get("content"), str):
+                        content = choices[0]["message"]["content"]
+                        content = await asyncio.to_thread(process_response_text, content, guardrail_ctx)
+                        body = {
+                            **body,
+                            "choices": [
+                                {**choices[0], "message": {**choices[0]["message"], "content": content}},
+                                *choices[1:],
+                            ],
+                        }
+                except Exception:
+                    logger.error("Guardrail response processing failed, blocking response", exc_info=True)
+                    schedule_audit_log(
+                        ctx=guardrail_ctx,
+                        trace_id=get_trace_id(),
+                        model_request=payload,
+                        response={},
+                        app_id=app_id,
+                        status_code=500,
+                    )
+                    return 500, {"error": {"message": "Response blocked: PII policy enforcement failed", "type": "guardrail_error"}}
+            schedule_audit_log(
+                ctx=guardrail_ctx,
+                trace_id=get_trace_id(),
+                model_request=payload,
+                response=body,
+                app_id=app_id,
+                status_code=status_code,
+            )
+        # ─────────────────────────────────────────────────────────────────
+
+        return status_code, body
+
+    async def _forward_traced(
+        self,
+        path: str,
+        url: str,
+        service_id: str,
+        model_name: str,
+        payload: Any,
+        service_info: Dict[str, Any],
+    ) -> Tuple[int, Any]:
+        """One upstream call inside its own model + ai-inference spans, so a
+        fallback attempt is traced (and billed) exactly like the requested
+        service."""
         with traced_span("model") as model_attrs:
             self._seed_model_attrs(model_attrs, service_id, model_name)
 
@@ -420,43 +499,33 @@ class OpenAIProxyService:
                     set_llm_usage_cached_input_tokens(infer_attrs["cached_input_tokens"])
                     set_llm_usage_model_name(model_attrs["model_name"])
 
-        # ── PII guardrail: process response + fire-and-forget audit log ───
-        if guardrail_ctx.active:
-            if status_code == 200 and isinstance(body, dict):
-                try:
-                    choices = body.get("choices") or []
-                    if choices and isinstance((choices[0].get("message") or {}).get("content"), str):
-                        content = choices[0]["message"]["content"]
-                        content = await asyncio.to_thread(process_response_text, content, guardrail_ctx)
-                        body = {
-                            **body,
-                            "choices": [
-                                {**choices[0], "message": {**choices[0]["message"], "content": content}},
-                                *choices[1:],
-                            ],
-                        }
-                except Exception:
-                    logger.error("Guardrail response processing failed, blocking response", exc_info=True)
-                    schedule_audit_log(
-                        ctx=guardrail_ctx,
-                        trace_id=get_trace_id(),
-                        model_request=payload,
-                        response={},
-                        app_id=app_id,
-                        status_code=500,
-                    )
-                    return 500, {"error": {"message": "Response blocked: PII policy enforcement failed", "type": "guardrail_error"}}
-            schedule_audit_log(
-                ctx=guardrail_ctx,
-                trace_id=get_trace_id(),
-                model_request=payload,
-                response=body,
-                app_id=app_id,
-                status_code=status_code,
-            )
-        # ─────────────────────────────────────────────────────────────────
-
         return status_code, body
+
+    async def _fallbacks_for(
+        self, path: str, payload: Any, service_id: str, request: Optional[Any], upstream_status: int
+    ):
+        """The Application's fallbacks for ``service_id`` that still resolve and
+        pass the Tier gate, each prepared like the requested service (same
+        messages, ``model`` = the fallback's upstream model name)."""
+        if not isinstance(payload, dict):
+            return
+        for fallback_id in await get_fallbacks(service_id):
+            try:
+                url, _, model_name, fb_payload, service_info = await self._prepare_request(
+                    path=path, payload={**payload, "model": fallback_id}, request=request,
+                )
+            except LLMProxyError as exc:  # unknown, unpublished or out of Tier: skip it
+                logger.warning(
+                    "service_fallback_skipped fallback_service_id=%s status=%s", fallback_id, exc.status_code
+                )
+                continue
+            logger.warning(
+                "service_failover application_id=%s api_key_id=%s requested_service_id=%s "
+                "fallback_service_id=%s reason=upstream_%s",
+                get_application_id() or "", get_api_key_id() or "", service_id, fallback_id, upstream_status,
+            )
+            yield fallback_id, url, model_name, fb_payload, service_info
+
 
     async def open_stream(
         self, upstream_url: str, payload: Any, service_info: Dict[str, Any]
@@ -647,6 +716,22 @@ class OpenAIProxyService:
         payload = self._with_include_usage(payload)
 
         kind, status_code, result = await self.proxy_stream(path=url, payload=payload, service_info=service_info)
+        if kind == "error" and status_code >= 500:
+            # Nothing has reached the client yet, so the stream can still move
+            # to a fallback; once a stream has started it is never switched.
+            tried = False
+            async for fb_id, fb_url, fb_model, fb_payload, fb_info in self._fallbacks_for(
+                path, payload, service_id, request, status_code
+            ):
+                tried = True
+                kind, status_code, result = await self.proxy_stream(path=fb_url, payload=fb_payload, service_info=fb_info)
+                if kind == "stream" or status_code < 500:
+                    service_id, model_name, payload, service_info = fb_id, fb_model, fb_payload, fb_info
+                    if request is not None:
+                        request.state.service_id = fb_id
+                    break
+            if tried and kind == "error" and status_code >= 500:
+                status_code, result = 503, _all_unavailable(service_id)
         if kind == "error":
             if guardrail_ctx.active:
                 schedule_audit_log(

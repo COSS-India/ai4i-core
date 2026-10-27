@@ -25,6 +25,7 @@ from models.common import ChatCompletionResponse, GenericInferenceResponse
 from orchestrator import Orchestrator
 from services.llm_service import OpenAIProxyService
 from trace.request_span import traced_span, get_context_attributes
+from utils.failover import AllServicesUnavailableError
 from utils.http_status import http_status_for
 from trace.request_tags import strip_caller_tags, validate_request_tags
 
@@ -74,6 +75,13 @@ def _http_error_for(exc: Exception, task_type: str) -> HTTPException:
             if (type(cause) is LookupError) if status_code == 404 else isinstance(cause, decisive[status_code]):
                 return HTTPException(status_code=status_code, detail=str(cause))
             cause = cause.__cause__
+    if status_code == 503:
+        # The requested service and every configured fallback failed; the
+        # message names only service ids, never upstream endpoints.
+        cause = exc
+        while cause is not None and not isinstance(cause, AllServicesUnavailableError):
+            cause = cause.__cause__
+        return HTTPException(status_code=503, detail=str(cause))
     if status_code == 502:
         return HTTPException(status_code=502, detail=f"{task_type}: upstream inference dependency failed")
     return HTTPException(status_code=500, detail=f"{task_type}: internal error")
@@ -534,6 +542,10 @@ async def _run_llm_chat_consolidated(request: Request, payload: Dict[str, Any], 
         status_code, body = await OpenAIProxyService().proxy_traced(
             path=path, payload=payload, request=request,
         )
+        # A configured fallback may have answered (request.state.service_id
+        # is updated by proxy_traced): the request span names the service
+        # that actually served it, like the Triton path.
+        req_attrs["service_id"] = getattr(request.state, "service_id", "") or req_attrs["service_id"]
         # Same values llm_service.py already read from the vLLM `usage` block
         # onto the ai-inference span (via ai4i_core.context) — bridged here so
         # ObservabilityMiddleware reads one shared count instead of re-parsing

@@ -30,6 +30,7 @@ from app.services import budget_usage
 from app.services.api_key_service import APIKeyService
 from app.services.authorization import authorize_institution_scope
 from app.services.cache_service import CacheService
+from app.services.service_fallback_validator import validate_service_fallbacks
 
 _HUNDRED = Decimal("100")
 _CENTS = Decimal("0.01")
@@ -96,12 +97,16 @@ class ApplicationService:
         tenant_id: int,
         body: ApplicationCreate,
         current_user: User,
+        platform_core_db: Optional[AsyncSession] = None,
     ) -> Application:
         await authorize_institution_scope(self._roles, current_user, tenant_id)
         tenant = await self._load_tenant_or_404(tenant_id)
 
         if await self._applications.get_by_name(tenant_id, body.name):
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=dict(_NAME_CONFLICT_DETAIL))
+
+        service_fallbacks = body.service_fallbacks or {}
+        await validate_service_fallbacks(service_fallbacks, tenant.tier_id, platform_core_db)
 
         allocated_budget = None
         if body.allocated_percentage is not None:
@@ -122,11 +127,14 @@ class ApplicationService:
             domain=body.domain,
             allocated_percentage=body.allocated_percentage,
             allocated_budget=allocated_budget,
+            service_fallbacks=service_fallbacks,
             created_by=current_user.id,
         )
         await self._applications.create(app)
         await self._commit_or_raise_name_conflict()
         await self._applications.refresh(app)
+        if self._cache is not None:
+            await self._cache.set_app_service_fallbacks(app.id, app.service_fallbacks)
         return app
 
     async def _commit_or_raise_name_conflict(self) -> None:
@@ -257,6 +265,10 @@ class ApplicationService:
             if existing and existing.id != application_id:
                 raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=dict(_NAME_CONFLICT_DETAIL))
 
+        if "service_fallbacks" in data:
+            tenant = await self._load_tenant_or_404(tenant_id)
+            await validate_service_fallbacks(data["service_fallbacks"], tenant.tier_id, platform_core_db)
+
         zeroed_key_ids: list[int] = []
         if data.get("status") == ApplicationStatus.INACTIVE and app.status == ApplicationStatus.ACTIVE:
             # Release this Application's own allocation on deactivation —
@@ -309,5 +321,7 @@ class ApplicationService:
         # request without any extra API call.
         if "policy_id" in data and self._cache is not None:
             await self._cache.set_app_policy_ids(app.id, app.policy_id or [])
+        if "service_fallbacks" in data and self._cache is not None:
+            await self._cache.set_app_service_fallbacks(app.id, app.service_fallbacks)
 
         return app
