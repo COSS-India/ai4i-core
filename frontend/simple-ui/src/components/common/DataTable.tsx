@@ -58,6 +58,7 @@ import {
   getTruncateCellProps,
   resolveAdminColumnLayouts,
   shouldAutoTruncateColumn,
+  type AdminColumnLayout,
 } from "./dataTableUtils";
 
 export { DATA_TABLE_CELL_MAX_W };
@@ -952,17 +953,19 @@ function resolveAdminEmptyText(options: {
   return options.emptyMessage;
 }
 
+type AdminTableLoadingBodyProps<T> = Readonly<{
+  columns: DataTableColumn<T>[];
+  columnCount: number;
+  rowChevron: boolean;
+  loadingContent?: React.ReactNode;
+}>;
+
 function AdminTableLoadingBody<T>({
   columns,
   columnCount,
   rowChevron,
   loadingContent,
-}: {
-  columns: DataTableColumn<T>[];
-  columnCount: number;
-  rowChevron: boolean;
-  loadingContent?: React.ReactNode;
-}): React.ReactElement {
+}: AdminTableLoadingBodyProps<T>): React.ReactElement {
   if (loadingContent) {
     return (
       <Tr>
@@ -997,15 +1000,17 @@ function AdminTableLoadingBody<T>({
   );
 }
 
+type AdminTableEmptyBodyProps = Readonly<{
+  columnCount: number;
+  emptyContent?: React.ReactNode;
+  emptyText: string;
+}>;
+
 function AdminTableEmptyBody({
   columnCount,
   emptyContent,
   emptyText,
-}: {
-  columnCount: number;
-  emptyContent?: React.ReactNode;
-  emptyText: string;
-}): React.ReactElement {
+}: AdminTableEmptyBodyProps): React.ReactElement {
   return (
     <Tr>
       <Td colSpan={columnCount} py={6} overflow="visible">
@@ -1020,6 +1025,105 @@ function AdminTableEmptyBody({
   );
 }
 
+type AdminTableDataBodyProps<T> = Readonly<{
+  displayItems: T[];
+  columns: DataTableColumn<T>[];
+  columnLayouts: ReturnType<typeof resolveAdminColumnLayouts>;
+  getRowKey: (row: T) => string;
+  getSubRows?: (row: T) => readonly T[];
+  onRowClick?: (row: T) => void;
+  rowChevron: boolean;
+}>;
+
+function renderAdminDataCell<T>(
+  col: DataTableColumn<T>,
+  row: T,
+  parentIndex: number,
+  layout: AdminColumnLayout,
+): React.ReactElement {
+  const truncate = shouldAutoTruncateColumn(col);
+  const content = col.cell(row, parentIndex);
+  const numeric = Boolean(col.isNumeric || col.align === "center" || col.align === "right");
+  return (
+    <Td
+      key={col.id}
+      py={4}
+      isNumeric={col.isNumeric}
+      textAlign={col.align}
+      w={layout.w}
+      minW={layout.minW}
+      maxW={layout.maxW}
+      whiteSpace={layout.whiteSpace}
+      sx={numeric ? { fontVariantNumeric: "tabular-nums" } : undefined}
+      {...(col.tdProps ?? {})}
+      overflow="hidden"
+    >
+      {truncate ? (
+        <TruncatingCellContent>{content}</TruncatingCellContent>
+      ) : (
+        <Box minW={0} w="100%" maxW="100%">
+          {content}
+        </Box>
+      )}
+    </Td>
+  );
+}
+
+function AdminTableDataRow<T>({
+  row,
+  parentIndex,
+  isSubRow,
+  columns,
+  columnLayouts,
+  getRowKey,
+  onRowClick,
+  rowChevron,
+}: Readonly<{
+  row: T;
+  parentIndex: number;
+  isSubRow: boolean;
+  columns: DataTableColumn<T>[];
+  columnLayouts: ReturnType<typeof resolveAdminColumnLayouts>;
+  getRowKey: (row: T) => string;
+  onRowClick?: (row: T) => void;
+  rowChevron: boolean;
+}>): React.ReactElement {
+  return (
+    <Tr
+      key={getRowKey(row)}
+      onClick={onRowClick ? () => onRowClick(row) : undefined}
+      cursor={onRowClick ? "pointer" : undefined}
+      bg={isSubRow ? "ink.50" : undefined}
+      _hover={{
+        bg: "#FAFBFE",
+        ...(rowChevron ? { "& .data-table-chevron": { color: "ink.600" } } : {}),
+      }}
+      transition="background 0.15s"
+    >
+      {columns.map((col) =>
+        renderAdminDataCell(col, row, parentIndex, columnLayouts.get(col.id) ?? { minW: 0 }),
+      )}
+      {rowChevron ? (
+        <Td
+          w={ADMIN_CHEVRON_COLUMN_WIDTH}
+          minW={ADMIN_CHEVRON_COLUMN_WIDTH}
+          maxW={ADMIN_CHEVRON_COLUMN_WIDTH}
+          px={1}
+          py={4}
+          textAlign="right"
+          whiteSpace="nowrap"
+        >
+          <ChevronRightIcon
+            className="data-table-chevron"
+            boxSize={3.5}
+            color="gray.300"
+          />
+        </Td>
+      ) : null}
+    </Tr>
+  );
+}
+
 function AdminTableDataBody<T>({
   displayItems,
   columns,
@@ -1028,83 +1132,23 @@ function AdminTableDataBody<T>({
   getSubRows,
   onRowClick,
   rowChevron,
-}: {
-  displayItems: T[];
-  columns: DataTableColumn<T>[];
-  columnLayouts: ReturnType<typeof resolveAdminColumnLayouts>;
-  getRowKey: (row: T) => string;
-  getSubRows?: (row: T) => readonly T[];
-  onRowClick?: (row: T) => void;
-  rowChevron: boolean;
-}): React.ReactElement {
+}: AdminTableDataBodyProps<T>): React.ReactElement {
   return (
     <>
       {displayItems.flatMap((parent, parentIndex) =>
-        [parent, ...(getSubRows?.(parent) ?? [])].map((row, subIndex) => {
-          const isSubRow = subIndex > 0;
-          return (
-            <Tr
-              key={getRowKey(row)}
-              onClick={onRowClick ? () => onRowClick(row) : undefined}
-              cursor={onRowClick ? "pointer" : undefined}
-              bg={isSubRow ? "ink.50" : undefined}
-              _hover={{
-                bg: "#FAFBFE",
-                ...(rowChevron ? { "& .data-table-chevron": { color: "ink.600" } } : {}),
-              }}
-              transition="background 0.15s"
-            >
-              {columns.map((col) => {
-                const truncate = shouldAutoTruncateColumn(col);
-                const content = col.cell(row, parentIndex);
-                const numeric = Boolean(
-                  col.isNumeric || col.align === "center" || col.align === "right",
-                );
-                const layout = columnLayouts.get(col.id) ?? { minW: 0 };
-                return (
-                  <Td
-                    key={col.id}
-                    py={4}
-                    isNumeric={col.isNumeric}
-                    textAlign={col.align}
-                    w={layout.w}
-                    minW={layout.minW}
-                    maxW={layout.maxW}
-                    whiteSpace={layout.whiteSpace}
-                    sx={numeric ? { fontVariantNumeric: "tabular-nums" } : undefined}
-                    {...(col.tdProps ?? {})}
-                    overflow="hidden"
-                  >
-                    {truncate ? (
-                      <TruncatingCellContent>{content}</TruncatingCellContent>
-                    ) : (
-                      <Box minW={0} w="100%" maxW="100%">
-                        {content}
-                      </Box>
-                    )}
-                  </Td>
-                );
-              })}
-              {rowChevron ? (
-                <Td
-                  w={ADMIN_CHEVRON_COLUMN_WIDTH}
-                  minW={ADMIN_CHEVRON_COLUMN_WIDTH}
-                  maxW={ADMIN_CHEVRON_COLUMN_WIDTH}
-                  px={1}
-                  py={4}
-                  textAlign="right"
-                  whiteSpace="nowrap"
-                >
-                  <ChevronRightIcon
-                    className="data-table-chevron"
-                    boxSize={3.5}
-                    color="gray.300"
-                  />
-                </Td>
-              ) : null}
-            </Tr>
-          );
-        }),
+        [parent, ...(getSubRows?.(parent) ?? [])].map((row, subIndex) => (
+          <AdminTableDataRow
+            key={getRowKey(row)}
+            row={row}
+            parentIndex={parentIndex}
+            isSubRow={subIndex > 0}
+            columns={columns}
+            columnLayouts={columnLayouts}
+            getRowKey={getRowKey}
+            onRowClick={onRowClick}
+            rowChevron={rowChevron}
+          />
+        )),
       )}
     </>
   );
@@ -1157,40 +1201,280 @@ function renderAdminTableBody<T>(options: {
   );
 }
 
-function AdminLayoutDataTable<T>({
-  items,
+function adminHeaderSx<T>(col: DataTableColumn<T>) {
+  return {
+    ...DATA_TABLE_HEADER_SX,
+    ...(col.isNumeric || col.align === "right" ? { textAlign: "right" as const } : {}),
+    ...(col.align === "center" ? { textAlign: "center" as const } : {}),
+  };
+}
+
+function AdminTableHead<T>({
   columns,
-  getRowKey,
-  search,
-  filterDefs,
-  hasActiveFilters = false,
-  onClearFilters,
-  filterToolbarAlign = "flex-start",
-  filterToolbarRightContent,
-  toolbarAttached = false,
-  showFiltersHeading = false,
-  filtersHeading = "Filters",
+  columnLayouts,
   sort,
   onSortChange,
-  paginate = "client",
-  initialPageSize = 25,
-  pageSizeOptions = DEFAULT_PAGE_SIZE_OPTIONS,
-  serverPagination,
-  isLoading = false,
-  loadingMessage = "Loading…",
-  loadingContent,
-  emptyMessage = "No items found.",
-  emptyContent,
-  noResultsMessage = "No items match the current filters.",
-  unfilteredCount,
-  onRowClick,
-  maxHeight = "60vh",
-  tableContainerProps,
-  size = "sm",
-  paginationPosition = "bottom",
-  showRowChevron,
-  getSubRows,
-}: DataTableAdminProps<T>) {
+  rowChevron,
+}: Readonly<{
+  columns: DataTableColumn<T>[];
+  columnLayouts: ReturnType<typeof resolveAdminColumnLayouts>;
+  sort?: DataTableSortState;
+  onSortChange?: (next: DataTableSortState) => void;
+  rowChevron: boolean;
+}>): React.ReactElement {
+  return (
+    <Thead bg="ink.50" position="sticky" top={0} zIndex={1}>
+      <Tr>
+        {columns.map((col) => {
+          const layout = columnLayouts.get(col.id) ?? { minW: 0 };
+          return (
+            <Th
+              key={col.id}
+              py={3}
+              overflow="hidden"
+              w={layout.w}
+              minW={layout.minW}
+              maxW={layout.maxW}
+              whiteSpace={layout.whiteSpace}
+              sx={adminHeaderSx(col)}
+              {...(col.thProps ?? {})}
+            >
+              <AdminSortableHeader col={col} sort={sort} onSortChange={onSortChange} />
+            </Th>
+          );
+        })}
+        {rowChevron ? (
+          <Th
+            w={ADMIN_CHEVRON_COLUMN_WIDTH}
+            minW={ADMIN_CHEVRON_COLUMN_WIDTH}
+            maxW={ADMIN_CHEVRON_COLUMN_WIDTH}
+            px={1}
+            py={3}
+            whiteSpace="nowrap"
+            sx={DATA_TABLE_HEADER_SX}
+          />
+        ) : null}
+      </Tr>
+    </Thead>
+  );
+}
+
+function buildAdminPaginationBlock(
+  pagination: AdminPaginationControls | null,
+  paginate: DataTableAdminProps<unknown>["paginate"],
+  paginationPosition: "top" | "bottom",
+): React.ReactNode {
+  if (paginate === false || !pagination || pagination.totalItems <= 0) {
+    return null;
+  }
+  return (
+    <TablePaginationBar
+      startRow={pagination.startRow}
+      endRow={pagination.endRow}
+      totalItems={pagination.totalItems}
+      page={pagination.page}
+      totalPages={pagination.totalPages}
+      pageSize={pagination.pageSize}
+      pageSizeOptions={pagination.pageSizeOptions}
+      onPageSizeChange={pagination.onPageSizeChange}
+      onFirst={pagination.onFirst}
+      onPrev={pagination.onPrev}
+      onNext={pagination.onNext}
+      onLast={pagination.onLast}
+      canPrev={pagination.canPrev}
+      canNext={pagination.canNext}
+      borderColor="ink.200"
+      bg="ink.50"
+      variant="attached"
+      placement={paginationPosition}
+    />
+  );
+}
+
+function AdminFilterToolbarSection({
+  search,
+  filterDefs,
+  hasActiveFilters,
+  onClear,
+  filterToolbarAlign,
+  filterToolbarRightContent,
+  toolbarAttached,
+  showFiltersHeading,
+  filtersHeading,
+  toolbarLabelsVisible,
+}: Readonly<{
+  search?: DataTableSearchConfig;
+  filterDefs?: DataTableFilterDef[];
+  hasActiveFilters: boolean;
+  onClear?: () => void;
+  filterToolbarAlign: "flex-start" | "center";
+  filterToolbarRightContent?: React.ReactNode;
+  toolbarAttached: boolean;
+  showFiltersHeading: boolean;
+  filtersHeading: string;
+  toolbarLabelsVisible: boolean;
+}>): React.ReactElement | null {
+  if (!search && !(filterDefs && filterDefs.length > 0)) {
+    return null;
+  }
+  return (
+    <Box
+      px={toolbarAttached ? 4 : 0}
+      py={toolbarAttached ? 3 : 0}
+      borderBottomWidth={toolbarAttached ? "1px" : 0}
+      borderColor="ink.100"
+    >
+      <VStack spacing={4} align="stretch">
+        {showFiltersHeading ? (
+          <Text fontSize="sm" fontWeight="semibold" color="gray.700" userSelect="none">
+            {filtersHeading}
+          </Text>
+        ) : null}
+        <TableFilterToolbar
+          hasActiveFilters={hasActiveFilters}
+          onClear={onClear}
+          align={filterToolbarAlign}
+          alignActionsToInputs={toolbarLabelsVisible}
+          rightContent={filterToolbarRightContent}
+        >
+          <ConfigDrivenFilters search={search} filterDefs={filterDefs} />
+        </TableFilterToolbar>
+      </VStack>
+    </Box>
+  );
+}
+
+function AdminTableSurface({
+  toolbarAttached,
+  showPagination,
+  paginationPosition,
+  paginationBlock,
+  tableBody,
+}: Readonly<{
+  toolbarAttached: boolean;
+  showPagination: boolean;
+  paginationPosition: "top" | "bottom";
+  paginationBlock: React.ReactNode;
+  tableBody: React.ReactNode;
+}>): React.ReactElement {
+  const showTop = showPagination && paginationPosition === "top";
+  const showBottom = showPagination && paginationPosition === "bottom";
+  return (
+    <Box
+      w="full"
+      minW={0}
+      borderWidth={toolbarAttached ? 0 : "1px"}
+      borderColor="ink.200"
+      borderRadius={toolbarAttached ? 0 : "14px"}
+      bg="white"
+      overflow="hidden"
+    >
+      {showTop ? paginationBlock : null}
+      {tableBody}
+      {showBottom ? paginationBlock : null}
+    </Box>
+  );
+}
+
+function AdminTableFrame({
+  toolbarAttached,
+  toolbar,
+  tableSurface,
+  filterContextValue,
+}: Readonly<{
+  toolbarAttached: boolean;
+  toolbar: React.ReactNode;
+  tableSurface: React.ReactNode;
+  filterContextValue: {
+    resetPage: () => void;
+    inputBg: string;
+    deferApply: boolean;
+  };
+}>): React.ReactElement {
+  const stack = (
+    <VStack spacing={toolbarAttached ? 0 : 4} align="stretch" w="full" minW={0}>
+      {toolbar}
+      {tableSurface}
+    </VStack>
+  );
+  const content = toolbarAttached ? (
+    <Box
+      w="full"
+      minW={0}
+      borderWidth="1px"
+      borderColor="ink.200"
+      borderRadius="lg"
+      bg="white"
+      overflow="hidden"
+    >
+      {stack}
+    </Box>
+  ) : (
+    stack
+  );
+  return (
+    <DataTableFilterContext.Provider value={filterContextValue}>
+      {content}
+    </DataTableFilterContext.Provider>
+  );
+}
+
+function stripAdminTableContainerChrome(
+  tableContainerProps: Omit<TableContainerProps, "children"> | undefined,
+): {
+  containerMaxH: TableContainerProps["maxH"];
+  restTableContainerProps: Omit<TableContainerProps, "children">;
+} {
+  const {
+    borderWidth: _borderWidth,
+    borderColor: _borderColor,
+    borderRadius: _borderRadius,
+    bg: _bg,
+    overflow: _overflow,
+    overflowX: _overflowX,
+    overflowY: _overflowY,
+    maxH: containerMaxH,
+    ...restTableContainerProps
+  } = tableContainerProps ?? {};
+  return { containerMaxH, restTableContainerProps };
+}
+
+function AdminLayoutDataTable<T>(props: DataTableAdminProps<T>) {
+  const {
+    items,
+    columns,
+    getRowKey,
+    search,
+    filterDefs,
+    hasActiveFilters = false,
+    onClearFilters,
+    filterToolbarAlign = "flex-start",
+    filterToolbarRightContent,
+    toolbarAttached = false,
+    showFiltersHeading = false,
+    filtersHeading = "Filters",
+    sort,
+    onSortChange,
+    paginate = "client",
+    initialPageSize = 25,
+    pageSizeOptions = DEFAULT_PAGE_SIZE_OPTIONS,
+    serverPagination,
+    isLoading = false,
+    loadingMessage = "Loading…",
+    loadingContent,
+    emptyMessage = "No items found.",
+    emptyContent,
+    noResultsMessage = "No items match the current filters.",
+    unfilteredCount,
+    onRowClick,
+    maxHeight = "60vh",
+    tableContainerProps,
+    size = "sm",
+    paginationPosition = "bottom",
+    showRowChevron,
+    getSubRows,
+  } = props;
+
   const { cardBg } = useAdminTableSurface();
   const rowChevron = showRowChevron ?? Boolean(onRowClick);
   const columnLayouts = useMemo(
@@ -1215,7 +1499,6 @@ function AdminLayoutDataTable<T>({
   );
 
   const displayItems = paginate === "client" ? clientTable.paginatedItems : items;
-
   const pagination = resolveAdminPagination(
     paginate,
     clientTable,
@@ -1229,7 +1512,6 @@ function AdminLayoutDataTable<T>({
   }, [onClearFilters, pagination?.resetPage]);
 
   const deferApply = Boolean(search?.onSubmit);
-
   const filterContextValue = useMemo(
     () => ({
       resetPage: pagination?.resetPage ?? (() => {}),
@@ -1246,56 +1528,22 @@ function AdminLayoutDataTable<T>({
     clientTotalItems: clientTable.totalItems,
     itemCount: items.length,
   });
-
   const emptyText = resolveAdminEmptyText({
     hasActiveFilters,
     unfilteredCount,
     noResultsMessage,
     emptyMessage,
   });
-
-  const paginationBlock =
-    paginate !== false && pagination && pagination.totalItems > 0 ? (
-      <TablePaginationBar
-        startRow={pagination.startRow}
-        endRow={pagination.endRow}
-        totalItems={pagination.totalItems}
-        page={pagination.page}
-        totalPages={pagination.totalPages}
-        pageSize={pagination.pageSize}
-        pageSizeOptions={pagination.pageSizeOptions}
-        onPageSizeChange={pagination.onPageSizeChange}
-        onFirst={pagination.onFirst}
-        onPrev={pagination.onPrev}
-        onNext={pagination.onNext}
-        onLast={pagination.onLast}
-        canPrev={pagination.canPrev}
-        canNext={pagination.canNext}
-        borderColor="ink.200"
-        bg="ink.50"
-        variant="attached"
-        placement={paginationPosition}
-      />
-    ) : null;
-
-  const hasFilterToolbar = Boolean(search || (filterDefs && filterDefs.length > 0));
+  const paginationBlock = buildAdminPaginationBlock(
+    pagination,
+    paginate,
+    paginationPosition,
+  );
   const toolbarLabelsVisible =
     Boolean(search && !search.hideLabel) ||
     (filterDefs ?? []).some((def) => !def.hideLabel);
-
-  // Outer shell owns border/radius; strip chrome / overflow overrides so columns stay viewport-fit.
-  const {
-    borderWidth: _borderWidth,
-    borderColor: _borderColor,
-    borderRadius: _borderRadius,
-    bg: _bg,
-    overflow: _overflow,
-    overflowX: _overflowX,
-    overflowY: _overflowY,
-    maxH: containerMaxH,
-    ...restTableContainerProps
-  } = tableContainerProps ?? {};
-
+  const { containerMaxH, restTableContainerProps } =
+    stripAdminTableContainerChrome(tableContainerProps);
   const columnCount = columns.length + (rowChevron ? 1 : 0);
 
   const tableBody = (
@@ -1320,46 +1568,13 @@ function AdminLayoutDataTable<T>({
           "th, td": { verticalAlign: "middle" },
         }}
       >
-        <Thead bg="ink.50" position="sticky" top={0} zIndex={1}>
-          <Tr>
-            {columns.map((col) => {
-              const headerSx = {
-                ...DATA_TABLE_HEADER_SX,
-                ...(col.isNumeric || col.align === "right"
-                  ? { textAlign: "right" as const }
-                  : {}),
-                ...(col.align === "center" ? { textAlign: "center" as const } : {}),
-              };
-              const layout = columnLayouts.get(col.id) ?? { minW: 0 };
-              return (
-                <Th
-                  key={col.id}
-                  py={3}
-                  overflow="hidden"
-                  w={layout.w}
-                  minW={layout.minW}
-                  maxW={layout.maxW}
-                  whiteSpace={layout.whiteSpace}
-                  sx={headerSx}
-                  {...(col.thProps ?? {})}
-                >
-                  <AdminSortableHeader col={col} sort={sort} onSortChange={onSortChange} />
-                </Th>
-              );
-            })}
-            {rowChevron ? (
-              <Th
-                w={ADMIN_CHEVRON_COLUMN_WIDTH}
-                minW={ADMIN_CHEVRON_COLUMN_WIDTH}
-                maxW={ADMIN_CHEVRON_COLUMN_WIDTH}
-                px={1}
-                py={3}
-                whiteSpace="nowrap"
-                sx={DATA_TABLE_HEADER_SX}
-              />
-            ) : null}
-          </Tr>
-        </Thead>
+        <AdminTableHead
+          columns={columns}
+          columnLayouts={columnLayouts}
+          sort={sort}
+          onSortChange={onSortChange}
+          rowChevron={rowChevron}
+        />
         <Tbody>
           {renderAdminTableBody({
             isLoading,
@@ -1381,66 +1596,38 @@ function AdminLayoutDataTable<T>({
     </TableContainer>
   );
 
-  const toolbar = hasFilterToolbar ? (
-    <Box
-      px={toolbarAttached ? 4 : 0}
-      py={toolbarAttached ? 3 : 0}
-      borderBottomWidth={toolbarAttached ? "1px" : 0}
-      borderColor="ink.100"
-    >
-      <VStack spacing={4} align="stretch">
-        {showFiltersHeading ? (
-          <Text fontSize="sm" fontWeight="semibold" color="gray.700" userSelect="none">
-            {filtersHeading}
-          </Text>
-        ) : null}
-        <TableFilterToolbar
-          hasActiveFilters={hasActiveFilters}
-          onClear={onClearFilters ? handleClearFilters : undefined}
-          align={filterToolbarAlign}
-          alignActionsToInputs={toolbarLabelsVisible}
-          rightContent={filterToolbarRightContent}
-        >
-          <ConfigDrivenFilters search={search} filterDefs={filterDefs} />
-        </TableFilterToolbar>
-      </VStack>
-    </Box>
-  ) : null;
-
-  const showPagination = !isLoading && !showEmpty;
-  const tableSurface = (
-    <Box
-      w="full"
-      minW={0}
-      borderWidth={toolbarAttached ? 0 : "1px"}
-      borderColor="ink.200"
-      borderRadius={toolbarAttached ? 0 : "14px"}
-      bg="white"
-      overflow="hidden"
-    >
-      {showPagination && paginationPosition === "top" ? paginationBlock : null}
-      {tableBody}
-      {showPagination && paginationPosition === "bottom" ? paginationBlock : null}
-    </Box>
+  const toolbar = (
+    <AdminFilterToolbarSection
+      search={search}
+      filterDefs={filterDefs}
+      hasActiveFilters={hasActiveFilters}
+      onClear={onClearFilters ? handleClearFilters : undefined}
+      filterToolbarAlign={filterToolbarAlign}
+      filterToolbarRightContent={filterToolbarRightContent}
+      toolbarAttached={toolbarAttached}
+      showFiltersHeading={showFiltersHeading}
+      filtersHeading={filtersHeading}
+      toolbarLabelsVisible={toolbarLabelsVisible}
+    />
   );
 
-  const stack = (
-    <VStack spacing={toolbarAttached ? 0 : 4} align="stretch" w="full" minW={0}>
-      {toolbar}
-      {tableSurface}
-    </VStack>
+  const tableSurface = (
+    <AdminTableSurface
+      toolbarAttached={toolbarAttached}
+      showPagination={!isLoading && !showEmpty}
+      paginationPosition={paginationPosition}
+      paginationBlock={paginationBlock}
+      tableBody={tableBody}
+    />
   );
 
   return (
-    <DataTableFilterContext.Provider value={filterContextValue}>
-      {toolbarAttached ? (
-        <Box w="full" minW={0} borderWidth="1px" borderColor="ink.200" borderRadius="lg" bg="white" overflow="hidden">
-          {stack}
-        </Box>
-      ) : (
-        stack
-      )}
-    </DataTableFilterContext.Provider>
+    <AdminTableFrame
+      toolbarAttached={toolbarAttached}
+      toolbar={toolbar}
+      tableSurface={tableSurface}
+      filterContextValue={filterContextValue}
+    />
   );
 }
 

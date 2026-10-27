@@ -78,7 +78,7 @@ function normalizeColumnId(id: string): string {
 }
 
 function compactColumnId(id: string): string {
-  return normalizeColumnId(id).replace(/_/g, "");
+  return normalizeColumnId(id).replaceAll("_", "");
 }
 
 export function shouldAutoTruncateColumn(col: { id: string; truncate?: boolean }): boolean {
