@@ -24,6 +24,8 @@ REDIS_API_KEY_PREFIX = "auth:apikey:"
 # Redis key pattern: auth:app:{app_id}:policy_ids -> JSON list of policy IDs.
 # Written by auth-service on application create/update; read by inference-service
 # to resolve which policies apply to a request without an extra API call.
+# Same prefix for auth:app:{app_id}:service_fallbacks -> JSON map
+# {service_id: [fallback service_id, ...]}.
 REDIS_APP_POLICY_PREFIX = "auth:app:"
 
 # Redis key pattern: auth:logout:{user_id} -> unix timestamp of last logout.
@@ -156,6 +158,26 @@ class CacheService(_BaseCacheService):
             )
         except Exception as exc:
             logger.warning("Failed to set app policy_ids for app_id=%s: %s", app_id, exc)
+
+    async def set_app_service_fallbacks(self, app_id: int, service_fallbacks: dict) -> None:
+        """Persist the application's service_fallbacks map for inference-service.
+        No TTL — written on application create/update and on a miss (see
+        ApplicationService.get_service_fallbacks_internal), deleted on
+        deactivation. {} is written too, so an Application with no fallbacks
+        doesn't send every request back to the DB."""
+        try:
+            await self._redis.set(
+                f"{REDIS_APP_POLICY_PREFIX}{app_id}:service_fallbacks",
+                json.dumps(service_fallbacks or {}),
+            )
+        except Exception as exc:
+            logger.warning("Failed to set app service_fallbacks for app_id=%s: %s", app_id, exc)
+
+    async def delete_app_service_fallbacks(self, app_id: int) -> None:
+        try:
+            await self._redis.delete(f"{REDIS_APP_POLICY_PREFIX}{app_id}:service_fallbacks")
+        except Exception as exc:
+            logger.warning("Failed to delete app service_fallbacks for app_id=%s: %s", app_id, exc)
 
     async def get_app_policy_ids(self, app_id: int) -> Optional[list]:
         """Return the cached policy_id list for an application, or None on miss."""

@@ -52,6 +52,7 @@ async def create_application(
     body: ApplicationCreate,
     current_user: User = Depends(get_current_user),
     svc: ApplicationService = Depends(get_application_service),
+    platform_core_db: Optional[AsyncSession] = Depends(get_platform_core_db),
 ):
     """Onboard an Application under a tenant as an independent entity.
 
@@ -59,8 +60,12 @@ async def create_application(
     within the tenant (case-insensitive). Budget is optional; when given as
     allocated_percentage, the sum of every Application's percentage under
     this tenant must stay <= 100%.
+
+    ``service_fallbacks`` is optional: {service_id: [fallback, ...]}, every id
+    published, in the tenant's Tier, and each fallback the same task type as
+    its primary. ``platform_core_db`` is only used to validate it.
     """
-    app = await svc.create_application(tenant_id, body, current_user)
+    app = await svc.create_application(tenant_id, body, current_user, platform_core_db)
     return CreateApplicationResponse(data=to_response(app, ApplicationResponse))
 
 
@@ -125,14 +130,16 @@ async def update_application(
     svc: ApplicationService = Depends(get_application_service),
     platform_core_db: Optional[AsyncSession] = Depends(get_platform_core_db),
 ):
-    """Update name / domain / status. Budget is not editable here — 422 if sent.
+    """Update name / domain / status / service_fallbacks. Budget is not
+    editable here — 422 if sent.
 
     Name stays unique within the tenant (case-insensitive) after edit.
+    ``service_fallbacks`` replaces the whole map ({} clears it).
 
-    ``platform_core_db`` is only used when this update deactivates the
+    ``platform_core_db`` is used when this update deactivates the
     Application — it carries the zeroed ceiling through to platform-core's
     budget_usage.api_key_budget_snap for the Application's Keys, same as
-    the three Budget Allocation endpoints.
+    the three Budget Allocation endpoints — and to validate service_fallbacks.
     """
     app = await svc.update_application(
         tenant_id, application_id, body, current_user, platform_core_db

@@ -6,9 +6,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict
 
 from app.core.exceptions import EntityNotFoundError
-from app.dependencies.services import get_api_key_service, get_tenant_service
+from app.dependencies.services import get_api_key_service, get_application_service, get_tenant_service
 from app.schemas.quota import TierReactivatedRequest
 from app.services.api_key_service import APIKeyService
+from app.services.application_service import ApplicationService
 from app.services.tenant_service import TenantService
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,18 @@ async def get_tenant_plan(tenant_id: str, svc: TenantService = Depends(get_tenan
         return await svc.get_tenant_plan(tid)
     except EntityNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No plan found for tenant")
+
+
+@router.get("/applications/{application_id}/service-fallbacks")
+async def get_application_service_fallbacks(
+    application_id: int,
+    svc: ApplicationService = Depends(get_application_service),
+):
+    """inference-service's fallback when the Redis key
+    auth:app:{id}:service_fallbacks is missing: reads Postgres and writes the
+    key back. Unknown / INACTIVE Applications return an empty map."""
+    fallbacks = await svc.get_service_fallbacks_internal(application_id)
+    return {"application_id": application_id, "service_fallbacks": fallbacks}
 
 
 class BudgetExhaustedRequest(BaseModel):
