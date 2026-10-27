@@ -10,9 +10,9 @@ import {
 } from "../../config/constants";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 
-type InstitutionConfirmDialogsProps = {
+type InstitutionConfirmDialogsProps = Readonly<{
   tm: ReturnType<typeof useTenantManagement>;
-};
+}>;
 
 export default function InstitutionConfirmDialogs({ tm }: InstitutionConfirmDialogsProps) {
   function formatStatusConfirmLabel(

@@ -1,7 +1,9 @@
 import { INSTITUTION } from "../config/constants";
 import type { TenantView } from "../types/tenant";
 import {
+  validateEmailFormatOnly,
   validateTenantContactEmail,
+  validateTenantContactEmailTaken,
   validateTenantUserEmail,
 } from "./tenantEmailValidation";
 import {
@@ -94,7 +96,6 @@ export function collectEditTenantErrors(input: {
   tenants: TenantView[];
   isEditTenantEmailEditable: boolean;
   knownTenantEmails: Set<string>;
-  knownUserEmails: Set<string>;
   editTenantEmail: string | undefined;
 }): Record<string, string> {
   const {
@@ -106,7 +107,6 @@ export function collectEditTenantErrors(input: {
     tenants,
     isEditTenantEmailEditable,
     knownTenantEmails,
-    knownUserEmails,
     editTenantEmail,
   } = input;
   const errors: Record<string, string> = {};
@@ -123,16 +123,19 @@ export function collectEditTenantErrors(input: {
   const contactError = validateOptionalPersonName(contact_name ?? "");
   if (contactError) errors.contact_name = contactError;
   if (isEditTenantEmailEditable) {
-    const emailError = validateTenantContactEmail(
-      email ?? "",
-      knownTenantEmails,
-      knownUserEmails,
-      {
-        excludeTenantEmail: editTenantEmail,
-        excludeUserEmail: editTenantEmail,
-      },
-    );
-    if (emailError) errors.email = emailError;
+    // Format + other-tenant contact only. User collisions are decided by PATCH
+    // (listUsers emails stay masked — AI4IDS-3401 / #1818).
+    const formatError = validateEmailFormatOnly(email ?? "");
+    if (formatError) {
+      errors.email = formatError;
+    } else {
+      const tenantTaken = validateTenantContactEmailTaken(
+        email ?? "",
+        knownTenantEmails,
+        { excludeTenantEmail: editTenantEmail },
+      );
+      if (tenantTaken) errors.email = tenantTaken;
+    }
   }
   const phoneError = validateE164Phone(phone_number ?? "");
   if (phoneError) errors.phone_number = phoneError;

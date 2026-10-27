@@ -1,5 +1,10 @@
 // Client-side email rules for tenant contact + tenant user provisioning.
 
+import {
+  INSTITUTION,
+  TENANT,
+  isTenantStatus,
+} from "../config/constants";
 import type { TenantView } from "../types/tenant";
 
 export const EMAIL_REQUIRED_MSG = "Email is required.";
@@ -12,6 +17,12 @@ export const EMAIL_USER_ALREADY_EXISTS_MSG =
 export const EMAIL_ALREADY_EXISTS_MSG =
   "This email is already associated with an existing account";
 export const EMAIL_AVAILABLE_MSG = "Email is available.";
+
+/** PATCH /tenants/{id} email uniqueness conflicts (AI4IDS-3401 / #1818). */
+export const TENANT_EMAIL_CONFLICT_CODES = new Set([
+  "DUPLICATE_EMAIL",
+  "DUPLICATE_TENANT_EMAIL",
+]);
 
 export function normalizeEmail(email: string): string {
   return (email || "").trim().toLowerCase();
@@ -40,11 +51,126 @@ export function collectUserEmails(users: { email?: string | null }[]): Set<strin
   return out;
 }
 
-/** When editing, skip collision checks for the record's current email. */
-export interface EmailUniquenessExclusions {
+/** Contact email editable for PENDING/ACTIVE non-default institutions (AI4IDS-3401). */
+export function isTenantContactEmailEditable(
+  status: string | null | undefined,
+  options?: { isDefaultOrganisation?: boolean },
+): boolean {
+  if (options?.isDefaultOrganisation) return false;
+  return (
+    isTenantStatus(status, TENANT.STATUS.PENDING) ||
+    isTenantStatus(status, TENANT.STATUS.ACTIVE)
+  );
+}
+
+function asErrorDetailRecord(
+  detail: unknown,
+): Record<string, unknown> | null {
+  if (typeof detail === "object" && detail !== null && !Array.isArray(detail)) {
+    return detail as Record<string, unknown>;
+  }
+  return null;
+}
+
+function stringifyErrorCode(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) return value.toUpperCase();
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value).toUpperCase();
+  }
+  return null;
+}
+
+export function extractApiErrorCode(error: unknown): string | null {
+  const detail = (
+    error as { response?: { data?: { detail?: unknown } } } | null
+  )?.response?.data?.detail;
+  const record = asErrorDetailRecord(detail);
+  if (!record) return null;
+  return (
+    stringifyErrorCode(record.code) ?? stringifyErrorCode(record.error)
+  );
+}
+
+/** Message from API `detail` only — never axios's top-level `error.message`. */
+export function extractApiErrorMessage(error: unknown): string | undefined {
+  const detail = (
+    error as { response?: { data?: { detail?: unknown } } } | null
+  )?.response?.data?.detail;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  const record = asErrorDetailRecord(detail);
+  if (!record) return undefined;
+  const message = record.message;
+  return typeof message === "string" && message.trim() ? message : undefined;
+}
+
+/** Inline form message for PATCH email uniqueness 409s; undefined for other errors. */
+export function mapTenantEmailConflictToFieldError(
+  error: unknown,
+): string | undefined {
+  const code = extractApiErrorCode(error);
+  if (!code || !TENANT_EMAIL_CONFLICT_CODES.has(code)) return undefined;
+  return extractApiErrorMessage(error) ?? EMAIL_ALREADY_EXISTS_MSG;
+}
+
+export type TenantEmailUpdateFeedback = {
+  toastType: "success" | "info";
+  message: string;
+  /** Effective contact after save (old address while verification is pending). */
+  email: string | undefined;
+  pending_email: string | null;
+};
+
+/**
+ * Toast + local email fields from PATCH /tenants/{id} after an email change
+ * (AI4IDS-3401 / BE contract).
+ */
+export function resolveTenantEmailUpdateFeedback(
+  updated: Pick<
+    TenantView,
+    "email" | "pending_email" | "email_verification_sent" | "status"
+  >,
+  previousEmail: string | undefined,
+): TenantEmailUpdateFeedback {
+  const pending = updated.pending_email?.trim() || null;
+  const sent = Boolean(updated.email_verification_sent);
+  const effectiveEmail = updated.email || previousEmail;
+
+  if (sent && pending) {
+    return {
+      toastType: "info",
+      message:
+        "Verification email sent to the new address. The change takes effect once it's verified.",
+      email: effectiveEmail,
+      pending_email: pending,
+    };
+  }
+
+  if (sent) {
+    return {
+      toastType: "info",
+      message:
+        "Email updated. A new activation link was sent to the new address.",
+      email: effectiveEmail,
+      pending_email: null,
+    };
+  }
+
+  return {
+    toastType: "success",
+    message: `${INSTITUTION} updated.`,
+    email: effectiveEmail,
+    pending_email: null,
+  };
+}
+
+/**
+ * When editing, skip collision checks for the record's current email.
+ * Contact-email edit uniqueness for users is decided by PATCH (emails stay masked).
+ */
+export type EmailUniquenessExclusions = Readonly<{
   excludeTenantEmail?: string;
   excludeUserEmail?: string;
-}
+}>;
 
 function isExcludedEmail(lower: string, exclusions?: EmailUniquenessExclusions): {
   tenant: boolean;

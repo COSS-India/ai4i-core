@@ -70,7 +70,9 @@ function DetailField({
 }
 
 /** Rate limit and per-task-type monthly quotas of the assigned tier — view only. */
-function TierUsageLimits({ tierLimits }: Readonly<{ tierLimits: TierLimits | null }>) {
+function TierUsageLimits({
+  tierLimits,
+}: Readonly<{ tierLimits: TierLimits | null }>) {
   const rateLimit = tierLimits?.rate_limit;
   return (
     <Box borderTopWidth="1px" borderColor="ink.100" mt={4} pt={4}>
@@ -109,7 +111,7 @@ function TierUsageLimits({ tierLimits }: Readonly<{ tierLimits: TierLimits | nul
   );
 }
 
-export interface InstitutionDetailsPanelProps {
+export type InstitutionDetailsPanelProps = Readonly<{
   institution: TenantView | null;
   /** Assigned tier name; null renders as an em dash, matching the adopter view. */
   tierName?: string | null;
@@ -122,7 +124,7 @@ export interface InstitutionDetailsPanelProps {
   errorMessage?: string | null;
   /** Set when Tier/Budget could not be read; the two fields then read "Unavailable". */
   tierBudgetErrorMessage?: string | null;
-}
+}>;
 
 /** View-only card of the Institution Admin's own institution — no edit or delete. */
 export default function InstitutionDetailsPanel({
@@ -204,6 +206,7 @@ export default function InstitutionDetailsPanel({
             email: institution.email ?? "",
             phone_number: institution.phone_number ?? "",
           }}
+          pendingEmail={institution.pending_email}
         />
         <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3} mt={4}>
           <DetailField label={`${INSTITUTION} ID`}>

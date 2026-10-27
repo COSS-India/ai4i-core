@@ -11,6 +11,7 @@ import FieldLabel from "../common/FieldLabel";
 import FormSection from "../common/FormSection";
 import ReadOnlyField from "../common/ReadOnlyField";
 import { dash } from "../../utils/valueFormatters";
+import InstitutionContactEmail from "./InstitutionContactEmail";
 
 export type InstitutionFormMode = "create" | "edit" | "view";
 
@@ -25,12 +26,16 @@ export type InstitutionFormErrors = Partial<
   Record<keyof InstitutionFormValues, string>
 >;
 
-type InstitutionFormProps = {
+type InstitutionFormProps = Readonly<{
   mode: InstitutionFormMode;
   values: InstitutionFormValues;
   errors?: InstitutionFormErrors;
-  /** Edit only. Pending institutions can change the contact email. */
+  /** Edit only. Contact email editable for PENDING/ACTIVE (AI4IDS-3401). */
   emailEditable?: boolean;
+  /** Keeps the email input mounted but non-editable (e.g. while submit awaits). */
+  emailDisabled?: boolean;
+  /** Pending verification address from GET/PATCH (shown in view + locked edit). */
+  pendingEmail?: string | null;
   emailStatus?: string;
   onOrganisationChange?: (value: string) => void;
   onOrganisationBlur?: (value: string) => void;
@@ -41,7 +46,190 @@ type InstitutionFormProps = {
   onPhoneChange?: (value: string) => void;
   /** View pages that already title the record with the organisation name. */
   showOrganisation?: boolean;
-};
+}>;
+
+type EditableEmailFieldProps = Readonly<{
+  isCreate: boolean;
+  emailEditable: boolean;
+  emailDisabled?: boolean;
+  values: InstitutionFormValues;
+  errors: InstitutionFormErrors;
+  pendingEmail: string | null;
+  emailStatus?: string;
+  emailHint: string | null;
+  onEmailChange?: (value: string) => void;
+  onEmailBlur?: () => void;
+}>;
+
+function resolveCreateEmailHint(emailStatus?: string): string {
+  if (emailStatus === "checking") return FIELD_HINTS.tenant.emailChecking;
+  if (emailStatus === "available") return FIELD_HINTS.tenant.emailAvailable;
+  return FIELD_HINTS.tenant.email.helper;
+}
+
+function emailAvailabilityTone(
+  emailStatus?: string,
+): "success" | "muted" {
+  if (emailStatus === "available") return "success";
+  return "muted";
+}
+
+function emailAvailabilityLabel(emailStatus?: string): string {
+  if (emailStatus === "checking") return FIELD_HINTS.tenant.emailChecking;
+  return FIELD_HINTS.tenant.emailAvailable;
+}
+
+function formatPendingEmailHint(pendingEmail: string | null): string | null {
+  const pending = pendingEmail?.trim();
+  if (pending) {
+    return `${pending} — ${FIELD_HINTS.tenant.emailVerificationPending}`;
+  }
+  return null;
+}
+
+function InstitutionViewFields({
+  values,
+  pendingEmail,
+  showOrganisation,
+}: Readonly<{
+  values: InstitutionFormValues;
+  pendingEmail: string | null;
+  showOrganisation: boolean;
+}>) {
+  return (
+    <FormSection title="Institution">
+      {showOrganisation ? (
+        <ReadOnlyField label="Organisation">{dash(values.organisation)}</ReadOnlyField>
+      ) : null}
+      <ReadOnlyField label="Contact Name">{dash(values.contact_name)}</ReadOnlyField>
+      <ReadOnlyField label="Email">
+        <InstitutionContactEmail
+          email={values.email}
+          pendingEmail={pendingEmail}
+        />
+      </ReadOnlyField>
+      <ReadOnlyField label="Phone Number">{dash(values.phone_number)}</ReadOnlyField>
+    </FormSection>
+  );
+}
+
+function InstitutionLockedEmailField({
+  email,
+  pendingEmail,
+}: Readonly<{ email: string; pendingEmail: string | null }>) {
+  return (
+    <FormControl>
+      <ReadOnlyField label="Email">
+        <InstitutionContactEmail email={email} pendingEmail={pendingEmail} />
+      </ReadOnlyField>
+      <FieldHint>{FIELD_HINTS.tenant.emailPendingOnly}</FieldHint>
+    </FormControl>
+  );
+}
+
+function CreateEmailHints({
+  errors,
+  emailStatus,
+  emailHint,
+}: Readonly<{
+  errors: InstitutionFormErrors;
+  emailStatus?: string;
+  emailHint: string | null;
+}>) {
+  return (
+    <FieldHint
+      show={!errors.email}
+      tone={emailAvailabilityTone(emailStatus)}
+    >
+      {emailHint}
+    </FieldHint>
+  );
+}
+
+function EditEmailHints({
+  errors,
+  pendingEmail,
+  emailStatus,
+}: Readonly<{
+  errors: InstitutionFormErrors;
+  pendingEmail: string | null;
+  emailStatus?: string;
+}>) {
+  const pendingHint = formatPendingEmailHint(pendingEmail);
+  const showAvailabilityHint =
+    !errors.email &&
+    (emailStatus === "checking" || emailStatus === "available");
+
+  return (
+    <>
+      {pendingHint ? (
+        <FieldHint show={!errors.email}>{pendingHint}</FieldHint>
+      ) : null}
+      <FieldHint show={!errors.email}>
+        {FIELD_HINTS.tenant.emailVerifyOnChange}
+      </FieldHint>
+      <FieldHint
+        show={showAvailabilityHint}
+        tone={emailAvailabilityTone(emailStatus)}
+      >
+        {emailAvailabilityLabel(emailStatus)}
+      </FieldHint>
+    </>
+  );
+}
+
+function InstitutionEditableEmailField({
+  isCreate,
+  emailEditable,
+  emailDisabled = false,
+  values,
+  errors,
+  pendingEmail,
+  emailStatus,
+  emailHint,
+  onEmailChange,
+  onEmailBlur,
+}: EditableEmailFieldProps) {
+  const canEditEmail = isCreate || emailEditable;
+  if (canEditEmail) {
+    return (
+      <FormControl isRequired isInvalid={Boolean(errors.email)}>
+        <FieldLabel>Email</FieldLabel>
+        <Input
+          type="email"
+          value={values.email}
+          isDisabled={emailDisabled}
+          onChange={(e) => onEmailChange?.(e.target.value)}
+          onBlur={isCreate ? onEmailBlur : undefined}
+          placeholder={
+            isCreate ? FIELD_HINTS.tenant.email.placeholder : undefined
+          }
+        />
+        <FormErrorMessage>{errors.email}</FormErrorMessage>
+        {isCreate ? (
+          <CreateEmailHints
+            errors={errors}
+            emailStatus={emailStatus}
+            emailHint={emailHint}
+          />
+        ) : (
+          <EditEmailHints
+            errors={errors}
+            pendingEmail={pendingEmail}
+            emailStatus={emailStatus}
+          />
+        )}
+      </FormControl>
+    );
+  }
+
+  return (
+    <InstitutionLockedEmailField
+      email={values.email}
+      pendingEmail={pendingEmail}
+    />
+  );
+}
 
 /** Shared Institution fields. Mode changes editability, not the field list. */
 export default function InstitutionForm({
@@ -49,6 +237,8 @@ export default function InstitutionForm({
   values,
   errors = {},
   emailEditable = false,
+  emailDisabled = false,
+  pendingEmail = null,
   emailStatus,
   onOrganisationChange,
   onOrganisationBlur,
@@ -62,28 +252,17 @@ export default function InstitutionForm({
   const isView = mode === "view";
   const isCreate = mode === "create";
 
-  const emailHint = (() => {
-    if (isView) return null;
-    if (isCreate) {
-      if (emailStatus === "checking") return FIELD_HINTS.tenant.emailChecking;
-      if (emailStatus === "available") return FIELD_HINTS.tenant.emailAvailable;
-      return FIELD_HINTS.tenant.email.helper;
-    }
-    return null;
-  })();
-
   if (isView) {
     return (
-      <FormSection title="Institution">
-        {showOrganisation ? (
-          <ReadOnlyField label="Organisation">{dash(values.organisation)}</ReadOnlyField>
-        ) : null}
-        <ReadOnlyField label="Contact Name">{dash(values.contact_name)}</ReadOnlyField>
-        <ReadOnlyField label="Email">{dash(values.email)}</ReadOnlyField>
-        <ReadOnlyField label="Phone Number">{dash(values.phone_number)}</ReadOnlyField>
-      </FormSection>
+      <InstitutionViewFields
+        values={values}
+        pendingEmail={pendingEmail}
+        showOrganisation={showOrganisation}
+      />
     );
   }
+
+  const emailHint = isCreate ? resolveCreateEmailHint(emailStatus) : null;
 
   return (
     <FormSection title="Institution">
@@ -119,52 +298,18 @@ export default function InstitutionForm({
           </FieldHint>
         </FormControl>
 
-        {mode === "edit" && !emailEditable ? (
-          <FormControl>
-            <ReadOnlyField label="Email">{dash(values.email)}</ReadOnlyField>
-            <FieldHint>{FIELD_HINTS.tenant.emailPendingOnly}</FieldHint>
-          </FormControl>
-        ) : (
-          <FormControl
-            isRequired={isCreate || emailEditable}
-            isInvalid={Boolean(errors.email)}
-          >
-            <FieldLabel>Email</FieldLabel>
-            <Input
-              type="email"
-              value={values.email}
-              onChange={(e) => onEmailChange?.(e.target.value)}
-              onBlur={isCreate ? onEmailBlur : undefined}
-              placeholder={isCreate ? FIELD_HINTS.tenant.email.placeholder : undefined}
-            />
-            <FormErrorMessage>{errors.email}</FormErrorMessage>
-            {isCreate ? (
-              <FieldHint
-                show={!errors.email}
-                tone={emailStatus === "available" ? "success" : "muted"}
-              >
-                {emailHint}
-              </FieldHint>
-            ) : (
-              <>
-                <FieldHint show={!errors.email}>
-                  {FIELD_HINTS.tenant.emailVerifyOnChange}
-                </FieldHint>
-                <FieldHint
-                  show={
-                    !errors.email &&
-                    (emailStatus === "checking" || emailStatus === "available")
-                  }
-                  tone={emailStatus === "available" ? "success" : "muted"}
-                >
-                  {emailStatus === "checking"
-                    ? FIELD_HINTS.tenant.emailChecking
-                    : FIELD_HINTS.tenant.emailAvailable}
-                </FieldHint>
-              </>
-            )}
-          </FormControl>
-        )}
+        <InstitutionEditableEmailField
+          isCreate={isCreate}
+          emailEditable={emailEditable}
+          emailDisabled={emailDisabled}
+          values={values}
+          errors={errors}
+          pendingEmail={pendingEmail}
+          emailStatus={emailStatus}
+          emailHint={emailHint}
+          onEmailChange={onEmailChange}
+          onEmailBlur={onEmailBlur}
+        />
 
         <FormControl isInvalid={Boolean(errors.phone_number)}>
           <FieldLabel>Phone Number</FieldLabel>

@@ -8,6 +8,15 @@ import { useOwnInstitutionDetails } from "./hooks/useOwnInstitutionDetails";
 
 type OwnInstitution = ReturnType<typeof useOwnInstitutionDetails>;
 
+type InstitutionAdminHomeProps = Readonly<{
+  tabCardBg: string;
+  tabCardBorder: string;
+  ownInstitution: OwnInstitution;
+  tenantId: string;
+  onAddUser: () => void;
+  usersTable: React.ReactNode;
+}>;
+
 export function InstitutionAdminHome({
   tabCardBg,
   tabCardBorder,
@@ -15,14 +24,7 @@ export function InstitutionAdminHome({
   tenantId,
   onAddUser,
   usersTable,
-}: {
-  tabCardBg: string;
-  tabCardBorder: string;
-  ownInstitution: OwnInstitution;
-  tenantId: string;
-  onAddUser: () => void;
-  usersTable: React.ReactNode;
-}) {
+}: InstitutionAdminHomeProps) {
   return (
     <Card bg={tabCardBg} borderColor={tabCardBorder} borderWidth="1px">
       <Tabs colorScheme="blue" variant="enclosed">

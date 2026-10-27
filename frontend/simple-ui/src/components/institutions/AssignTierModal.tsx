@@ -21,7 +21,7 @@ import type { ServiceMappingsStatus } from "../profile/types";
 import type { Tier } from "../../types/tierManagement";
 import type { TenantView } from "../../types/tenant";
 
-export interface AssignTierModalProps {
+export type AssignTierModalProps = Readonly<{
   isOpen: boolean;
   onClose: () => void;
   tenant: TenantView | null;
@@ -31,7 +31,7 @@ export interface AssignTierModalProps {
   serviceMappingsStatus: ServiceMappingsStatus;
   noServicesMessage: string;
   onAssigned: (tenantId: string) => Promise<void> | void;
-}
+}>;
 
 export default function AssignTierModal({
   isOpen,

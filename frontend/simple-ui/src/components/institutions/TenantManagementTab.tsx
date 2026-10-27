@@ -183,11 +183,11 @@ function budgetRevisionDescription(
   return `${base} ${appsRecomputed} Application(s)' Budget % ${verb} recalculated to reflect the new total — their ₹ allocations were not changed.`;
 }
 
-export interface TenantManagementTabProps {
+export type TenantManagementTabProps = Readonly<{
   isActive?: boolean;
   onRegisterCreateInstitution?: (open: () => void) => void;
   onInstitutionDetailChange?: (isDetail: boolean) => void;
-}
+}>;
 
 /**
  * Tier filter options, from the tiers the rows carry rather than the catalog
@@ -833,6 +833,8 @@ export default function TenantManagementTab({
           }}
           errors={tm.editTenantFormErrors}
           emailEditable={tm.isEditTenantEmailEditable}
+          emailDisabled={tm.isSubmittingEditTenant}
+          pendingEmail={tm.editTenantRow?.pending_email}
           emailStatus={tm.editTenantEmailStatus}
           onOrganisationChange={tm.handleEditTenantOrganisationChange}
           onOrganisationBlur={tm.handleEditTenantOrganisationBlur}

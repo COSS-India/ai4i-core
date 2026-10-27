@@ -11,7 +11,10 @@ import { refreshUntil } from "../../../utils/postMutationRefresh";
 import {
   collectTenantContactEmails,
   collectUserEmails,
+  isTenantContactEmailEditable,
+  mapTenantEmailConflictToFieldError,
   normalizeEmail,
+  resolveTenantEmailUpdateFeedback,
   validateEmailFormatOnly,
 } from "../../../utils/tenantEmailValidation";
 import { useEmailAvailabilityField } from "./useEmailAvailabilityField";
@@ -211,7 +214,6 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     Record<string, string>
   >({});
   const [isSubmittingEditTenant, setIsSubmittingEditTenant] = useState(false);
-
   // Status update confirmation
   const [statusUpdateTarget, setStatusUpdateTarget] =
     useState<StatusUpdateTargetUnion | null>(null);
@@ -634,6 +636,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         excludeTenantEmail: editTenantRow?.email,
         excludeUserEmail: editTenantRow?.email,
       },
+      // User collisions are decided by PATCH — listUsers emails stay masked.
+      skipUserCollision: true,
       skipRemoteCheck: unchanged,
     };
   }, [
@@ -659,21 +663,25 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     recheckKey: isUserModalOpen ? knownEmailRecheckKey : undefined,
   });
 
-  /** Contact email is editable only while the tenant is PENDING (pending verification). */
-  const isEditTenantEmailEditable = useMemo(
-    () => isTenantStatus(editTenantRow?.status, TENANT.STATUS.PENDING),
-    [editTenantRow?.status],
+  /** Contact email editable for PENDING/ACTIVE non-default orgs (AI4IDS-3401). */
+  const isEditTenantEmailEditable = isTenantContactEmailEditable(
+    editTenantRow?.status,
+    {
+      isDefaultOrganisation:
+        editTenantRow != null && isDefaultTenant(editTenantRow),
+    },
   );
+
+  const editTenantEmailRecheckKey = isEditTenantModalOpen
+    ? knownEmailRecheckKey
+    : undefined;
 
   const editTenantEmailAvailability = useEmailAvailabilityField({
     enabled: isEditTenantModalOpen && isEditTenantEmailEditable,
     email: editTenantForm.email ?? "",
     patchError: patchEditTenantFormError,
     getCheckOptions: getEditTenantEmailCheckOptions,
-    recheckKey:
-      isEditTenantModalOpen && isEditTenantEmailEditable
-        ? knownEmailRecheckKey
-        : undefined,
+    recheckKey: editTenantEmailRecheckKey,
   });
 
   // ----- Create tenant -----
@@ -1022,7 +1030,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   ) => {
     if (!email.trim()) return false;
     if (validateEmailFormatOnly(email)) return false;
-    return status === "available";
+    // `unchecked` = edit flow deferred user check to PATCH (no "available" hint).
+    return status === "available" || status === "unchecked";
   };
 
   const canSubmitTenantForm = useMemo(() => {
@@ -1146,6 +1155,41 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
   };
 
+  const buildEditTenantLocalPatch = (
+    patch: {
+      organisation: string | undefined;
+      contact_name: string | undefined;
+      phone_number: string | undefined;
+      email?: string;
+    },
+    updated: TenantView,
+    emailChanged: boolean,
+  ): Partial<TenantView> => {
+    const localPatch: Partial<TenantView> = {
+      organisation: patch.organisation,
+      contact_name: patch.contact_name,
+      phone_number: patch.phone_number,
+    };
+    if (emailChanged) {
+      const feedback = resolveTenantEmailUpdateFeedback(
+        updated,
+        editTenantRow?.email,
+      );
+      localPatch.email = feedback.email;
+      localPatch.pending_email = feedback.pending_email;
+      showToast({ type: feedback.toastType, message: feedback.message });
+      return localPatch;
+    }
+    if (updated.pending_email !== undefined) {
+      localPatch.pending_email = updated.pending_email;
+    }
+    if (updated.email) {
+      localPatch.email = updated.email;
+    }
+    showToast({ type: "success", message: `${INSTITUTION} updated.` });
+    return localPatch;
+  };
+
   const handleSaveEditTenant = async () => {
     if (!editTenantForm.tenant_id) return;
     const errors = collectEditTenantErrors({
@@ -1157,55 +1201,38 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       tenants,
       isEditTenantEmailEditable,
       knownTenantEmails,
-      knownUserEmails,
       editTenantEmail: editTenantRow?.email,
     });
-    if (isEditTenantEmailEditable) {
-      delete errors.email;
-      const emailOk = await editTenantEmailAvailability.verifyNow();
-      if (!emailOk) return;
-    }
-    if (Object.keys(errors).length > 0) {
-      setEditTenantFormErrors(errors);
-      return;
-    }
-    setEditTenantFormErrors({});
-    const emailChanged =
-      isEditTenantEmailEditable &&
-      normalizeEmail(editTenantForm.email ?? "") !==
-        normalizeEmail(editTenantRow?.email ?? "");
-
+    // Lock the form before the async email check so the field can't change
+    // while verifyNow awaits (avoids validating an older value than PATCH sends).
     setIsSubmittingEditTenant(true);
     try {
+      if (isEditTenantEmailEditable) {
+        delete errors.email;
+        const emailOk = await editTenantEmailAvailability.verifyNow();
+        if (!emailOk) return;
+      }
+      if (Object.keys(errors).length > 0) {
+        setEditTenantFormErrors(errors);
+        return;
+      }
+      setEditTenantFormErrors({});
+      const nextEmail = normalizeEmail(editTenantForm.email ?? "");
+      const emailChanged =
+        isEditTenantEmailEditable &&
+        nextEmail !== normalizeEmail(editTenantRow?.email ?? "");
+
       const patch = {
         tenant_id: editTenantForm.tenant_id,
         organisation: editTenantForm.organisation,
         contact_name: editTenantForm.contact_name,
         phone_number: editTenantForm.phone_number,
-        ...(isEditTenantEmailEditable
-          ? { email: editTenantForm.email }
-          : {}),
+        ...(isEditTenantEmailEditable ? { email: editTenantForm.email } : {}),
       };
-      await tenantService.updateTenant(patch);
+      const updated = await tenantService.updateTenant(patch);
+      const localPatch = buildEditTenantLocalPatch(patch, updated, emailChanged);
+      patchTenantLocal(patch.tenant_id, localPatch);
 
-      patchTenantLocal(patch.tenant_id, {
-        organisation: patch.organisation,
-        contact_name: patch.contact_name,
-        phone_number: patch.phone_number,
-        ...(isEditTenantEmailEditable && !emailChanged
-          ? { email: patch.email }
-          : {}),
-      });
-
-      if (emailChanged) {
-        showToast({
-          type: "info",
-          message:
-            `A verification link was sent to the new contact email. The ${INSTITUTION.toLowerCase()} contact email will update after it is verified.`,
-        });
-      } else {
-        showToast({ type: "success", message: `${INSTITUTION} updated` });
-      }
       setIsEditTenantModalOpen(false);
       setEditTenantRow(null);
       const expectedOrg = patch.organisation;
@@ -1220,6 +1247,11 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       );
     } catch (err) {
       console.error("Failed to update tenant:", err);
+      const emailConflict = mapTenantEmailConflictToFieldError(err);
+      if (emailConflict) {
+        setEditTenantFormErrors((prev) => ({ ...prev, email: emailConflict }));
+        return;
+      }
       showError(err);
     } finally {
       setIsSubmittingEditTenant(false);
@@ -1257,7 +1289,6 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
           tenants,
           isEditTenantEmailEditable,
           knownTenantEmails,
-          knownUserEmails,
           editTenantEmail: editTenantRow?.email,
         }),
       ).length === 0
@@ -1274,7 +1305,6 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     editTenantForm.tenant_id,
     editTenantRow?.email,
     knownTenantEmails,
-    knownUserEmails,
     tenants,
   ]);
 
