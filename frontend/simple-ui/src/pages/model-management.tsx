@@ -39,7 +39,7 @@ import { useAuth } from "../hooks/useAuth";
 import { isRegistryReadOnlyUser, userHasRole } from "../utils/rbac";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
 import { parseError, showError } from "../utils/errorHandler";
-import { SAMPLE_MODEL_JSON } from "../utils/sampleModelJson";
+import { MODEL_SAMPLES, type ModelSampleKind } from "../utils/sampleModelJson";
 import { stripJsonComments } from "../utils/stripJsonComments";
 import { showToast } from "../utils/toast";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
@@ -346,12 +346,13 @@ const ModelManagementPage: React.FC = () => {
     onCreateOpen();
   };
 
-  const handleDownloadSample = () => {
-    const blob = new Blob([SAMPLE_MODEL_JSON], { type: "application/json" });
+  const handleDownloadSample = (kind: ModelSampleKind) => {
+    const sample = MODEL_SAMPLES[kind];
+    const blob = new Blob([sample.json], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "sample-model.json";
+    link.download = sample.fileName;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
