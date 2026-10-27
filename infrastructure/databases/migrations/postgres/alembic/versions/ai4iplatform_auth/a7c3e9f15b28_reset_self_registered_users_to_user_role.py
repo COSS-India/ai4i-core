@@ -1,26 +1,11 @@
-"""reset self-registered users to the USER role only
+"""reset non-privileged self-registered users to USER
 
-Self-registered users (creation_type default/google) may only hold USER
-(AI4IDS-3412). RoleService.assign_role enforces that for new grants, but
-accounts that were given other roles before the lock still hold them — and
-the UI now disables their role control, so an admin can't take those roles
-away. This one-time cleanup drops every non-USER role from them and makes
-sure each live one holds USER. Confirmed with product before release.
+A self-registered user (creation_type default/google) holding ADMIN,
+MODERATOR, TENANT ADMIN or USAGE VIEWER keeps all its roles. The rest,
+except the seeded guest, are left with USER only.
 
-Runs after e7a1b2c3d4f5 (via b8a1957cd6a3), which re-labels admin-created
-users still stored as 'default' to 'tenant' — so only genuinely
-self-registered accounts are hit.
-
-Excluded / guarded:
-  - the seeded guest account (username 'guest', matched the same way as
-    e2f3a4b5c6d7) keeps GUEST — it is a system account, not a signup.
-  - last admin: if no active admin-created ADMIN would remain, ADMIN is kept
-    on the oldest active self-registered ADMIN so the platform is never left
-    without one. A warning is logged; promote a real admin, then demote.
-
-Affected user ids and the roles removed are logged (ids only, no PII).
-Existing access tokens keep their old permission_ids until they expire;
-the next refresh re-reads roles from the DB.
+Runs after e7a1b2c3d4f5, which re-labels admin-created users to 'tenant',
+and c5d6e7f8a9b1, which renames PROGRAM ADMIN to USAGE VIEWER.
 
 Revision ID: a7c3e9f15b28
 Revises: b8a1957cd6a3
@@ -43,17 +28,27 @@ GUEST_USERNAME = "guest"
 
 logger = logging.getLogger("alembic.runtime.migration")
 
+# Self-registered users holding any of these keep every role they have.
+PRESERVED_ROLES = ("ADMIN", "MODERATOR", "TENANT ADMIN", "USAGE VIEWER")
+
 # Self-registered = a known signup type, minus the seeded guest. Scoped to
 # the signup labels rather than "not tenant" so an unlabelled (NULL) row is
-# never swept — this migration deletes grants, so it must fail open. The
-# explicit IS NOT NULL keeps the predicate two-valued: a bare IN (...) is
-# NULL for a NULL row, and NOT (NULL) would drop that row from the
-# remaining-admin count below.
+# never swept — this migration deletes grants, so it must fail open.
 _SELF_REGISTERED = (
     "u.creation_type IS NOT NULL"
     " AND u.creation_type IN ('default', 'google')"
     " AND u.username <> :guest"
 )
+
+# The users this migration touches. The DELETE below never removes a
+# preserved role, so the predicate gives the same set for the INSERT.
+_TO_RESET = _SELF_REGISTERED + """
+    AND NOT EXISTS (
+        SELECT 1 FROM user_role pur
+        JOIN roles pr ON pr.id = pur.role_id
+        WHERE pur.user_id = u.id
+          AND pr.name IN ({})
+    )""".format(", ".join(f"'{name}'" for name in PRESERVED_ROLES))
 
 
 def upgrade() -> None:
@@ -62,50 +57,18 @@ def upgrade() -> None:
 
     user_role_id = conn.execute(sa.text("SELECT id FROM roles WHERE name = 'USER'")).scalar()
     if user_role_id is None:
-        logger.warning("a7c3e9f15b28: no 'USER' role found; self-registered role reset skipped.")
+        logger.warning("a7c3e9f15b28: no 'USER' role found; non-privileged self-registered role reset skipped.")
         return
-
-    # Mirrors RoleRepository.count_admins_in_tenant: active, non-deleted holders.
-    admin_created_admins = conn.execute(sa.text(f"""
-        SELECT count(DISTINCT u.id)
-        FROM users u
-        JOIN user_role ur ON ur.user_id = u.id
-        JOIN roles r ON r.id = ur.role_id
-        WHERE r.name = 'ADMIN'
-          AND u.is_active IS TRUE AND u.is_delete IS NOT TRUE
-          AND NOT ({_SELF_REGISTERED})
-    """), params).scalar()
-
-    keep_admin_user_id = None
-    if admin_created_admins == 0:
-        keep_admin_user_id = conn.execute(sa.text(f"""
-            SELECT u.id
-            FROM users u
-            JOIN user_role ur ON ur.user_id = u.id
-            JOIN roles r ON r.id = ur.role_id
-            WHERE r.name = 'ADMIN'
-              AND u.is_active IS TRUE AND u.is_delete IS NOT TRUE
-              AND {_SELF_REGISTERED}
-            ORDER BY u.created_at, u.id
-            LIMIT 1
-        """), params).scalar()
-        if keep_admin_user_id is not None:
-            logger.warning(
-                "a7c3e9f15b28: user %s is the only active ADMIN and is self-registered; "
-                "keeping ADMIN on it. Promote an admin-created user, then remove it.",
-                keep_admin_user_id,
-            )
 
     removed = conn.execute(sa.text(f"""
         DELETE FROM user_role ur
         USING users u, roles r
         WHERE ur.user_id = u.id
           AND r.id = ur.role_id
-          AND {_SELF_REGISTERED}
+          AND {_TO_RESET}
           AND r.name <> 'USER'
-          AND NOT (r.name = 'ADMIN' AND u.id IS NOT DISTINCT FROM CAST(:keep AS uuid))
         RETURNING ur.user_id, r.name
-    """), {**params, "keep": keep_admin_user_id}).fetchall()
+    """), params).fetchall()
     for user_id, role_name in removed:
         logger.info("a7c3e9f15b28: removed role %r from self-registered user %s", role_name, user_id)
 
@@ -113,7 +76,7 @@ def upgrade() -> None:
         INSERT INTO user_role (user_id, role_id, created_by)
         SELECT u.id, :role_id, CAST(:seeder AS uuid)
         FROM users u
-        WHERE {_SELF_REGISTERED}
+        WHERE {_TO_RESET}
           AND u.is_delete IS NOT TRUE
           AND NOT EXISTS (
               SELECT 1 FROM user_role ur
