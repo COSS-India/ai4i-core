@@ -51,7 +51,7 @@ export default function FieldLabel({
   spacing = 1.5,
   formLabelProps,
   textProps,
-}: FieldLabelProps) {
+}: Readonly<FieldLabelProps>) {
   const message = hint ?? tip;
   const tipNode = message ? <InfoTip message={message} /> : null;
   const justify = stackJustify(align);

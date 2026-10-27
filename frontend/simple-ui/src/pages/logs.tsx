@@ -195,6 +195,66 @@ type AppliedFilters = {
   selectedTenantId: string;
 };
 
+function traceStatusIcon(failed: boolean, ok: boolean): React.ReactNode {
+  if (failed) {
+    return <CloseIcon boxSize={2.5} color="red.500" aria-hidden />;
+  }
+  if (ok) {
+    return <CheckIcon boxSize={3} color="green.500" aria-hidden />;
+  }
+  return (
+    <Box
+      as="span"
+      w={2}
+      h={2}
+      borderRadius="full"
+      bg="orange.400"
+      aria-hidden
+    />
+  );
+}
+
+function traceStatusLabel(
+  row: TelemetryTraceRecord,
+  isAdmin: boolean,
+): string {
+  const statusText = row.status ?? "unknown";
+  const failed = isFailureStatus(statusText);
+  let label =
+    failed && row.status_code != null
+      ? `${statusText} (${row.status_code})`
+      : statusText;
+  if (failed && isAdmin && row.error) {
+    label = `${label}: ${row.error}`;
+  }
+  return label;
+}
+
+function renderTraceStatusCell(
+  row: TelemetryTraceRecord,
+  isAdmin: boolean,
+): React.ReactNode {
+  const statusText = row.status ?? "unknown";
+  const label = traceStatusLabel(row, isAdmin);
+  return (
+    <Tooltip label={label} placement="top" hasArrow>
+      <Flex
+        align="center"
+        justify="center"
+        w={5}
+        h={5}
+        aria-label={label}
+        role="img"
+      >
+        {traceStatusIcon(
+          isFailureStatus(statusText),
+          isSuccessStatus(statusText),
+        )}
+      </Flex>
+    </Tooltip>
+  );
+}
+
 const LogsPage: React.FC = () => {
   const router = useRouter();
   const { isAuthenticated, isLoading: authLoading, user } = useAuth();
@@ -708,142 +768,64 @@ const LogsPage: React.FC = () => {
   }, []);
 
   const renderStatusCell = useCallback(
-    (row: TelemetryTraceRecord) => {
-      const statusText = row.status ?? "unknown";
-      const failed = isFailureStatus(statusText);
-      const ok = isSuccessStatus(statusText);
-      let label =
-        failed && row.status_code != null
-          ? `${statusText} (${row.status_code})`
-          : statusText;
-      // AC-6: admins see the error without opening the trace (tooltip on default view).
-      if (failed && isAdmin && row.error) {
-        label = `${label}: ${row.error}`;
-      }
-      const icon = failed ? (
-        <CloseIcon boxSize={2.5} color="red.500" aria-hidden />
-      ) : ok ? (
-        <CheckIcon boxSize={3} color="green.500" aria-hidden />
-      ) : (
-        <Box
-          as="span"
-          w={2}
-          h={2}
-          borderRadius="full"
-          bg="orange.400"
-          aria-hidden
-        />
-      );
-
-      return (
-        <Tooltip label={label} placement="top" hasArrow>
-          <Flex
-            align="center"
-            justify="center"
-            w={5}
-            h={5}
-            aria-label={label}
-            role="img"
-          >
-            {icon}
-          </Flex>
-        </Tooltip>
-      );
-    },
-    [isAdmin]
+    (row: TelemetryTraceRecord) => renderTraceStatusCell(row, isAdmin),
+    [isAdmin],
   );
 
   const cellForColumn = useCallback(
     (key: string, row: TelemetryTraceRecord): React.ReactNode => {
-      switch (key) {
-        case "timestamp":
-          return (
-            <Text fontSize="sm" color="ink.600">
-              {row.timestamp ? formatTimestamp(row.timestamp) : "—"}
-            </Text>
-          );
-        case "status":
-          return renderStatusCell(row);
-        case "task_type":
-          return (
-            <Text fontSize="sm" fontWeight="medium" color="ink.700">
-              {row.task_type || "—"}
-            </Text>
-          );
-        case "url":
-          return (
-            <Text
-              fontSize="sm"
-              color="ink.700"
-              fontFamily="mono"
-              noOfLines={1}
-              title={row.url || undefined}
-            >
-              {row.url || "—"}
-            </Text>
-          );
-        case "institution":
-          return (
-            <Text fontSize="sm" color="ink.600">
-              {resolveTenantName(row.tenant_id)}
-            </Text>
-          );
-        case "status_code":
-          return (
-            <Text fontSize="sm" color="ink.700">
-              {row.status_code ?? "—"}
-            </Text>
-          );
-        case "error": {
-          const errorText = row.error || "—";
-          return (
-            <Text
-              fontSize="sm"
-              color={row.error ? "red.600" : "ink.500"}
-              noOfLines={1}
-              title={row.error || undefined}
-            >
-              {errorText}
-            </Text>
-          );
-        }
-        case "service":
-          return (
-            <Text fontSize="sm" color="ink.700">
-              {row.service || "—"}
-            </Text>
-          );
-        case "model":
-          return (
-            <Text fontSize="sm" color="ink.700">
-              {row.model || "—"}
-            </Text>
-          );
-        case "latency":
-          return (
-            <Text fontSize="sm" color="ink.700">
-              {row.latency != null ? row.latency : "—"}
-            </Text>
-          );
-        case "application":
-          return (
-            <Text fontSize="sm" color="ink.700" fontFamily="mono">
-              {row.application || "—"}
-            </Text>
-          );
-        case "api_key":
-          return (
-            <Text fontSize="sm" color="ink.700" fontFamily="mono">
-              {row.api_key || "—"}
-            </Text>
-          );
-        case "end_user":
-          return (
-            <Text fontSize="sm" color="ink.700">
-              {row.end_user || "—"}
-            </Text>
-          );
-        case "metadata": {
+      const plain = (value: React.ReactNode, opts?: { mono?: boolean; weight?: string }) => (
+        <Text
+          fontSize="sm"
+          color="ink.700"
+          fontWeight={opts?.weight}
+          fontFamily={opts?.mono ? "mono" : undefined}
+        >
+          {value || "—"}
+        </Text>
+      );
+      const cells: Record<string, () => React.ReactNode> = {
+        timestamp: () => (
+          <Text fontSize="sm" color="ink.600">
+            {row.timestamp ? formatTimestamp(row.timestamp) : "—"}
+          </Text>
+        ),
+        status: () => renderStatusCell(row),
+        task_type: () => plain(row.task_type, { weight: "medium" }),
+        url: () => (
+          <Text
+            fontSize="sm"
+            color="ink.700"
+            fontFamily="mono"
+            noOfLines={1}
+            title={row.url || undefined}
+          >
+            {row.url || "—"}
+          </Text>
+        ),
+        institution: () => (
+          <Text fontSize="sm" color="ink.600">
+            {resolveTenantName(row.tenant_id)}
+          </Text>
+        ),
+        status_code: () => plain(row.status_code ?? "—"),
+        error: () => (
+          <Text
+            fontSize="sm"
+            color={row.error ? "red.600" : "ink.500"}
+            noOfLines={1}
+            title={row.error || undefined}
+          >
+            {row.error || "—"}
+          </Text>
+        ),
+        service: () => plain(row.service),
+        model: () => plain(row.model),
+        latency: () => plain(row.latency != null ? row.latency : "—"),
+        application: () => plain(row.application, { mono: true }),
+        api_key: () => plain(row.api_key, { mono: true }),
+        end_user: () => plain(row.end_user),
+        metadata: () => {
           const metadataText = formatMetadataCell(row.metadata);
           return (
             <Text
@@ -855,20 +837,16 @@ const LogsPage: React.FC = () => {
               {metadataText}
             </Text>
           );
-        }
-        case "method":
-          return (
-            <Text fontSize="sm" color="ink.700">
-              {row.method || "—"}
-            </Text>
-          );
-        default:
-          return (
-            <Text fontSize="sm" color="ink.500">
-              —
-            </Text>
-          );
-      }
+        },
+        method: () => plain(row.method),
+      };
+      return (
+        cells[key]?.() ?? (
+          <Text fontSize="sm" color="ink.500">
+            —
+          </Text>
+        )
+      );
     },
     [renderStatusCell, resolveTenantName]
   );
@@ -1130,27 +1108,24 @@ const LogsPage: React.FC = () => {
                             replaceDraft({ ...draftRef.current, selectedTenantId: v }),
                           hint: FIELD_HINTS.logs.tenant.tip,
                           width: { base: "full", sm: "180px" },
-                        options: [
-                          { label: `All ${INSTITUTIONS}`, value: "" },
-                          ...(tenantsLoading
-                            ? []
-                            : tenantsError
-                              ? []
-                              : activeTenants.map(
+                          options: [
+                            { label: `All ${INSTITUTIONS}`, value: "" },
+                            ...(!tenantsLoading && !tenantsError
+                              ? activeTenants.map(
                                   (tenant: {
                                     tenant_id: string;
                                     organisation?: string;
                                   }) => ({
                                     label:
-                                      tenant.organisation ||
-                                      tenant.tenant_id,
+                                      tenant.organisation || tenant.tenant_id,
                                     value: tenant.tenant_id,
-                                  })
-                                )),
-                        ],
-                      },
-                    ]
-                  : []),
+                                  }),
+                                )
+                              : []),
+                          ],
+                        },
+                      ]
+                    : []),
                   {
                     id: "taskType",
                     label: "Task Type",

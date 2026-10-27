@@ -217,16 +217,25 @@ const ServiceFormTab: React.FC<Readonly<ServiceFormTabProps>> = ({
     return afterBlur(field, error);
   };
 
-  const renderPriceField = (
-    field: string,
-    label: string,
-    value: string,
-    error: string | null | undefined,
-    onChange: (value: string) => void,
-    helper: string,
-    placeholder: string = FIELD_HINTS.service.price.placeholder,
-    tip?: string,
-  ) => {
+  const renderPriceField = (options: {
+    field: string;
+    label: string;
+    value: string;
+    error: string | null | undefined;
+    onChange: (value: string) => void;
+    helper: string;
+    placeholder?: string;
+    tip?: string;
+  }) => {
+    const {
+      field,
+      label,
+      value,
+      error,
+      onChange,
+      placeholder = FIELD_HINTS.service.price.placeholder,
+      tip,
+    } = options;
     if (isView) {
       return <ReadOnlyField label={label}>{value || "—"}</ReadOnlyField>;
     }

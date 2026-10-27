@@ -131,6 +131,30 @@ function rotateTooltip(key: ApiKeyTableRow, isRotatable: boolean, rotating: bool
   return "Only effectively active API keys can be rotated.";
 }
 
+function formatApiKeyTableDate(value?: string): string {
+  return value ? new Date(value).toLocaleDateString() : "—";
+}
+
+function ApiKeyStatusCell({
+  status,
+  reason,
+}: Readonly<{
+  status: ApiKeyDisplayStatusValue;
+  reason: string | null;
+}>) {
+  const indicator = (
+    <StatusDot label={formatApiKeyDisplayStatusLabel(status)} tone={apiKeyStatusTone(status)} />
+  );
+  if (!reason) return indicator;
+  return (
+    <Tooltip label={reason} placement="top" hasArrow openDelay={300}>
+      <Box as="span" tabIndex={0} display="inline-flex">
+        {indicator}
+      </Box>
+    </Tooltip>
+  );
+}
+
 type ApiKeyManagement = ReturnType<typeof useApiKeyManagementTab>;
 
 /** Read-only details of one key, shown in the view drawer. */
@@ -402,21 +426,6 @@ export default function ApiKeyManagementTab({
       return actions;
     };
 
-    const formatDate = (value?: string) => (value ? new Date(value).toLocaleDateString() : "—");
-    const statusCell = (status: ApiKeyDisplayStatusValue, reason: string | null) => {
-      const indicator = (
-        <StatusDot label={formatApiKeyDisplayStatusLabel(status)} tone={apiKeyStatusTone(status)} />
-      );
-      return reason ? (
-        <Tooltip label={reason} placement="top" hasArrow openDelay={300}>
-          <Box as="span" tabIndex={0} display="inline-flex">
-            {indicator}
-          </Box>
-        </Tooltip>
-      ) : (
-        indicator
-      );
-    };
     const revokeStyle = { color: "red.500", hoverColor: "red.600", hoverBg: "red.50" };
 
     return [
@@ -531,11 +540,12 @@ export default function ApiKeyManagementTab({
         id: "status",
         header: "Status",
         hint: FIELD_HINTS.apiKey.col.status,
-        cell: (key) =>
-          statusCell(
-            mgmt.resolveKeyDisplayStatus(key),
-            mgmt.getKeyInactiveReason(key) ?? mgmt.getKeyRevokedReason(key),
-          ),
+        cell: (key) => (
+          <ApiKeyStatusCell
+            status={mgmt.resolveKeyDisplayStatus(key)}
+            reason={mgmt.getKeyInactiveReason(key) ?? mgmt.getKeyRevokedReason(key)}
+          />
+        ),
       },
       {
         id: "created",
@@ -547,7 +557,9 @@ export default function ApiKeyManagementTab({
         },
         cell: (key) => (
           <Text fontSize="sm" color="ink.600">
-            {formatDate(key.subRow === "current" ? key.rotated_at ?? key.created_at : key.created_at)}
+            {formatApiKeyTableDate(
+              key.subRow === "current" ? key.rotated_at ?? key.created_at : key.created_at,
+            )}
           </Text>
         ),
       },
@@ -564,13 +576,13 @@ export default function ApiKeyManagementTab({
           if (key.subRow === "previous") {
             return (
               <Text fontSize="sm" color="ink.600">
-                {formatDate(key.rotated_key_expires_at)}
+                {formatApiKeyTableDate(key.rotated_key_expires_at)}
               </Text>
             );
           }
           return (
             <Text fontSize="sm" color="ink.600">
-              {key.expires_at ? formatDate(key.expires_at) : "Never"}
+              {key.expires_at ? formatApiKeyTableDate(key.expires_at) : "Never"}
             </Text>
           );
         },

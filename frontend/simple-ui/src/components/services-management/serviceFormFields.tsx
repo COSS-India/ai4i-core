@@ -105,16 +105,16 @@ export type ServiceFormFieldsProps = {
     isEditing: boolean;
     hasAuthToken: boolean;
   }) => { tip: string; helper?: string };
-  renderPriceField: (
-    field: string,
-    label: string,
-    value: string,
-    error: string | null | undefined,
-    onChange: (value: string) => void,
-    helper: string,
-    placeholder?: string,
-    tip?: string,
-  ) => React.ReactNode;
+  renderPriceField: (options: {
+    field: string;
+    label: string;
+    value: string;
+    error: string | null | undefined;
+    onChange: (value: string) => void;
+    helper: string;
+    placeholder?: string;
+    tip?: string;
+  }) => React.ReactNode;
 };
 
 type ModelSectionProps = Readonly<
@@ -1159,16 +1159,16 @@ function ServiceFormBillingSection({
       </SimpleGrid>
 
       <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-        {renderPriceField(
-          "pricePerUnit",
-          priceLabel,
-          pricePerUnit,
-          pricePerUnitError,
-          onPricePerUnitChange,
-          priceHelper,
-          pricePlaceholder,
-          priceTip,
-        )}
+        {renderPriceField({
+          field: "pricePerUnit",
+          label: priceLabel,
+          value: pricePerUnit,
+          error: pricePerUnitError,
+          onChange: onPricePerUnitChange,
+          helper: priceHelper,
+          placeholder: pricePlaceholder,
+          tip: priceTip,
+        })}
         <CurrencyField
           isView={isView}
           currency={currency}
@@ -1178,26 +1178,26 @@ function ServiceFormBillingSection({
 
       {isLlmTaskType ? (
         <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-          {renderPriceField(
-            "cachedInputPricePerUnit",
-            LLM_CACHED_INPUT_PRICE_LABEL,
-            cachedInputPricePerUnit,
-            cachedInputPricePerUnitError,
-            onCachedInputPricePerUnitChange,
-            FIELD_HINTS.service.llmCachedInputPrice.helper,
-            FIELD_HINTS.service.llmCachedInputPrice.placeholder,
-            FIELD_HINTS.service.llmCachedInputPrice.tip,
-          )}
-          {renderPriceField(
-            "outputPricePerUnit",
-            LLM_OUTPUT_PRICE_LABEL,
-            outputPricePerUnit,
-            outputPricePerUnitError,
-            onOutputPricePerUnitChange,
-            FIELD_HINTS.service.llmOutputPrice.helper,
-            FIELD_HINTS.service.llmOutputPrice.placeholder,
-            FIELD_HINTS.service.llmOutputPrice.tip,
-          )}
+          {renderPriceField({
+            field: "cachedInputPricePerUnit",
+            label: LLM_CACHED_INPUT_PRICE_LABEL,
+            value: cachedInputPricePerUnit,
+            error: cachedInputPricePerUnitError,
+            onChange: onCachedInputPricePerUnitChange,
+            helper: FIELD_HINTS.service.llmCachedInputPrice.helper,
+            placeholder: FIELD_HINTS.service.llmCachedInputPrice.placeholder,
+            tip: FIELD_HINTS.service.llmCachedInputPrice.tip,
+          })}
+          {renderPriceField({
+            field: "outputPricePerUnit",
+            label: LLM_OUTPUT_PRICE_LABEL,
+            value: outputPricePerUnit,
+            error: outputPricePerUnitError,
+            onChange: onOutputPricePerUnitChange,
+            helper: FIELD_HINTS.service.llmOutputPrice.helper,
+            placeholder: FIELD_HINTS.service.llmOutputPrice.placeholder,
+            tip: FIELD_HINTS.service.llmOutputPrice.tip,
+          })}
         </SimpleGrid>
       ) : null}
 

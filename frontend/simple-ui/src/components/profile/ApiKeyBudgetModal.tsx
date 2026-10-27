@@ -15,6 +15,45 @@ import { FIELD_HINTS } from "../../config/fieldHints";
 import { keyBudgetFigures, type KeyBudgetDraft } from "./hooks/useApiKeyBudgetEdit";
 import { BudgetAllocationField, singleBudgetModalProps } from "./BudgetAllocationField";
 
+type ApiKeyBudgetModalProps = Readonly<{
+  isOpen: boolean;
+  onClose: () => void;
+  isLoading: boolean;
+  isSaving: boolean;
+  banner: string | null;
+  applicationName: string;
+  applicationBudget: number;
+  applicationBudgetUnset: boolean;
+  liveTotalPct: number;
+  rows: KeyBudgetDraft[];
+  focusedKeyId: number | null;
+  focusedKeyName: string;
+  onPctChange: (apiKeyId: number, value: string) => void;
+  onPctBoundHit: (apiKeyId: number, bound: PercentageBound) => void;
+  onSave: () => void;
+  canSave: boolean;
+}>;
+
+function budgetRangeLabel(
+  isLoading: boolean,
+  figures: ReturnType<typeof keyBudgetFigures> | null,
+  currency: string,
+): string {
+  if (isLoading) return BUDGET_COPY.loading;
+  if (!figures) return "—";
+  return `${formatBudgetMoney(figures.minimum, currency)} – ${formatBudgetMoney(figures.maximum, currency)}`;
+}
+
+function applicationRemainingAmount(
+  applicationBudget: number,
+  liveTotalPct: number,
+): number | null {
+  if (applicationBudget <= 0) return null;
+  return (
+    Math.round(((applicationBudget * Math.max(0, 100 - liveTotalPct)) / 100) * 100) / 100
+  );
+}
+
 export default function ApiKeyBudgetModal({
   isOpen,
   onClose,
@@ -32,41 +71,17 @@ export default function ApiKeyBudgetModal({
   onPctBoundHit,
   onSave,
   canSave,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  isLoading: boolean;
-  isSaving: boolean;
-  banner: string | null;
-  applicationName: string;
-  applicationBudget: number;
-  applicationBudgetUnset: boolean;
-  liveTotalPct: number;
-  rows: KeyBudgetDraft[];
-  focusedKeyId: number | null;
-  focusedKeyName: string;
-  onPctChange: (apiKeyId: number, value: string) => void;
-  onPctBoundHit: (apiKeyId: number, bound: PercentageBound) => void;
-  onSave: () => void;
-  canSave: boolean;
-}) {
+}: ApiKeyBudgetModalProps) {
   const currency = "INR";
   const row =
     focusedKeyId == null ? undefined : rows.find((item) => item.api_key_id === focusedKeyId);
   const keyName = row?.key_name || focusedKeyName || BUDGET_COPY.apiKeyFallback;
   const totalOver = liveTotalPct > 100 + 1e-6;
   const figures = row ? keyBudgetFigures(row, rows, applicationBudget) : null;
-  const applicationRemaining =
-    applicationBudget > 0
-      ? Math.round(((applicationBudget * Math.max(0, 100 - liveTotalPct)) / 100) * 100) / 100
-      : null;
+  const applicationRemaining = applicationRemainingAmount(applicationBudget, liveTotalPct);
   const draftPct = row?.resolvedPct;
   const fieldError = row?.rowError || (totalOver ? totalApiKeysExceeds100(liveTotalPct) : null);
-  const rangeLabel = isLoading
-    ? BUDGET_COPY.loading
-    : figures
-      ? `${formatBudgetMoney(figures.minimum, currency)} – ${formatBudgetMoney(figures.maximum, currency)}`
-      : "—";
+  const rangeLabel = budgetRangeLabel(isLoading, figures, currency);
 
   return (
     <StandardModal

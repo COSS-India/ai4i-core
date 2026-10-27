@@ -92,7 +92,7 @@ export const SERVICE_SEARCH_FIELD_OPTIONS = [
 ];
 
 function compactFieldId(id: string): string {
-  return id.replace(/_/g, "").toLowerCase();
+  return id.replaceAll("_", "").toLowerCase();
 }
 
 function serviceSearchValue(service: Service, fieldId: string): string {

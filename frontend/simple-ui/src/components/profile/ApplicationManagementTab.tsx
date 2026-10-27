@@ -48,7 +48,8 @@ import { useDeferredColumnSort } from "../../utils/tableSort";
 function formatPct(value: number | null | undefined): string {
   if (value == null) return "No ceiling";
   const rounded = Math.round(value * 100) / 100;
-  return `${rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(2)}%`;
+  if (rounded % 1 === 0) return `${rounded.toFixed(0)}%`;
+  return `${rounded.toFixed(2)}%`;
 }
 
 function rupees(amount: number | null | undefined, currency: string): string {
@@ -56,15 +57,46 @@ function rupees(amount: number | null | undefined, currency: string): string {
   return formatSpendMoney(amount, currency);
 }
 
+function applicationDrawerTitle(options: {
+  isEditing: boolean;
+  isCreating: boolean;
+  formName: string;
+  selectedName?: string;
+  viewName?: string;
+}): string {
+  if (options.isEditing) {
+    return options.formName || options.selectedName || "Edit Application";
+  }
+  if (options.isCreating) return "Create Application";
+  return options.viewName || "Application";
+}
+
+function applicationDrawerDescription(options: {
+  isEditing: boolean;
+  isCreating: boolean;
+  selectedName?: string;
+}): string {
+  if (options.isEditing) {
+    if (options.selectedName) {
+      return `Update details for ${options.selectedName}.`;
+    }
+    return "Update the application details.";
+  }
+  if (options.isCreating) {
+    return "Add an application and set how much of the institution budget it can use.";
+  }
+  return "Application details.";
+}
+
 export default function ApplicationManagementTab({
   tenantId,
   institutionBudget,
   currency = "INR",
-}: {
+}: Readonly<{
   tenantId: string;
   institutionBudget: number | null;
   currency?: string;
-}) {
+}>) {
   const mgr = useApplicationManagement(tenantId, institutionBudget, currency);
   const [boundHint, setBoundHint] = useState<string | null>(null);
 
@@ -237,42 +269,27 @@ export default function ApplicationManagementTab({
             </Button>
           ) : undefined
         }
-        title={
-          isEditing
-            ? mgr.form.name || mgr.selected?.name || "Edit Application"
-            : isCreating
-              ? "Create Application"
-              : viewApp?.name || "Application"
-        }
-        description={
-          isEditing
-            ? mgr.selected
-              ? `Update details for ${mgr.selected.name}.`
-              : "Update the application details."
-            : isCreating
-              ? "Add an application and set how much of the institution budget it can use."
-              : "Application details."
-        }
+        title={applicationDrawerTitle({
+          isEditing,
+          isCreating,
+          formName: mgr.form.name,
+          selectedName: mgr.selected?.name,
+          viewName: viewApp?.name,
+        })}
+        description={applicationDrawerDescription({
+          isEditing,
+          isCreating,
+          selectedName: mgr.selected?.name,
+        })}
         footer={
-          isEditing ? (
+          isEditing || isCreating ? (
             <FormActions
               cancelLabel="Cancel"
-              submitLabel="Save Changes"
+              submitLabel={isEditing ? "Save Changes" : "Create Application"}
               onCancel={closeDrawer}
-              onSubmit={() => void mgr.handleEdit()}
+              onSubmit={() => void (isEditing ? mgr.handleEdit() : mgr.handleCreate())}
               isLoading={mgr.isSaving}
-              loadingText="Saving..."
-              justify="space-between"
-              pt={0}
-            />
-          ) : isCreating ? (
-            <FormActions
-              cancelLabel="Cancel"
-              submitLabel="Create Application"
-              onCancel={closeDrawer}
-              onSubmit={() => void mgr.handleCreate()}
-              isLoading={mgr.isSaving}
-              loadingText="Creating..."
+              loadingText={isEditing ? "Saving..." : "Creating..."}
               justify="space-between"
               pt={0}
             />
@@ -294,7 +311,8 @@ export default function ApplicationManagementTab({
               {APPLICATION_BUDGET_MANAGED_NOTE}
             </Text>
           </>
-        ) : isCreating ? (
+        ) : null}
+        {isCreating ? (
           <>
             <ApplicationIdentityFields
               mode="create"
@@ -324,7 +342,8 @@ export default function ApplicationManagementTab({
               </FormControl>
             </FormSection>
           </>
-        ) : viewApp ? (
+        ) : null}
+        {!isEditing && !isCreating && viewApp ? (
           <>
             <ApplicationIdentityFields
               mode="view"

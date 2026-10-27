@@ -41,6 +41,27 @@ export interface CreateApiKeyTabProps {
   onCreatedTokenChange?: (visible: boolean) => void;
 }
 
+type CreateApiKeyTabState = ReturnType<typeof useCreateApiKeyTab>;
+
+function budgetAvailabilityHint(create: CreateApiKeyTabState): string {
+  if (
+    !create.apiKeyForm.application_id ||
+    create.selectedApplication?.allocated_budget == null
+  ) {
+    return "";
+  }
+  if (create.uncappedHoldsRemainder) {
+    return " An existing key without a percentage allocation is holding this Application's remaining Budget — give that key an explicit Budget before creating another.";
+  }
+  return ` · Up to ${create.formatAvailablePct()}% available`;
+}
+
+function parseExpiresDaysInput(raw: string): number | "" {
+  if (raw === "") return "";
+  const n = Number.parseInt(raw, 10);
+  return Number.isNaN(n) ? "" : n;
+}
+
 export default function CreateApiKeyTab({
   tenantId,
   onApiKeyCreated,
@@ -49,7 +70,7 @@ export default function CreateApiKeyTab({
   formId,
   onCreatingChange,
   onCreatedTokenChange,
-}: CreateApiKeyTabProps) {
+}: Readonly<CreateApiKeyTabProps>) {
   const create = useCreateApiKeyTab({ tenantId, onApiKeyCreated });
   const { copy } = useCopyToClipboard();
   const [budgetBoundHint, setBudgetBoundHint] = React.useState<string | null>(null);
@@ -239,14 +260,9 @@ export default function CreateApiKeyTab({
                 placeholder={FIELD_HINTS.apiKey.budget.placeholder}
                 onBoundHit={(bound) => setBudgetBoundHint(percentageBoundMessage(bound))}
               />
-              <FieldHint show={!budgetError}>
+              <FieldHint show={budgetError == null}>
                 {FIELD_HINTS.apiKey.budget.helper}
-                {create.apiKeyForm.application_id &&
-                create.selectedApplication?.allocated_budget != null
-                  ? create.uncappedHoldsRemainder
-                    ? " An existing key without a percentage allocation is holding this Application's remaining Budget — give that key an explicit Budget before creating another."
-                    : ` · Up to ${create.formatAvailablePct()}% available`
-                  : ""}
+                {budgetAvailabilityHint(create)}
               </FieldHint>
               {create.budgetPreview && (
                 <Text fontSize="sm" color="blue.600" mt={2} fontWeight="semibold">
@@ -264,15 +280,10 @@ export default function CreateApiKeyTab({
                 type="number"
                 value={create.apiKeyForm.expires_days === "" ? "" : create.apiKeyForm.expires_days}
                 onChange={(e) => {
-                  const raw = e.target.value;
-                  const next =
-                    raw === ""
-                      ? ""
-                      : (() => {
-                          const n = Number.parseInt(raw, 10);
-                          return Number.isNaN(n) ? "" : n;
-                        })();
-                  create.setApiKeyForm({ ...create.apiKeyForm, expires_days: next });
+                  create.setApiKeyForm({
+                    ...create.apiKeyForm,
+                    expires_days: parseExpiresDaysInput(e.target.value),
+                  });
                 }}
                 min={1}
                 max={365}

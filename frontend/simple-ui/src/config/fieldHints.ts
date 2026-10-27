@@ -177,7 +177,7 @@ export const FIELD_HINTS = {
       tip: "URL the platform calls for this service.",
       llmHelper: "Host:port only",
       llmTip: "Host where the model server listens.",
-      llmPlaceholder: "http://host:port",
+      llmPlaceholder: "host:port",
     },
     authToken: {
       placeholder: "Bearer token",

@@ -615,7 +615,13 @@ function TypeLibrary() {
           label: "Mode",
           type: "select",
           value: modeFilter,
-          onChange: (value) => setModeFilter(value === "custom" ? "custom" : value === "model" ? "model" : ""),
+          onChange: (value) => {
+            if (value === "custom" || value === "model") {
+              setModeFilter(value);
+              return;
+            }
+            setModeFilter("");
+          },
           width: { base: "full", sm: "160px" },
           options: [
             { label: "All", value: "" },

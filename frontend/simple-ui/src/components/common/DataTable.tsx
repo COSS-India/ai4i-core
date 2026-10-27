@@ -538,7 +538,7 @@ export function TableMultiSelectField({
   formControlProps,
   hideLabel = false,
   emptyLabel = "All",
-}: {
+}: Readonly<{
   label: string;
   value: string;
   onChange: (value: string) => void;
@@ -548,7 +548,7 @@ export function TableMultiSelectField({
   formControlProps?: FormControlProps;
   hideLabel?: boolean;
   emptyLabel?: string;
-}) {
+}>) {
   const { resetPage, inputBg, deferApply } = useDataTableFilterContext();
   const selected = selectedMultiValues(value);
   const choices = options.filter((option) => option.value !== "");
@@ -664,7 +664,7 @@ function clusteredFilterDefs(
 ): { key: string; defs: DataTableFilterDef[] }[] {
   const groups: { key: string; defs: DataTableFilterDef[] }[] = [];
   for (const def of filterDefs ?? []) {
-    const previous = groups[groups.length - 1];
+    const previous = groups.at(-1);
     if (def.cluster && previous?.key === def.cluster) {
       previous.defs.push(def);
       continue;
@@ -674,104 +674,109 @@ function clusteredFilterDefs(
   return groups;
 }
 
+function filterWidthProps(
+  def: DataTableFilterDef,
+): FormControlProps | undefined {
+  return def.width ? { w: def.width as FormControlProps["w"] } : undefined;
+}
+
+function renderSelectFilterDef(def: DataTableFilterDef): React.ReactNode {
+  return (
+    <TableSelectField
+      key={def.id}
+      label={def.label}
+      value={def.value}
+      onChange={def.onChange}
+      helper={def.helper}
+      hint={def.hint}
+      hideLabel={def.hideLabel}
+      formControlProps={filterWidthProps(def)}
+    >
+      {(def.options ?? []).map((opt) => (
+        <option key={opt.value} value={opt.value}>
+          {opt.label}
+        </option>
+      ))}
+    </TableSelectField>
+  );
+}
+
+function renderMultiSelectFilterDef(def: DataTableFilterDef): React.ReactNode {
+  return (
+    <TableMultiSelectField
+      key={def.id}
+      label={def.label}
+      value={def.value}
+      onChange={def.onChange}
+      options={def.options ?? []}
+      helper={def.helper}
+      hint={def.hint}
+      hideLabel={def.hideLabel}
+      formControlProps={filterWidthProps(def)}
+    />
+  );
+}
+
+function renderTextFilterDef(def: DataTableFilterDef): React.ReactNode {
+  const textType = def.inputType === "number" ? "number" : "text";
+  return (
+    <TableTextField
+      key={def.id}
+      label={def.label}
+      value={def.value}
+      onChange={def.onChange}
+      placeholder={def.placeholder}
+      helper={def.helper}
+      hint={def.hint}
+      error={def.error}
+      inputType={textType}
+      formControlProps={filterWidthProps(def)}
+      inputProps={textType === "number" ? { min: 0 } : undefined}
+    />
+  );
+}
+
+function renderDateFilterDef(def: DataTableFilterDef): React.ReactNode {
+  const dateType =
+    def.inputType === "datetime-local" ? "datetime-local" : "date";
+  return (
+    <TableDateField
+      key={def.id}
+      label={def.label}
+      value={def.value}
+      onChange={def.onChange}
+      helper={def.helper}
+      hint={def.hint}
+      inputType={dateType}
+      formControlProps={filterWidthProps(def)}
+    />
+  );
+}
+
 function renderFilterDef(def: DataTableFilterDef): React.ReactNode {
-        const widthProps = def.width
-          ? { w: def.width as FormControlProps["w"] }
-          : undefined;
+  if (def.type === "select") return renderSelectFilterDef(def);
+  if (def.type === "multiselect") return renderMultiSelectFilterDef(def);
+  if (def.type === "text") return renderTextFilterDef(def);
+  if (def.type === "date") return renderDateFilterDef(def);
 
-        if (def.type === "select") {
-          return (
-            <TableSelectField
-              key={def.id}
-              label={def.label}
-              value={def.value}
-              onChange={def.onChange}
-              helper={def.helper}
-              hint={def.hint}
-              hideLabel={def.hideLabel}
-              formControlProps={widthProps ? { w: widthProps.w } : undefined}
-            >
-              {(def.options ?? []).map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </TableSelectField>
-          );
-        }
-
-        if (def.type === "multiselect") {
-          return (
-            <TableMultiSelectField
-              key={def.id}
-              label={def.label}
-              value={def.value}
-              onChange={def.onChange}
-              options={def.options ?? []}
-              helper={def.helper}
-              hint={def.hint}
-              hideLabel={def.hideLabel}
-              formControlProps={widthProps ? { w: widthProps.w } : undefined}
-            />
-          );
-        }
-
-        if (def.type === "text") {
-          const textType = def.inputType === "number" ? "number" : "text";
-          return (
-            <TableTextField
-              key={def.id}
-              label={def.label}
-              value={def.value}
-              onChange={def.onChange}
-              placeholder={def.placeholder}
-              helper={def.helper}
-              hint={def.hint}
-              error={def.error}
-              inputType={textType}
-              formControlProps={widthProps ? { w: widthProps.w } : undefined}
-              inputProps={textType === "number" ? { min: 0 } : undefined}
-            />
-          );
-        }
-
-        if (def.type === "date") {
-          const dateType =
-            def.inputType === "datetime-local" ? "datetime-local" : "date";
-          return (
-            <TableDateField
-              key={def.id}
-              label={def.label}
-              value={def.value}
-              onChange={def.onChange}
-              helper={def.helper}
-              hint={def.hint}
-              inputType={dateType}
-              formControlProps={widthProps ? { w: widthProps.w } : undefined}
-            />
-          );
-        }
-
-        // Reserved: multiselect is not implemented yet — fail loudly in dev
-        // so a misconfigured filterDefs entry is obvious (renders nothing otherwise).
-        if (process.env.NODE_ENV !== "production") {
-          // eslint-disable-next-line no-console
-          console.warn(
-            `[DataTable] filterDefs type "${def.type}" is not rendered yet (id="${def.id}").`,
-          );
-        }
-        return null;
+  if (process.env.NODE_ENV !== "production") {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[DataTable] filterDefs type "${def.type}" is not rendered yet (id="${def.id}").`,
+    );
+  }
+  return null;
 }
 
 function AdminSortableHeader<T>({
   col,
   sort,
   onSortChange,
-}: {
+}: Readonly<{
   col: DataTableColumn<T>;
   sort?: DataTableSortState;
   onSortChange?: (next: DataTableSortState) => void;
-}) {
+}>) {
   const hint = columnHint(col);
 
   if (col.sortable && onSortChange) {
@@ -802,6 +807,48 @@ function AdminSortableHeader<T>({
   }
 
   return <>{col.header}</>;
+}
+
+function cardColumnHeaderSx<T>(col: DataTableColumn<T>) {
+  return {
+    ...DATA_TABLE_HEADER_SX,
+    ...(col.isNumeric || col.align === "right"
+      ? { textAlign: "right" as const }
+      : {}),
+    ...(col.align === "center" ? { textAlign: "center" as const } : {}),
+  };
+}
+
+function renderCardColumnHeader<T>(
+  col: DataTableColumn<T>,
+  options: {
+    sortingEnabled: boolean;
+    activeSortKey: string;
+    activeSortDirection: DataTableSortState["direction"];
+    onSortChange: (next: DataTableSortState) => void;
+  },
+): React.ReactNode {
+  if (options.sortingEnabled && col.sortable) {
+    return (
+      <AdminSortableHeader
+        col={col}
+        sort={{
+          key: options.activeSortKey,
+          direction: options.activeSortDirection,
+        }}
+        onSortChange={options.onSortChange}
+      />
+    );
+  }
+  const hint = columnHint(col);
+  if (hint) {
+    return (
+      <FieldLabel variant="header" hint={hint} align={col.align ?? "left"}>
+        {col.header}
+      </FieldLabel>
+    );
+  }
+  return col.header;
 }
 
 function CardLayoutDataTable<T>({
@@ -878,39 +925,28 @@ function CardLayoutDataTable<T>({
       >
         <Thead bg={theadBg}>
           <Tr>
-            {columns.map((col) => {
-              const hint = columnHint(col);
-              const headerSx = {
-                ...DATA_TABLE_HEADER_SX,
-                ...(col.isNumeric || col.align === "right" ? { textAlign: "right" as const } : {}),
-                ...(col.align === "center" ? { textAlign: "center" as const } : {}),
-              };
-              return (
+            {columns.map((col) => (
                 <Th
                   key={col.id}
                   w={shrinkToContentWidth(col)}
                   minW={col.minWidth}
                   isNumeric={col.isNumeric}
-                  sx={headerSx}
-                  whiteSpace={shouldAutoTruncateColumn(col) ? undefined : "nowrap"}
+                  sx={cardColumnHeaderSx(col)}
+                  whiteSpace={
+                    shouldAutoTruncateColumn(col) ? undefined : "nowrap"
+                  }
                 >
-                  {sortingEnabled && col.sortable ? (
-                    <AdminSortableHeader
-                      col={col}
-                      sort={{ key: activeSortKey, direction: activeSortDirection }}
-                      onSortChange={handleSortChange}
-                    />
-                  ) : hint ? (
-                    <FieldLabel variant="header" hint={hint} align={col.align ?? "left"}>
-                      {col.header}
-                    </FieldLabel>
-                  ) : (
-                    col.header
-                  )}
+                  {renderCardColumnHeader(col, {
+                    sortingEnabled,
+                    activeSortKey,
+                    activeSortDirection,
+                    onSortChange: handleSortChange,
+                  })}
                 </Th>
-              );
-            })}
-            {showRowChevron ? <Th w="4%" borderBottomWidth="1px" sx={DATA_TABLE_HEADER_SX} /> : null}
+            ))}
+            {showRowChevron ? (
+              <Th w="4%" borderBottomWidth="1px" sx={DATA_TABLE_HEADER_SX} />
+            ) : null}
           </Tr>
         </Thead>
         <Tbody>
@@ -1231,6 +1267,39 @@ function renderAdminDataCell<T>(
   );
 }
 
+function adminRowKeyDownHandler<T>(
+  onRowClick: ((row: T) => void) | undefined,
+  row: T,
+): ((e: React.KeyboardEvent) => void) | undefined {
+  if (!onRowClick) return undefined;
+  return (e: React.KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onRowClick(row);
+    }
+  };
+}
+
+function AdminRowChevronCell(): React.ReactElement {
+  return (
+    <Td
+      w={ADMIN_CHEVRON_COLUMN_WIDTH}
+      minW={ADMIN_CHEVRON_COLUMN_WIDTH}
+      maxW={ADMIN_CHEVRON_COLUMN_WIDTH}
+      px={1}
+      py={4}
+      textAlign="right"
+      whiteSpace="nowrap"
+    >
+      <ChevronRightIcon
+        className="data-table-chevron"
+        boxSize={3.5}
+        color="ink.400"
+      />
+    </Td>
+  );
+}
+
 function AdminTableDataRow<T>({
   row,
   parentIndex,
@@ -1257,16 +1326,7 @@ function AdminTableDataRow<T>({
       role={clickable ? "button" : undefined}
       tabIndex={clickable ? 0 : undefined}
       onClick={clickable ? () => onRowClick?.(row) : undefined}
-      onKeyDown={
-        clickable
-          ? (e: React.KeyboardEvent) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onRowClick?.(row);
-              }
-            }
-          : undefined
-      }
+      onKeyDown={adminRowKeyDownHandler(onRowClick, row)}
       cursor={clickable ? "pointer" : undefined}
       bg={isSubRow ? "ink.50" : undefined}
       _hover={{
@@ -1278,23 +1338,7 @@ function AdminTableDataRow<T>({
       {columns.map((col) =>
         renderAdminDataCell(col, row, parentIndex, columnLayouts.get(col.id) ?? { minW: 0 }),
       )}
-      {rowChevron ? (
-        <Td
-          w={ADMIN_CHEVRON_COLUMN_WIDTH}
-          minW={ADMIN_CHEVRON_COLUMN_WIDTH}
-          maxW={ADMIN_CHEVRON_COLUMN_WIDTH}
-          px={1}
-          py={4}
-          textAlign="right"
-          whiteSpace="nowrap"
-        >
-          <ChevronRightIcon
-            className="data-table-chevron"
-            boxSize={3.5}
-            color="ink.400"
-          />
-        </Td>
-      ) : null}
+      {rowChevron ? <AdminRowChevronCell /> : null}
     </Tr>
   );
 }

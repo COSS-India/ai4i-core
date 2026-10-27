@@ -139,11 +139,12 @@ export default function InstitutionDetailsPanel({
   }
 
   const tierLabel = tierBudgetErrorMessage ? UNAVAILABLE : dash(tierName);
-  const budgetLabel = tierBudgetErrorMessage
-    ? UNAVAILABLE
-    : budgetLimit != null
-      ? formatSpendMoney(budgetLimit, currency)
-      : EMPTY_VALUE;
+  let budgetLabel = EMPTY_VALUE;
+  if (tierBudgetErrorMessage) {
+    budgetLabel = UNAVAILABLE;
+  } else if (budgetLimit != null) {
+    budgetLabel = formatSpendMoney(budgetLimit, currency);
+  }
 
   return (
     <VStack align="stretch" spacing={4} w="full">

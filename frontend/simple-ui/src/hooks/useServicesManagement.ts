@@ -830,7 +830,7 @@ export function useServicesManagement() {
         const next = { ...prev };
         let changed = false;
         for (const column of textSearchColumns) {
-          const compact = column.id.replace(/_/g, "").toLowerCase();
+          const compact = column.id.replaceAll("_", "").toLowerCase();
           // No field chosen: keep the existing name search. The list API
           // combines name, service id, and model name, so filling all of them
           // would require the text in every field.
@@ -838,7 +838,7 @@ export function useServicesManagement() {
             selected.length === 0
               ? compact === "name"
               : selected.includes(column.id) ||
-                selected.some((id) => id.replace(/_/g, "").toLowerCase() === compact);
+                selected.some((id) => id.replaceAll("_", "").toLowerCase() === compact);
           const value = chosen && query ? query : "";
           const current = next[column.id] ?? "";
           if (current === value) continue;
