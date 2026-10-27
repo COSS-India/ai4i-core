@@ -342,9 +342,7 @@ def _reject_admin_only_filters(filters: ServiceListFilterParams, is_admin: bool)
     """Raise FILTER_NOT_PERMITTED if a non-admin supplied an admin-only filter."""
     if is_admin:
         return
-    # tier_ids stays open although the Tier column is admin-only: the
-    # Application fallback picker filters by the Institution's own Tier.
-    supplied = {p: getattr(filters, p) for p in ADMIN_ONLY_FILTER_PARAMS - {"tier_ids"}}
+    supplied = {p: getattr(filters, p) for p in ADMIN_ONLY_FILTER_PARAMS}
     denied = sorted(p for p, v in supplied.items() if v is not None)
     if denied:
         raise ValidationError(

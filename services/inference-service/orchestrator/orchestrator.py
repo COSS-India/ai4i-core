@@ -7,7 +7,6 @@ from typing import Any, Dict, Optional, Tuple
 from fastapi import Request
 import logging
 
-from ai4i_core.context import get_api_key_id, get_application_id
 from ai4i_core.observability import set_billed_state, set_metric_labels
 
 from trace.request_span import (
@@ -17,7 +16,7 @@ from trace.request_span import (
 )
 
 from services.base.task_service import BaseTaskService
-from services.service_fallback import get_fallbacks
+from services.service_fallback import get_fallbacks, log_all_failed, log_failover, log_fallback_skipped
 from inference.inference_server_resolver import InferenceServerResolver
 from utils.failover import AllServicesUnavailableError, UpstreamUnavailableError
 from utils.http_status import http_status_for
@@ -186,24 +185,25 @@ class Orchestrator:
 
         tried = [requested_id]
         for fallback_id in fallbacks:
-            logger.warning(
-                "service_failover application_id=%s api_key_id=%s requested_service_id=%s "
-                "fallback_service_id=%s reason=%s",
-                get_application_id() or "", get_api_key_id() or "", requested_id, fallback_id, reason,
-            )
+            log_failover(requested_id, fallback_id, reason)
             tried.append(fallback_id)
             fb_payload = {**payload, "config": {**(payload.get("config") or {}), "serviceId": fallback_id}}
             try:
                 fb_info = await self._resolve_service_and_model(fb_payload)
                 self._enforce_tier_gate(fb_info, request)
             except Exception as exc:
-                logger.warning("service_fallback_skipped fallback_service_id=%s reason=%s", fallback_id, type(exc).__name__)
+                log_fallback_skipped(requested_id, fallback_id, type(exc).__name__)
                 continue
             fb_service = self._get_task_service(fb_info)
             try:
                 return fb_info, fb_service, await fb_service.process(fb_payload, fb_info)
             except UpstreamUnavailableError as exc:
                 reason = type(exc.__cause__ or exc).__name__
+                if getattr(fb_service, "completed_groups", 0):
+                    # This fallback already answered (and billed) part of the
+                    # payload; the next one must not bill those groups again.
+                    break
+        log_all_failed(requested_id, tried)
         raise AllServicesUnavailableError(requested_id, tried)
 
     def _validate_task_type(self, task_type: str) -> None:

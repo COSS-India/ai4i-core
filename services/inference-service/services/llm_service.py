@@ -4,12 +4,11 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, AsyncIterator, Dict, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 
 import httpx
 
 from ai4i_core.context import (
-    get_api_key_id,
     get_application_id,
     get_trace_id,
     set_llm_usage_input_tokens,
@@ -21,7 +20,7 @@ from ai4i_core.context import (
 from ai4i_core.observability.utils import get_llm_cached_tokens, get_llm_usage
 from config import settings
 from inference.inference_server_resolver import InferenceServerResolver
-from services.service_fallback import get_fallbacks
+from services.service_fallback import get_fallbacks, log_all_failed, log_failover, log_fallback_skipped
 from services.guardrail import (
     GuardrailContext,
     GuardrailError,
@@ -42,6 +41,11 @@ _resolver = InferenceServerResolver()
 # Shared by the buffered, streaming and multipart paths so upstream transport
 # failures read identically in the logs whichever entry point hit them.
 _UPSTREAM_FAILED_LOG = "LLM upstream request failed (path=%s): %s"
+
+
+def _transport_reason(exc: BaseException) -> str:
+    """Failover reason of a transport failure: the client still gets a 502."""
+    return "timeout" if isinstance(exc, (httpx.TimeoutException, asyncio.TimeoutError)) else "unreachable"
 
 
 def _all_unavailable(service_id: str) -> Dict[str, Any]:
@@ -112,6 +116,9 @@ class OpenAIProxyService:
 
     def __init__(self) -> None:
         self.timeout = float(settings.LLM_INFERENCE_TIMEOUT)
+        # Why the last upstream call failed (timeout / unreachable / upstream_5xx),
+        # for the service_failover log line; the client always gets a 502.
+        self._failure_reason: Optional[str] = None
 
     async def resolve_upstream_url(self, service_id: str, path: str) -> Tuple[str, Dict[str, Any]]:
         """
@@ -377,17 +384,21 @@ class OpenAIProxyService:
         if status_code >= 500:
             # The model server is unreachable or failed: the Application's
             # fallbacks for it, in order. A 4xx is the client's and is returned.
-            tried = False
+            fallbacks = await get_fallbacks(service_id)
+            reason, tried = self._failure_reason or "upstream_5xx", [service_id]
             async for fb_id, fb_url, fb_model, fb_payload, fb_info in self._fallbacks_for(
-                path, payload, service_id, request, status_code
+                path, payload, service_id, request, fallbacks
             ):
-                tried = True
+                log_failover(service_id, fb_id, reason)
+                tried.append(fb_id)
                 status_code, body = await self._forward_traced(path, fb_url, fb_id, fb_model, fb_payload, fb_info)
                 if status_code < 500:
                     if request is not None:
                         request.state.service_id = fb_id
                     break
-            if tried and status_code >= 500:
+                reason = self._failure_reason or "upstream_5xx"
+            if fallbacks and status_code >= 500:
+                log_all_failed(service_id, tried)
                 # Metrics label the failed request with the requested model,
                 # not the last fallback _prepare_request resolved.
                 set_llm_usage_model_id(service_info.get("model_id") or "")
@@ -465,8 +476,10 @@ class OpenAIProxyService:
                     # though the request never reached upstream.
                     infer_attrs["status"] = "failure"
                     infer_attrs["status_code"] = 502
+                    self._failure_reason = _transport_reason(exc)
                     return 502, {"detail": "Upstream LLM request failed"}
 
+                self._failure_reason = "upstream_5xx" if status_code >= 500 else None
                 if status_code >= 400:
                     # Same reasoning as above: a real upstream 4xx/5xx doesn't
                     # raise, so the span must be marked failed explicitly or
@@ -506,28 +519,21 @@ class OpenAIProxyService:
         return status_code, body
 
     async def _fallbacks_for(
-        self, path: str, payload: Any, service_id: str, request: Optional[Any], upstream_status: int
+        self, path: str, payload: Any, service_id: str, request: Optional[Any], fallbacks: List[str]
     ):
-        """The Application's fallbacks for ``service_id`` that still resolve and
-        pass the Tier gate, each prepared like the requested service (same
-        messages, ``model`` = the fallback's upstream model name)."""
+        """Those of ``fallbacks`` that still resolve and pass the Tier gate, each
+        prepared like the requested service (same messages, ``model`` = the
+        fallback's upstream model name); the rest are logged as skipped."""
         if not isinstance(payload, dict):
             return
-        for fallback_id in await get_fallbacks(service_id):
+        for fallback_id in fallbacks:
             try:
                 url, _, model_name, fb_payload, service_info = await self._prepare_request(
                     path=path, payload={**payload, "model": fallback_id}, request=request,
                 )
-            except LLMProxyError as exc:  # unknown, unpublished or out of Tier: skip it
-                logger.warning(
-                    "service_fallback_skipped fallback_service_id=%s status=%s", fallback_id, exc.status_code
-                )
+            except LLMProxyError as exc:  # unknown, unpublished or out of Tier
+                log_fallback_skipped(service_id, fallback_id, f"http_{exc.status_code}")
                 continue
-            logger.warning(
-                "service_failover application_id=%s api_key_id=%s requested_service_id=%s "
-                "fallback_service_id=%s reason=upstream_%s",
-                get_application_id() or "", get_api_key_id() or "", service_id, fallback_id, upstream_status,
-            )
             yield fallback_id, url, model_name, fb_payload, service_info
 
 
@@ -625,9 +631,11 @@ class OpenAIProxyService:
         try:
             client, response = await self.open_stream(path, payload, service_info)
         except UpstreamStreamError as exc:
+            self._failure_reason = "upstream_5xx" if exc.status_code >= 500 else None
             return "error", exc.status_code, exc.body
         except httpx.RequestError as exc:
             logger.warning(_UPSTREAM_FAILED_LOG, path, exc)
+            self._failure_reason = _transport_reason(exc)
             return "error", 502, {"error": {"message": str(exc), "type": "upstream_error"}}
 
         lines = response.aiter_lines()
@@ -639,6 +647,7 @@ class OpenAIProxyService:
             await response.aclose()
             await client.aclose()
             logger.warning(_UPSTREAM_FAILED_LOG, path, type(exc).__name__)
+            self._failure_reason = _transport_reason(exc)
             return "error", 502, {
                 "error": {"message": "Upstream LLM stream did not start in time", "type": "upstream_error"}
             }
@@ -742,18 +751,22 @@ class OpenAIProxyService:
         if kind == "error" and status_code >= 500:
             # Nothing has reached the client yet, so the stream can still move
             # to a fallback; once a stream has started it is never switched.
-            tried = False
+            fallbacks = await get_fallbacks(service_id)
+            reason, tried = self._failure_reason or "upstream_5xx", [service_id]
             async for fb_id, fb_url, fb_model, fb_payload, fb_info in self._fallbacks_for(
-                path, payload, service_id, request, status_code
+                path, payload, service_id, request, fallbacks
             ):
-                tried = True
+                log_failover(service_id, fb_id, reason)
+                tried.append(fb_id)
                 kind, status_code, result = await self.proxy_stream(path=fb_url, payload=fb_payload, service_info=fb_info)
                 if kind == "stream" or status_code < 500:
                     service_id, model_name, payload, service_info = fb_id, fb_model, fb_payload, fb_info
                     if request is not None:
                         request.state.service_id = fb_id
                     break
-            if tried and kind == "error" and status_code >= 500:
+                reason = self._failure_reason or "upstream_5xx"
+            if fallbacks and kind == "error" and status_code >= 500:
+                log_all_failed(service_id, tried)
                 set_llm_usage_model_id(service_info.get("model_id") or "")
                 status_code, result = 503, _all_unavailable(service_id)
         if kind == "error":
@@ -961,11 +974,13 @@ class OpenAIProxyService:
             # Same rule as the JSON routes: only an unreachable model moves the
             # upload to the Application's fallbacks. The file bytes are in
             # memory, so every fallback gets the same upload.
-            tried = False
+            fallbacks = await get_fallbacks(service_id)
+            reason, tried = self._failure_reason or "upstream_5xx", [service_id]
             async for fb_id, fb_url, fb_model, fb_data, fb_info in self._fallbacks_for(
-                path, data, service_id, request, status_code
+                path, data, service_id, request, fallbacks
             ):
-                tried = True
+                log_failover(service_id, fb_id, reason)
+                tried.append(fb_id)
                 with traced_span("model") as fb_model_attrs:
                     self._seed_model_attrs(fb_model_attrs, fb_id, fb_model)
                 status_code, body = await self._post_multipart(path, fb_url, files, fb_data, fb_info)
@@ -973,7 +988,9 @@ class OpenAIProxyService:
                     if request is not None:
                         request.state.service_id = fb_id
                     break
-            if tried and status_code >= 500:
+                reason = self._failure_reason or "upstream_5xx"
+            if fallbacks and status_code >= 500:
+                log_all_failed(service_id, tried)
                 # Metrics label the failed request with the requested model,
                 # not the last fallback _prepare_request resolved.
                 set_llm_usage_model_id(service_info.get("model_id") or "")
@@ -1000,9 +1017,11 @@ class OpenAIProxyService:
             logger.warning(
                 _UPSTREAM_FAILED_LOG, path, exc
             )
+            self._failure_reason = _transport_reason(exc)
             return 502, {
                 "error": {"message": str(exc), "type": "upstream_error"}
             }
+        self._failure_reason = "upstream_5xx" if response.status_code >= 500 else None
 
         try:
             return response.status_code, response.json()

@@ -147,6 +147,20 @@ def test_fallback_rejecting_the_input_returns_that_error():
         _run_loop(orch, ["nmt-b"])
 
 
+def test_fallback_that_partly_answered_stops_the_chain():
+    # per_item fallback billed group 1 then failed: the next fallback must not re-bill it
+    orch = _orchestrator()
+    second = _task_service({"output": ["c"]})
+    _wire(orch, {
+        "nmt-a": _task_service(exc=_unreachable()),
+        "nmt-b": _task_service(exc=_unreachable(), completed_groups=1),
+        "nmt-c": second,
+    })
+    with pytest.raises(AllServicesUnavailableError):
+        _run_loop(orch, ["nmt-b", "nmt-c"])
+    second.process.assert_not_called()
+
+
 def test_every_service_failing_is_503():
     orch = _orchestrator()
     _wire(orch, {"nmt-a": _task_service(exc=_unreachable()), "nmt-b": _task_service(exc=_unreachable())})
@@ -248,6 +262,25 @@ def test_llm_buffered_unresolvable_fallback_is_skipped_and_all_failing_is_503():
     (status, body), _ = _with(patches, ["llm-b", "llm-c"], proxy.proxy_traced(PATH, {"model": "llm-a", "messages": []}, None))
     assert status == 503 and body["error"]["type"] == "all_services_unavailable"
     assert [c.args[2] for c in proxy._forward_traced.call_args_list] == ["llm-a", "llm-c"]
+
+
+def test_llm_every_fallback_skipped_is_503_like_triton():
+    proxy, patches = _proxy({"llm-a": (502, {})})  # llm-b does not resolve
+    (status, body), _ = _with(patches, ["llm-b"], proxy.proxy_traced(PATH, {"model": "llm-a", "messages": []}, None))
+    assert status == 503 and body["error"]["type"] == "all_services_unavailable"
+
+
+def test_llm_failure_reason_is_classified():
+    from services.llm_service import OpenAIProxyService
+
+    async def run(exc):
+        proxy = OpenAIProxyService()
+        proxy.forward = AsyncMock(side_effect=exc)
+        status, _ = await proxy._forward_traced(PATH, "http://llm-a/v1", "llm-a", "m", {"model": "m"}, {})
+        return status, proxy._failure_reason
+
+    assert _run(run(httpx.ReadTimeout("slow"))) == (502, "timeout")
+    assert _run(run(httpx.ConnectError("refused"))) == (502, "unreachable")
 
 
 def test_llm_stream_moves_to_fallback_before_first_byte():

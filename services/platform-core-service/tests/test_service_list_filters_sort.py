@@ -225,7 +225,7 @@ class TestRouteHelpers:
 
     def test_tier_ids_is_open_to_non_admins(self):
         # The Application fallback picker filters by the Institution's Tier.
-        assert "tier_ids" in _route.ADMIN_ONLY_FILTER_PARAMS
+        assert "tier_ids" not in _route.ADMIN_ONLY_FILTER_PARAMS  # FILTER_PARAMS_OPEN_TO_ALL
         _route._reject_admin_only_filters(ServiceListFilterParams(tier_ids="t1"), is_admin=False)
 
     def test_split_csv(self):

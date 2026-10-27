@@ -13,7 +13,7 @@ from typing import List, Optional
 
 import redis.asyncio as aioredis
 
-from ai4i_core.context import get_application_id
+from ai4i_core.context import get_api_key_id, get_application_id
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -51,3 +51,27 @@ async def get_fallbacks(service_id: str) -> List[str]:
         logger.warning("Service fallback lookup failed for app_id=%s: %s", app_id, type(exc).__name__)
         return []
     return [str(f) for f in fallbacks if f and f != service_id]
+
+
+def log_failover(requested: str, fallback: str, reason: str) -> None:
+    """The failover event the AC asks for: Application, API key, requested and
+    fallback service, reason; the timestamp comes from the log record."""
+    logger.warning(
+        "service_failover application_id=%s api_key_id=%s requested_service_id=%s "
+        "fallback_service_id=%s reason=%s",
+        get_application_id() or "", get_api_key_id() or "", requested, fallback, reason,
+    )
+
+
+def log_fallback_skipped(requested: str, fallback: str, reason: str) -> None:
+    logger.warning(
+        "service_fallback_skipped application_id=%s requested_service_id=%s skipped_service_id=%s reason=%s",
+        get_application_id() or "", requested, fallback, reason,
+    )
+
+
+def log_all_failed(requested: str, tried: List[str]) -> None:
+    logger.error(
+        "all_services_failed application_id=%s api_key_id=%s requested_service_id=%s tried=%s",
+        get_application_id() or "", get_api_key_id() or "", requested, ",".join(tried),
+    )
