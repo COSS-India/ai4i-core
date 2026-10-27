@@ -310,7 +310,7 @@ async def revise_tenant_budget(
     present.
 
     ``budget_effective_from``/``budget_effective_to`` are both optional —
-    both omitted is a plain amount top-up that leaves an existing
+    both omitted is a plain amount top-up that leaves an active
     window untouched. Whether either is actually required depends on
     whether this tenant currently has a LIVE window:
       * Active: ``budget_effective_from`` is locked (422
@@ -323,7 +323,9 @@ async def revise_tenant_budget(
         as-is and just extends ``budget_effective_to`` — reactivating the
         SAME window (remaining balance carries over, since
         allocated_budget/spend are never window-scoped) rather than
-        forcing a brand-new one.
+        forcing a brand-new one. A top-up without a new
+        ``budget_effective_to`` is rejected (422 ``budget_window_expired``)
+        while the window stays lapsed.
       * No window on file at all: this is the ONLY case that can ever set
         a new ``budget_effective_from`` — this call IS the assignment and
         both fields become required (422 ``effective_window_required`` if

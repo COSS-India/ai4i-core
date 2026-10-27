@@ -445,11 +445,12 @@ class TenantBudgetRequest(BaseSchema):
     # tenant state TenantService.revise_tenant_budget alone can see (does
     # this tenant already have a LIVE window?), not something this schema
     # can express. Omitting both is the common case: a plain amount top-up
-    # that doesn't touch the window at all (what the shipped UI
+    # that doesn't touch an active window at all (what the shipped UI
     # already sends). See revise_tenant_budget's own docstring for the full
     # required-ness matrix and the 422s it can raise
     # (effective_from_locked / effective_window_required /
-    # budget_effective_from_invalid / budget_effective_to_invalid) — all
+    # budget_effective_from_invalid / budget_effective_to_invalid /
+    # budget_window_expired) — all
     # semantic, so all live in the service, not as Pydantic constraints
     # here, same reasoning as allocated_budget's own missing `ge=0` above.
     budget_effective_from: Optional[datetime] = Field(
