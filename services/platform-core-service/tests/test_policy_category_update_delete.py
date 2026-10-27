@@ -540,14 +540,30 @@ class TestRouteShape:
         assert route.status_code == 204
         assert {403, 404, 409} <= set(route.responses)
 
-    @pytest.mark.parametrize("path", ["/policies/categories/{category_id}",
-                                      "/policies/sub-categories/{sub_category_id}"])
-    @pytest.mark.parametrize("method", ["PATCH", "DELETE"])
-    def test_gateway_requires_admin(self, path, method):
+
+
+_API_PERMISSIONS = Path(__file__).resolve().parents[2] / "auth-service" / "api_permissions.json"
+# policies.read / create / update / delete. Not the admin sentinel (1), which
+# USAGE VIEWER also holds by seed (AI4IDS-3591).
+_POLICY_PERMISSION_BY_METHOD = {"GET": 100, "POST": 101, "PATCH": 102, "PUT": 102, "DELETE": 103}
+
+
+def _gateway_permissions() -> dict:
+    data = json.loads(_API_PERMISSIONS.read_text())
+    entries = data if isinstance(data, list) else next(v for v in data.values() if isinstance(v, list))
+    return {e["endpoint"]: e["permissionRequired"] for e in entries}
+
+
+class TestGatewayPermissions:
+    def test_no_policy_entry_uses_the_admin_sentinel(self):
+        on_sentinel = [k for k, v in _gateway_permissions().items()
+                       if k.split(":", 1)[1].startswith("/api/v1/policies") and v == 1]
+        assert on_sentinel == []
+
+    @pytest.mark.parametrize("method,path", sorted(
+        (m, f"/api/v1{r.path}") for r in _policy_routes.router.routes for m in r.methods
+    ))
+    def test_every_policy_route_is_listed_with_its_method_permission(self, method, path):
         # auth-service treats an endpoint missing from api_permissions.json as
         # public, so an anonymous call reached the route and got 403, not 401.
-        perms_file = Path(__file__).resolve().parents[2] / "auth-service" / "api_permissions.json"
-        data = json.loads(perms_file.read_text())
-        entries = data if isinstance(data, list) else next(v for v in data.values() if isinstance(v, list))
-        perms = {e["endpoint"]: e["permissionRequired"] for e in entries}
-        assert perms.get(f"{method}:/api/v1{path}") == 1
+        assert _gateway_permissions().get(f"{method}:{path}") == _POLICY_PERMISSION_BY_METHOD[method]
