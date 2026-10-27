@@ -1,22 +1,23 @@
 """reset self-registered users to the USER role only
 
 Self-registered users (creation_type default/google) may only hold USER
-(AI4IDS-3412). RoleService.assign_role enforces that for new grants, but
-accounts that were given other roles before the lock still hold them — and
-the UI now disables their role control, so an admin can't take those roles
-away. This one-time cleanup drops every non-USER role from them and makes
-sure each live one holds USER. Confirmed with product before release.
+(AI4IDS-3412). RoleService.assign_role enforces that for new grants. This
+one-time cleanup brings existing self-registered accounts in line: their
+roles other than USER are removed and each live one is given USER.
+
+Change request: self-registered users who already hold a privileged role
+(ADMIN, MODERATOR, TENANT ADMIN or USAGE VIEWER) keep their roles. Such a
+user is left exactly as it is — nothing removed, nothing added — so no
+working admin, moderator or usage viewer loses access. Only the other
+self-registered users are reset.
 
 Runs after e7a1b2c3d4f5 (via b8a1957cd6a3), which re-labels admin-created
 users still stored as 'default' to 'tenant' — so only genuinely
-self-registered accounts are hit.
+self-registered accounts are considered.
 
-Excluded / guarded:
+Excluded:
   - the seeded guest account (username 'guest', matched the same way as
     e2f3a4b5c6d7) keeps GUEST — it is a system account, not a signup.
-  - last admin: if no active admin-created ADMIN would remain, ADMIN is kept
-    on the oldest active self-registered ADMIN so the platform is never left
-    without one. A warning is logged; promote a real admin, then demote.
 
 Affected user ids and the roles removed are logged (ids only, no PII).
 Existing access tokens keep their old permission_ids until they expire;
@@ -41,92 +42,81 @@ depends_on: Union[str, None] = None
 SEEDER_ID = "5eed0000-0000-0000-0000-000000000000"
 GUEST_USERNAME = "guest"
 
+# A self-registered user holding any of these keeps all of its roles.
+PRESERVED_ROLES = ("ADMIN", "MODERATOR", "TENANT ADMIN", "USAGE VIEWER")
+
 logger = logging.getLogger("alembic.runtime.migration")
 
 # Self-registered = a known signup type, minus the seeded guest. Scoped to
 # the signup labels rather than "not tenant" so an unlabelled (NULL) row is
-# never swept — this migration deletes grants, so it must fail open. The
-# explicit IS NOT NULL keeps the predicate two-valued: a bare IN (...) is
-# NULL for a NULL row, and NOT (NULL) would drop that row from the
-# remaining-admin count below.
+# never swept — this migration deletes grants, so it must fail open.
 _SELF_REGISTERED = (
     "u.creation_type IS NOT NULL"
     " AND u.creation_type IN ('default', 'google')"
     " AND u.username <> :guest"
 )
 
+# Users holding a preserved role are left untouched.
+_NO_PRESERVED_ROLE = """
+    NOT EXISTS (
+        SELECT 1 FROM user_role kept
+        JOIN roles kr ON kr.id = kept.role_id
+        WHERE kept.user_id = u.id AND kr.name IN :preserved
+    )
+"""
+
+
+def _params() -> dict:
+    return {"guest": GUEST_USERNAME, "preserved": PRESERVED_ROLES}
+
 
 def upgrade() -> None:
     conn = op.get_bind()
-    params = {"guest": GUEST_USERNAME}
 
     user_role_id = conn.execute(sa.text("SELECT id FROM roles WHERE name = 'USER'")).scalar()
     if user_role_id is None:
         logger.warning("a7c3e9f15b28: no 'USER' role found; self-registered role reset skipped.")
         return
 
-    # Mirrors RoleRepository.count_admins_in_tenant: active, non-deleted holders.
-    admin_created_admins = conn.execute(sa.text(f"""
-        SELECT count(DISTINCT u.id)
-        FROM users u
-        JOIN user_role ur ON ur.user_id = u.id
-        JOIN roles r ON r.id = ur.role_id
-        WHERE r.name = 'ADMIN'
-          AND u.is_active IS TRUE AND u.is_delete IS NOT TRUE
-          AND NOT ({_SELF_REGISTERED})
-    """), params).scalar()
-
-    keep_admin_user_id = None
-    if admin_created_admins == 0:
-        keep_admin_user_id = conn.execute(sa.text(f"""
-            SELECT u.id
-            FROM users u
-            JOIN user_role ur ON ur.user_id = u.id
-            JOIN roles r ON r.id = ur.role_id
-            WHERE r.name = 'ADMIN'
-              AND u.is_active IS TRUE AND u.is_delete IS NOT TRUE
+    removed = conn.execute(
+        sa.text(f"""
+            DELETE FROM user_role ur
+            USING users u, roles r
+            WHERE ur.user_id = u.id
+              AND r.id = ur.role_id
               AND {_SELF_REGISTERED}
-            ORDER BY u.created_at, u.id
-            LIMIT 1
-        """), params).scalar()
-        if keep_admin_user_id is not None:
-            logger.warning(
-                "a7c3e9f15b28: user %s is the only active ADMIN and is self-registered; "
-                "keeping ADMIN on it. Promote an admin-created user, then remove it.",
-                keep_admin_user_id,
-            )
-
-    removed = conn.execute(sa.text(f"""
-        DELETE FROM user_role ur
-        USING users u, roles r
-        WHERE ur.user_id = u.id
-          AND r.id = ur.role_id
-          AND {_SELF_REGISTERED}
-          AND r.name <> 'USER'
-          AND NOT (r.name = 'ADMIN' AND u.id IS NOT DISTINCT FROM CAST(:keep AS uuid))
-        RETURNING ur.user_id, r.name
-    """), {**params, "keep": keep_admin_user_id}).fetchall()
+              AND {_NO_PRESERVED_ROLE}
+              AND r.name <> 'USER'
+            RETURNING ur.user_id, r.name
+        """).bindparams(sa.bindparam("preserved", expanding=True)),
+        _params(),
+    ).fetchall()
     for user_id, role_name in removed:
         logger.info("a7c3e9f15b28: removed role %r from self-registered user %s", role_name, user_id)
 
-    added = conn.execute(sa.text(f"""
-        INSERT INTO user_role (user_id, role_id, created_by)
-        SELECT u.id, :role_id, CAST(:seeder AS uuid)
-        FROM users u
-        WHERE {_SELF_REGISTERED}
-          AND u.is_delete IS NOT TRUE
-          AND NOT EXISTS (
-              SELECT 1 FROM user_role ur
-              WHERE ur.user_id = u.id AND ur.role_id = :role_id
-          )
-        RETURNING user_id
-    """), {**params, "role_id": user_role_id, "seeder": SEEDER_ID}).fetchall()
+    added = conn.execute(
+        sa.text(f"""
+            INSERT INTO user_role (user_id, role_id, created_by)
+            SELECT u.id, :role_id, CAST(:seeder AS uuid)
+            FROM users u
+            WHERE {_SELF_REGISTERED}
+              AND {_NO_PRESERVED_ROLE}
+              AND u.is_delete IS NOT TRUE
+              AND NOT EXISTS (
+                  SELECT 1 FROM user_role ur
+                  WHERE ur.user_id = u.id AND ur.role_id = :role_id
+              )
+            RETURNING user_id
+        """).bindparams(sa.bindparam("preserved", expanding=True)),
+        {**_params(), "role_id": user_role_id, "seeder": SEEDER_ID},
+    ).fetchall()
     for (user_id,) in added:
         logger.info("a7c3e9f15b28: assigned USER to self-registered user %s", user_id)
 
     logger.info(
-        "a7c3e9f15b28: removed %d role assignment(s), added USER to %d user(s).",
-        len(removed), len(added),
+        "a7c3e9f15b28: removed %d role assignment(s), added USER to %d user(s); "
+        "self-registered users holding %s were left unchanged.",
+        len(removed), len(added), ", ".join(PRESERVED_ROLES),
     )
 
 
