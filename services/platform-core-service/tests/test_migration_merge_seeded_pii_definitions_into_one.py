@@ -42,8 +42,22 @@ def _regex(entity_name):
     return next(field["regex"] for field in FIELDS if field["entity_name"] == entity_name)
 
 
-def test_only_custom_fields_are_seeded():
-    assert set(migration._PII_POLICY_FIELDS) == {"custom_field"}
+def test_custom_fields_and_built_ins_are_seeded():
+    assert set(migration._PII_POLICY_FIELDS) == {"custom_field", "model_supported_field"}
+
+
+def test_built_ins_are_the_domain_definitions_combined():
+    # Inference runs only the built-ins named here; one dropped in the merge
+    # would go unmasked for every policy moved onto this row.
+    domain_names = [
+        entity["entity_name"]
+        for definition in domain_seed._DOMAIN_PII_DEFINITIONS.values()
+        for entry in definition["model_supported_field"]
+        for entity in entry["en"]
+    ]
+    [entry] = migration._PII_POLICY_FIELDS["model_supported_field"]
+    names = [entity["entity_name"] for entity in entry["en"]]
+    assert names == list(dict.fromkeys(domain_names))
 
 
 def test_policy_fields_pass_the_policy_type_api_validation():

@@ -3,8 +3,11 @@
 b7d9f1a3c5e8 seeded Education PII, Finance PII and Healthcare PII next to the
 older seeded 'PII' row, so the PII Types list showed four default definitions
 and the same entities more than once. The defaults are one 'PII' policy type
-holding the custom fields only. Built-ins (PERSON, EMAIL_ADDRESS, IN_PAN, ...)
-are not seeded into it: the PII Types list already offers every one of them.
+holding the three definitions combined: their custom fields, and the union of
+their built-ins (PERSON, EMAIL_ADDRESS, IN_PAN, ...) in model_supported_field.
+Inference runs a built-in only when the policy type names it there, so leaving
+them out would stop every re-pointed policy masking names, emails, phones,
+cards, Aadhaar and PAN.
 
 Every earlier seeded row (created_by one of the earlier seeder ids) is
 removed, and a policy that listed one of them in policy_type_id lists the new
@@ -56,8 +59,24 @@ _ADDRESS_REGEX = (
 )
 
 # The custom fields b7d9f1a3c5e8 seeded, unchanged; see its docstring for why
-# each regex differs from the story where it does.
+# each regex differs from the story where it does. The built-ins are its three
+# model_supported_field lists combined, without repeats.
 _PII_POLICY_FIELDS = {
+    "model_supported_field": [
+        {
+            "en": [
+                {"entity_name": name}
+                for name in (
+                    "PERSON",
+                    "EMAIL_ADDRESS",
+                    "PHONE_NUMBER",
+                    "CREDIT_CARD",
+                    "IN_PAN",
+                    "IN_AADHAAR",
+                )
+            ]
+        }
+    ],
     "custom_field": [
         {
             "entity_name": "STUDENT_ID",
