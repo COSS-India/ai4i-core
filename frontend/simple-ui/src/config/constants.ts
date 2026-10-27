@@ -1476,6 +1476,10 @@ export const SERVICE_TIER = {
   },
 } as const;
 
+/** Shown for a tier with no rate limit — a null rate limit means the platform default applies. */
+export const TIER_RATE_LIMIT_PLATFORM_DEFAULT = "Platform default";
+
+
 /** Service publish state (services-management). */
 export const SERVICE_PUBLISH = {
   FILTER: {

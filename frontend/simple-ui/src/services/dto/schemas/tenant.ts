@@ -11,6 +11,19 @@ export const tenantStatusSchema = z.preprocess(
   z.enum(tenantStatusValues)
 );
 
+/** Quotas arrive as decimal strings ("1000.0000"). */
+export const tierLimitsSchema = z.object({
+  rate_limit: z.number().nullable(),
+  quotas: z.array(
+    z.object({
+      task_type: z.string(),
+      unit: z.string(),
+      monthly_quota: z.coerce.number(),
+      pending_monthly_quota: z.coerce.number().nullable().optional(),
+    })
+  ),
+});
+
 export const tenantViewSchema = z
   .object({
     tenant_id: z.coerce.string(),
@@ -22,6 +35,7 @@ export const tenantViewSchema = z
     onboarding_completed: z.boolean().optional(),
     tier_id: z.string().nullable().optional(),
     tier_name: z.string().nullable().optional(),
+    tier_limits: tierLimitsSchema.nullable().optional(),
     allocated_budget: z.coerce.number().nullable().optional(),
     budget_effective_from: z.string().nullable().optional(),
     budget_effective_to: z.string().nullable().optional(),

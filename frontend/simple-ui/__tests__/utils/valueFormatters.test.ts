@@ -1,4 +1,4 @@
-import { EMPTY_VALUE, dash, fmtDate } from "../../src/utils/valueFormatters";
+import { EMPTY_VALUE, dash, fmtDate, formatMonthlyQuota } from "../../src/utils/valueFormatters";
 
 describe("dash", () => {
   it("returns the value when it has content", () => {
@@ -29,5 +29,22 @@ describe("fmtDate", () => {
     // Date yields "Invalid Date" instead of throwing, so this needs the NaN check.
     expect(fmtDate("not-a-date")).toBe("not-a-date");
     expect(fmtDate("2026-13-45")).toBe("2026-13-45");
+  });
+});
+
+describe("formatMonthlyQuota", () => {
+  it("reads a catalogue unit's underscores as spaces", () => {
+    expect(formatMonthlyQuota(99999999, "audio_minutes")).toBe("99,999,999 audio minutes/month");
+    expect(formatMonthlyQuota(1000, "tokens")).toBe("1,000 tokens/month");
+  });
+
+  it("keeps up to two decimals", () => {
+    expect(formatMonthlyQuota(12.345, "audio_minutes")).toBe("12.35 audio minutes/month");
+  });
+
+  it("drops the unit when it is missing or blank", () => {
+    expect(formatMonthlyQuota(500, undefined)).toBe("500/month");
+    expect(formatMonthlyQuota(500, null)).toBe("500/month");
+    expect(formatMonthlyQuota(500, "  ")).toBe("500/month");
   });
 });
