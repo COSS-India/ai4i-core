@@ -7,8 +7,9 @@ the UI now disables their role control, so an admin can't take those roles
 away. This one-time cleanup drops every non-USER role from them and makes
 sure each live one holds USER. Confirmed with product before release.
 
-Runs after e7a1b2c3d4f5, which re-labels admin-created users still stored as
-'default' to 'tenant' — so only genuinely self-registered accounts are hit.
+Runs after e7a1b2c3d4f5 (via b8a1957cd6a3), which re-labels admin-created
+users still stored as 'default' to 'tenant' — so only genuinely
+self-registered accounts are hit.
 
 Excluded / guarded:
   - the seeded guest account (username 'guest', matched the same way as
@@ -22,7 +23,7 @@ Existing access tokens keep their old permission_ids until they expire;
 the next refresh re-reads roles from the DB.
 
 Revision ID: a7c3e9f15b28
-Revises: e7a1b2c3d4f5
+Revises: b8a1957cd6a3
 Create Date: 2026-10-27
 
 """
@@ -33,7 +34,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "a7c3e9f15b28"
-down_revision: Union[str, None] = "e7a1b2c3d4f5"
+down_revision: Union[str, None] = "b8a1957cd6a3"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, None] = None
 
