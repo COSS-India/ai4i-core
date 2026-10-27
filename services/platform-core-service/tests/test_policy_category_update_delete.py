@@ -17,7 +17,9 @@ test_policy_category.py does.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
@@ -537,3 +539,15 @@ class TestRouteShape:
         )
         assert route.status_code == 204
         assert {403, 404, 409} <= set(route.responses)
+
+    @pytest.mark.parametrize("path", ["/policies/categories/{category_id}",
+                                      "/policies/sub-categories/{sub_category_id}"])
+    @pytest.mark.parametrize("method", ["PATCH", "DELETE"])
+    def test_gateway_requires_admin(self, path, method):
+        # auth-service treats an endpoint missing from api_permissions.json as
+        # public, so an anonymous call reached the route and got 403, not 401.
+        perms_file = Path(__file__).resolve().parents[2] / "auth-service" / "api_permissions.json"
+        data = json.loads(perms_file.read_text())
+        entries = data if isinstance(data, list) else next(v for v in data.values() if isinstance(v, list))
+        perms = {e["endpoint"]: e["permissionRequired"] for e in entries}
+        assert perms.get(f"{method}:/api/v1{path}") == 1
