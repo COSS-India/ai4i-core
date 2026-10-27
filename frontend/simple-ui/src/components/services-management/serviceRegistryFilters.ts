@@ -1,5 +1,6 @@
 import { formatModelTaskTypeLabel, SERVICE_TIER } from "../../config/constants";
 import type { ServiceTierFilterOption } from "../../hooks/useServicesManagement";
+import type { Service } from "../../types/platform";
 import type {
   DataTableFilterDef,
   DataTableSearchConfig,
@@ -83,6 +84,36 @@ function selectFilterWidth(cellKey: string): string {
   return "160px";
 }
 
+/** Offline catalogue search targets. Server mode uses the column catalogue instead. */
+export const SERVICE_SEARCH_FIELD_OPTIONS = [
+  { label: "Name", value: "name" },
+  { label: "Model name", value: "modelName" },
+  { label: "Service ID", value: "serviceId" },
+];
+
+function compactFieldId(id: string): string {
+  return id.replace(/_/g, "").toLowerCase();
+}
+
+function serviceSearchValue(service: Service, fieldId: string): string {
+  const key = compactFieldId(fieldId);
+  if (key === "name") return service.name ?? "";
+  if (key === "serviceid") return service.serviceId || service.service_id || "";
+  if (key === "modelname") return service.model?.name || service.modelName || "";
+  return "";
+}
+
+/** Empty `fields` matches any of the search targets. A selection matches any chosen field. */
+export function serviceMatchesSearch(service: Service, query: string, fields: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const selected = fields.split(",").map((part) => part.trim()).filter(Boolean);
+  const active = selected.length > 0
+    ? selected
+    : SERVICE_SEARCH_FIELD_OPTIONS.map((option) => option.value);
+  return active.some((id) => serviceSearchValue(service, id).toLowerCase().includes(q));
+}
+
 const TOOLBAR_FILTER_ORDER = ["status", "task", "tier"] as const;
 
 export function buildServerServiceFilterDefs(options: {
@@ -92,28 +123,34 @@ export function buildServerServiceFilterDefs(options: {
   tierFilterOptions: ServiceTierFilterOption[];
   onChange: (columnId: string, value: string) => void;
 }): DataTableFilterDef[] {
-  const byKey = new Map<string, DataTableFilterDef>();
+  const defs: DataTableFilterDef[] = [];
   for (const column of options.columns) {
     if (!column.filterable || !column.filter) continue;
-    const kind = column.filter.type;
-    if (kind !== "single_select" && kind !== "multi_select") continue;
     const cellKey = serviceListCellKey(column.id);
-    if (!TOOLBAR_FILTER_ORDER.includes(cellKey as (typeof TOOLBAR_FILTER_ORDER)[number])) continue;
-    byKey.set(
-      cellKey,
-      buildSelectFilterDef(
-        column,
-        options.serverFilterValues?.[column.id] ?? "",
-        options.taskTypeNames,
-        options.tierFilterOptions,
-        options.onChange,
-      ),
+    if (!TOOLBAR_FILTER_ORDER.includes(cellKey as (typeof TOOLBAR_FILTER_ORDER)[number])) {
+      continue;
+    }
+    if (column.filter.type !== "single_select" && column.filter.type !== "multi_select") {
+      continue;
+    }
+
+    const value = options.serverFilterValues?.[column.id] ?? "";
+    const def = buildSelectFilterDef(
+      column,
+      value,
+      options.taskTypeNames,
+      options.tierFilterOptions,
+      options.onChange,
     );
+    if (cellKey === "task") def.label = "Task Type";
+    defs.push(def);
   }
-  return TOOLBAR_FILTER_ORDER.flatMap((key) => {
-    const def = byKey.get(key);
-    return def ? [def] : [];
-  });
+  defs.sort(
+    (left, right) =>
+      TOOLBAR_FILTER_ORDER.indexOf(serviceListCellKey(left.id) as (typeof TOOLBAR_FILTER_ORDER)[number]) -
+      TOOLBAR_FILTER_ORDER.indexOf(serviceListCellKey(right.id) as (typeof TOOLBAR_FILTER_ORDER)[number]),
+  );
+  return defs;
 }
 
 export function buildClientServiceFilterDefs(options: {
@@ -187,7 +224,7 @@ export function buildServiceRegistrySearch(options: {
     label: "Search",
     value: options.searchQuery,
     onChange: options.onSearchQueryChange,
-    placeholder: "Search by service name...",
+    placeholder: "Search services...",
     width: { base: "full", sm: "240px" },
     debounceMs: options.serverMode ? 400 : undefined,
     fields: ["name", "model_name", "service_id"],

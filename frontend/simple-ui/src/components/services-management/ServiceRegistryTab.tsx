@@ -14,7 +14,9 @@ import {
   buildClientServiceFilterDefs,
   buildServerServiceFilterDefs,
   buildServiceRegistrySearch,
+  SERVICE_SEARCH_FIELD_OPTIONS,
 } from "./serviceRegistryFilters";
+import type { DataTableFilterDef } from "../common/dataTableTypes";
 
 interface ServiceRegistryTabProps {
   items: Service[];
@@ -27,6 +29,10 @@ interface ServiceRegistryTabProps {
   tableKey: string;
   searchQuery: string;
   onSearchQueryChange: (value: string) => void;
+  /** Comma-separated search fields. Empty means all fields. */
+  searchFields: string;
+  onSearchFieldsChange: (value: string) => void;
+  searchFieldOptions?: { label: string; value: string }[];
   filterStatus: string;
   onFilterStatusChange: (value: string) => void;
   filterTaskType: string;
@@ -107,6 +113,9 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
   tableKey,
   searchQuery,
   onSearchQueryChange,
+  searchFields,
+  onSearchFieldsChange,
+  searchFieldOptions = SERVICE_SEARCH_FIELD_OPTIONS,
   filterStatus,
   onFilterStatusChange,
   filterTaskType,
@@ -153,6 +162,18 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
     searchQuery,
     onSearchQueryChange,
   });
+  const searchInFilter: DataTableFilterDef = {
+    id: "searchIn",
+    label: "Search in",
+    type: "multiselect",
+    value: searchFields,
+    onChange: onSearchFieldsChange,
+    width: { base: "full", sm: "168px" },
+    options: [
+      { label: "All fields", value: "" },
+      ...searchFieldOptions,
+    ],
+  };
   const serverPagination = resolveServerPagination({
     serverMode,
     serverPage,
@@ -186,7 +207,10 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
       onClearFilters={onClearFilters}
       filterToolbarRightContent={columnPicker}
       search={search}
-      filterDefs={serverMode ? serverFilterDefs : clientFilterDefs}
+      filterDefs={[
+        searchInFilter,
+        ...(serverMode ? serverFilterDefs : clientFilterDefs),
+      ]}
     />
   );
 };

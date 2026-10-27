@@ -11,6 +11,7 @@ import {
   serviceListSortAccessors,
   type ServiceListColumnDef,
 } from "../components/services-management/serviceListColumns";
+import { serviceMatchesSearch } from "../components/services-management/serviceRegistryFilters";
 import {
   applyServicePublishPatch,
   fetchRegistryServicesPage,
@@ -641,6 +642,8 @@ export function useServicesManagement() {
   const [activeTab, setActiveTab] = useState(0);
   const [registryEpoch, setRegistryEpoch] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
+  /** Comma-separated search fields. Empty searches every text field. */
+  const [searchFields, setSearchFields] = useState("");
   const [filterStatus, setFilterStatus] = useState<string>("");
   const [filterTaskType, setFilterTaskType] = useState<string>("");
   const [filterTier, setFilterTier] = useState<string>(
@@ -721,15 +724,14 @@ export function useServicesManagement() {
   // and the rows are already one server page.
   const registryTableItems = useMemo(() => {
     if (serviceListUsesServer) return services;
-    const q = searchQuery.trim().toLowerCase();
-    let filtered = q
-      ? services.filter((service) => (service.name ?? "").toLowerCase().includes(q))
-      : services;
+    let filtered = services.filter((service) =>
+      serviceMatchesSearch(service, searchQuery, searchFields),
+    );
     if (filterTier !== SERVICE_TIER.FILTER.ALL) {
       filtered = filtered.filter((s) => serviceMatchesTier(s, filterTier));
     }
     return registrySort.apply(filtered);
-  }, [services, searchQuery, filterTier, registrySort, serviceListUsesServer]);
+  }, [services, searchQuery, searchFields, filterTier, registrySort, serviceListUsesServer]);
 
   const tiersQuery = useQuery({
     queryKey: ACTIVE_TIERS_QUERY_KEY,
@@ -794,6 +796,7 @@ export function useServicesManagement() {
       });
   const clearAllFilters = () => {
     setSearchQuery("");
+    setSearchFields("");
     setFilterStatus("");
     setFilterTaskType(taskTypeNames.length === 1 ? taskTypeNames[0] : "");
     handleFilterTierChange(SERVICE_TIER.FILTER.ALL);
@@ -804,41 +807,67 @@ export function useServicesManagement() {
     setRegistryPage(1);
     setServerFilters((prev) => ({ ...prev, [columnId]: value }));
   }, []);
-  const nameSearchColumnId = useMemo(
-    () =>
-      serviceListCatalogue.find(
-        (column) => column.filter?.type === "text" && serviceListCellKey(column.id) === "name",
-      )?.id,
+  const textSearchColumns = useMemo(
+    () => serviceListCatalogue.filter((column) => column.filter?.type === "text"),
     [serviceListCatalogue],
   );
+  const searchFieldOptions = useMemo(
+    () =>
+      textSearchColumns.length > 0
+        ? textSearchColumns.map((column) => ({ label: column.label, value: column.id }))
+        : undefined,
+    [textSearchColumns],
+  );
   const searchQueryRef = useRef(searchQuery);
+  const searchFieldsRef = useRef(searchFields);
   searchQueryRef.current = searchQuery;
+  searchFieldsRef.current = searchFields;
   const writeServerSearch = useCallback(
-    (query: string) => {
-      if (!serviceListUsesServer || !nameSearchColumnId) return;
+    (query: string, fields: string) => {
+      if (!serviceListUsesServer || textSearchColumns.length === 0) return;
+      const selected = fields.split(",").map((part) => part.trim()).filter(Boolean);
       setServerFilters((prev) => {
-        const current = prev[nameSearchColumnId] ?? "";
-        if (current === query) return prev;
         const next = { ...prev };
-        if (query) next[nameSearchColumnId] = query;
-        else delete next[nameSearchColumnId];
-        return next;
+        let changed = false;
+        for (const column of textSearchColumns) {
+          const compact = column.id.replace(/_/g, "").toLowerCase();
+          // No field chosen: keep the existing name search. The list API
+          // combines name, service id, and model name, so filling all of them
+          // would require the text in every field.
+          const chosen =
+            selected.length === 0
+              ? compact === "name"
+              : selected.includes(column.id) ||
+                selected.some((id) => id.replace(/_/g, "").toLowerCase() === compact);
+          const value = chosen && query ? query : "";
+          const current = next[column.id] ?? "";
+          if (current === value) continue;
+          if (value) next[column.id] = value;
+          else delete next[column.id];
+          changed = true;
+        }
+        return changed ? next : prev;
       });
     },
-    [serviceListUsesServer, nameSearchColumnId],
+    [serviceListUsesServer, textSearchColumns],
   );
   const applyServiceSearch = useCallback(
-    (query: string) => {
+    (query: string, fields?: string) => {
+      const nextFields = fields ?? searchFieldsRef.current;
       setSearchQuery(query);
+      if (fields !== undefined) setSearchFields(fields);
       setRegistryPage(1);
-      writeServerSearch(query);
+      writeServerSearch(query, nextFields);
     },
     [writeServerSearch],
   );
+  const onSearchFieldsChange = useCallback((fields: string) => {
+    applyServiceSearch(searchQueryRef.current, fields);
+  }, [applyServiceSearch]);
   useEffect(() => {
     if (!serviceListUsesServer) return;
-    writeServerSearch(searchQueryRef.current);
-  }, [serviceListUsesServer, nameSearchColumnId, writeServerSearch]);
+    writeServerSearch(searchQueryRef.current, searchFieldsRef.current);
+  }, [serviceListUsesServer, textSearchColumns, writeServerSearch]);
 
   const router = useRouter();
   const routerRef = useRef(router);
@@ -1912,6 +1941,9 @@ export function useServicesManagement() {
     setServerFilterValue,
     searchQuery,
     setSearchQuery: applyServiceSearch,
+    searchFields,
+    onSearchFieldsChange,
+    searchFieldOptions,
     filterStatus,
     setFilterStatus,
     filterTaskType,
