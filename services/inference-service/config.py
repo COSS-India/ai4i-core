@@ -68,6 +68,16 @@ class Settings(BaseSettings):
         None, description="Shared secret for the internal service-resolution call"
     )
 
+    # Service fallback — the Application's {service_id: [fallbacks]} map is read
+    # from Redis (auth:app:{id}:service_fallbacks); on a miss, from auth-service's
+    # internal route, which reloads it from Postgres. Unset → no fallback on a miss.
+    AUTH_SERVICE_URL: Optional[str] = Field(
+        None, description="Internal URL of auth-service (fallback config on a Redis miss)"
+    )
+    SERVICE_FALLBACK_CACHE_SECONDS: int = Field(
+        30, description="In-process cache of each Application's fallback map, in seconds"
+    )
+
     # Triton configuration
     DEFAULT_TRITON_TIMEOUT: int = Field(300, description="Triton inference HTTP timeout in seconds")
 

@@ -346,6 +346,12 @@ class BaseTaskService:
                 # The PPU Kafka consumer reads only the ai-inference span for
                 # billing, so it must always be present there (mirrors llm_service.py).
                 span_ctx["service_id"] = service_id
+                # Which attempt this is (0 = the requested service, 1.. = the
+                # Application's fallbacks) — set by the Orchestrator, so the
+                # trace view can tell the attempts' ai-inference spans apart.
+                attempt = int(serviceInfo.get("attempt") or 0)
+                span_ctx["attempt"] = attempt
+                span_ctx["is_fallback"] = attempt > 0
                 # input_type/output_type (payload-shape guessing) are seeded by
                 # traced_inference for the LLM path only — Triton uses unit_type instead.
                 span_ctx.pop("input_type", None)
@@ -460,6 +466,18 @@ class BaseTaskService:
             # message — the exception message can surface in logs ingested
             # to client-visible sinks. The chained `from e` preserves the
             # original exception for server-side debugging only.
+            #
+            # Timeout / unreachable / 5xx are marked UpstreamUnavailableError
+            # (still a RuntimeError → 502) so the Orchestrator can move on to
+            # the Application's fallback service. 4xx (incl. the 404
+            # LookupError above) stays as is: it goes back to the client.
+            from utils.failover import UpstreamUnavailableError, classify_upstream_failure
+
+            reason = classify_upstream_failure(e)
+            if reason:
+                raise UpstreamUnavailableError(
+                    f"{self.task_name}: Triton inference call failed", reason
+                ) from e
             raise RuntimeError(
                 f"{self.task_name}: Triton inference call failed"
             ) from e

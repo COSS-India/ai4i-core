@@ -21,6 +21,11 @@ class ModelMetadata(BaseModel):
     language: List[Dict[str, Any]] = Field(
         default_factory=list, description="mm_models.languages"
     )
+    # Service fallback: which service actually answered, and whether it was
+    # one of the Application's fallbacks for the requested serviceId.
+    serviceId: Optional[str] = Field(None, description="The service that served the request")
+    requestedServiceId: Optional[str] = Field(None, description="The serviceId the client sent")
+    fallbackUsed: Optional[bool] = Field(None, description="True when a fallback service answered")
 
 
 class GenericInferenceResponse(BaseModel):
