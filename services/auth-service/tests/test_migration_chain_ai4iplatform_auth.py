@@ -35,3 +35,10 @@ def test_role_reset_runs_after_creation_type_backfill(script):
     # a7c3e9f15b28 only resets users e7a1b2c3d4f5 left as self-registered.
     ancestors = {rev.revision for rev in script.iterate_revisions("a7c3e9f15b28", "base")}
     assert "e7a1b2c3d4f5" in ancestors
+
+
+def test_role_reset_runs_after_usage_viewer_rename(script):
+    # a7c3e9f15b28 preserves 'USAGE VIEWER' by name; on a DB still holding
+    # 'PROGRAM ADMIN' those users would be reset instead.
+    ancestors = {rev.revision for rev in script.iterate_revisions("a7c3e9f15b28", "base")}
+    assert "c5d6e7f8a9b1" in ancestors
