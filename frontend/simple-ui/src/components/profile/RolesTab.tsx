@@ -25,7 +25,6 @@ import StandardModal from "../common/StandardModal";
 import { formatDefaultTenantAssignableRoleLabel } from "../../utils/defaultTenant";
 import { INSTITUTION } from "../../config/constants";
 import { FIELD_HINTS } from "../../config/fieldHints";
-import FieldHint from "../common/FieldHint";
 import FieldLabel from "../common/FieldLabel";
 
 export interface RolesTabProps {
@@ -88,7 +87,7 @@ export default function RolesTab({ users, isLoadingUsers, defaultTenantId }: Rol
           <Box>
 
             <FormControl>
-              <FieldLabel>User</FieldLabel>
+              <FieldLabel hint={FIELD_HINTS.profile.roleUser.tip}>User</FieldLabel>
               <UserSearchableSelect
                 key={`${defaultTenantId ?? "pending"}-${users.length}`}
                 variant="pick"
@@ -108,7 +107,6 @@ export default function RolesTab({ users, isLoadingUsers, defaultTenantId }: Rol
                 selectedPreview={rt.selectedUser}
                 allowClear
               />
-              <FieldHint>{FIELD_HINTS.profile.roleUser.helper}</FieldHint>
             </FormControl>
           </Box>
 

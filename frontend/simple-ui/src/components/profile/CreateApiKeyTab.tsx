@@ -132,7 +132,7 @@ export default function CreateApiKeyTab({
             )}
 
             <FormControl isRequired>
-              <FieldLabel>Key Name</FieldLabel>
+              <FieldLabel hint={FIELD_HINTS.apiKey.keyName.tip}>Key Name</FieldLabel>
               <Input
                 value={create.apiKeyForm.key_name}
                 onChange={(e) =>
@@ -146,7 +146,7 @@ export default function CreateApiKeyTab({
             </FormControl>
 
             <FormControl isRequired isInvalid={Boolean(create.fieldErrors.application_id)}>
-              <FieldLabel>Application</FieldLabel>
+              <FieldLabel hint={FIELD_HINTS.apiKey.application.tip}>Application</FieldLabel>
               <Select
                 value={create.apiKeyForm.application_id}
                 onChange={(e) => {
@@ -168,14 +168,11 @@ export default function CreateApiKeyTab({
                   </option>
                 ))}
               </Select>
-              <FieldHint show={!create.fieldErrors.application_id}>
-                {FIELD_HINTS.apiKey.application.helper}
-              </FieldHint>
               <FormErrorMessage>{create.fieldErrors.application_id}</FormErrorMessage>
             </FormControl>
 
             <FormControl isRequired>
-              <FieldLabel>Permissions</FieldLabel>
+              <FieldLabel hint={FIELD_HINTS.apiKey.permissions.tip}>Permissions</FieldLabel>
               <Box borderWidth="1px" borderRadius="md" p={4} bg="white" maxH="300px" overflowY="auto">
                 <CheckboxGroup
                   value={create.selectedPermissions}
@@ -216,11 +213,10 @@ export default function CreateApiKeyTab({
                   </SimpleGrid>
                 </CheckboxGroup>
               </Box>
-              <FieldHint>{FIELD_HINTS.apiKey.permissions.helper}</FieldHint>
             </FormControl>
 
             <FormControl isRequired isInvalid={Boolean(budgetError)}>
-              <FieldLabel>
+              <FieldLabel hint={FIELD_HINTS.apiKey.budget.tip}>
                 Budget Allocation{" "}
                 <Text as="span" fontWeight="normal" color="ink.500" fontSize="sm">
                   (% of the Application&apos;s Budget)
@@ -249,7 +245,7 @@ export default function CreateApiKeyTab({
                 create.selectedApplication?.allocated_budget != null
                   ? create.uncappedHoldsRemainder
                     ? " An existing key without a percentage allocation is holding this Application's remaining Budget — give that key an explicit Budget before creating another."
-                    : ` Up to ${create.formatAvailablePct()}% available within this Application.`
+                    : ` · Up to ${create.formatAvailablePct()}% available`
                   : ""}
               </FieldHint>
               {create.budgetPreview && (
@@ -263,7 +259,7 @@ export default function CreateApiKeyTab({
             </FormControl>
 
             <FormControl isRequired>
-              <FieldLabel>Expiry (Days)</FieldLabel>
+              <FieldLabel hint={FIELD_HINTS.apiKey.expiry.tip}>Expiry (Days)</FieldLabel>
               <Input
                 type="number"
                 value={create.apiKeyForm.expires_days === "" ? "" : create.apiKeyForm.expires_days}

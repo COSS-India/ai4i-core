@@ -48,6 +48,7 @@ import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
   type DataTableColumn,
 } from "../components/common/table";
+import { FIELD_HINTS } from "../config/fieldHints";
 import { useDeferredColumnSort } from "../utils/tableSort";
 import {
   MODEL_VERSION,
@@ -649,6 +650,7 @@ const ModelManagementPage: React.FC = () => {
       {
         id: "status",
         header: "Status",
+        hint: FIELD_HINTS.model.col.status,
         cell: (model) => (
           <Badge
             colorScheme={isModelVersionStatusActive(model.versionStatus) ? "green" : "gray"}
@@ -661,6 +663,7 @@ const ModelManagementPage: React.FC = () => {
       {
         id: "task",
         header: "Task Type",
+        hint: FIELD_HINTS.model.col.task,
         cell: (model) => {
           const taskType = resolveTaskType(model);
           return (
@@ -696,6 +699,7 @@ const ModelManagementPage: React.FC = () => {
       {
         id: "serviceCount",
         header: "No. of Services",
+        hint: FIELD_HINTS.model.col.services,
         cell: (model) => {
           if (isServiceCountLoading) {
             return <Skeleton height="20px" width="28px" borderRadius="md" />;

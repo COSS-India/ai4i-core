@@ -723,7 +723,7 @@ export function useServicesManagement() {
     if (serviceListUsesServer) return services;
     const q = searchQuery.trim().toLowerCase();
     let filtered = q
-      ? services.filter((s) => (s.name ?? "").toLowerCase().includes(q))
+      ? services.filter((service) => (service.name ?? "").toLowerCase().includes(q))
       : services;
     if (filterTier !== SERVICE_TIER.FILTER.ALL) {
       filtered = filtered.filter((s) => serviceMatchesTier(s, filterTier));
@@ -804,6 +804,41 @@ export function useServicesManagement() {
     setRegistryPage(1);
     setServerFilters((prev) => ({ ...prev, [columnId]: value }));
   }, []);
+  const nameSearchColumnId = useMemo(
+    () =>
+      serviceListCatalogue.find(
+        (column) => column.filter?.type === "text" && serviceListCellKey(column.id) === "name",
+      )?.id,
+    [serviceListCatalogue],
+  );
+  const searchQueryRef = useRef(searchQuery);
+  searchQueryRef.current = searchQuery;
+  const writeServerSearch = useCallback(
+    (query: string) => {
+      if (!serviceListUsesServer || !nameSearchColumnId) return;
+      setServerFilters((prev) => {
+        const current = prev[nameSearchColumnId] ?? "";
+        if (current === query) return prev;
+        const next = { ...prev };
+        if (query) next[nameSearchColumnId] = query;
+        else delete next[nameSearchColumnId];
+        return next;
+      });
+    },
+    [serviceListUsesServer, nameSearchColumnId],
+  );
+  const applyServiceSearch = useCallback(
+    (query: string) => {
+      setSearchQuery(query);
+      setRegistryPage(1);
+      writeServerSearch(query);
+    },
+    [writeServerSearch],
+  );
+  useEffect(() => {
+    if (!serviceListUsesServer) return;
+    writeServerSearch(searchQueryRef.current);
+  }, [serviceListUsesServer, nameSearchColumnId, writeServerSearch]);
 
   const router = useRouter();
   const routerRef = useRef(router);
@@ -1876,7 +1911,7 @@ export function useServicesManagement() {
     serverFilters,
     setServerFilterValue,
     searchQuery,
-    setSearchQuery,
+    setSearchQuery: applyServiceSearch,
     filterStatus,
     setFilterStatus,
     filterTaskType,

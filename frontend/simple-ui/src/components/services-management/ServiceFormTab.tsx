@@ -133,13 +133,20 @@ function modelNamePlaceholder(options: {
   return FIELD_HINTS.service.modelName.placeholder;
 }
 
-function authTokenFieldHint(options: {
+function authTokenFieldCopy(options: {
   isEditing: boolean;
   hasAuthToken: boolean;
-}): string {
-  if (!options.isEditing) return FIELD_HINTS.service.authToken.helper;
-  if (options.hasAuthToken) return FIELD_HINTS.service.authToken.editHelper;
-  return FIELD_HINTS.service.authToken.editEmptyHelper;
+}): { tip: string; helper?: string } {
+  if (!options.isEditing) {
+    return { tip: FIELD_HINTS.service.authToken.tip };
+  }
+  if (options.hasAuthToken) {
+    return {
+      tip: FIELD_HINTS.service.authToken.editTip,
+      helper: FIELD_HINTS.service.authToken.editHelper,
+    };
+  }
+  return { tip: FIELD_HINTS.service.authToken.editEmptyTip };
 }
 
 const ServiceFormTab: React.FC<Readonly<ServiceFormTabProps>> = ({
@@ -219,6 +226,7 @@ const ServiceFormTab: React.FC<Readonly<ServiceFormTabProps>> = ({
     onChange: (value: string) => void,
     helper: string,
     placeholder: string = FIELD_HINTS.service.price.placeholder,
+    tip?: string,
   ) => {
     if (isView) {
       return <ReadOnlyField label={label}>{value || "—"}</ReadOnlyField>;
@@ -226,7 +234,7 @@ const ServiceFormTab: React.FC<Readonly<ServiceFormTabProps>> = ({
     const shownError = priceFieldError(field, value, error);
     return (
       <FormControl isRequired isInvalid={!!shownError}>
-        <FieldLabel>{label}</FieldLabel>
+        <FieldLabel hint={tip}>{label}</FieldLabel>
         <Input
           value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -377,7 +385,7 @@ const ServiceFormTab: React.FC<Readonly<ServiceFormTabProps>> = ({
       markBlurred={markBlurred}
       formatSubmissionDateDisplay={formatSubmissionDateDisplay}
       modelNamePlaceholder={modelNamePlaceholder}
-      authTokenFieldHint={authTokenFieldHint}
+      authTokenFieldCopy={authTokenFieldCopy}
       renderPriceField={renderPriceField}
     />
   );

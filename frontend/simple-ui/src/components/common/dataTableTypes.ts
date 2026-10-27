@@ -21,7 +21,10 @@ export type DataTableSearchConfig = {
   label?: string;
   /** Keep the label for screen readers and drop it from the toolbar layout. */
   hideLabel?: boolean;
+  /** Short always-visible line under the field. Prefer `hint` for longer guidance. */
   helper?: string;
+  /** Info-icon tip on the label (longer / optional guidance). */
+  hint?: string;
   /** Validation message shown under the search input. */
   error?: string;
   /**
@@ -31,6 +34,8 @@ export type DataTableSearchConfig = {
   fields?: string[];
   /** Debounce `onChange` in ms. Default: immediate. */
   debounceMs?: number;
+  /** Control width. Defaults to a fixed search width. */
+  width?: string | Record<string, string>;
 };
 
 export type DataTableFilterOption = {
@@ -42,7 +47,7 @@ export type DataTableFilterOption = {
  * Declarative filter control rendered by DataTable.
  *
  * `param` is the backend query parameter name (parent maps values → API).
- * Multi-select / date / text types are reserved for future use.
+ * `multiselect` stores a comma-separated `value` (empty means all / none selected).
  */
 export type DataTableFilterDef = {
   id: string;
@@ -55,7 +60,10 @@ export type DataTableFilterDef = {
   options?: DataTableFilterOption[];
   defaultValue?: string;
   placeholder?: string;
+  /** Short always-visible line under the field. Prefer `hint` for longer guidance. */
   helper?: string;
+  /** Info-icon tip on the label (longer / optional guidance). */
+  hint?: string;
   /** Keep the label for screen readers and drop it from the toolbar layout. */
   hideLabel?: boolean;
   /**
@@ -71,6 +79,11 @@ export type DataTableFilterDef = {
   error?: string;
   /** Width hint for the control. */
   width?: string | Record<string, string>;
+  /**
+   * Consecutive filters with the same cluster stay on one row and wrap
+   * together, so a pair such as start and end time is not split.
+   */
+  cluster?: string;
 };
 
 export type DataTableActionClickPayload<T = unknown> = {

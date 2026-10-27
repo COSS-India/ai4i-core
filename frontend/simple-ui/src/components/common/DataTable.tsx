@@ -1,18 +1,26 @@
-import { ChevronRightIcon, SearchIcon } from "@chakra-ui/icons";
+import { ChevronDownIcon, ChevronRightIcon, SearchIcon } from "@chakra-ui/icons";
 import {
   Alert,
   AlertDescription,
   AlertIcon,
   Box,
+  Button,
   Center,
+  Checkbox,
   FormControl,
   FormControlProps,
+  HStack,
   FormErrorMessage,
   Input,
   InputGroup,
   InputGroupProps,
   InputLeftElement,
   InputProps,
+  Menu,
+  MenuButton,
+  MenuItem,
+  MenuList,
+  Portal,
   Select,
   SelectProps,
   Skeleton,
@@ -515,6 +523,105 @@ export function TableSelectField({
   );
 }
 
+function selectedMultiValues(value: string): Set<string> {
+  return new Set(value.split(",").map((part) => part.trim()).filter(Boolean));
+}
+
+/** Checkbox menu. Empty value means nothing is selected (parent treats that as all). */
+export function TableMultiSelectField({
+  label,
+  value,
+  onChange,
+  options,
+  helper,
+  hint,
+  formControlProps,
+  hideLabel = false,
+  emptyLabel = "All",
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: { label: string; value: string }[];
+  helper?: string;
+  hint?: string;
+  formControlProps?: FormControlProps;
+  hideLabel?: boolean;
+  emptyLabel?: string;
+}) {
+  const { resetPage, inputBg, deferApply } = useDataTableFilterContext();
+  const selected = selectedMultiValues(value);
+  const choices = options.filter((option) => option.value !== "");
+  const allLabel = options.find((option) => option.value === "")?.label ?? emptyLabel;
+  const summary =
+    selected.size === 0
+      ? allLabel
+      : choices
+          .filter((option) => selected.has(option.value))
+          .map((option) => option.label)
+          .join(", ");
+
+  const emit = (next: string) => {
+    onChange(next);
+    if (!deferApply) resetPage();
+  };
+
+  const toggle = (optionValue: string) => {
+    if (!optionValue) {
+      emit("");
+      return;
+    }
+    const next = selectedMultiValues(value);
+    if (next.has(optionValue)) next.delete(optionValue);
+    else next.add(optionValue);
+    emit(Array.from(next).join(","));
+  };
+
+  return (
+    <FormControl w={{ base: "full", sm: "200px" }} {...formControlProps}>
+      <FieldLabel hint={hint} formLabelProps={hideLabel ? { srOnly: true, mb: 0 } : undefined}>
+        {label}
+      </FieldLabel>
+      <Menu closeOnSelect={false} matchWidth>
+        <MenuButton
+          as={Button}
+          type="button"
+          size="sm"
+          variant="outline"
+          bg={inputBg}
+          fontWeight="normal"
+          rightIcon={<ChevronDownIcon />}
+          w="full"
+          textAlign="left"
+          justifyContent="space-between"
+          aria-label={label}
+        >
+          <Text as="span" isTruncated display="block" minW={0}>
+            {summary || emptyLabel}
+          </Text>
+        </MenuButton>
+        <Portal>
+          <MenuList maxH="280px" overflowY="auto" zIndex={20} minW="200px">
+            {options.map((option) => {
+              const checked = option.value === "" ? selected.size === 0 : selected.has(option.value);
+              return (
+                <MenuItem key={option.value || "all"} onClick={() => toggle(option.value)} closeOnSelect={false}>
+                  <Checkbox isChecked={checked} pointerEvents="none" colorScheme="blue" mr={2}>
+                    <Text as="span" fontSize="sm">
+                      {option.label}
+                    </Text>
+                  </Checkbox>
+                </MenuItem>
+              );
+            })}
+          </MenuList>
+        </Portal>
+      </Menu>
+      <FieldHint>{helper}</FieldHint>
+    </FormControl>
+  );
+}
+
 function ConfigDrivenFilters({
   search,
   filterDefs,
@@ -532,12 +639,42 @@ function ConfigDrivenFilters({
           onSubmit={search.onSubmit}
           placeholder={search.placeholder}
           helper={search.helper}
+          hint={search.hint}
           error={search.error}
           hideLabel={search.hideLabel}
           debounceMs={search.debounceMs}
+          formControlProps={search.width ? { w: search.width as FormControlProps["w"] } : undefined}
         />
       ) : null}
-      {(filterDefs ?? []).map((def) => {
+      {clusteredFilterDefs(filterDefs).map((group) => {
+        const fields = group.defs.map((def) => renderFilterDef(def));
+        if (group.defs.length === 1) return fields[0];
+        return (
+          <HStack key={group.key} spacing={3} align="flex-start" flexShrink={0}>
+            {fields}
+          </HStack>
+        );
+      })}
+    </>
+  );
+}
+
+function clusteredFilterDefs(
+  filterDefs: DataTableFilterDef[] | undefined,
+): { key: string; defs: DataTableFilterDef[] }[] {
+  const groups: { key: string; defs: DataTableFilterDef[] }[] = [];
+  for (const def of filterDefs ?? []) {
+    const previous = groups[groups.length - 1];
+    if (def.cluster && previous?.key === def.cluster) {
+      previous.defs.push(def);
+      continue;
+    }
+    groups.push({ key: def.cluster ?? def.id, defs: [def] });
+  }
+  return groups;
+}
+
+function renderFilterDef(def: DataTableFilterDef): React.ReactNode {
         const widthProps = def.width
           ? { w: def.width as FormControlProps["w"] }
           : undefined;
@@ -550,6 +687,7 @@ function ConfigDrivenFilters({
               value={def.value}
               onChange={def.onChange}
               helper={def.helper}
+              hint={def.hint}
               hideLabel={def.hideLabel}
               formControlProps={widthProps ? { w: widthProps.w } : undefined}
             >
@@ -559,6 +697,22 @@ function ConfigDrivenFilters({
                 </option>
               ))}
             </TableSelectField>
+          );
+        }
+
+        if (def.type === "multiselect") {
+          return (
+            <TableMultiSelectField
+              key={def.id}
+              label={def.label}
+              value={def.value}
+              onChange={def.onChange}
+              options={def.options ?? []}
+              helper={def.helper}
+              hint={def.hint}
+              hideLabel={def.hideLabel}
+              formControlProps={widthProps ? { w: widthProps.w } : undefined}
+            />
           );
         }
 
@@ -572,6 +726,7 @@ function ConfigDrivenFilters({
               onChange={def.onChange}
               placeholder={def.placeholder}
               helper={def.helper}
+              hint={def.hint}
               error={def.error}
               inputType={textType}
               formControlProps={widthProps ? { w: widthProps.w } : undefined}
@@ -590,6 +745,7 @@ function ConfigDrivenFilters({
               value={def.value}
               onChange={def.onChange}
               helper={def.helper}
+              hint={def.hint}
               inputType={dateType}
               formControlProps={widthProps ? { w: widthProps.w } : undefined}
             />
@@ -605,9 +761,6 @@ function ConfigDrivenFilters({
           );
         }
         return null;
-      })}
-    </>
-  );
 }
 
 function AdminSortableHeader<T>({

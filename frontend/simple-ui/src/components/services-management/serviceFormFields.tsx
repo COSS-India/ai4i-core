@@ -23,7 +23,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { ChevronDownIcon, SearchIcon, ViewIcon, ViewOffIcon } from "@chakra-ui/icons";
-import React from "react";
+import React, { useMemo, useState } from "react";
 import { formatModelTaskTypeLabel, getTaskColorScheme } from "../../config/constants";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import FieldHint from "../common/FieldHint";
@@ -101,10 +101,10 @@ export type ServiceFormFieldsProps = {
     isLoadingModels: boolean;
     hasTaskType: boolean;
   }) => string;
-  authTokenFieldHint: (options: {
+  authTokenFieldCopy: (options: {
     isEditing: boolean;
     hasAuthToken: boolean;
-  }) => string;
+  }) => { tip: string; helper?: string };
   renderPriceField: (
     field: string,
     label: string,
@@ -113,6 +113,7 @@ export type ServiceFormFieldsProps = {
     onChange: (value: string) => void,
     helper: string,
     placeholder?: string,
+    tip?: string,
   ) => React.ReactNode;
 };
 
@@ -165,7 +166,7 @@ type ConnectionSectionProps = Readonly<
     | "onToggleShowAuthToken"
     | "infraError"
     | "markBlurred"
-    | "authTokenFieldHint"
+    | "authTokenFieldCopy"
   >
 >;
 
@@ -232,7 +233,7 @@ function TaskTypeField({
   }
   return (
     <FormControl isRequired>
-      <FieldLabel>Task Type</FieldLabel>
+      <FieldLabel hint={FIELD_HINTS.service.taskType.tip}>Task Type</FieldLabel>
       {editingService ? (
         <Input
           value={formatModelTaskTypeLabel(formData.task_type || "")}
@@ -277,6 +278,28 @@ function ModelNameField({
     | "modelNamePlaceholder"
   >
 >): React.ReactElement {
+  const [query, setQuery] = useState("");
+  const selectedId = formData.modelId || "";
+  const selected = filteredModelsForDropdown.find(
+    (model) => (model.modelId || model.model_id) === selectedId,
+  );
+  const selectedLabel =
+    selected?.name || formData.modelName || selectedId || modelNamePlaceholder({
+      isLoadingModels,
+      hasTaskType: Boolean(formData.task_type),
+    });
+  const q = query.trim().toLowerCase();
+  const visibleModels = useMemo(
+    () =>
+      q
+        ? filteredModelsForDropdown.filter((model) => {
+            const name = (model.name || model.modelId || model.model_id || "").toLowerCase();
+            return name.includes(q);
+          })
+        : filteredModelsForDropdown,
+    [filteredModelsForDropdown, q],
+  );
+
   if (isView) {
     return (
       <ReadOnlyField label="Model Name">
@@ -286,7 +309,7 @@ function ModelNameField({
   }
   return (
     <FormControl isRequired>
-      <FieldLabel>Model Name</FieldLabel>
+      <FieldLabel hint={FIELD_HINTS.service.modelName.tip}>Model Name</FieldLabel>
       {editingService ? (
         <Input
           value={formData.modelName || formData.modelId || ""}
@@ -294,25 +317,72 @@ function ModelNameField({
           bg="ink.50"
         />
       ) : (
-        <Select
-          value={formData.modelId || ""}
-          onChange={(e) => onModelNameChange(e.target.value)}
-          placeholder={modelNamePlaceholder({
-            isLoadingModels,
-            hasTaskType: Boolean(formData.task_type),
-          })}
-          bg="white"
-          isDisabled={isLoadingModels || !formData.task_type}
-        >
-          {filteredModelsForDropdown.map((model) => (
-            <option
-              key={model.modelId || model.model_id}
-              value={model.modelId || model.model_id}
-            >
-              {model.name || model.modelId || model.model_id}
-            </option>
-          ))}
-        </Select>
+        <Menu matchWidth onClose={() => setQuery("")}>
+          <MenuButton
+            as={Button}
+            type="button"
+            rightIcon={<ChevronDownIcon />}
+            w="full"
+            textAlign="left"
+            fontWeight="normal"
+            variant="outline"
+            bg="white"
+            justifyContent="space-between"
+            isDisabled={isLoadingModels || !formData.task_type}
+            aria-label="Model Name"
+          >
+            <Text as="span" isTruncated display="block" minW={0} color={selectedId ? "inherit" : "ink.500"}>
+              {selectedLabel}
+            </Text>
+          </MenuButton>
+          <Portal>
+            <MenuList maxH="320px" overflow="hidden" p={0} zIndex={1500}>
+              <Box px={3} py={2} borderBottomWidth="1px" borderColor="ink.100">
+                <InputGroup size="sm">
+                  <InputLeftElement pointerEvents="none">
+                    <SearchIcon color="ink.400" />
+                  </InputLeftElement>
+                  <Input
+                    placeholder="Search models..."
+                    aria-label="Search models"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => {
+                      if (e.key.length === 1 || e.key === "Backspace" || e.key === "Delete" || e.key === " ") {
+                        e.stopPropagation();
+                      }
+                    }}
+                    bg="white"
+                  />
+                </InputGroup>
+              </Box>
+              <Box maxH="240px" overflowY="auto" py={1} role="listbox" aria-label="Models">
+                {visibleModels.length === 0 ? (
+                  <Text px={3} py={2} fontSize="sm" color="ink.500">
+                    {filteredModelsForDropdown.length === 0
+                      ? "No models available"
+                      : "No models match your search"}
+                  </Text>
+                ) : (
+                  visibleModels.map((model) => {
+                    const id = model.modelId || model.model_id || "";
+                    const name = model.name || id;
+                    return (
+                      <MenuItem
+                        key={id}
+                        onClick={() => onModelNameChange(id)}
+                        fontWeight={id === selectedId ? "semibold" : "normal"}
+                      >
+                        {name}
+                      </MenuItem>
+                    );
+                  })
+                )}
+              </Box>
+            </MenuList>
+          </Portal>
+        </Menu>
       )}
     </FormControl>
   );
@@ -412,7 +482,7 @@ function ServiceNameField({
   }
   return (
     <FormControl isRequired isInvalid={!!nameError}>
-      <FieldLabel>Service Name</FieldLabel>
+      <FieldLabel hint={FIELD_HINTS.service.name.tip}>Service Name</FieldLabel>
       <Input
         value={formData.name || ""}
         onBlur={() => markBlurred("name")}
@@ -461,9 +531,12 @@ function ServiceIdField({
   const serviceIdHelper = isLlmTaskType
     ? FIELD_HINTS.service.serviceId.llmHelper
     : FIELD_HINTS.service.serviceId.helper;
+  const serviceIdTip = isLlmTaskType
+    ? FIELD_HINTS.service.serviceId.llmTip
+    : FIELD_HINTS.service.serviceId.tip;
   return (
     <FormControl isRequired isInvalid={!!idError}>
-      <FieldLabel>Service ID</FieldLabel>
+      <FieldLabel hint={serviceIdTip}>Service ID</FieldLabel>
       <Input
         value={formData.serviceId || ""}
         onChange={(e) =>
@@ -518,14 +591,16 @@ function ServiceDescriptionField({
   }
   return (
     <FormControl isInvalid={!!descriptionError}>
-      <FieldLabel>Service Description</FieldLabel>
+      <FieldLabel hint={FIELD_HINTS.service.description.tip}>
+        Service Description
+      </FieldLabel>
       <Textarea
         value={formData.serviceDescription || ""}
         onChange={(e) => onInputChange("serviceDescription", e.target.value)}
         onBlur={() => markBlurred("serviceDescription")}
         placeholder={FIELD_HINTS.service.description.placeholder}
         bg="white"
-        rows={4}
+        rows={3}
         maxLength={SERVICE_DESCRIPTION_MAX_LEN}
       />
       {descriptionError ? (
@@ -597,7 +672,7 @@ function AuthTokenField({
   isShowingSavedAuthMask,
   showAuthToken,
   onToggleShowAuthToken,
-  authTokenFieldHint,
+  authTokenFieldCopy,
 }: Readonly<
   Pick<
     ConnectionSectionProps,
@@ -609,7 +684,7 @@ function AuthTokenField({
     | "isShowingSavedAuthMask"
     | "showAuthToken"
     | "onToggleShowAuthToken"
-    | "authTokenFieldHint"
+    | "authTokenFieldCopy"
   >
 >): React.ReactElement | null {
   if (isView) {
@@ -619,9 +694,13 @@ function AuthTokenField({
       </ReadOnlyField>
     );
   }
+  const authCopy = authTokenFieldCopy({
+    isEditing: Boolean(editingService),
+    hasAuthToken,
+  });
   return (
     <FormControl>
-      <FieldLabel>Authentication Token</FieldLabel>
+      <FieldLabel hint={authCopy.tip}>Authentication Token</FieldLabel>
       <InputGroup>
         <Input
           type={isShowingSavedAuthMask || showAuthToken ? "text" : "password"}
@@ -651,12 +730,7 @@ function AuthTokenField({
           </InputRightElement>
         )}
       </InputGroup>
-      <FieldHint>
-        {authTokenFieldHint({
-          isEditing: Boolean(editingService),
-          hasAuthToken,
-        })}
-      </FieldHint>
+      <FieldHint show={Boolean(authCopy.helper)}>{authCopy.helper}</FieldHint>
     </FormControl>
   );
 }
@@ -675,7 +749,7 @@ function ServiceFormConnectionSection({
   onToggleShowAuthToken,
   infraError,
   markBlurred,
-  authTokenFieldHint,
+  authTokenFieldCopy,
 }: ConnectionSectionProps): React.ReactElement {
   return (
     <VStack align="stretch" spacing={4}>
@@ -685,7 +759,15 @@ function ServiceFormConnectionSection({
         </ReadOnlyField>
       ) : (
         <FormControl isRequired>
-          <FieldLabel>Endpoint</FieldLabel>
+          <FieldLabel
+            hint={
+              isLlmTaskType
+                ? FIELD_HINTS.service.endpoint.llmTip
+                : FIELD_HINTS.service.endpoint.tip
+            }
+          >
+            Endpoint
+          </FieldLabel>
           <Input
             value={formData.endpoint || ""}
             onChange={(e) => onInputChange("endpoint", e.target.value)}
@@ -696,10 +778,8 @@ function ServiceFormConnectionSection({
             }
             bg="white"
           />
-          <FieldHint>
-            {isLlmTaskType
-              ? FIELD_HINTS.service.endpoint.llmHelper
-              : FIELD_HINTS.service.endpoint.helper}
+          <FieldHint show={isLlmTaskType}>
+            {FIELD_HINTS.service.endpoint.llmHelper}
           </FieldHint>
         </FormControl>
       )}
@@ -714,7 +794,7 @@ function ServiceFormConnectionSection({
           isShowingSavedAuthMask={isShowingSavedAuthMask}
           showAuthToken={showAuthToken}
           onToggleShowAuthToken={onToggleShowAuthToken}
-          authTokenFieldHint={authTokenFieldHint}
+          authTokenFieldCopy={authTokenFieldCopy}
         />
       ) : null}
 
@@ -724,7 +804,9 @@ function ServiceFormConnectionSection({
         </ReadOnlyField>
       ) : (
         <FormControl isInvalid={!!infraError}>
-          <FieldLabel>Hardware Description</FieldLabel>
+          <FieldLabel hint={FIELD_HINTS.service.hardware.tip}>
+            Hardware Description
+          </FieldLabel>
           <Input
             value={formData.hardwareDescription || ""}
             onChange={(e) =>
@@ -779,7 +861,7 @@ function TierPickerField({
       : "No tiers match your search";
   return (
     <FormControl isRequired>
-      <FieldLabel>Tier</FieldLabel>
+      <FieldLabel hint={FIELD_HINTS.service.tier.tip}>Tier</FieldLabel>
       <Menu
         closeOnSelect={false}
         matchWidth
@@ -874,7 +956,6 @@ function TierPickerField({
           </MenuList>
         </Portal>
       </Menu>
-      <FieldHint>{FIELD_HINTS.service.tier.helper}</FieldHint>
     </FormControl>
   );
 }
@@ -891,7 +972,7 @@ function UnitTypeField({
   }
   return (
     <FormControl>
-      <FieldLabel>Unit Type</FieldLabel>
+      <FieldLabel hint={FIELD_HINTS.service.unitType.tip}>Unit Type</FieldLabel>
       <Input
         value={unitType}
         isReadOnly
@@ -900,7 +981,6 @@ function UnitTypeField({
           formData.task_type ? "—" : FIELD_HINTS.service.unitType.needTaskType
         }
       />
-      <FieldHint>{FIELD_HINTS.service.unitType.helper}</FieldHint>
     </FormControl>
   );
 }
@@ -928,12 +1008,12 @@ function UnitSizeField({
       </ReadOnlyField>
     );
   }
-  const unitSizeHelper = isLlmTaskType
-    ? FIELD_HINTS.service.unitSize.llmHelper
-    : FIELD_HINTS.service.unitSize.helper;
+  const unitSizeTip = isLlmTaskType
+    ? FIELD_HINTS.service.unitSize.llmTip
+    : FIELD_HINTS.service.unitSize.tip;
   return (
     <FormControl isRequired>
-      <FieldLabel>Unit Size</FieldLabel>
+      <FieldLabel hint={unitSizeTip}>Unit Size</FieldLabel>
       <Select
         value={unitSize}
         onChange={(e) => onUnitSizeChange(e.target.value)}
@@ -946,7 +1026,6 @@ function UnitSizeField({
           </option>
         ))}
       </Select>
-      <FieldHint>{unitSizeHelper}</FieldHint>
     </FormControl>
   );
 }
@@ -1066,6 +1145,9 @@ function ServiceFormBillingSection({
   const priceHelper = isLlmTaskType
     ? FIELD_HINTS.service.llmInputPrice.helper
     : FIELD_HINTS.service.price.helper;
+  const priceTip = isLlmTaskType
+    ? FIELD_HINTS.service.llmInputPrice.tip
+    : FIELD_HINTS.service.price.tip;
   const pricePlaceholder = isLlmTaskType
     ? FIELD_HINTS.service.llmInputPrice.placeholder
     : FIELD_HINTS.service.price.placeholder;
@@ -1092,6 +1174,7 @@ function ServiceFormBillingSection({
           onPricePerUnitChange,
           priceHelper,
           pricePlaceholder,
+          priceTip,
         )}
         <CurrencyField
           isView={isView}
@@ -1110,6 +1193,7 @@ function ServiceFormBillingSection({
             onCachedInputPricePerUnitChange,
             FIELD_HINTS.service.llmCachedInputPrice.helper,
             FIELD_HINTS.service.llmCachedInputPrice.placeholder,
+            FIELD_HINTS.service.llmCachedInputPrice.tip,
           )}
           {renderPriceField(
             "outputPricePerUnit",
@@ -1119,6 +1203,7 @@ function ServiceFormBillingSection({
             onOutputPricePerUnitChange,
             FIELD_HINTS.service.llmOutputPrice.helper,
             FIELD_HINTS.service.llmOutputPrice.placeholder,
+            FIELD_HINTS.service.llmOutputPrice.tip,
           )}
         </SimpleGrid>
       ) : null}
@@ -1182,7 +1267,7 @@ export function ServiceFormFields(
         onToggleShowAuthToken={props.onToggleShowAuthToken}
         infraError={props.infraError}
         markBlurred={props.markBlurred}
-        authTokenFieldHint={props.authTokenFieldHint}
+        authTokenFieldCopy={props.authTokenFieldCopy}
       />
       <ServiceFormBillingSection
         isView={props.isView}

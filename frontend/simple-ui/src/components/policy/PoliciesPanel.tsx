@@ -22,6 +22,7 @@ import DataTable, {
 import { useDeferredColumnSort } from "../../utils/tableSort";
 import { policyService, type PolicyOut } from "../../services/policyService";
 import { INSTITUTION, INSTITUTIONS } from "../../config/constants";
+import { FIELD_HINTS } from "../../config/fieldHints";
 import { PolicyFormModal } from "./PolicyFormModal";
 import {
   EMPTY_PII_TYPES,
@@ -253,6 +254,7 @@ export function PoliciesPanel({
     {
       id: "piiTypes",
       header: "PII types",
+      hint: FIELD_HINTS.policy.col.piiTypes,
       sortable: true,
       sortAccessor: (row) => row.pii_types?.length ?? 0,
       cell: (row) => row.pii_types?.length ?? 0,
@@ -260,6 +262,7 @@ export function PoliciesPanel({
     {
       id: "languages",
       header: "Languages",
+      hint: FIELD_HINTS.policy.col.languages,
       sortable: true,
       sortAccessor: (row) => (row.supported_languages ?? []).join(", "),
       cell: (row) => row.supported_languages?.join(", ") || "—",
@@ -267,6 +270,7 @@ export function PoliciesPanel({
     {
       id: "status",
       header: "Status",
+      hint: FIELD_HINTS.policy.col.status,
       cell: (row) => (
         <Badge colorScheme={row.is_active ? "green" : "gray"}>
           {row.is_active ? "Active" : "Inactive"}
@@ -276,6 +280,7 @@ export function PoliciesPanel({
     {
       id: "scope",
       header: "Scope",
+      hint: FIELD_HINTS.policy.col.scope,
       cell: (row) => (row.is_global ? "Global" : `${INSTITUTION}-scoped`),
     },
     {

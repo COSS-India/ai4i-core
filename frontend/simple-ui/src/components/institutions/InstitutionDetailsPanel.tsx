@@ -13,7 +13,6 @@ import {
   Center,
   HStack,
   Heading,
-  SimpleGrid,
   Spinner,
   Text,
   Tooltip,
@@ -35,6 +34,7 @@ import {
 } from "../../utils/valueFormatters";
 import type { TenantView, TierLimits, TierQuotaLimit } from "../../types/tenant";
 import DataTable, { DATA_TABLE_HEADER_SX, type DataTableColumn } from "../common/table";
+import FormSection from "../common/FormSection";
 import InstitutionForm from "./InstitutionForm";
 
 /** Shown for Tier/Budget when the call behind them failed — not the same as unassigned. */
@@ -74,40 +74,34 @@ function TierUsageLimits({
   tierLimits,
 }: Readonly<{ tierLimits: TierLimits | null }>) {
   const rateLimit = tierLimits?.rate_limit;
+  if (!tierLimits) {
+    return <Text color="ink.500">{UNAVAILABLE}</Text>;
+  }
   return (
-    <Box borderTopWidth="1px" borderColor="ink.100" mt={4} pt={4}>
-      <Heading size="sm" mb={3}>
-        Tier and usage limits
-      </Heading>
-      {tierLimits ? (
-        <>
-          <Box>
-            <Text fontWeight="semibold" color={DATA_TABLE_HEADER_SX.color}>
-              Rate Limit
-            </Text>
-            <Text>
-              {rateLimit == null
-                ? TIER_RATE_LIMIT_PLATFORM_DEFAULT
-                : `${rateLimit.toLocaleString("en-US")} requests/min`}
-            </Text>
-          </Box>
-          <Box mt={4}>
-            <DataTable
-              variant="compact"
-              columns={QUOTA_COLUMNS}
-              rows={tierLimits.quotas}
-              rowKey={(row) => row.task_type}
-              sortable={false}
-              isEmpty={tierLimits.quotas.length === 0}
-              emptyMessage="No task types are configured for this tier."
-              asyncStateHeight="48px"
-            />
-          </Box>
-        </>
-      ) : (
-        <Text color="ink.500">{UNAVAILABLE}</Text>
-      )}
-    </Box>
+    <>
+      <Box>
+        <Text fontWeight="semibold" color={DATA_TABLE_HEADER_SX.color}>
+          Rate Limit
+        </Text>
+        <Text>
+          {rateLimit == null
+            ? TIER_RATE_LIMIT_PLATFORM_DEFAULT
+            : `${rateLimit.toLocaleString("en-US")} requests/min`}
+        </Text>
+      </Box>
+      <Box>
+        <DataTable
+          variant="compact"
+          columns={QUOTA_COLUMNS}
+          rows={tierLimits.quotas}
+          rowKey={(row) => row.task_type}
+          sortable={false}
+          isEmpty={tierLimits.quotas.length === 0}
+          emptyMessage="No task types are configured for this tier."
+          asyncStateHeight="48px"
+        />
+      </Box>
+    </>
   );
 }
 
@@ -207,8 +201,7 @@ export default function InstitutionDetailsPanel({
             phone_number: institution.phone_number ?? "",
           }}
           pendingEmail={institution.pending_email}
-        />
-        <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3} mt={4}>
+        >
           <DetailField label={`${INSTITUTION} ID`}>
             <Text fontFamily="mono">{institution.tenant_id}</Text>
           </DetailField>
@@ -220,6 +213,9 @@ export default function InstitutionDetailsPanel({
           <DetailField label="Created">
             <Text>{fmtDate(institution.created_at)}</Text>
           </DetailField>
+        </InstitutionForm>
+
+        <FormSection title="Tier and budget">
           <DetailField label="Tier Assigned">
             <Text>{tierBudgetErrorMessage ? UNAVAILABLE : dash(tierName)}</Text>
           </DetailField>
@@ -232,18 +228,16 @@ export default function InstitutionDetailsPanel({
                   : EMPTY_VALUE}
             </Text>
           </DetailField>
-        </SimpleGrid>
-
-        {tierName && !tierBudgetErrorMessage && (
-          <TierUsageLimits tierLimits={tierLimits} />
-        )}
-
-        {tierBudgetErrorMessage && (
-          <Alert status="warning" borderRadius="md" mt={4}>
-            <AlertIcon />
-            <Text fontSize="sm">{tierBudgetErrorMessage}</Text>
-          </Alert>
-        )}
+          {tierName && !tierBudgetErrorMessage ? (
+            <TierUsageLimits tierLimits={tierLimits} />
+          ) : null}
+          {tierBudgetErrorMessage ? (
+            <Alert status="warning" borderRadius="md">
+              <AlertIcon />
+              <Text fontSize="sm">{tierBudgetErrorMessage}</Text>
+            </Alert>
+          ) : null}
+        </FormSection>
       </CardBody>
 
       <CardFooter borderTopWidth="1px" borderColor="ink.100" pt={4}>

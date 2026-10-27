@@ -84,7 +84,7 @@ export function TierForm({
     <VStack align="stretch" spacing={0}>
       <VStack align="stretch" spacing={4}>
       <FormControl isRequired>
-        <FieldLabel>Tier Name</FieldLabel>
+        <FieldLabel hint={FIELD_HINTS.tier.name.tip}>Tier Name</FieldLabel>
         <Input
           value={formData.name}
           onChange={(e) => onChange({ ...formData, name: e.target.value })}
@@ -95,7 +95,7 @@ export function TierForm({
       </FormControl>
 
       <FormControl>
-        <FieldLabel>Description</FieldLabel>
+        <FieldLabel hint={FIELD_HINTS.tier.description.tip}>Description</FieldLabel>
         <Input
           value={formData.description}
           onChange={(e) =>
@@ -103,13 +103,14 @@ export function TierForm({
           }
           placeholder={FIELD_HINTS.tier.description.placeholder}
         />
-        <FieldHint>{FIELD_HINTS.tier.description.helper}</FieldHint>
       </FormControl>
       </VStack>
 
       <FormSection title="Usage limits">
       <FormControl isInvalid={!!rateLimitError}>
-        <FieldLabel>Rate Limit (per minute)</FieldLabel>
+        <FieldLabel hint={FIELD_HINTS.tier.rateLimit.tip}>
+          Rate Limit (per minute)
+        </FieldLabel>
         <NumberInput
           min={1}
           step={1}
@@ -121,7 +122,6 @@ export function TierForm({
           <NumberInputField placeholder={FIELD_HINTS.tier.rateLimit.placeholder} />
         </NumberInput>
         <FormErrorMessage>{rateLimitError}</FormErrorMessage>
-        <FieldHint show={!rateLimitError}>{FIELD_HINTS.tier.rateLimit.helper}</FieldHint>
       </FormControl>
 
       <QuotaEditor

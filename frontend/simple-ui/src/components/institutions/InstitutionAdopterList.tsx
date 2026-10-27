@@ -26,6 +26,7 @@ import {
   resolveTenantTierName,
   type TierOption,
 } from "./institutionDisplay";
+import { FIELD_HINTS } from "../../config/fieldHints";
 
 type TenantManagement = ReturnType<typeof useTenantManagement>;
 
@@ -133,6 +134,7 @@ export function InstitutionAdopterList({
       {
         id: "status",
         header: "Status",
+        hint: FIELD_HINTS.tenantCol.status,
         cell: (t) => (
           <Badge colorScheme={getTenantStatusColorScheme(t.status)}>
             {formatTenantStatusLabel(t.status)}
@@ -146,6 +148,7 @@ export function InstitutionAdopterList({
             {
               id: "tier",
               header: "Tier",
+              hint: FIELD_HINTS.tenantCol.tier,
               thProps: { w: "180px", maxW: "180px" },
               tdProps: { maxW: "180px" },
               sortable: true,
@@ -190,6 +193,7 @@ export function InstitutionAdopterList({
       {
         id: "created",
         header: "Onboarded",
+        hint: FIELD_HINTS.tenantCol.onboarded,
         sortable: true,
         sortAccessor: (t) =>
           t.created_at ? new Date(t.created_at).getTime() : 0,

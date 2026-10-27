@@ -179,17 +179,18 @@ export function InstitutionWorkspace({
                     phone_number: t.phone_number ?? "",
                   }}
                   pendingEmail={t.pending_email}
-                />
-                <FormSection title="Record">
-                    <ReadOnlyField label={`${INSTITUTION} ID`}>
-                      <Text fontFamily="mono" fontSize="sm">{t.tenant_id}</Text>
-                    </ReadOnlyField>
-                    <ReadOnlyField label="Status">
-                      <Badge colorScheme={getTenantStatusColorScheme(t.status)}>
-                        {formatTenantStatusLabel(t.status)}
-                      </Badge>
-                    </ReadOnlyField>
-                    <ReadOnlyField label="Created">{fmtDate(t.created_at)}</ReadOnlyField>
+                >
+                  <ReadOnlyField label={`${INSTITUTION} ID`}>
+                    <Text fontFamily="mono" fontSize="sm">{t.tenant_id}</Text>
+                  </ReadOnlyField>
+                  <ReadOnlyField label="Status">
+                    <Badge colorScheme={getTenantStatusColorScheme(t.status)}>
+                      {formatTenantStatusLabel(t.status)}
+                    </Badge>
+                  </ReadOnlyField>
+                  <ReadOnlyField label="Created">{fmtDate(t.created_at)}</ReadOnlyField>
+                </InstitutionForm>
+                <FormSection title="Tier and budget">
                     <ReadOnlyField label="Tier">
                       {resolveTierLabel(
                         t.tier_id ?? tierAssignment?.tier_id,

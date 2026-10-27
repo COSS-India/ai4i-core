@@ -227,7 +227,7 @@ export function PolicyFormModal({
             <ReadOnlyField label="Name">{name || "—"}</ReadOnlyField>
           ) : (
             <FormControl isRequired>
-              <FieldLabel>Name</FieldLabel>
+              <FieldLabel hint={FIELD_HINTS.policy.name.tip}>Name</FieldLabel>
               <Input value={name} onChange={(e) => setName(e.target.value)} />
             </FormControl>
           )}
@@ -235,15 +235,17 @@ export function PolicyFormModal({
             <ReadOnlyField label="Description">{description || "No description"}</ReadOnlyField>
           ) : (
             <FormControl>
-              <FieldLabel>Description</FieldLabel>
-              <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} />
+              <FieldLabel hint={FIELD_HINTS.policy.description.tip}>Description</FieldLabel>
+              <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} />
             </FormControl>
           )}
           {readOnly ? (
             <ReadOnlyField label="Global policy">{isGlobal ? "Yes" : "No"}</ReadOnlyField>
           ) : (
             <FormControl display="flex" alignItems="center">
-              <FieldLabel formLabelProps={{ mb: 0 }}>Global policy</FieldLabel>
+              <FieldLabel hint={FIELD_HINTS.policy.global.tip} formLabelProps={{ mb: 0 }}>
+                Global policy
+              </FieldLabel>
               <Switch isChecked={isGlobal} onChange={(e) => setIsGlobal(e.target.checked)} />
             </FormControl>
           )}
@@ -259,7 +261,7 @@ export function PolicyFormModal({
           ) : null}
           {!isGlobal && !readOnly && (
             <FormControl isRequired>
-              <FieldLabel>{INSTITUTIONS}</FieldLabel>
+              <FieldLabel hint={FIELD_HINTS.policy.institutions.tip}>{INSTITUTIONS}</FieldLabel>
               {tenantsLoading ? (
                 <HStack spacing={2} py={2}>
                   <Spinner size="sm" />
@@ -285,7 +287,7 @@ export function PolicyFormModal({
                     isReadOnly={readOnly}
                     fontFamily="mono"
                     fontSize="sm"
-                    rows={3}
+                    rows={2}
                   />
                   <FieldHint>{FIELD_HINTS.policy.tenantIdsManual}</FieldHint>
                 </>
@@ -326,7 +328,7 @@ export function PolicyFormModal({
             <ReadOnlyField label="Supported languages">{langs.join(", ") || "—"}</ReadOnlyField>
           ) : (
           <FormControl>
-            <FieldLabel>Supported languages</FieldLabel>
+            <FieldLabel hint={FIELD_HINTS.policy.languages.tip}>Supported languages</FieldLabel>
             <CheckboxGroup value={langs} onChange={(v) => setLangs(v as string[])}>
               <HStack spacing={4}>
                 {LANGUAGE_OPTIONS.map((code) => (
@@ -346,7 +348,9 @@ export function PolicyFormModal({
             </ReadOnlyField>
           ) : (
           <FormControl isRequired>
-            <FieldLabel>PII types (policy configuration)</FieldLabel>
+            <FieldLabel hint={FIELD_HINTS.policy.piiTypes.tip}>
+              PII types (policy configuration)
+            </FieldLabel>
             <Box
               borderWidth="1px"
               borderRadius="md"

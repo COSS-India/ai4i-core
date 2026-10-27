@@ -183,7 +183,7 @@ export function QuotaEditor({
                     minW={0}
                   >
                     <FieldLabel
-                      hint={FIELD_HINTS.tier.quotaUnit.helper}
+                      hint={FIELD_HINTS.tier.quotaUnit.tip}
                       formLabelProps={{ fontSize: "xs", mb: 1 }}
                     >
                       Unit
@@ -208,7 +208,7 @@ export function QuotaEditor({
                     minW={0}
                   >
                     <FieldLabel
-                      hint={FIELD_HINTS.tier.quotaLimit.helper}
+                      hint={FIELD_HINTS.tier.quotaLimit.tip}
                       formLabelProps={{ fontSize: "xs", mb: 1 }}
                     >
                       Limit
@@ -226,6 +226,7 @@ export function QuotaEditor({
                     >
                       <NumberInputField
                         placeholder={FIELD_HINTS.tier.quotaLimit.placeholder}
+                        title={FIELD_HINTS.tier.quotaLimit.helper}
                       />
                     </NumberInput>
                     <FormErrorMessage fontSize="xs">

@@ -103,6 +103,7 @@ export default function ApplicationManagementTab({
     {
       id: "domain",
       header: "Domain",
+      hint: FIELD_HINTS.application.col.domain,
       sortable: true,
       sortAccessor: (app) => app.domain ?? "",
       cell: (app) => (
@@ -114,6 +115,7 @@ export default function ApplicationManagementTab({
     {
       id: "budget",
       header: "Budget",
+      hint: FIELD_HINTS.application.col.budget,
       sortable: true,
       sortAccessor: (app) => app.allocated_percentage ?? -1,
       truncate: false,
@@ -133,6 +135,7 @@ export default function ApplicationManagementTab({
     {
       id: "keys",
       header: "Active API keys",
+      hint: FIELD_HINTS.application.col.keys,
       sortable: true,
       sortAccessor: (app) => app.api_key_count ?? -1,
       thProps: hideKeys,
@@ -146,6 +149,7 @@ export default function ApplicationManagementTab({
     {
       id: "status",
       header: "Status",
+      hint: FIELD_HINTS.application.col.status,
       sortable: true,
       sortAccessor: (app) => app.status ?? "",
       truncate: false,
@@ -302,7 +306,9 @@ export default function ApplicationManagementTab({
             />
             <FormSection title="Budget">
               <FormControl isInvalid={Boolean(createBudgetError)}>
-                <FieldLabel>Budget allocation</FieldLabel>
+                <FieldLabel hint={FIELD_HINTS.application.budget.tip}>
+                  Budget allocation
+                </FieldLabel>
                 <PercentageStepper
                   value={mgr.form.allocated_percentage}
                   onChange={(next) => {
@@ -313,8 +319,8 @@ export default function ApplicationManagementTab({
                 />
                 <FormErrorMessage>{createBudgetError}</FormErrorMessage>
                 <FieldHint show={!createBudgetError}>
-                  {FIELD_HINTS.application.budget.helper} {mgr.remainingPct.toFixed(2)}% remaining.
-                  {createPreview != null ? ` ≈ ${formatSpendMoney(createPreview, currency)}` : ""}
+                  {mgr.remainingPct.toFixed(2)}% remaining
+                  {createPreview != null ? ` · ≈ ${formatSpendMoney(createPreview, currency)}` : ""}
                 </FieldHint>
               </FormControl>
             </FormSection>

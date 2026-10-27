@@ -85,6 +85,30 @@ export const defaultTimeRange = (): { startTime: string; endTime: string } => {
   };
 };
 
+export type LogTimePreset = "custom" | "1h" | "24h" | "7d" | "30d";
+
+export const LOG_TIME_PRESETS: readonly {
+  id: Exclude<LogTimePreset, "custom">;
+  label: string;
+  ms: number;
+}[] = [
+  { id: "1h", label: "Last 1 hour", ms: 60 * 60 * 1000 },
+  { id: "24h", label: "Last 24 hours", ms: 24 * 60 * 60 * 1000 },
+  { id: "7d", label: "Last 7 days", ms: 7 * 24 * 60 * 60 * 1000 },
+  { id: "30d", label: "Last 30 days", ms: 30 * 24 * 60 * 60 * 1000 },
+];
+
+export const rangeForTimePreset = (
+  preset: Exclude<LogTimePreset, "custom">,
+): { startTime: string; endTime: string } => {
+  const ms = LOG_TIME_PRESETS.find((item) => item.id === preset)?.ms ?? DEFAULT_RANGE_MS;
+  const now = new Date();
+  return {
+    endTime: formatDateTimeLocal(now),
+    startTime: formatDateTimeLocal(new Date(now.getTime() - ms)),
+  };
+};
+
 export const convertToISOFormat = (datetimeLocal: string): string => {
   if (!datetimeLocal || datetimeLocal.trim() === "") return "";
 

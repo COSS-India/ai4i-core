@@ -51,7 +51,7 @@ function InstitutionPickerField({ tm }: TenantFieldProps) {
   if (tm.lockedUserFormTenantId) {
     return (
       <FormControl isRequired isInvalid={Boolean(tm.userFormErrors.tenant_id)}>
-        <FieldLabel>{INSTITUTION}</FieldLabel>
+        <FieldLabel hint={FIELD_HINTS.tenantUser.tenant.tip}>{INSTITUTION}</FieldLabel>
         <Input
           value={tm.getLockedUserFormTenantLabel()}
           isReadOnly
@@ -60,7 +60,6 @@ function InstitutionPickerField({ tm }: TenantFieldProps) {
           cursor="not-allowed"
         />
         <FormErrorMessage>{tm.userFormErrors.tenant_id}</FormErrorMessage>
-        <FieldHint>{FIELD_HINTS.tenantUser.tenant.helper}</FieldHint>
       </FormControl>
     );
   }
@@ -95,7 +94,7 @@ function UsernameField({ mode, tm }: InstitutionUserFormProps) {
   if (mode === "edit") {
     return (
       <FormControl isRequired isInvalid={Boolean(tm.editUserFormErrors.username)}>
-        <FieldLabel>Username</FieldLabel>
+        <FieldLabel hint={FIELD_HINTS.tenantUser.username.tip}>Username</FieldLabel>
         <Input
           value={tm.editUserForm.username ?? ""}
           onChange={(e) => tm.handleEditUserUsernameChange(e.target.value)}
@@ -115,7 +114,7 @@ function EmailField({ mode, tm }: InstitutionUserFormProps) {
   if (mode === "create") {
     return (
       <FormControl isRequired isInvalid={Boolean(tm.userFormErrors.email)}>
-        <FieldLabel>Email</FieldLabel>
+        <FieldLabel hint={FIELD_HINTS.tenantUser.email.tip}>Email</FieldLabel>
         <Input
           type="email"
           value={tm.userForm.email}
@@ -153,7 +152,7 @@ function FullNameField({ mode, tm }: InstitutionUserFormProps) {
   if (mode === "create") {
     return (
       <FormControl isRequired isInvalid={Boolean(tm.userFormErrors.full_name)}>
-        <FieldLabel>Full Name</FieldLabel>
+        <FieldLabel hint={FIELD_HINTS.tenantUser.fullName.tip}>Full Name</FieldLabel>
         <Input
           value={tm.userForm.full_name}
           onChange={(e) => tm.handleUserFullNameChange(e.target.value)}
@@ -169,7 +168,7 @@ function FullNameField({ mode, tm }: InstitutionUserFormProps) {
   }
   return (
     <FormControl isInvalid={Boolean(tm.editUserFormErrors.full_name)}>
-      <FieldLabel>Full Name</FieldLabel>
+      <FieldLabel hint={FIELD_HINTS.tenantUser.fullName.tip}>Full Name</FieldLabel>
       <Input
         value={tm.editUserForm.full_name ?? ""}
         onChange={(e) => tm.handleEditUserFullNameChange(e.target.value)}
@@ -195,7 +194,7 @@ function CreateRoleField({ tm }: TenantFieldProps) {
 
   return (
     <FormControl isRequired>
-      <FieldLabel>Role</FieldLabel>
+      <FieldLabel hint={FIELD_HINTS.tenantUser.role.tip}>Role</FieldLabel>
       <Select
         value={tm.userForm.role}
         onChange={(e) =>
@@ -211,7 +210,6 @@ function CreateRoleField({ tm }: TenantFieldProps) {
           </option>
         ))}
       </Select>
-      <FieldHint>{FIELD_HINTS.tenantUser.role.helper}</FieldHint>
     </FormControl>
   );
 }
@@ -251,7 +249,9 @@ function EditRoleField({ tm }: TenantFieldProps) {
 
   return (
     <FormControl>
-      <FieldLabel required>Role</FieldLabel>
+      <FieldLabel required hint={FIELD_HINTS.tenantUser.role.tip}>
+        Role
+      </FieldLabel>
       {/* Disabled controls swallow hover, so the tooltip targets a wrapper. */}
       <Tooltip
         label={FIELD_HINTS.tenantUser.selfRegisteredRoleLocked}
@@ -292,11 +292,6 @@ function EditRoleField({ tm }: TenantFieldProps) {
       {tm.isEditUserOnlyAdmin && !tm.isEditUserSelfRegistered && (
         <FieldHint>{FIELD_HINTS.tenantUser.onlyAdminLocked}</FieldHint>
       )}
-      {!tm.isEditUserOnlyAdmin &&
-        !tm.isEditUserSelfRegistered &&
-        tm.editUserRolesLoaded && (
-          <FieldHint>{FIELD_HINTS.tenantUser.role.helper}</FieldHint>
-        )}
     </FormControl>
   );
 }
@@ -325,30 +320,24 @@ function PhoneField({ mode, tm }: InstitutionUserFormProps) {
   if (mode === "create") {
     return (
       <FormControl isInvalid={Boolean(tm.userFormErrors.phone_number)}>
-        <FieldLabel>Phone Number</FieldLabel>
+        <FieldLabel hint={FIELD_HINTS.tenantUser.phone.tip}>Phone Number</FieldLabel>
         <Input
           value={tm.userForm.phone_number}
           onChange={(e) => tm.handleUserPhoneChange(e.target.value)}
           placeholder={FIELD_HINTS.tenantUser.phone.placeholder}
         />
         <FormErrorMessage>{tm.userFormErrors.phone_number}</FormErrorMessage>
-        <FieldHint show={!tm.userFormErrors.phone_number}>
-          {FIELD_HINTS.tenantUser.phone.helper}
-        </FieldHint>
       </FormControl>
     );
   }
   return (
     <FormControl isInvalid={Boolean(tm.editUserFormErrors.phone_number)}>
-      <FieldLabel>Phone Number</FieldLabel>
+      <FieldLabel hint={FIELD_HINTS.tenantUser.phone.tip}>Phone Number</FieldLabel>
       <Input
         value={tm.editUserForm.phone_number ?? ""}
         onChange={(e) => tm.handleEditUserPhoneChange(e.target.value)}
       />
       <FormErrorMessage>{tm.editUserFormErrors.phone_number}</FormErrorMessage>
-      <FieldHint show={!tm.editUserFormErrors.phone_number}>
-        {FIELD_HINTS.tenantUser.phone.helper}
-      </FieldHint>
     </FormControl>
   );
 }

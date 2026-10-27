@@ -1,5 +1,5 @@
 // Logs Dashboard - View telemetry traces via unified traces/search API
-// AI4IDS-3527: keyword + filters apply on Search/Enter; sort/page hit the API;
+// AI4IDS-3527: one search field applies as you type or on Enter; sort/page hit the API;
 // nothing is searched, filtered or sorted in the browser.
 
 import {
@@ -71,7 +71,6 @@ import DataTable, {
 import TelemetryTraceDetailModal from "@/components/observability/TelemetryTraceDetailModal";
 import { getPlatformName } from "../config/runtimeConfig";
 import { FIELD_HINTS } from "../config/fieldHints";
-import FieldHint from "../components/common/FieldHint";
 import FieldLabel from "../components/common/FieldLabel";
 import { isPlatformAdminUser, isTenantAdminUser, userHasRole } from "../utils/rbac";
 import {
@@ -83,6 +82,9 @@ import {
   convertToISOFormat,
   defaultTimeRange,
   formatDateTimeLocal,
+  LOG_TIME_PRESETS,
+  rangeForTimePreset,
+  type LogTimePreset,
   formatMetadataCell,
   isAdminOnlyColumnKey,
   isFailureStatus,
@@ -96,8 +98,14 @@ import {
   writeStoredColumns,
 } from "../utils/logsDashboard";
 
+const LOG_SEARCH_FIELDS = ["service", "statusCode", "endUser", "metadata"] as const;
+type LogSearchField = (typeof LOG_SEARCH_FIELDS)[number];
+
 type DraftFilters = {
   q: string;
+  /** Comma-separated search fields. Empty means every field (keyword search). */
+  searchScope: string;
+  timePreset: LogTimePreset;
   taskType: string;
   level: string;
   serviceId: string;
@@ -108,6 +116,70 @@ type DraftFilters = {
   endTime: string;
   selectedTenantId: string;
 };
+
+function selectedSearchFields(scope: string): Set<LogSearchField> {
+  const selected = new Set<LogSearchField>();
+  for (const part of scope.split(",")) {
+    const field = part.trim();
+    if ((LOG_SEARCH_FIELDS as readonly string[]).includes(field)) {
+      selected.add(field as LogSearchField);
+    }
+  }
+  return selected;
+}
+
+function withSearchText(draft: DraftFilters, value: string): DraftFilters {
+  return { ...draft, q: value };
+}
+
+function searchFieldCopy(field: LogSearchField | undefined): { placeholder: string; hint: string } {
+  if (field === "service") {
+    return { placeholder: FIELD_HINTS.logs.service.placeholder, hint: FIELD_HINTS.logs.service.tip };
+  }
+  if (field === "statusCode") {
+    return { placeholder: FIELD_HINTS.logs.statusCode.placeholder, hint: FIELD_HINTS.logs.statusCode.tip };
+  }
+  if (field === "endUser") {
+    return { placeholder: FIELD_HINTS.logs.endUser.placeholder, hint: FIELD_HINTS.logs.endUser.tip };
+  }
+  if (field === "metadata") {
+    return { placeholder: FIELD_HINTS.logs.metadata.placeholder, hint: FIELD_HINTS.logs.metadata.tip };
+  }
+  return { placeholder: FIELD_HINTS.logs.search.placeholder, hint: FIELD_HINTS.logs.search.tip };
+}
+
+function appliedFromDraft(next: DraftFilters): AppliedFilters | null {
+  const text = next.q.trim();
+  const fields = selectedSearchFields(next.searchScope);
+  const searchingAll = fields.size === 0;
+  const q = searchingAll ? text : "";
+  const serviceId = fields.has("service") ? text : "";
+  const endUser = fields.has("endUser") ? text : "";
+  const metadataRaw = fields.has("metadata") ? text : "";
+  const statusRaw = fields.has("statusCode") ? text : "";
+  if (q.length > KEYWORD_MAX_LENGTH || endUser.length > END_USER_MAX_LENGTH) return null;
+  const meta = parseMetadataFilter(metadataRaw);
+  if (meta && "error" in meta) return null;
+  const codes = parseStatusCodeFilter(statusRaw);
+  if (codes && "error" in codes) return null;
+  return {
+    q,
+    taskType: next.taskType,
+    level: next.level,
+    serviceId,
+    statusCode: codes && "value" in codes ? codes.value : "",
+    user: endUser,
+    metadataKey: meta && "key" in meta ? meta.key : "",
+    metadataValue: meta && "key" in meta ? meta.value : "",
+    startTime: next.startTime,
+    endTime: next.endTime,
+    selectedTenantId: next.selectedTenantId,
+  };
+}
+
+function sameApplied(left: AppliedFilters, right: AppliedFilters): boolean {
+  return (Object.keys(left) as (keyof AppliedFilters)[]).every((key) => left[key] === right[key]);
+}
 
 type AppliedFilters = {
   q: string;
@@ -132,6 +204,8 @@ const LogsPage: React.FC = () => {
 
   const [draft, setDraft] = useState<DraftFilters>({
     q: "",
+    searchScope: "",
+    timePreset: "custom",
     taskType: "",
     level: "",
     serviceId: "",
@@ -206,30 +280,34 @@ const LogsPage: React.FC = () => {
     [isAdmin, isTenantAdmin, applied.selectedTenantId, authTenantId]
   );
 
+  const searchFields = selectedSearchFields(draft.searchScope);
+  const searchingAllFields = searchFields.size === 0;
   const keywordError =
-    draft.q.trim().length > KEYWORD_MAX_LENGTH
+    searchingAllFields && draft.q.trim().length > KEYWORD_MAX_LENGTH
       ? FIELD_HINTS.logs.search.tooLong
       : undefined;
 
-  const trimmedEndUser = draft.endUser.trim();
+  const trimmedSearch = draft.q.trim();
   const endUserError =
-    trimmedEndUser.length > END_USER_MAX_LENGTH
+    searchFields.has("endUser") && trimmedSearch.length > END_USER_MAX_LENGTH
       ? FIELD_HINTS.logs.endUser.tooLong
       : undefined;
   const metadataFilter = useMemo(
-    () => parseMetadataFilter(draft.metadata),
-    [draft.metadata]
+    () => (searchFields.has("metadata") ? parseMetadataFilter(draft.q) : null),
+    [draft.q, draft.searchScope],
   );
   const metadataError =
     metadataFilter && "error" in metadataFilter ? metadataFilter.error : undefined;
   const statusCodeFilter = useMemo(
-    () => parseStatusCodeFilter(draft.statusCode),
-    [draft.statusCode]
+    () => (searchFields.has("statusCode") ? parseStatusCodeFilter(draft.q) : null),
+    [draft.q, draft.searchScope],
   );
   const statusCodeError =
-    statusCodeFilter && "error" in statusCodeFilter
-      ? statusCodeFilter.error
-      : undefined;
+    statusCodeFilter && "error" in statusCodeFilter ? statusCodeFilter.error : undefined;
+  const searchError = searchingAllFields
+    ? keywordError
+    : endUserError || metadataError || statusCodeError;
+  const onlySearchField = searchFields.size === 1 ? Array.from(searchFields)[0] : undefined;
 
   useEffect(() => {
     if (!followsPresent && autoRefresh) {
@@ -359,56 +437,36 @@ const LogsPage: React.FC = () => {
     setSelectedColumns(next.length > 0 ? next : defaults);
   }, [authLoading, columnsFetched, columnsResponse, columnDefs]);
 
-  const updateDraft = useCallback(
-    <K extends keyof DraftFilters>(key: K, value: DraftFilters[K]) => {
-      if (key === "endTime") {
-        setFollowsPresent(false);
-      }
-      setDraft((prev) => ({ ...prev, [key]: value }));
-    },
-    []
-  );
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
 
-  const applyFilters = useCallback(() => {
-    if (keywordError || endUserError || metadataError || statusCodeError) {
-      return;
-    }
-    const meta =
-      metadataFilter && "key" in metadataFilter ? metadataFilter : null;
-    const codes =
-      statusCodeFilter && "value" in statusCodeFilter
-        ? statusCodeFilter.value
-        : "";
-
-    setApplied({
-      q: draft.q.trim(),
-      taskType: draft.taskType,
-      level: draft.level,
-      serviceId: draft.serviceId.trim(),
-      statusCode: codes,
-      user: endUserError ? "" : trimmedEndUser,
-      metadataKey: meta?.key ?? "",
-      metadataValue: meta?.value ?? "",
-      startTime: draft.startTime,
-      endTime: draft.endTime,
-      selectedTenantId: draft.selectedTenantId,
+  const commitFilters = useCallback((next: DraftFilters) => {
+    const built = appliedFromDraft(next);
+    if (!built) return;
+    let changed = false;
+    setApplied((prev) => {
+      if (sameApplied(prev, built)) return prev;
+      changed = true;
+      return built;
     });
-    setPage(1);
-  }, [
-    keywordError,
-    endUserError,
-    metadataError,
-    statusCodeError,
-    metadataFilter,
-    statusCodeFilter,
-    draft,
-    trimmedEndUser,
-  ]);
+    if (changed) setPage(1);
+  }, []);
+
+  const replaceDraft = useCallback(
+    (next: DraftFilters, commit = true) => {
+      draftRef.current = next;
+      setDraft(next);
+      if (commit) commitFilters(next);
+    },
+    [commitFilters],
+  );
 
   const clearAllFilters = useCallback(() => {
     const range = defaultTimeRange();
     const clearedDraft: DraftFilters = {
       q: "",
+      searchScope: "",
+      timePreset: "custom",
       taskType: "",
       level: "",
       serviceId: "",
@@ -419,6 +477,7 @@ const LogsPage: React.FC = () => {
       endTime: range.endTime,
       selectedTenantId: "",
     };
+    draftRef.current = clearedDraft;
     setDraft(clearedDraft);
     setApplied({
       q: "",
@@ -452,42 +511,6 @@ const LogsPage: React.FC = () => {
       ),
     [selectedColumns, isAdmin, columnDefs]
   );
-
-  const filtersDirty = useMemo(() => {
-    const appliedMeta =
-      applied.metadataKey && applied.metadataValue
-        ? `${applied.metadataKey}=${applied.metadataValue}`
-        : "";
-    const draftMeta =
-      metadataFilter && "key" in metadataFilter
-        ? `${metadataFilter.key}=${metadataFilter.value}`
-        : draft.metadata.trim() === ""
-          ? ""
-          : draft.metadata.trim();
-    const draftCodes =
-      statusCodeFilter && "value" in statusCodeFilter
-        ? statusCodeFilter.value
-        : draft.statusCode.trim();
-
-    return (
-      draft.q.trim() !== applied.q ||
-      draft.taskType !== applied.taskType ||
-      draft.level !== applied.level ||
-      draft.serviceId.trim() !== applied.serviceId ||
-      draftCodes !== applied.statusCode ||
-      trimmedEndUser !== applied.user ||
-      draftMeta !== appliedMeta ||
-      draft.startTime !== applied.startTime ||
-      draft.endTime !== applied.endTime ||
-      draft.selectedTenantId !== applied.selectedTenantId
-    );
-  }, [
-    draft,
-    applied,
-    metadataFilter,
-    statusCodeFilter,
-    trimmedEndUser,
-  ]);
 
   const {
     data: tracesData,
@@ -1077,13 +1100,31 @@ const LogsPage: React.FC = () => {
                 search={{
                   label: "Search",
                   value: draft.q,
-                  onChange: (v) => updateDraft("q", v),
-                  onSubmit: applyFilters,
-                  placeholder: FIELD_HINTS.logs.search.placeholder,
-                  helper: FIELD_HINTS.logs.search.helper,
-                  error: keywordError,
+                  debounceMs: 400,
+                  onChange: (v) => replaceDraft(withSearchText(draftRef.current, v)),
+                  onSubmit: () => commitFilters(draftRef.current),
+                  placeholder: searchFieldCopy(onlySearchField).placeholder,
+                  hint: searchFieldCopy(onlySearchField).hint,
+                  error: searchError,
+                  width: { base: "full", sm: "240px" },
                 }}
                 filterDefs={[
+                  {
+                    id: "searchScope",
+                    label: "Search in",
+                    type: "multiselect",
+                    value: draft.searchScope,
+                    onChange: (v) =>
+                      replaceDraft({ ...draftRef.current, searchScope: v }),
+                    width: { base: "full", sm: "168px" },
+                    options: [
+                      { label: "All fields", value: "" },
+                      { label: "Service", value: "service" },
+                      { label: "Status code", value: "statusCode" },
+                      { label: "End user", value: "endUser" },
+                      { label: "Metadata", value: "metadata" },
+                    ],
+                  },
                   ...(canPickTenant
                     ? [
                         {
@@ -1093,38 +1134,38 @@ const LogsPage: React.FC = () => {
                           param: "tenant_id",
                           value: draft.selectedTenantId,
                           onChange: (v: string) =>
-                            updateDraft("selectedTenantId", v),
-                          helper: FIELD_HINTS.logs.tenant.helper,
-                          width: { base: "full", sm: "200px" },
-                          options: [
-                            { label: `All ${INSTITUTIONS}`, value: "" },
-                            ...(tenantsLoading
+                            replaceDraft({ ...draftRef.current, selectedTenantId: v }),
+                          hint: FIELD_HINTS.logs.tenant.tip,
+                          width: { base: "full", sm: "180px" },
+                        options: [
+                          { label: `All ${INSTITUTIONS}`, value: "" },
+                          ...(tenantsLoading
+                            ? []
+                            : tenantsError
                               ? []
-                              : tenantsError
-                                ? []
-                                : activeTenants.map(
-                                    (tenant: {
-                                      tenant_id: string;
-                                      organisation?: string;
-                                    }) => ({
-                                      label:
-                                        tenant.organisation ||
-                                        tenant.tenant_id,
-                                      value: tenant.tenant_id,
-                                    })
-                                  )),
-                          ],
-                        },
-                      ]
-                    : []),
+                              : activeTenants.map(
+                                  (tenant: {
+                                    tenant_id: string;
+                                    organisation?: string;
+                                  }) => ({
+                                    label:
+                                      tenant.organisation ||
+                                      tenant.tenant_id,
+                                    value: tenant.tenant_id,
+                                  })
+                                )),
+                        ],
+                      },
+                    ]
+                  : []),
                   {
                     id: "taskType",
                     label: "Task Type",
                     type: "select",
-                    param: "task_type",
+                    param: "task_types",
                     value: draft.taskType,
-                    onChange: (v) => updateDraft("taskType", v),
-                    width: { base: "full", sm: "160px" },
+                    onChange: (v) => replaceDraft({ ...draftRef.current, taskType: v }),
+                    width: { base: "full", sm: "150px" },
                     options: [
                       { label: "All", value: "" },
                       ...taskTypeNames.map((tt) => ({
@@ -1139,8 +1180,8 @@ const LogsPage: React.FC = () => {
                     type: "select",
                     param: "level",
                     value: draft.level,
-                    onChange: (v) => updateDraft("level", v),
-                    width: { base: "full", sm: "140px" },
+                    onChange: (v) => replaceDraft({ ...draftRef.current, level: v }),
+                    width: { base: "full", sm: "132px" },
                     options: [
                       { label: "All Statuses", value: "" },
                       { label: "Success", value: "success" },
@@ -1148,51 +1189,31 @@ const LogsPage: React.FC = () => {
                     ],
                   },
                   {
-                    id: "service",
-                    label: "Service",
-                    type: "text",
-                    param: "service_id",
-                    value: draft.serviceId,
-                    onChange: (v) => updateDraft("serviceId", v),
-                    placeholder: FIELD_HINTS.logs.service.placeholder,
-                    helper: FIELD_HINTS.logs.service.helper,
-                    width: { base: "full", sm: "200px" },
-                  },
-                  {
-                    id: "statusCode",
-                    label: "Status Code",
-                    type: "text",
-                    param: "status_code",
-                    value: draft.statusCode,
-                    onChange: (v) => updateDraft("statusCode", v),
-                    placeholder: FIELD_HINTS.logs.statusCode.placeholder,
-                    helper: FIELD_HINTS.logs.statusCode.helper,
-                    error: statusCodeError,
-                    width: { base: "full", sm: "180px" },
-                  },
-                  {
-                    id: "endUser",
-                    label: "End User",
-                    type: "text",
-                    param: "user",
-                    value: draft.endUser,
-                    onChange: (v) => updateDraft("endUser", v),
-                    placeholder: FIELD_HINTS.logs.endUser.placeholder,
-                    helper: FIELD_HINTS.logs.endUser.helper,
-                    error: endUserError,
-                    width: { base: "full", sm: "200px" },
-                  },
-                  {
-                    id: "metadata",
-                    label: "Metadata",
-                    type: "text",
-                    param: "metadata_key, metadata_value",
-                    value: draft.metadata,
-                    onChange: (v) => updateDraft("metadata", v),
-                    placeholder: FIELD_HINTS.logs.metadata.placeholder,
-                    helper: FIELD_HINTS.logs.metadata.helper,
-                    error: metadataError,
-                    width: { base: "full", sm: "220px" },
+                    id: "timePreset",
+                    label: "Time range",
+                    type: "select",
+                    value: draft.timePreset,
+                    onChange: (v) => {
+                      if (v === "custom") {
+                        replaceDraft({ ...draftRef.current, timePreset: "custom" }, false);
+                        return;
+                      }
+                      const preset = v as Exclude<LogTimePreset, "custom">;
+                      setFollowsPresent(true);
+                      replaceDraft({
+                        ...draftRef.current,
+                        timePreset: preset,
+                        ...rangeForTimePreset(preset),
+                      });
+                    },
+                    width: { base: "full", sm: "156px" },
+                    options: [
+                      { label: "Custom", value: "custom" },
+                      ...LOG_TIME_PRESETS.map((preset) => ({
+                        label: preset.label,
+                        value: preset.id,
+                      })),
+                    ],
                   },
                   {
                     id: "startTime",
@@ -1200,10 +1221,12 @@ const LogsPage: React.FC = () => {
                     type: "date",
                     param: "start_time",
                     value: draft.startTime,
-                    onChange: (v) => updateDraft("startTime", v),
+                    onChange: (v) =>
+                      replaceDraft({ ...draftRef.current, timePreset: "custom", startTime: v }),
                     inputType: "datetime-local",
-                    helper: FIELD_HINTS.logs.startTime.helper,
-                    width: { base: "full", sm: "220px" },
+                    hint: FIELD_HINTS.logs.startTime.tip,
+                    width: { base: "full", sm: "196px" },
+                    cluster: "log-time",
                   },
                   {
                     id: "endTime",
@@ -1211,53 +1234,21 @@ const LogsPage: React.FC = () => {
                     type: "date",
                     param: "end_time",
                     value: draft.endTime,
-                    onChange: (v) => updateDraft("endTime", v),
+                    onChange: (v) => {
+                      setFollowsPresent(false);
+                      replaceDraft({ ...draftRef.current, timePreset: "custom", endTime: v });
+                    },
                     inputType: "datetime-local",
-                    helper: FIELD_HINTS.logs.endTime.helper,
-                    width: { base: "full", sm: "220px" },
+                    hint: FIELD_HINTS.logs.endTime.tip,
+                    width: { base: "full", sm: "196px" },
+                    cluster: "log-time",
                   },
                 ]}
                 filterToolbarRightContent={
                   <HStack spacing={3} flexWrap="wrap" align="center">
-                    <Tooltip
-                      label={
-                        keywordError ||
-                        endUserError ||
-                        metadataError ||
-                        statusCodeError
-                          ? "Fix validation errors before searching"
-                          : filtersDirty
-                            ? "Apply keyword and filters"
-                            : "No changes to apply"
-                      }
-                      placement="top"
-                      hasArrow
-                    >
-                      <Box as="span" display="inline-block">
-                        <Button
-                          size="sm"
-                          colorScheme="blue"
-                          variant={filtersDirty ? "solid" : "outline"}
-                          onClick={applyFilters}
-                          isDisabled={Boolean(
-                            keywordError ||
-                              endUserError ||
-                              metadataError ||
-                              statusCodeError
-                          )}
-                        >
-                          Search
-                        </Button>
-                      </Box>
-                    </Tooltip>
-                    {filtersDirty && (
-                      <Text fontSize="xs" color="ink.500" whiteSpace="nowrap">
-                        Unapplied changes
-                      </Text>
-                    )}
                     <Menu closeOnSelect={false}>
                       <Tooltip
-                        label={FIELD_HINTS.logs.columns.helper}
+                        label={FIELD_HINTS.logs.columns.tip}
                         placement="top"
                         hasArrow
                       >
@@ -1282,7 +1273,7 @@ const LogsPage: React.FC = () => {
                             color="ink.500"
                             fontWeight="medium"
                           >
-                            {FIELD_HINTS.logs.columns.helper}
+                            {FIELD_HINTS.logs.columns.tip}
                           </Text>
                           {columnDefs.map((col) => {
                             const checked = selectedColumns.includes(col.key);
@@ -1338,6 +1329,7 @@ const LogsPage: React.FC = () => {
                     </Menu>
                     <FormControl display="flex" alignItems="center" w="auto">
                       <FieldLabel
+                        hint={FIELD_HINTS.logs.autoRefresh.tip}
                         formLabelProps={{
                           htmlFor: "auto-refresh-toggle",
                           mb: 0,
@@ -1352,7 +1344,7 @@ const LogsPage: React.FC = () => {
                       <Tooltip
                         label={
                           followsPresent
-                            ? FIELD_HINTS.logs.autoRefresh.helper
+                            ? FIELD_HINTS.logs.autoRefresh.tip
                             : "Available only while End Time is the present"
                         }
                         placement="top"
@@ -1368,9 +1360,6 @@ const LogsPage: React.FC = () => {
                           />
                         </Box>
                       </Tooltip>
-                      <FieldHint ml={2} mt={0}>
-                        {FIELD_HINTS.logs.autoRefresh.helper}
-                      </FieldHint>
                     </FormControl>
                     <Tooltip label="Refresh now" placement="top" hasArrow>
                       <IconButton

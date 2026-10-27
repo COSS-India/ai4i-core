@@ -119,7 +119,10 @@ function ModelJsonUpload({
         ))}
       </SimpleGrid>
       <FormControl>
-        <FieldLabel formLabelProps={{ mb: 2, htmlFor: "model-json-file" }}>
+        <FieldLabel
+          hint={FIELD_HINTS.model.jsonUpload.tip}
+          formLabelProps={{ mb: 2, htmlFor: "model-json-file" }}
+        >
           Upload JSON File
         </FieldLabel>
         <Box

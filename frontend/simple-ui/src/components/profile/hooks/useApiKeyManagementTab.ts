@@ -527,7 +527,7 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     } catch (error) {
       showToast({
         type: "error",
-        message: error instanceof Error ? error.message : "Failed to revoke the previous key value",
+        message: error instanceof Error ? error.message : "Failed to revoke the old key value",
       });
       // A 409 means the window already ended, or the key was revoked elsewhere.
       setKeyToStopPrevious(null);
@@ -557,7 +557,7 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
   const handleExtendPreviousKeyValue = async () => {
     if (!keyToExtend) return;
     if (extendError || !extendNewEnd) {
-      showToast({ type: "error", message: extendError ?? "Choose when the previous key should stop working." });
+      showToast({ type: "error", message: extendError ?? "Choose when the old key should stop working." });
       return;
     }
     const until = extendNewEnd;
@@ -566,14 +566,14 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
       const result = await authService.extendPreviousApiKeyValue(keyToExtend.id, until.toISOString());
       showToast({
         type: "success",
-        message: `Previous key now works until ${new Date(result.rotated_key_expires_at ?? until).toLocaleString()}.`,
+        message: `Old key now works until ${new Date(result.rotated_key_expires_at ?? until).toLocaleString()}.`,
       });
       setKeyToExtend(null);
       await handleFetchAllApiKeys();
     } catch (error) {
       showToast({
         type: "error",
-        message: error instanceof Error ? error.message : "Failed to extend the previous key",
+        message: error instanceof Error ? error.message : "Failed to extend the old key",
       });
       // A 409 means the window already ended or the key changed elsewhere; a
       // 422 is a date the admin can fix, so keep the dialog open for that.

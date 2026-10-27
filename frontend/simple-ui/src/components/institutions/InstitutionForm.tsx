@@ -46,6 +46,8 @@ type InstitutionFormProps = Readonly<{
   onPhoneChange?: (value: string) => void;
   /** View pages that already title the record with the organisation name. */
   showOrganisation?: boolean;
+  /** Extra view-only fields kept in the Institution section. */
+  children?: React.ReactNode;
 }>;
 
 type EditableEmailFieldProps = Readonly<{
@@ -91,10 +93,12 @@ function InstitutionViewFields({
   values,
   pendingEmail,
   showOrganisation,
+  children,
 }: Readonly<{
   values: InstitutionFormValues;
   pendingEmail: string | null;
   showOrganisation: boolean;
+  children?: React.ReactNode;
 }>) {
   return (
     <FormSection title="Institution">
@@ -109,6 +113,7 @@ function InstitutionViewFields({
         />
       </ReadOnlyField>
       <ReadOnlyField label="Phone Number">{dash(values.phone_number)}</ReadOnlyField>
+      {children}
     </FormSection>
   );
 }
@@ -194,7 +199,7 @@ function InstitutionEditableEmailField({
   if (canEditEmail) {
     return (
       <FormControl isRequired isInvalid={Boolean(errors.email)}>
-        <FieldLabel>Email</FieldLabel>
+        <FieldLabel hint={FIELD_HINTS.tenant.email.tip}>Email</FieldLabel>
         <Input
           type="email"
           value={values.email}
@@ -248,6 +253,7 @@ export default function InstitutionForm({
   onEmailBlur,
   onPhoneChange,
   showOrganisation = true,
+  children,
 }: InstitutionFormProps) {
   const isView = mode === "view";
   const isCreate = mode === "create";
@@ -258,7 +264,9 @@ export default function InstitutionForm({
         values={values}
         pendingEmail={pendingEmail}
         showOrganisation={showOrganisation}
-      />
+      >
+        {children}
+      </InstitutionViewFields>
     );
   }
 
@@ -268,7 +276,7 @@ export default function InstitutionForm({
     <FormSection title="Institution">
       <VStack spacing={4} align="stretch">
         <FormControl isRequired isInvalid={Boolean(errors.organisation)}>
-          <FieldLabel>Organisation</FieldLabel>
+          <FieldLabel hint={FIELD_HINTS.tenant.organisation.tip}>Organisation</FieldLabel>
           <Input
             value={values.organisation}
             onChange={(e) => onOrganisationChange?.(e.target.value)}
@@ -283,7 +291,7 @@ export default function InstitutionForm({
         </FormControl>
 
         <FormControl isRequired={isCreate} isInvalid={Boolean(errors.contact_name)}>
-          <FieldLabel>Contact Name</FieldLabel>
+          <FieldLabel hint={FIELD_HINTS.tenant.contactName.tip}>Contact Name</FieldLabel>
           <Input
             value={values.contact_name}
             onChange={(e) => onContactNameChange?.(e.target.value)}
@@ -312,16 +320,13 @@ export default function InstitutionForm({
         />
 
         <FormControl isInvalid={Boolean(errors.phone_number)}>
-          <FieldLabel>Phone Number</FieldLabel>
+          <FieldLabel hint={FIELD_HINTS.tenant.phone.tip}>Phone Number</FieldLabel>
           <Input
             value={values.phone_number}
             onChange={(e) => onPhoneChange?.(e.target.value)}
             placeholder={isCreate ? FIELD_HINTS.tenant.phone.placeholder : undefined}
           />
           <FormErrorMessage>{errors.phone_number}</FormErrorMessage>
-          <FieldHint show={!errors.phone_number}>
-            {FIELD_HINTS.tenant.phone.helper}
-          </FieldHint>
         </FormControl>
       </VStack>
     </FormSection>

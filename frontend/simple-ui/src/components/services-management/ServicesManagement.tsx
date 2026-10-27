@@ -39,6 +39,7 @@ import {
   renderServiceTaskTypeCell,
   renderServiceTierCell,
 } from "./serviceListCells";
+import { FIELD_HINTS } from "../../config/fieldHints";
 
 const READ_ONLY_PAGE_DESCRIPTION =
   "Browse services in the registry. You can open a service to view its configuration.";
@@ -507,12 +508,14 @@ const ServicesManagement: React.FC = () => {
       {
         id: "tier",
         header: "Tier",
+        hint: FIELD_HINTS.service.col.tier,
         sortable: true,
         cell: renderServiceTierCell,
       },
       {
         id: "status",
         header: "Status",
+        hint: FIELD_HINTS.service.col.status,
         sortable: true,
         cell: renderServiceStatusCell,
       },
@@ -537,6 +540,7 @@ const ServicesManagement: React.FC = () => {
       {
         id: "inputPrice",
         header: "Input Price",
+        hint: FIELD_HINTS.service.col.inputPrice,
         sortable: true,
         isNumeric: true,
         cell: renderServiceInputPriceCell,
@@ -544,6 +548,7 @@ const ServicesManagement: React.FC = () => {
       {
         id: "outputPrice",
         header: "Output Price",
+        hint: FIELD_HINTS.service.col.outputPrice,
         sortable: true,
         isNumeric: true,
         cell: renderServiceOutputPriceCell,
@@ -551,6 +556,7 @@ const ServicesManagement: React.FC = () => {
       {
         id: "cachedInputPrice",
         header: "Cached Input Price",
+        hint: FIELD_HINTS.service.col.cachedInputPrice,
         sortable: true,
         isNumeric: true,
         cell: renderServiceCachedInputPriceCell,
@@ -558,6 +564,7 @@ const ServicesManagement: React.FC = () => {
       {
         id: "publishedOn",
         header: "Published On",
+        hint: FIELD_HINTS.service.col.publishedOn,
         sortable: true,
         cell: renderServicePublishedOnCell,
       },

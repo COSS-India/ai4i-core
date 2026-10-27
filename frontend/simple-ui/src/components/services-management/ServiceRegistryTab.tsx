@@ -8,7 +8,6 @@ import DataTable, {
 import type { ServiceTierFilterOption } from "../../hooks/useServicesManagement";
 import type { Service } from "../../services/servicesManagementService";
 import {
-  serviceListCellKey,
   type ServiceListColumnDef,
 } from "./serviceListColumns";
 import {
@@ -64,12 +63,8 @@ function resolveServerFilterDefs(options: {
   onServerFilterChange?: (columnId: string, value: string) => void;
 }) {
   if (!options.serverMode || !options.onServerFilterChange) return [];
-  const nameColumn = options.serverColumns?.find(
-    (column) => column.filterable && serviceListCellKey(column.id) === "name",
-  );
   return buildServerServiceFilterDefs({
     columns: options.serverColumns ?? [],
-    nameColumnId: nameColumn?.id,
     serverFilterValues: options.serverFilterValues,
     taskTypeNames: options.taskTypeNames,
     tierFilterOptions: options.tierFilterOptions,
@@ -135,9 +130,6 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
   const serverMode = Boolean(
     serverColumns && onServerFilterChange && onServerPageChange,
   );
-  const nameColumn = serverColumns?.find(
-    (column) => column.filterable && serviceListCellKey(column.id) === "name",
-  );
   const serverFilterDefs = resolveServerFilterDefs({
     serverMode,
     serverColumns,
@@ -158,9 +150,6 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
   });
   const search = buildServiceRegistrySearch({
     serverMode,
-    nameColumn,
-    serverFilterValues,
-    onServerFilterChange,
     searchQuery,
     onSearchQueryChange,
   });

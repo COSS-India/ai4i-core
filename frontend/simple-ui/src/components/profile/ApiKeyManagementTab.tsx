@@ -125,7 +125,7 @@ function inactiveKeyTooltip(
 function rotateTooltip(key: ApiKeyTableRow, isRotatable: boolean, rotating: boolean): string {
   if (isRotatable) return "Rotate key";
   if (rotating && key.rotated_key_expires_at) {
-    return `The previous key works until ${new Date(key.rotated_key_expires_at).toLocaleString()}; rotate again after that, or revoke it.`;
+    return `The old key works until ${new Date(key.rotated_key_expires_at).toLocaleString()}; rotate again after that, or revoke it.`;
   }
   if (isApiKeyExpired(key.expires_at)) return "This API key has expired; create a new API key instead.";
   return "Only effectively active API keys can be rotated.";
@@ -145,13 +145,13 @@ function ApiKeyDetails({
     <>
         <FormSection title="API Key">
           <ReadOnlyField label="Key Name">{viewKey.key_name}</ReadOnlyField>
-          <ReadOnlyField label={viewKey.rotated_key ? "Current Key" : "API Key"}>
+          <ReadOnlyField label={viewKey.rotated_key ? "New Key" : "API Key"}>
             <Text fontSize="sm" fontFamily="mono" color="ink.700" wordBreak="break-all">
               {mgmt.formatKeyId(viewKey)}
             </Text>
           </ReadOnlyField>
           {mgmt.isRotationInProgress(viewKey) && viewKey.rotated_key ? (
-            <ReadOnlyField label="Previous Key">
+            <ReadOnlyField label="Old Key">
               <Text fontSize="sm" fontFamily="mono" color="ink.700" wordBreak="break-all">
                 {viewKey.rotated_key}
               </Text>
@@ -313,7 +313,7 @@ export default function ApiKeyManagementTab({
           // Revoking the rotated key revokes the API key: both keys stop.
           id: "revoke",
           label: "Revoke API key",
-          tooltip: "Revoke the API key; the current and previous keys both stop",
+          tooltip: "Revoke the API key; the new and old keys both stop",
           icon: <FiSlash />,
           ...revokeStyle,
           onClick: () => mgmt.handleOpenRevokeModal(key),
@@ -329,8 +329,8 @@ export default function ApiKeyManagementTab({
         },
         {
           id: "stop-previous",
-          label: "Revoke previous key",
-          tooltip: "Revoke the previous key now; the current key keeps working",
+          label: "Revoke old key",
+          tooltip: "Revoke the old key now; the new key keeps working",
           icon: <FiSlash />,
           ...revokeStyle,
           onClick: () => mgmt.handleOpenStopPreviousModal(key),
@@ -431,7 +431,7 @@ export default function ApiKeyManagementTab({
               <HStack spacing={2} pl={6}>
                 <Box as={FiCornerDownRight} color="ink.400" flexShrink={0} />
                 <EntityIdentity
-                  name={key.subRow === "current" ? "Current key" : "Previous key"}
+                  name={key.subRow === "current" ? "New Key" : "Old Key"}
                   meta={key.subRow === "current" ? key.api_key : key.rotated_key}
                 />
               </HStack>
@@ -443,7 +443,7 @@ export default function ApiKeyManagementTab({
             <HStack spacing={1}>
               {rotating ? (
                 <IconButton
-                  aria-label={collapsed ? "Show current and previous key" : "Hide current and previous key"}
+                  aria-label={collapsed ? "Show new and old key" : "Hide new and old key"}
                   icon={collapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}
                   size="xs"
                   variant="ghost"
@@ -475,6 +475,7 @@ export default function ApiKeyManagementTab({
       {
         id: "permissions",
         header: "Permissions",
+        hint: FIELD_HINTS.apiKey.col.permissions,
         thProps: { display: { base: "none", xl: "table-cell" } },
         tdProps: { display: { base: "none", xl: "table-cell" } },
         cell: (key) => {
@@ -489,6 +490,7 @@ export default function ApiKeyManagementTab({
       {
         id: "budget",
         header: "Allocation",
+        hint: FIELD_HINTS.apiKey.col.allocation,
         sortable: true,
         sortAccessor: (key) =>
           key.allocated_percentage ?? key.allocated_budget ?? -1,
@@ -517,6 +519,7 @@ export default function ApiKeyManagementTab({
       {
         id: "status",
         header: "Status",
+        hint: FIELD_HINTS.apiKey.col.status,
         cell: (key) =>
           statusCell(
             mgmt.resolveKeyDisplayStatus(key),
@@ -525,17 +528,41 @@ export default function ApiKeyManagementTab({
       },
       {
         id: "created",
-        header: "Created",
-        thProps: { display: { base: "none", xl: "table-cell" } },
-        tdProps: { display: { base: "none", xl: "table-cell" } },
+        header: "Created Date",
         sortable: true,
-        sortAccessor: (key) =>
-          key.created_at ? new Date(key.created_at).getTime() : 0,
+        sortAccessor: (key) => {
+          const value = key.subRow === "current" ? key.rotated_at ?? key.created_at : key.created_at;
+          return value ? new Date(value).getTime() : 0;
+        },
         cell: (key) => (
           <Text fontSize="sm" color="ink.600">
-            {formatDate(key.created_at)}
+            {formatDate(key.subRow === "current" ? key.rotated_at ?? key.created_at : key.created_at)}
           </Text>
         ),
+      },
+      {
+        id: "expires",
+        header: "Expiry Date",
+        hint: FIELD_HINTS.apiKey.col.expiry,
+        sortable: true,
+        sortAccessor: (key) => {
+          const value = key.subRow === "previous" ? key.rotated_key_expires_at : key.expires_at;
+          return value ? new Date(value).getTime() : Number.POSITIVE_INFINITY;
+        },
+        cell: (key) => {
+          if (key.subRow === "previous") {
+            return (
+              <Text fontSize="sm" color="ink.600">
+                {formatDate(key.rotated_key_expires_at)}
+              </Text>
+            );
+          }
+          return (
+            <Text fontSize="sm" color="ink.600">
+              {key.expires_at ? formatDate(key.expires_at) : "Never"}
+            </Text>
+          );
+        },
       },
       createActionsColumn<ApiKeyTableRow>({
         // Parent rows: edit + budget (+ rotate/revoke when enabled). Row click opens details.
@@ -750,7 +777,7 @@ export default function ApiKeyManagementTab({
       >
         <VStack spacing={4} align="stretch">
               <FormControl isRequired>
-                <FieldLabel>Key Name</FieldLabel>
+                <FieldLabel hint={FIELD_HINTS.apiKey.keyName.tip}>Key Name</FieldLabel>
                 <Input
                   value={mgmt.updateFormData.key_name || ""}
                   onChange={(e) =>
@@ -760,7 +787,7 @@ export default function ApiKeyManagementTab({
                 />
               </FormControl>
               <FormControl isRequired>
-                <FieldLabel>Permissions</FieldLabel>
+                <FieldLabel hint={FIELD_HINTS.apiKey.permissions.tip}>Permissions</FieldLabel>
                 {mgmt.permissionFilterOptions.length > 0 ? (
                   <Box
                     borderWidth="1px"
@@ -797,7 +824,6 @@ export default function ApiKeyManagementTab({
                     </AlertDescription>
                   </Alert>
                 )}
-                <FieldHint>{FIELD_HINTS.apiKey.permissions.helper}</FieldHint>
               </FormControl>
               {mgmt.selectedKeyForUpdate?.api_key && (
                 <Text fontSize="xs" color="ink.500">
@@ -822,7 +848,7 @@ export default function ApiKeyManagementTab({
             <Text fontSize="sm" color="ink.700" lineHeight="1.5">
               Revoking <Text as="b">{mgmt.keyToRevoke?.key_name}</Text> stops{" "}
               {mgmt.keyToRevoke && mgmt.isRotationInProgress(mgmt.keyToRevoke)
-                ? "both its current and previous keys"
+                ? "both its new and old keys"
                 : "it from working"}{" "}
               immediately. This can&apos;t be undone.
             </Text>

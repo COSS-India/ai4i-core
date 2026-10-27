@@ -56,6 +56,10 @@ export default function ApiKeyBudgetModal({
   const keyName = row?.key_name || focusedKeyName || BUDGET_COPY.apiKeyFallback;
   const totalOver = liveTotalPct > 100 + 1e-6;
   const figures = row ? keyBudgetFigures(row, rows, applicationBudget) : null;
+  const applicationRemaining =
+    applicationBudget > 0
+      ? Math.round(((applicationBudget * Math.max(0, 100 - liveTotalPct)) / 100) * 100) / 100
+      : null;
   const draftPct = row?.resolvedPct;
   const fieldError = row?.rowError || (totalOver ? totalApiKeysExceeds100(liveTotalPct) : null);
   const rangeLabel = isLoading
@@ -127,11 +131,11 @@ export default function ApiKeyBudgetModal({
                   isLoading ? undefined : formatBudgetMoney(row?.consumed_budget, currency)
                 }
                 remainingValue={
-                  isLoading ? BUDGET_COPY.loading : formatBudgetMoney(figures?.remaining, currency)
+                  isLoading ? BUDGET_COPY.loading : formatBudgetMoney(applicationRemaining, currency)
                 }
-                remainingSub={isLoading ? undefined : BUDGET_COPY.leftForThisKey}
+                remainingSub={isLoading ? undefined : BUDGET_COPY.leftOnThisApplication}
                 remainingColor={
-                  figures?.remaining != null && figures.remaining >= 0 ? "green.700" : "ink.800"
+                  applicationRemaining != null && applicationRemaining >= 0 ? "green.700" : "ink.800"
                 }
                 rangeLabel={rangeLabel}
                 currency={currency}
@@ -150,7 +154,7 @@ export default function ApiKeyBudgetModal({
               fillPct={draftPct != null && Number.isFinite(draftPct) ? draftPct : 0}
               error={fieldError}
               notice={row?.inputNotice}
-              hint={FIELD_HINTS.apiKey.budget.helper}
+              hint={FIELD_HINTS.apiKey.budget.tip}
             />
           </>
         )}

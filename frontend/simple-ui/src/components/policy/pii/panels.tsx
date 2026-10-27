@@ -22,6 +22,7 @@ import FormDrawer from "../../common/FormDrawer";
 import ReadOnlyField from "../../common/ReadOnlyField";
 import LoadingSpinner from "../../common/LoadingSpinner";
 import FieldLabel from "../../common/FieldLabel";
+import { FIELD_HINTS } from "../../../config/fieldHints";
 import DataTable, {
   createActionsColumn,
   type DataTableColumn,
@@ -435,6 +436,7 @@ function TypeLibrary() {
 
   const [modelEntities, setModelEntities] = useState<string[]>([]);
   const [detail, setDetail] = useState<EntityRow | null>(null);
+  const [modeFilter, setModeFilter] = useState<"" | "model" | "custom">("");
   useEffect(() => {
     let current = true;
     loadModelEntities("en").then(
@@ -461,25 +463,25 @@ function TypeLibrary() {
   );
   const rows = useMemo(() => {
     const query = typeSearch.toLowerCase();
-    if (!query) return allRows;
-    return allRows.filter(
-      (row) =>
-        row.entityName.toLowerCase().includes(query) || Boolean(row.type?.name.toLowerCase().includes(query)),
-    );
-  }, [allRows, typeSearch]);
+    return allRows.filter((row) => {
+      if (modeFilter && row.mode !== modeFilter) return false;
+      if (!query) return true;
+      return (
+        row.entityName.toLowerCase().includes(query) ||
+        Boolean(row.type?.name.toLowerCase().includes(query))
+      );
+    });
+  }, [allRows, modeFilter, typeSearch]);
 
   const typeSortAccessors = useMemo(
     () => ({
       entity: (row: EntityRow) => row.entityName,
-      group: (row: EntityRow) => row.type?.name ?? "",
       mode: (row: EntityRow) => row.mode,
     }),
     [],
   );
   const typeSort = useDeferredColumnSort("entity", typeSortAccessors);
   const sortedRows = useMemo(() => typeSort.apply(rows), [typeSort, rows]);
-  // Only rows from a policy type have a group; GET /pii/entities rows have none.
-  const hasGroups = allRows.some((row) => row.type);
 
   const columns = useMemo<DataTableColumn<EntityRow>[]>(() => {
     const removeEntity = async (type: PiiType, row: EntityRow) => {
@@ -507,22 +509,6 @@ function TypeLibrary() {
           </Text>
         ),
       },
-      ...(hasGroups
-        ? [
-            {
-              id: "group",
-              header: "Group",
-              width: "22%",
-              sortable: true,
-              sortAccessor: (row: EntityRow) => row.type?.name ?? "",
-              cell: (row: EntityRow) => (
-                <Text fontSize="sm" color="ink.500">
-                  {row.type?.name ?? "—"}
-                </Text>
-              ),
-            },
-          ]
-        : []),
       {
         id: "mode",
         header: "Mode",
@@ -565,7 +551,7 @@ function TypeLibrary() {
         },
       }),
     ];
-  }, [hasGroups, openDrawer, askConfirm, deleteType, updateType]);
+  }, [openDrawer, askConfirm, deleteType, updateType]);
 
   return (
     <Box>
@@ -595,9 +581,10 @@ function TypeLibrary() {
       paginate="client"
       paginationPosition="bottom"
       unfilteredCount={allRows.length}
-      hasActiveFilters={Boolean(typeSearch)}
+      hasActiveFilters={Boolean(typeSearch) || modeFilter !== ""}
       onClearFilters={() => {
         setTypeSearch("");
+        setModeFilter("");
       }}
       emptyMessage="No PII types yet."
       noResultsMessage="No PII types match your search."
@@ -622,6 +609,21 @@ function TypeLibrary() {
         placeholder: "Search PII types...",
         fields: ["entityName", "type.name"],
       }}
+      filterDefs={[
+        {
+          id: "mode",
+          label: "PII type",
+          type: "select",
+          value: modeFilter,
+          onChange: (value) => setModeFilter(value === "custom" ? "custom" : value === "model" ? "model" : ""),
+          width: { base: "full", sm: "160px" },
+          options: [
+            { label: "All", value: "" },
+            { label: "Model", value: "model" },
+            { label: "Custom", value: "custom" },
+          ],
+        },
+      ]}
     />
       )}
       {detail ? (
@@ -771,7 +773,9 @@ export function PlaygroundPanel() {
       <Box borderWidth="1px" borderColor="ink.200" borderRadius="md" p={4} mb={5}>
         <Flex wrap="wrap" align="flex-end" gap={4}>
           <Box flex="1" minW="240px">
-            <FieldLabel required>Select Policy</FieldLabel>
+            <FieldLabel required hint={FIELD_HINTS.policy.playground.policy.tip}>
+              Select Policy
+            </FieldLabel>
             <Select
               aria-label="Select policy"
               placeholder="Choose a policy to test"
@@ -795,7 +799,9 @@ export function PlaygroundPanel() {
 
       <Box borderWidth="1px" borderColor="ink.200" borderRadius="md" p={4} mb={5}>
         <Flex justify="space-between" align="center" mb={2}>
-          <FieldLabel>Input Request</FieldLabel>
+          <FieldLabel hint={FIELD_HINTS.policy.playground.input.tip}>
+            Input Request
+          </FieldLabel>
           {selected ? (
             <Button
               variant="link"
@@ -912,13 +918,17 @@ function SimplePolicySummary({ policy }: { policy: Policy }) {
   return (
     <Flex wrap="wrap" gap={4} borderTopWidth="1px" borderColor="ink.200" pt={3} mt={3}>
       <Box>
-        <FieldLabel variant="metric">Scope</FieldLabel>
+        <FieldLabel variant="metric" hint={FIELD_HINTS.policy.playground.scope.tip}>
+          Scope
+        </FieldLabel>
         <Text fontSize="sm" mt={1.5}>
           {policy.scope}
         </Text>
       </Box>
       <Box flex="1" minW="200px">
-        <FieldLabel variant="metric">Entity Names</FieldLabel>
+        <FieldLabel variant="metric" hint={FIELD_HINTS.policy.playground.entities.tip}>
+          Entity Names
+        </FieldLabel>
         <Flex wrap="wrap" gap={1} mt={1.5}>
           {(entityNames.length > 0
             ? entityNames

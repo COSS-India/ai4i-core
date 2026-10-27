@@ -14,6 +14,7 @@ import {
   type MeteringSubTab,
 } from "../../config/meteringConstants";
 import type { MeteringPeriod, MeteringTopN } from "../../types/metering";
+import { istRangeEndingToday } from "../../utils/meteringDateRange";
 import { formatMeteringRefreshTime } from "../../utils/meteringFormatters";
 import CustomRangePicker from "./CustomRangePicker";
 import SegmentedTabBar from "./SegmentedTabBar";
@@ -68,6 +69,11 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
   const lastRefreshed = lastGeneratedAt
     ? formatMeteringRefreshTime(lastGeneratedAt, nowMs)
     : null;
+  const last30Days = istRangeEndingToday(30, nowMs);
+  const isLast30Days =
+    period.key === "custom" &&
+    period.range.from === last30Days.from &&
+    period.range.to === last30Days.to;
 
   return (
   <VStack align="stretch" spacing={3}>
@@ -88,9 +94,18 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
             </Button>
           );
         })}
+        <Button
+          onClick={() => onPeriodChange({ key: "custom", range: last30Days })}
+          colorScheme={isLast30Days ? "orange" : "gray"}
+          variant={isLast30Days ? "solid" : "outline"}
+          fontWeight={isLast30Days ? "semibold" : "normal"}
+          borderRadius="full"
+        >
+          Last 30 days
+        </Button>
       </ButtonGroup>
       <CustomRangePicker
-        appliedRange={period.key === "custom" ? period.range : null}
+        appliedRange={period.key === "custom" && !isLast30Days ? period.range : null}
         onApply={(range) => onPeriodChange({ key: "custom", range })}
         onClear={() => onPeriodChange(METERING.DEFAULTS.PERIOD)}
       />

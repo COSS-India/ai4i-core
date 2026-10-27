@@ -27,6 +27,7 @@ import {
   ROTATION_GRACE_OPTIONS,
 } from "../../utils/apiKeyUtils";
 import type { useApiKeyManagementTab } from "./hooks/useApiKeyManagementTab";
+import { FIELD_HINTS } from "../../config/fieldHints";
 
 /** "24 Oct 2026, 6:00 PM IST" in the viewer's own time zone. */
 function formatGraceTime(value: string | Date): string {
@@ -61,11 +62,11 @@ function RotateDialog({ mgmt }: DialogProps) {
         <VStack align="stretch" spacing={3}>
           <Text fontSize="sm" color="ink.700" lineHeight="1.5">
             A new key is issued for <Text as="b">{mgmt.keyToRotate?.key_name}</Text> and shown
-            once. The current key keeps working for the grace period so you can switch your
+            once. The new key keeps working for the grace period so you can switch your
             applications over, then stops. Budget, permissions and expiry stay the same.
           </Text>
           <FormControl isRequired>
-            <FieldLabel>Grace period</FieldLabel>
+            <FieldLabel hint={FIELD_HINTS.apiKey.gracePeriod.tip}>Grace period</FieldLabel>
             <ButtonGroup size="sm" isAttached w="100%" role="radiogroup" aria-label="Grace period">
               {ROTATION_GRACE_OPTIONS.map((days) => {
                 const selected = mgmt.rotateGraceDays === days;
@@ -121,20 +122,20 @@ function RevokePreviousDialog({ mgmt }: DialogProps) {
       onConfirm={mgmt.handleStopPreviousKeyValue}
       title={
         mgmt.keyToStopPrevious?.key_name
-          ? `Revoke previous key of ${mgmt.keyToStopPrevious.key_name}`
-          : "Revoke previous key"
+          ? `Revoke old key of ${mgmt.keyToStopPrevious.key_name}`
+          : "Revoke old key"
       }
       body={
         <Text fontSize="sm" color="ink.700" lineHeight="1.5">
-          The previous key of <Text as="b">{mgmt.keyToStopPrevious?.key_name}</Text> stops working
+          The old key of <Text as="b">{mgmt.keyToStopPrevious?.key_name}</Text> stops working
           immediately instead of at the end of its grace period
           {mgmt.keyToStopPrevious?.rotated_key_expires_at
             ? ` (${new Date(mgmt.keyToStopPrevious.rotated_key_expires_at).toLocaleString()})`
             : ""}
-          . The current key keeps working.
+          . The new key keeps working.
         </Text>
       }
-      confirmLabel="Revoke Previous Key"
+      confirmLabel="Revoke Old Key"
       cancelLabel="Cancel"
       isConfirmLoading={mgmt.isStoppingPrevious}
       confirmLoadingText="Revoking..."
@@ -156,7 +157,7 @@ function ExtendGraceModal({ mgmt }: DialogProps) {
       title="Extend grace period"
       description={
         mgmt.keyToExtend
-          ? `${mgmt.keyToExtend.key_name} • previous key${previousKeySuffix}`
+          ? `${mgmt.keyToExtend.key_name} • old key${previousKeySuffix}`
           : undefined
       }
       lockDismiss={mgmt.isExtending}
@@ -235,7 +236,7 @@ function ExtendGraceModal({ mgmt }: DialogProps) {
             </Alert>
           ) : null}
           <Text fontSize="xs" color="ink.500">
-            This extends only the previous key. The current key is not affected.
+            This extends only the old key. The new key is not affected.
           </Text>
         </VStack>
       ) : null}
@@ -287,7 +288,7 @@ function NewKeyModal({ mgmt }: DialogProps) {
             </Button>
           </HStack>
           <Text fontSize="sm" color="ink.700">
-            The previous key for <Text as="b">{mgmt.rotatedKey.key_name}</Text> keeps working
+            The old key for <Text as="b">{mgmt.rotatedKey.key_name}</Text> keeps working
             until{" "}
             <Text as="b">{new Date(mgmt.rotatedKey.rotated_key_expires_at).toLocaleString()}</Text>
             . Revoking the key stops both immediately.

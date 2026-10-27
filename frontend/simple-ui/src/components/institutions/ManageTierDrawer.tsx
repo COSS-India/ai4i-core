@@ -151,7 +151,7 @@ export default function ManageTierDrawer({
                 </Alert>
               )}
               <FormControl>
-                <FieldLabel>Tier</FieldLabel>
+                <FieldLabel hint={FIELD_HINTS.assignTier.tier.tip}>Tier</FieldLabel>
                 {!isEditingTier && originalTierId ? (
                   <HStack>
                     <Input
@@ -195,7 +195,10 @@ export default function ManageTierDrawer({
               </FormControl>
 
               <FormControl>
-                <FieldLabel formLabelProps={{ fontWeight: "semibold", fontSize: "sm" }}>
+                <FieldLabel
+                  hint={FIELD_HINTS.assignTier.currentBudget.tip}
+                  formLabelProps={{ fontWeight: "semibold", fontSize: "sm" }}
+                >
                   Current budget (₹)
                 </FieldLabel>
                 <Input
@@ -209,7 +212,10 @@ export default function ManageTierDrawer({
 
               <HStack spacing={4} align="flex-start">
                 <FormControl>
-                  <FieldLabel formLabelProps={{ fontWeight: "semibold", fontSize: "sm" }}>
+                  <FieldLabel
+                    hint={FIELD_HINTS.assignTier.effectiveFrom.tip}
+                    formLabelProps={{ fontWeight: "semibold", fontSize: "sm" }}
+                  >
                     Budget Effective From
                   </FieldLabel>
                   <Input
@@ -228,7 +234,10 @@ export default function ManageTierDrawer({
                 </FormControl>
 
                 <FormControl>
-                  <FieldLabel formLabelProps={{ fontWeight: "semibold", fontSize: "sm" }}>
+                  <FieldLabel
+                    hint={FIELD_HINTS.assignTier.effectiveTo.tip}
+                    formLabelProps={{ fontWeight: "semibold", fontSize: "sm" }}
+                  >
                     Budget Effective To
                   </FieldLabel>
                   <Input
