@@ -131,37 +131,92 @@ def _roles(conn, user_id: str) -> list[str]:
 
 
 class TestResetSelfRegisteredRoles:
-    def test_old_self_registered_grants_are_reset_to_user(self, migrations) -> None:
+    def test_self_registered_privileged_roles_are_preserved(self, migrations) -> None:
+        # Change request: a self-registered user holding ADMIN, MODERATOR,
+        # TENANT ADMIN or USAGE VIEWER keeps every role it has — nothing is
+        # removed and USER is not added. The first version stripped these
+        # and would have locked real admins out in production.
         conn = _live_connection()
         trans = conn.begin()
         try:
-            # The reported case: an email signup that was given USAGE VIEWER
-            # before the lock, now shown with a disabled role control.
             usage_viewer_signup = _insert_user(conn, creation_type="default", roles=("USAGE VIEWER",))
             google_moderator = _insert_user(conn, creation_type="google", creds_at=None, roles=("USER", "MODERATOR"))
+            institution_admin_signup = _insert_user(conn, creation_type="default", roles=("TENANT ADMIN",))
+            admin_signup = _insert_user(conn, creation_type="default", roles=("USER", "ADMIN"))
+            # A preserved role keeps the whole account untouched, GUEST included.
+            guest_and_moderator = _insert_user(conn, creation_type="default", roles=("GUEST", "MODERATOR"))
             inactive_admin_signup = _insert_user(
                 conn, creation_type="default", roles=("USER", "ADMIN"), is_active=False
             )
-            deleted_signup = _insert_user(conn, creation_type="default", roles=("MODERATOR",), is_delete=True)
+            deleted_moderator_signup = _insert_user(conn, creation_type="default", roles=("MODERATOR",), is_delete=True)
+
+            _run_upgrades(migrations, conn)
+
+            assert _roles(conn, usage_viewer_signup) == ["USAGE VIEWER"]
+            assert _roles(conn, google_moderator) == ["MODERATOR", "USER"]
+            assert _roles(conn, institution_admin_signup) == ["TENANT ADMIN"]
+            assert _roles(conn, admin_signup) == ["ADMIN", "USER"]
+            assert _roles(conn, guest_and_moderator) == ["GUEST", "MODERATOR"]
+            assert _roles(conn, inactive_admin_signup) == ["ADMIN", "USER"]
+            assert _roles(conn, deleted_moderator_signup) == ["MODERATOR"]
+        finally:
+            trans.rollback()
+            conn.close()
+
+    def test_other_self_registered_users_are_reset_to_user(self, migrations) -> None:
+        conn = _live_connection()
+        trans = conn.begin()
+        try:
+            guest_signup = _insert_user(conn, creation_type="default", roles=("GUEST",))
+            google_guest = _insert_user(conn, creation_type="google", creds_at=None, roles=("USER", "GUEST"))
+            roleless_signup = _insert_user(conn, creation_type="default")
+            deleted_guest_signup = _insert_user(conn, creation_type="default", roles=("GUEST",), is_delete=True)
             plain_signup = _insert_user(conn, creation_type="default", roles=("USER",))
             tenant_moderator = _insert_user(
                 conn, creation_type="tenant", creds_at=T_LATER, roles=("USER", "MODERATOR")
             )
             # Admin-created but stored as 'default' (2026-04-29 → 05-22):
             # the backfill must re-label it before the reset runs.
-            legacy_institution_admin = _insert_user(
-                conn, creation_type="default", creds_at=T_LATER, roles=("TENANT ADMIN",)
+            legacy_tenant_guest = _insert_user(
+                conn, creation_type="default", creds_at=T_LATER, roles=("GUEST",)
             )
 
             _run_upgrades(migrations, conn)
 
-            assert _roles(conn, usage_viewer_signup) == ["USER"]
-            assert _roles(conn, google_moderator) == ["USER"]
-            assert _roles(conn, inactive_admin_signup) == ["USER"]
-            assert _roles(conn, deleted_signup) == []
+            assert _roles(conn, guest_signup) == ["USER"]
+            assert _roles(conn, google_guest) == ["USER"]
+            assert _roles(conn, roleless_signup) == ["USER"]
+            assert _roles(conn, deleted_guest_signup) == []
             assert _roles(conn, plain_signup) == ["USER"]
             assert _roles(conn, tenant_moderator) == ["MODERATOR", "USER"]
-            assert _roles(conn, legacy_institution_admin) == ["TENANT ADMIN"]
+            assert _roles(conn, legacy_tenant_guest) == ["GUEST"]
+        finally:
+            trans.rollback()
+            conn.close()
+
+    def test_every_self_registered_admin_keeps_admin(self, migrations) -> None:
+        # Adversarial case for the old last-admin guard: when every admin is
+        # self-registered, it kept ADMIN on the oldest one only. All of them
+        # must keep it now.
+        conn = _live_connection()
+        trans = conn.begin()
+        try:
+            conn.execute(text(
+                "DELETE FROM user_role WHERE role_id = (SELECT id FROM roles WHERE name = 'ADMIN')"
+            ))
+            older = _insert_user(
+                conn, creation_type="default", roles=("USER", "ADMIN", "MODERATOR"),
+                created_at="2026-05-01 00:00:00+00", creds_at="2026-05-01 00:00:00+00",
+            )
+            newer = _insert_user(
+                conn, creation_type="default", roles=("ADMIN",),
+                created_at="2026-06-01 00:00:00+00", creds_at="2026-06-01 00:00:00+00",
+            )
+
+            _run_upgrades(migrations, conn)
+
+            assert _roles(conn, older) == ["ADMIN", "MODERATOR", "USER"]
+            assert _roles(conn, newer) == ["ADMIN"]
         finally:
             trans.rollback()
             conn.close()
@@ -174,40 +229,11 @@ class TestResetSelfRegisteredRoles:
         conn = _live_connection()
         trans = conn.begin()
         try:
-            unlabelled_admin = _insert_user(
-                conn, creation_type=None, roles=("USER", "ADMIN", "MODERATOR")
-            )
+            unlabelled_guest = _insert_user(conn, creation_type=None, roles=("GUEST",))
 
             _run_upgrades(migrations, conn)
 
-            assert _roles(conn, unlabelled_admin) == ["ADMIN", "MODERATOR", "USER"]
-        finally:
-            trans.rollback()
-            conn.close()
-
-    def test_null_creation_type_admin_counts_as_a_remaining_admin(self, migrations) -> None:
-        # Guards the NOT (...) in the remaining-admin count: with a bare
-        # ``creation_type IN (...)`` a NULL row evaluates to NULL, NOT NULL
-        # is still NULL, and the NULL admin would silently drop out of the
-        # count — keeping ADMIN on a self-registered user for no reason.
-        conn = _live_connection()
-        trans = conn.begin()
-        try:
-            conn.execute(text(
-                "DELETE FROM user_role WHERE role_id = (SELECT id FROM roles WHERE name = 'ADMIN')"
-            ))
-            _insert_user(
-                conn, creation_type=None, roles=("ADMIN",),
-                created_at="2026-06-01 00:00:00+00", creds_at="2026-06-01 00:00:00+00",
-            )
-            self_registered_admin = _insert_user(
-                conn, creation_type="default", roles=("USER", "ADMIN"),
-                created_at="2026-05-01 00:00:00+00", creds_at="2026-05-01 00:00:00+00",
-            )
-
-            _run_upgrades(migrations, conn)
-
-            assert _roles(conn, self_registered_admin) == ["USER"]
+            assert _roles(conn, unlabelled_guest) == ["GUEST"]
         finally:
             trans.rollback()
             conn.close()
@@ -233,42 +259,28 @@ class TestResetSelfRegisteredRoles:
             trans.rollback()
             conn.close()
 
-    def test_keeps_admin_on_oldest_self_registered_admin_when_none_other_remains(
-        self, migrations
-    ) -> None:
-        conn = _live_connection()
-        trans = conn.begin()
-        try:
-            # Simulate an environment whose only active admins are self-registered.
-            conn.execute(text(
-                "DELETE FROM user_role WHERE role_id = (SELECT id FROM roles WHERE name = 'ADMIN')"
-            ))
-            older = _insert_user(
-                conn, creation_type="default", roles=("USER", "ADMIN", "MODERATOR"),
-                created_at="2026-05-01 00:00:00+00", creds_at="2026-05-01 00:00:00+00",
-            )
-            newer = _insert_user(
-                conn, creation_type="default", roles=("USER", "ADMIN"),
-                created_at="2026-06-01 00:00:00+00", creds_at="2026-06-01 00:00:00+00",
-            )
-
-            _run_upgrades(migrations, conn)
-
-            assert _roles(conn, older) == ["ADMIN", "USER"]
-            assert _roles(conn, newer) == ["USER"]
-        finally:
-            trans.rollback()
-            conn.close()
-
     def test_rerun_is_a_no_op(self, migrations) -> None:
         conn = _live_connection()
         trans = conn.begin()
         try:
-            signup = _insert_user(conn, creation_type="default", roles=("MODERATOR",))
+            guest_signup = _insert_user(conn, creation_type="default", roles=("GUEST",))
+            moderator_signup = _insert_user(conn, creation_type="default", roles=("MODERATOR",))
             _run_upgrades(migrations, conn)
             _run_upgrades(migrations, conn)
 
-            assert _roles(conn, signup) == ["USER"]
+            assert _roles(conn, guest_signup) == ["USER"]
+            assert _roles(conn, moderator_signup) == ["MODERATOR"]
         finally:
             trans.rollback()
+            conn.close()
+
+    def test_preserved_roles_exist_in_roles_table(self, migrations) -> None:
+        # A typo (e.g. "TENANT_ADMIN") would preserve nothing and silently
+        # strip that role again.
+        _, reset = migrations
+        conn = _live_connection()
+        try:
+            names = {row[0] for row in conn.execute(text("SELECT name FROM roles"))}
+            assert set(reset.PRESERVED_ROLES) <= names
+        finally:
             conn.close()

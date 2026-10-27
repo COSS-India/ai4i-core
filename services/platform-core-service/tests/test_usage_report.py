@@ -67,19 +67,28 @@ class TestMonthlyPeriod:
 
 class TestFormatting:
     @pytest.mark.parametrize("n,expected", [
-        (None, "N/A"), (42, "42"), (973_100, "973.1K"), (18_400_000, "18.4M"), (10_000_000, "10M"),
+        (None, "Not available"), (0, "0"), (42, "42"), (842, "842"), (999, "999"), (1_000, "1.00K"),
+        (2_170, "2.17K"), (973_100, "973.10K"), (999_994, "999.99K"), (999_995, "1.00M"),
+        (18_400_000, "18.40M"), (10_000_000, "10.00M"), (33.4, "33"),
     ])
     def test_count(self, n, expected):
         assert fmt.count(n) == expected
 
     @pytest.mark.parametrize("n,expected", [
-        (590_000, "5.9 L"), (215_000_000, "21.5 Cr"), (500_000_000, "50 Cr"), (950, "950"),
+        (None, "Not available"), (0, "₹0"), (Decimal("0.4"), "<₹1"), (950, "₹950"), (20_400, "₹20,400"),
+        (99_999, "₹99,999"), (99_999.6, "₹1.00 L"), (2_870_000, "₹28.70 L"), (9_999_499, "₹99.99 L"),
+        (9_999_500, "₹1.00 Cr"), (Decimal("712000000"), "₹71.20 Cr"), (-20_400, "-₹20,400"),
     ])
-    def test_indian(self, n, expected):
-        assert fmt.indian(n) == expected
+    def test_inr(self, n, expected):
+        assert fmt.inr(n) == expected
 
-    def test_inr_and_signed(self):
-        assert fmt.inr(Decimal("215000000")) == "₹21.5 Cr"
+    @pytest.mark.parametrize("v,expected", [
+        (None, "—"), (0, "0%"), (0.3, "<1%"), (1, "1%"), (42.4, "42%"), (99.6, ">99%"), (100, "100%"), (130, "130%"),
+    ])
+    def test_share(self, v, expected):
+        assert fmt.share(v) == expected
+
+    def test_signed(self):
         assert fmt.signed_pct(18.0) == "+18%" and fmt.signed_pct(-4.25) == "-4.2%"
         assert fmt.signed_int(3) == "+3" and fmt.signed_int(-2) == "-2"
 
@@ -135,6 +144,12 @@ class TestActiveTenantIds:
         assert await svc.active_tenant_ids(_rng()) == {"1"}
 
     @pytest.mark.asyncio
+    async def test_an_extrapolated_fraction_of_a_request_is_not_active(self):
+        rows = [_prom("0.4", tenant_id="1", tenant="A"), _prom(1, tenant_id="2", tenant="B")]
+        svc, _ = _metering(query=rows)
+        assert await svc.active_tenant_ids(_rng()) == {"2"}
+
+    @pytest.mark.asyncio
     async def test_auth_db_down_keeps_all_labelled_ids(self):
         svc, _ = _metering(query=[_prom(5, tenant_id="1", tenant="A")])
         assert await svc.active_tenant_ids(_rng()) == {"1"}
@@ -147,6 +162,11 @@ class TestActiveApplicationCount:
         assert await svc.active_application_count(_rng()) == 2
         promql = client.query.call_args.args[0]
         assert 'application_id!=""' in promql and "sum by(application_id)" in promql
+
+    @pytest.mark.asyncio
+    async def test_an_extrapolated_fraction_of_a_request_is_not_active(self):
+        svc, _ = _metering(query=[_prom("0.3", application_id="7"), _prom(2, application_id="9")])
+        assert await svc.active_application_count(_rng()) == 1
 
 
 class TestTenantTaskUsage:
@@ -199,6 +219,9 @@ class _FakeAuthDB:
             return _rows(*[(tid,) for tid, c in self.tenants if c < params["before"]])
         if "allocated_budget IS NOT NULL" in sql:
             return _rows(*[SimpleNamespace(id=i, organisation=o) for i, o in self.budget_tenants])
+        if sql.startswith("SELECT id, organisation FROM tenants WHERE id = ANY"):
+            return _rows(*[SimpleNamespace(id=i, organisation=o) for i, o in self.budget_tenants
+                           if int(i) in params["ids"]])
         raise AssertionError(f"unexpected SQL: {sql}")
 
 
@@ -253,7 +276,8 @@ def repo_state():
     return SimpleNamespace(
         budgets={"1": _budget_ns(100, 40)},
         data_from=SEP_START - (SEP_END - SEP_START),  # recording began long before September
-        period_rows=[SimpleNamespace(cost=Decimal("12.5")), SimpleNamespace(cost=Decimal("17.5"))],
+        period_rows=[SimpleNamespace(tenant_id=1, cost=Decimal("12.5")),
+                     SimpleNamespace(tenant_id=1, cost=Decimal("17.5"))],
     )
 
 
@@ -301,7 +325,8 @@ class TestCollector:
         assert d.top_institutions[0] == RankedInstitution("Ministry A", 75.0, ["NMT", "ASR"])
         assert d.avg_daily_requests == pytest.approx(1000 / 30)
         assert d.budget.used_pct == pytest.approx(40.0)
-        assert d.period_spend == PeriodSpend(Decimal("30.0"), None, 30)
+        assert d.period_spend == PeriodSpend(Decimal("30.0"), None, 30, {"1": Decimal("30.0")})
+        assert d.top_by_spend == [InstitutionSpend("Ministry A", Decimal("30.0"), pytest.approx(40.0))]
         assert d.period_spend.burn_rate == Decimal("1")
 
     @pytest.mark.asyncio
@@ -460,11 +485,24 @@ class TestBudgetSummary:
         assert (b.exhausted, b.nearing_limit) == (2, 1)
         assert b.allocated == Decimal(500) and b.spent == Decimal("389.9")
         assert b.remaining == b.allocated - b.spent
-        assert [s.name for s in b.top_by_spend] == ["Inst 2", "Inst 1", "Inst 3", "Inst 4"]
-        assert b.top_by_spend[0].used_pct == pytest.approx(130.0)
+        assert b.used_pct_by_tenant["2"] == pytest.approx(130.0)
+
+    @pytest.mark.asyncio
+    async def test_top_by_spend_ranks_on_spend_in_the_period_not_to_date(self, retention_90d, repo):
+        # Inst 1 has spent most to date, but Inst 3 and 7 (no allocation) spent more this period.
+        repo.budgets = {"1": _budget_ns(100, 90), "3": _budget_ns(100, 20)}
+        repo.period_rows = [SimpleNamespace(tenant_id=1, cost=Decimal(5)), SimpleNamespace(tenant_id=3, cost=Decimal(15)),
+                            SimpleNamespace(tenant_id=7, cost=Decimal(8)), SimpleNamespace(tenant_id=7, cost=Decimal(2)),
+                            SimpleNamespace(tenant_id=4, cost=Decimal(0))]
+        auth = _FakeAuthDB(tenants=TestCollector.TENANTS,
+                           budget_tenants=[("1", "Inst 1"), ("3", "Inst 3"), ("7", "Inst 7")])
+        d = await UsageReportCollector(_fake_metering(), auth, AsyncMock()).collect(SEP, now=AFTER_SEP)
+        assert [(s.name, s.spent) for s in d.top_by_spend] == [
+            ("Inst 3", Decimal(15)), ("Inst 7", Decimal(10)), ("Inst 1", Decimal(5))]
+        assert [s.used_pct for s in d.top_by_spend] == [pytest.approx(20.0), None, pytest.approx(90.0)]
 
     def test_used_pct_none_without_allocation(self):
-        assert BudgetSummary(Decimal(0), Decimal(5), Decimal(-5), 0, 0, []).used_pct is None
+        assert BudgetSummary(Decimal(0), Decimal(5), Decimal(-5), 0, 0).used_pct is None
 
 
 class _BudgetAuthDB(_FakeAuthDB):
@@ -478,7 +516,7 @@ class _BudgetAuthDB(_FakeAuthDB):
 
     async def execute(self, stmt, params=None):
         sql = str(stmt)
-        if "FROM tenants WHERE id = ANY(:ids)" in sql:
+        if "allocated_budget" in sql and "FROM tenants WHERE id = ANY(:ids)" in sql:
             return _rows(*[SimpleNamespace(id=i, allocated_budget=self.allocated[i], tier_id=None,
                                            budget_effective_from=None, budget_effective_to=None)
                            for i in params["ids"] if i in self.allocated])
@@ -525,7 +563,7 @@ class TestBudgetAgainstTheRealRepository:
         b = d.budget
         assert (b.allocated, b.spent, b.remaining) == (Decimal(150), Decimal(135), Decimal(15))
         assert (b.exhausted, b.nearing_limit) == (1, 1)
-        assert [(s.name, s.spent) for s in b.top_by_spend] == [("Ministry A", Decimal(85)), ("Ministry B", Decimal(50))]
+        assert b.used_pct_by_tenant == {"1": pytest.approx(85.0), "2": pytest.approx(100.0)}
 
 
 # ── recipients ───────────────────────────────────────────────────────────────
@@ -563,9 +601,9 @@ def _full_data() -> ReportData:
     d.total_applications, d.active_applications = 84, 61
     d.requests_by_task = [("NMT", 6_100_000), ("ASR", 4_400_000)]
     d.top_institutions = [RankedInstitution("Ministry A", 24.0, ["ASR", "TTS"])]
-    d.budget = BudgetSummary(Decimal(500), Decimal(215), Decimal(285), 2, 3,
-                             [InstitutionSpend("Ministry A", Decimal(62), 100.0)])
-    d.period_spend = PeriodSpend(Decimal(63_000_000), None, 30)
+    d.budget = BudgetSummary(Decimal(500), Decimal(215), Decimal(285), 2, 3, {"1": 100.0})
+    d.period_spend = PeriodSpend(Decimal(63_000_000), None, 30, {"1": Decimal(62)})
+    d.top_by_spend = [InstitutionSpend("Ministry A", Decimal(62), 100.0)]
     return d
 
 
@@ -647,7 +685,7 @@ class TestRenderEmail:
         lines = mailer.summary_lines(_full_data())
         assert lines == [
             "Model portfolio: 42 Models; 31 were used in September.",
-            "Adoption: 26 of 36 Institutions were live (+3 vs August). 18.4M requests were served (+17.9%).",
+            "Adoption: 26 of 36 Institutions were live (+3 vs August). 18.40M requests were served (+17.9%).",
         ]
         for body in (msg.html_body, msg.text_body):
             assert "AI4I-Orchestrate_Programme-Report_India-AI-Mission_2026-09.pdf" in body
@@ -666,8 +704,8 @@ class TestRenderEmail:
 
     def test_failed_figures_show_na_and_drop_the_comparison(self, portal):
         lines = mailer.summary_lines(ReportData(period=SEP, generated_at=AFTER_SEP))
-        assert "N/A Models" in lines[0]
-        assert "N/A of N/A Institutions were live." in lines[1]
+        assert lines[0] == "Model portfolio: Not available."
+        assert lines[1] == "Adoption: Live Institutions: Not available. Requests served: Not available."
         assert " vs " not in lines[1]
 
     def test_sender_name_is_escaped_in_html(self, portal, monkeypatch):
@@ -770,9 +808,10 @@ def _pages(html: str) -> int:
 class TestReportHtml:
     def test_real_values_and_placeholders(self):
         html = render_report_html(_full_data())
-        for real in ("September 2026", "42", "31 active", "11 inactive", "36 total",
-                     "+2 new this period", "84 total", "18.4M", "+17.9%", "6.1 L",
-                     "₹500", "₹285", "₹6.3 Cr", "Ministry A", "IndicTrans2"):
+        for real in ("<h1>September 2026 (Monthly)</h1>", "42", "31 active", "11 inactive", "36 total",
+                     "+2 new this period", "72% active", "84 total", "73% active", "18.40M", "+17.9%",
+                     "613.33K", "6.10M", "₹500", "₹285", "₹6.30 Cr", "₹21.00 L", "Ministry A", "IndicTrans2",
+                     "Top 5 institutions by spend (this period)", "Financial year allocation: Not available"):
             assert real in html, real
         # Availability, P95, fallback rate and providers are not tracked, so not shown.
         for untracked in ("Availability", "Latency P95", "Fallback rate", "Providers"):
@@ -787,9 +826,13 @@ class TestReportHtml:
             assert removed not in html, removed
         assert "health_cards" not in report_context(_full_data())
 
-    def test_dormant_legend_is_just_dormant(self):
+    def test_legends_give_every_count(self):
         html = render_report_html(_full_data())
-        assert '<span class="seg-dormant">dormant</span>' in html
+        for item in ('<span class="seg-active">26 active</span>',
+                     '<span class="seg-other">4 not active this period</span>',
+                     '<span class="seg-dormant">6 dormant</span>',
+                     '<span class="seg-active">61 active</span>', '<span class="seg-other">23 inactive</span>'):
+            assert item in html, item
         assert "2+ periods" not in html
 
     def test_untrusted_names_are_escaped(self):
@@ -800,11 +843,82 @@ class TestReportHtml:
         assert '<img src="file:///etc/passwd">' not in html
         assert "&lt;img src=&#34;file:///etc/passwd&#34;&gt;" in html
 
-    def test_empty_report_renders_no_traffic_messages(self):
-        html = render_report_html(ReportData(period=SEP, generated_at=AFTER_SEP))
-        assert "No model traffic in this period" in html
-        assert "No institution traffic in this period" in html
+    def test_unloaded_report_says_not_available(self):
+        d = ReportData(period=SEP, generated_at=AFTER_SEP)
+        d.failed = ["model_usage", "institution_usage", "budget"]
+        html = render_report_html(d)
+        assert "No requests in this period" not in html and "No spend in this period" not in html
+        assert "N/A" not in html
         assert "Usage not recorded for this period" in html
+        ctx = report_context(d)
+        assert ctx["models"]["top_empty"] == ctx["adoption"]["top_empty"] == "Not available"
+        assert ctx["budget"]["top_spend_empty"] == "Not available"
+        assert [c["value"] for c in ctx["budget"]["cards"]] == ["Not available"] * 4
+
+    @staticmethod
+    def _quiet_period() -> ReportData:
+        """Everything loaded, nothing happened: no requests, no spend."""
+        d = ReportData(period=ReportPeriod.days("7d", date(2026, 10, 19), date(2026, 10, 25)),
+                       generated_at=datetime(2026, 10, 27, tzinfo=UTC))
+        d.total_requests, d.prev_total_requests = 0, 0
+        d.total_models, d.active_models = 50, 0
+        d.total_institutions, d.active_institutions, d.prev_active_institutions = 140, 0, 0
+        d.dormant_institutions, d.new_institutions = 112, 0
+        d.total_applications, d.active_applications = 2_170, 0
+        d.budget = BudgetSummary(Decimal("712000000"), Decimal(3_000_000), Decimal("709000000"), 8, 2)
+        d.period_spend = PeriodSpend(Decimal(0), None, 7)
+        return d
+
+    def test_quiet_period_shows_zeros_and_no_activity_messages(self):
+        d = self._quiet_period()
+        html = render_report_html(d)
+        assert "<h1>19–25 Oct 2026 (Weekly)</h1>" in html
+        assert html.count("No requests in this period") == 2 and "No spend in this period" in html
+        ctx = report_context(d)
+        a, b = ctx["adoption"], ctx["budget"]
+        assert (a["requests"], a["avg_daily"], a["requests_change"]) == ("0", "0", None)
+        assert (a["institutions_active_pct"], a["applications_active_pct"]) == ("0% active", "0% active")
+        assert [c["value"] for c in b["cards"]] == ["₹71.20 Cr", "₹0", "₹70.90 Cr", "₹0"]
+        assert (b["used_pct"], b["remaining_pct"], b["exhausted"], b["nearing"]) == ("<1%", ">99%", "8", "2")
+        # Bars: the 0 active segments are not drawn; the rest fill the bar by count.
+        assert [(s["css"], s["count"], s["width"]) for s in a["institution_segments"]] == [
+            ("seg-other", "28", 20.0), ("seg-dormant", "112", 80.0)]
+        assert [(s["css"], s["count"], s["width"]) for s in a["application_segments"]] == [
+            ("seg-other", "2.17K", 100.0)]
+        assert ctx["models"]["active_width"] == 0.0
+
+    def test_rates_with_nothing_to_divide_by_are_a_dash(self):
+        from app.services.usage_report import pdf as pdf_module
+
+        d = self._quiet_period()
+        d.total_applications = d.active_applications = 0
+        d.budget = BudgetSummary(Decimal(0), Decimal(0), Decimal(0), 0, 0)
+        d.period = ReportPeriod.containing("1h", datetime(2026, 10, 14, 10, 0, tzinfo=UTC))
+        d.period_spend = PeriodSpend(Decimal(0), None, None)
+        # The sections directly: a sub-day date_span uses %-d, which Windows' strftime rejects.
+        adoption, budget = pdf_module._adoption(d), pdf_module._budget(d)
+        assert adoption["applications_active_pct"] == "Active: —"
+        assert adoption["avg_daily"] == "—"
+        assert (budget["used_pct"], budget["remaining_pct"], budget["used_width"]) == ("—", "—", None)
+        burn = budget["cards"][3]
+        assert burn["value"] == "—" and burn["muted"]
+
+    def test_bars_match_the_values_beside_them(self):
+        d = _full_data()
+        d.top_models = [RankedModel("A", "NMT", 22.0), RankedModel("B", "ASR", 0.4)]
+        d.top_institutions = [RankedInstitution("X", 24.0, ["NMT"])]
+        ctx = report_context(d)
+        assert [(m["share"], m["width"]) for m in ctx["models"]["top"]] == [("22%", 22.0), ("<1%", 0.4)]
+        assert [(i["share"], i["width"]) for i in ctx["adoption"]["top_institutions"]] == [("24%", 24.0)]
+        # Task bars: each task's share of all requests (6.1M + 4.4M).
+        assert [t["width"] for t in ctx["adoption"]["tasks"]] == [58.1, 41.9]
+
+    def test_narrow_segments_drop_their_label_but_keep_the_legend(self):
+        d = _full_data()
+        d.active_institutions, d.dormant_institutions, d.total_institutions = 1, 0, 100
+        a = report_context(d)["adoption"]
+        assert a["institution_segments"][0] == {"count": "", "css": "seg-active", "width": 1.0}
+        assert a["institution_legend"][0]["text"] == "1 active"
 
     @pytest.mark.parametrize("active,total,width", [(10, 10, 100.0), (0, 10, 0.0), (1, 1000, 0.1)])
     def test_donut_width_edges(self, active, total, width):
@@ -814,8 +928,8 @@ class TestReportHtml:
 
     def test_bar_widths_are_clamped(self):
         d = _full_data()
-        d.budget = BudgetSummary(Decimal(1), Decimal(5), Decimal(-4), 1, 0,
-                                 [InstitutionSpend("X", Decimal(5), 500.0)])
+        d.budget = BudgetSummary(Decimal(1), Decimal(5), Decimal(-4), 1, 0)
+        d.top_by_spend = [InstitutionSpend("X", Decimal(5), 500.0)]
         ctx = report_context(d)
         assert ctx["budget"]["used_width"] == 100.0
         assert ctx["budget"]["top_spend"][0]["width"] == 100.0
@@ -836,7 +950,7 @@ class TestThresholdsHaveOneSource:
         budget = report_context(d)["budget"]
         assert budget["nearing_pct"] == "70%"
         assert budget["top_spend"][0]["css"] == "amber"
-        assert "nearing limit (70%+ used)" in render_report_html(d)
+        assert "nearing limit (70% or more used)" in render_report_html(d)
 
 
 class TestReportPdf:
@@ -852,8 +966,8 @@ class TestReportPdf:
         d.top_models = [RankedModel("M" * 200, "Transliteration", 20.0)] * 5
         d.top_institutions = [RankedInstitution("I" * 300, 20.0, ["Speaker Diarization", "NMT"])] * 5
         d.requests_by_task = [(f"Task {i}", 10**9 - i) for i in range(20)]
-        d.budget = BudgetSummary(Decimal(10**15), Decimal(10**15), Decimal(0), 99, 99,
-                                 [InstitutionSpend("S" * 300, Decimal(10**15), 100.0)] * 5)
+        d.budget = BudgetSummary(Decimal(10**15), Decimal(10**15), Decimal(0), 99, 99)
+        d.top_by_spend = [InstitutionSpend("S" * 300, Decimal(10**15), 100.0)] * 5
         return d
 
     def test_worst_case_content_still_fits_one_page(self):

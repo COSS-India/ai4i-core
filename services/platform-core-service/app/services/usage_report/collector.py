@@ -71,20 +71,23 @@ class RankedInstitution:
 
 @dataclass
 class InstitutionSpend:
+    """An institution's spend in the period, and how much of its own
+    allocation it has used to date (None without an allocation on file)."""
     name: str
     spent: Decimal
-    used_pct: float
+    used_pct: Optional[float]
 
 
 @dataclass
 class BudgetSummary:
-    """Current balances, across institutions with a budget on file."""
+    """Current balances, across institutions with a budget on file.
+    used_pct_by_tenant: each one's % of its own allocation used to date."""
     allocated: Decimal
     spent: Decimal
     remaining: Decimal
     exhausted: int
     nearing_limit: int
-    top_by_spend: list[InstitutionSpend]
+    used_pct_by_tenant: dict[str, float] = field(default_factory=dict)
 
     @property
     def used_pct(self) -> Optional[float]:
@@ -95,10 +98,12 @@ class BudgetSummary:
 class PeriodSpend:
     """Spend recorded in the period. ``since`` is set when usage recording
     began inside the period, so the amount covers only part of it.
-    covered_days is None for a sub-day period (no per-day burn rate)."""
+    covered_days is None for a sub-day period (no per-day burn rate).
+    by_tenant: the amount per tenant id."""
     amount: Decimal
     since: Optional[datetime]
     covered_days: Optional[int]
+    by_tenant: dict[str, Decimal] = field(default_factory=dict)
 
     @property
     def burn_rate(self) -> Optional[Decimal]:
@@ -130,6 +135,7 @@ class ReportData:
     # Budget
     budget: Optional[BudgetSummary] = None
     period_spend: Optional[PeriodSpend] = None
+    top_by_spend: list[InstitutionSpend] = field(default_factory=list)  # ranked by spend in the period
     # Names of figures that failed to load (logged; shown as unavailable)
     failed: list[str] = field(default_factory=list)
 
@@ -205,6 +211,10 @@ class UsageReportCollector:
         data.period_spend = await self._try(
             data, "period_spend", self._period_spend(period, subdaily=not report_period.whole_days)
         )
+        if data.period_spend is not None:
+            data.top_by_spend = await self._try(
+                data, "top_by_spend", self._top_by_spend(data.period_spend, data.budget)
+            ) or []
         return data
 
     # ── sections ────────────────────────────────────────────────────────────
@@ -225,9 +235,12 @@ class UsageReportCollector:
             data.failed.append("model_usage")
             breakdown = None
         if breakdown is not None:
-            kpis = MeteringService.model_consumption_kpis(breakdown["services"], breakdown["model_totals"])
+            # Active = at least one (rounded) request, as total_requests rounds:
+            # an extrapolated fraction of a request is not a model in use.
+            used = [m for m in breakdown["model_totals"] if round(m["requests"]) >= 1]
+            kpis = MeteringService.model_consumption_kpis(breakdown["services"], used)
             data.active_models = kpis["active_models"]
-            _, ranked, _ = MeteringService.model_consumption_ranking(breakdown["model_totals"], TOP_N)
+            _, ranked, _ = MeteringService.model_consumption_ranking(used, TOP_N)
             data.top_models = [
                 RankedModel(m["model_name"], task_display_name(m.get("task_type")), m["consumption_pct"])
                 for m in ranked
@@ -295,7 +308,7 @@ class UsageReportCollector:
     async def _registry_count(self) -> int:
         """registry_model_count() returns None instead of raising when the DB
         query fails; raise here so the figure is recorded as failed, not shown
-        as N/A in a report sent without --allow-partial."""
+        as "Not available" in a report sent without --allow-partial."""
         count = await self._metering.registry_model_count()
         if count is None:
             raise RuntimeError("model registry unavailable")
@@ -326,7 +339,7 @@ class UsageReportCollector:
         budgets = await UsageRepository(self._core_db).get_tenant_budgets(list(names), self._auth_db)
         allocated = spent = remaining = Decimal("0")
         exhausted = nearing = 0
-        spends: list[InstitutionSpend] = []
+        used_by_tenant: dict[str, float] = {}
         for tenant_id, b in budgets.items():
             allocated += b.budget_limit
             spent += b.spent
@@ -339,9 +352,26 @@ class UsageReportCollector:
                 exhausted += 1
             elif used_pct >= NEARING_LIMIT_PCT:
                 nearing += 1
-            spends.append(InstitutionSpend(names.get(tenant_id, tenant_id), b.spent, used_pct))
-        top = sorted((s for s in spends if s.spent > 0), key=lambda s: s.spent, reverse=True)[:TOP_N]
-        return BudgetSummary(allocated, spent, remaining, exhausted, nearing, top)
+            used_by_tenant[tenant_id] = used_pct
+        return BudgetSummary(allocated, spent, remaining, exhausted, nearing, used_by_tenant)
+
+    async def _top_by_spend(self, spend: PeriodSpend, budget: Optional[BudgetSummary]) -> list[InstitutionSpend]:
+        """The TOP_N institutions by spend in the period, with the share of
+        their own allocation used to date (None when it has none on file, or
+        the budget figure failed to load)."""
+        ranked = sorted(
+            ((tid, amount) for tid, amount in spend.by_tenant.items() if amount > 0),
+            key=lambda x: x[1], reverse=True,
+        )[:TOP_N]
+        ids = [int(tid) for tid, _ in ranked if tid.isdigit()]
+        names: dict[str, str] = {}
+        if ids:
+            rows = await self._auth_db.execute(
+                text("SELECT id, organisation FROM tenants WHERE id = ANY(:ids)"), {"ids": ids}
+            )
+            names = {str(r.id): r.organisation for r in rows.all()}
+        used = budget.used_pct_by_tenant if budget else {}
+        return [InstitutionSpend(names.get(tid) or tid, amount, used.get(tid)) for tid, amount in ranked]
 
     async def _period_spend(self, period: UsagePeriod, subdaily: bool = False) -> Optional[PeriodSpend]:
         """None when usage recording had not started by the end of the period."""
@@ -349,11 +379,14 @@ class UsageReportCollector:
         data_from = await repo.get_usage_data_from(period)
         if data_from is None:
             return None
-        rows = await repo.get_period_usage(period)
-        amount = sum((_decimal(r.cost) for r in rows), Decimal("0"))
+        by_tenant: dict[str, Decimal] = {}
+        for r in await repo.get_period_usage(period):
+            tid = str(r.tenant_id)
+            by_tenant[tid] = by_tenant.get(tid, Decimal("0")) + _decimal(r.cost)
+        amount = sum(by_tenant.values(), Decimal("0"))
         covered_from = max(period.start, data_from)
         covered_days = None if subdaily else max(1, math.ceil((period.end - covered_from).total_seconds() / 86_400))
-        return PeriodSpend(amount, data_from if data_from > period.start else None, covered_days)
+        return PeriodSpend(amount, data_from if data_from > period.start else None, covered_days, by_tenant)
 
     # ── helpers ─────────────────────────────────────────────────────────────
 

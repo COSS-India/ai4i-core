@@ -798,24 +798,43 @@ class TestReviseTenantBudgetEffectiveWindow:
         svc._tenants.update.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_amount_only_change_on_lapsed_window_leaves_it_lapsed(self) -> None:
+    async def test_amount_only_top_up_on_lapsed_window_rejected(self) -> None:
         """A top-up with no budget_effective_to given at all, on a
-        lapsed window, must not silently reactivate it — only the ₹
-        changes; the window stays exactly as expired as it was."""
-        stored_from = _VALID_EFFECTIVE_FROM - timedelta(days=60)
-        stored_to = _VALID_EFFECTIVE_FROM - timedelta(days=1)
+        lapsed window, must 422 and leave the balance untouched — the
+        window has to be extended before more ₹ can go in."""
         expired_tenant = _tenant(allocated_budget=Decimal("300"))
-        expired_tenant.budget_effective_from = stored_from
-        expired_tenant.budget_effective_to = stored_to
+        expired_tenant.budget_effective_from = _VALID_EFFECTIVE_FROM - timedelta(days=60)
+        expired_tenant.budget_effective_to = _VALID_EFFECTIVE_FROM - timedelta(days=1)
         svc = _svc()
         svc._tenants.get_by_id_for_update = AsyncMock(return_value=expired_tenant)
+        svc._tenants.update = AsyncMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("200"))
+
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["error"] == "budget_window_expired"
+        svc._tenants.update.assert_not_awaited()
+        svc._allocations.cascade_tenant_budget_revision.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_amount_only_top_up_with_open_ended_window_allowed(self) -> None:
+        """A NULL budget_effective_to is open-ended, never lapsed (see
+        is_budget_window_expired), so a plain top-up there must still go
+        through rather than 422 budget_window_expired."""
+        stored_from = _VALID_EFFECTIVE_FROM - timedelta(days=60)
+        tenant = _tenant(allocated_budget=Decimal("300"))
+        tenant.budget_effective_from = stored_from
+        tenant.budget_effective_to = None
+        svc = _svc()
+        svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
         svc._tenants.update = AsyncMock()
 
         await svc.revise_tenant_budget(_admin_user(), 1, "top-up", Decimal("200"))
 
         written = svc._tenants.update.await_args.args[1]
         assert written["budget_effective_from"] == stored_from
-        assert written["budget_effective_to"] == stored_to
+        assert written["budget_effective_to"] is None
         assert written["allocated_budget"] == Decimal("500")
 
     @pytest.mark.asyncio
