@@ -42,3 +42,19 @@ def test_role_reset_runs_after_usage_viewer_rename(script):
     # 'PROGRAM ADMIN' those users would be reset instead.
     ancestors = {rev.revision for rev in script.iterate_revisions("a7c3e9f15b28", "base")}
     assert "c5d6e7f8a9b1" in ancestors
+
+
+def test_role_reset_log_line_says_privileged_users_are_kept(script):
+    # Alembic prints this in "Running upgrade ... -> a7c3e9f15b28, <doc>";
+    # "to the USER role only" read as if admins were stripped too.
+    assert script.get_revision("a7c3e9f15b28").doc == "reset non-privileged self-registered users to USER"
+
+
+def test_role_reset_docstring_matches_preserved_roles_and_order(script):
+    # The docstring is the only prose left in the file; keep it in step
+    # with PRESERVED_ROLES and the revisions it says it runs after.
+    module = script.get_revision("a7c3e9f15b28").module
+    for role in module.PRESERVED_ROLES:
+        assert role in module.__doc__
+    for revision in ("e7a1b2c3d4f5", "c5d6e7f8a9b1"):
+        assert revision in module.__doc__

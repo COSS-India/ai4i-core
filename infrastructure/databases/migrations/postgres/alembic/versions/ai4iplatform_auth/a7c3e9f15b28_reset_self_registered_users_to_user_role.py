@@ -1,28 +1,11 @@
-"""reset self-registered users to the USER role only
+"""reset non-privileged self-registered users to USER
 
-Self-registered users (creation_type default/google) may only hold USER
-(AI4IDS-3412). RoleService.assign_role enforces that for new grants, but
-accounts that were given other roles before the lock still hold them.
+A self-registered user (creation_type default/google) holding ADMIN,
+MODERATOR, TENANT ADMIN or USAGE VIEWER keeps all its roles. The rest,
+except the seeded guest, are left with USER only.
 
-Change request (2026-10-27): a self-registered user who holds ADMIN,
-MODERATOR, TENANT ADMIN or USAGE VIEWER is left completely untouched — no
-role removed, no USER added. Stripping those would cut real admins and
-institution admins off on deploy. Only the remaining self-registered users
-(e.g. one holding just GUEST, or no role at all) are reset to USER.
-
-Runs after e7a1b2c3d4f5 (via b8a1957cd6a3), which re-labels admin-created
-users still stored as 'default' to 'tenant' — so only genuinely
-self-registered accounts are hit — and after c5d6e7f8a9b1, which renames
-PROGRAM ADMIN to USAGE VIEWER, so matching on the new name is enough.
-
-Excluded:
-  - the seeded guest account (username 'guest', matched the same way as
-    e2f3a4b5c6d7) keeps GUEST — it is a system account, not a signup.
-  - any self-registered user holding a preserved role (see above).
-
-Affected user ids and the roles removed are logged (ids only, no PII).
-Existing access tokens keep their old permission_ids until they expire;
-the next refresh re-reads roles from the DB.
+Runs after e7a1b2c3d4f5, which re-labels admin-created users to 'tenant',
+and c5d6e7f8a9b1, which renames PROGRAM ADMIN to USAGE VIEWER.
 
 Revision ID: a7c3e9f15b28
 Revises: b8a1957cd6a3
@@ -74,7 +57,7 @@ def upgrade() -> None:
 
     user_role_id = conn.execute(sa.text("SELECT id FROM roles WHERE name = 'USER'")).scalar()
     if user_role_id is None:
-        logger.warning("a7c3e9f15b28: no 'USER' role found; self-registered role reset skipped.")
+        logger.warning("a7c3e9f15b28: no 'USER' role found; non-privileged self-registered role reset skipped.")
         return
 
     removed = conn.execute(sa.text(f"""
