@@ -835,6 +835,9 @@ async def get_trace_by_id(
             "name",
             "context.trace_id",
             "context.parent_span_id",
+            # span_id too: a failed-over trace has two "model" / "ai-inference"
+            # spans, so the UI needs it to tell the rows apart.
+            "context.span_id",
             "status",
             "attributes",
             "service_name"
