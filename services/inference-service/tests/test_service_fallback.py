@@ -99,9 +99,12 @@ def _info(service_id: str) -> dict:
     return {"serviceId": service_id, "name": service_id, "class_instance": "X", "tier_ids": []}
 
 
-def _task_service(result=None, exc=None) -> MagicMock:
+def _task_service(result=None, exc=None, billed_groups=0) -> MagicMock:
     svc = MagicMock()
     svc.process = AsyncMock(side_effect=exc, return_value=result)
+    # Groups already served (and billed) before the failure — see
+    # BaseTaskService.billed_groups.
+    svc.billed_groups = billed_groups
     return svc
 
 
@@ -255,7 +258,7 @@ def _llm_proxy():
 
     async def prepare(path, payload, request=None):
         sid = payload["model"]
-        return f"http://{sid}/v1/chat/completions", sid, f"{sid}-model", payload, {"serviceId": sid}
+        return f"http://{sid}{path}", sid, f"{sid}-model", payload, {"serviceId": sid}
 
     proxy._prepare_request = prepare
     return proxy
@@ -286,7 +289,7 @@ def test_llm_4xx_is_returned_without_fallback():
 
 def test_llm_unreachable_moves_to_fallback():
     proxy = _llm_proxy()
-    proxy._forward_traced = AsyncMock(return_value=(200, {"choices": []}))
+    proxy._forward_traced = AsyncMock(return_value=(200, {"choices": []}, None))
     request = MagicMock()
     with patch("services.llm_service.get_fallbacks", AsyncMock(return_value=["llm-b"])):
         status, body = _run(proxy._fallback_if_unreachable(
@@ -302,14 +305,16 @@ def test_llm_unreachable_moves_to_fallback():
 
 def test_llm_every_service_failing_returns_503():
     proxy = _llm_proxy()
-    proxy._forward_traced = AsyncMock(return_value=(500, {"detail": "boom"}))
+    proxy._forward_traced = AsyncMock(return_value=(500, {"detail": "boom"}, "upstream_5xx"))
     with patch("services.llm_service.get_fallbacks", AsyncMock(return_value=["llm-b"])):
         status, body = _run(proxy._fallback_if_unreachable(
             "/v1/chat/completions", MagicMock(), "llm-a", {"model": "x"}, 502, {"detail": "down"}
         ))
     assert status == 503
-    assert body["code"] == "ALL_SERVICES_UNAVAILABLE"
-    assert [a["service_id"] for a in body["attempted"]] == ["llm-a", "llm-b"]
+    # OpenAI shape: clients read error.message.
+    assert body["error"]["type"] == "all_services_unavailable"
+    assert "llm-a" in body["error"]["message"]
+    assert [a["service_id"] for a in body["error"]["attempted"]] == ["llm-a", "llm-b"]
 
 
 # ── Where the fallback map comes from ─────────────────────────────────────────
@@ -460,7 +465,7 @@ def test_orchestrator_logs_each_failover():
 
 def test_llm_logs_each_failover_and_marks_fallback_used():
     proxy = _llm_proxy()
-    proxy._forward_traced = AsyncMock(return_value=(200, {"choices": []}))
+    proxy._forward_traced = AsyncMock(return_value=(200, {"choices": []}, None))
     request = MagicMock()
     with patch("services.llm_service.get_fallbacks", AsyncMock(return_value=["llm-b"])),          patch("services.llm_service.log_failover") as log:
         _run(proxy._fallback_if_unreachable(
@@ -482,7 +487,8 @@ def test_run_fallbacks_stream_style_first_open_wins():
     async def attempt(fallback_id, url, model_name, payload, info, index):
         # Streaming caller: ok means the stream opened.
         calls.append((fallback_id, payload["model"], index))
-        return (fallback_id == "llm-c"), (200 if fallback_id == "llm-c" else 503), "stream-or-error"
+        ok = fallback_id == "llm-c"
+        return ok, (200 if ok else 503), "stream-or-error", (None if ok else "upstream_5xx")
 
     outcome = _run(proxy._run_fallbacks(
         "/v1/chat/completions", MagicMock(), "llm-a", "upstream_5xx", ["llm-b", "llm-c"], {"model": "x"}, attempt,
@@ -497,14 +503,14 @@ def test_run_fallbacks_all_failing_returns_503_for_the_requested_service():
     proxy = _llm_proxy()
 
     async def attempt(*args):
-        return False, 502, {"detail": "down"}
+        return False, 502, {"detail": "down"}, "unreachable"
 
     outcome = _run(proxy._run_fallbacks(
         "/v1/chat/completions", MagicMock(), "llm-a", "upstream_5xx", ["llm-b"], {"model": "x"}, attempt,
     ))
     assert not outcome.ok
     assert outcome.served_id == "llm-a" and outcome.status_code == 503
-    assert [a["service_id"] for a in outcome.result["attempted"]] == ["llm-a", "llm-b"]
+    assert [a["service_id"] for a in outcome.result["error"]["attempted"]] == ["llm-a", "llm-b"]
 
 
 def test_run_fallbacks_skips_a_fallback_that_cannot_be_resolved():
@@ -521,9 +527,272 @@ def test_run_fallbacks_skips_a_fallback_that_cannot_be_resolved():
     proxy._prepare_request = prepare
 
     async def attempt(fallback_id, *args):
-        return True, 200, "ok"
+        return True, 200, "ok", None
 
     outcome = _run(proxy._run_fallbacks(
         "/v1/chat/completions", MagicMock(), "llm-a", "upstream_5xx", ["llm-gone", "llm-b"], {"model": "x"}, attempt,
     ))
     assert outcome.served_id == "llm-b"
+
+
+# ── No failover once part of the payload was billed (per_item groups) ───────
+
+def test_no_failover_after_a_group_was_billed():
+    orch = _make_orchestrator()
+    primary = _task_service(exc=UpstreamUnavailableError("down", "timeout"), billed_groups=1)
+    fallback = _task_service({"output": ["b"]})
+    _wire(orch, {"nmt-a": primary, "nmt-b": fallback})
+
+    with patch("orchestrator.orchestrator.get_fallbacks", AsyncMock(return_value=["nmt-b"])):
+        with pytest.raises(UpstreamUnavailableError):
+            _run(orch._run_with_fallbacks(PAYLOAD, _info("nmt-a"), None, None))
+    fallback.process.assert_not_called()
+
+
+def test_partly_billed_fallback_stops_the_chain():
+    orch = _make_orchestrator()
+    primary = _task_service(exc=UpstreamUnavailableError("down", "timeout"))
+    partial = _task_service(exc=UpstreamUnavailableError("down", "upstream_5xx"), billed_groups=1)
+    last = _task_service({"output": ["c"]})
+    _wire(orch, {"nmt-a": primary, "nmt-b": partial, "nmt-c": last})
+
+    with pytest.raises(AllServicesUnavailableError) as exc_info:
+        _run(orch._run_with_fallbacks(PAYLOAD, _info("nmt-a"), ["nmt-b", "nmt-c"], None))
+    assert exc_info.value.attempts == [("nmt-a", "timeout"), ("nmt-b", "upstream_5xx")]
+    last.process.assert_not_called()
+
+
+def test_run_inference_counts_only_completed_groups():
+    from services.base.task_service import BaseTaskService
+
+    class _PerItem(BaseTaskService):
+        payload_key = "input"
+        TRITON_CALL_MODE = "per_item"
+
+    svc = _PerItem()
+    svc.convert_payload_to_triton_format = AsyncMock(return_value=([{"name": "IN"}], ["OUT"]))
+    svc.convert_triton_output_to_task_format = AsyncMock(return_value=[{"target": "x"}])
+    svc._call_triton_inference = AsyncMock(
+        side_effect=[{"outputs": []}, UpstreamUnavailableError("down", "timeout")]
+    )
+    payload = {"task_type": "TTS", "input": [{"source": "a"}, {"source": "b"}], "config": {}}
+    info = {"name": "tts", "endpoint": "http://triton/infer", "serviceId": "tts-a", "adapter_config": {}}
+
+    with patch("trace.span_attributes.get_unit_type", AsyncMock(return_value="character")),          patch("trace.span_attributes.count_input_tokens", return_value=1),          patch("trace.span_attributes.count_output_tokens", return_value=1):
+        with pytest.raises(UpstreamUnavailableError):
+            _run(svc.run_inference(payload, info))
+    assert svc.billed_groups == 1
+
+
+# ── LLM audio uploads (proxy_multipart) fail over too ────────────────────────
+
+_AUDIO_PATH = "/v1/audio/transcriptions"
+_FILES = {"file": ("a.wav", b"RIFF-bytes", "audio/wav")}
+
+
+def _audio_proxy(post_results):
+    proxy = _llm_proxy()
+    proxy.resolve_upstream_url = AsyncMock(return_value=(
+        f"http://asr-a{_AUDIO_PATH}", {"adapter_config": {"model_name": "whisper-a"}, "tier_ids": []},
+    ))
+    # (status, body) → (status, body, reason), as _post_multipart classifies it.
+    proxy._post_multipart = AsyncMock(side_effect=[
+        (sc, body, classify_upstream_failure(status_code=sc)) for sc, body in post_results
+    ])
+    return proxy
+
+
+def _upload(proxy, request=None):
+    return _run(proxy.proxy_multipart(
+        _AUDIO_PATH, files=_FILES, data={"model": "asr-a", "language": "hi"}, request=request,
+    ))
+
+
+def test_audio_upload_unreachable_moves_to_fallback_with_the_same_file():
+    proxy = _audio_proxy([(502, {"error": {"message": "down"}}), (200, {"text": "namaste"})])
+    request = MagicMock()
+    request.headers = {}
+    with patch("services.llm_service.get_fallbacks", AsyncMock(return_value=["asr-b"])):
+        status, body = _upload(proxy, request)
+
+    assert (status, body) == (200, {"text": "namaste"})
+    requested_call, fallback_call = proxy._post_multipart.call_args_list
+    assert requested_call.args[1] == f"http://asr-a{_AUDIO_PATH}"
+    assert requested_call.args[3]["model"] == "whisper-a"
+    assert fallback_call.args[1] == f"http://asr-b{_AUDIO_PATH}"
+    assert fallback_call.args[2] is _FILES                    # same upload
+    assert fallback_call.args[3]["model"] == "asr-b-model"     # fallback's upstream model
+    assert fallback_call.args[3]["language"] == "hi"           # other form fields kept
+    assert request.state.service_id == "asr-b" and request.state.fallback_used is True
+
+
+def test_audio_upload_4xx_is_returned_without_fallback():
+    proxy = _audio_proxy([(400, {"error": {"message": "bad file"}})])
+    with patch("services.llm_service.get_fallbacks", AsyncMock(return_value=["asr-b"])) as gf:
+        status, _ = _upload(proxy, MagicMock(headers={}))
+    assert status == 400
+    gf.assert_not_called()
+    assert proxy._post_multipart.await_count == 1
+
+
+def test_audio_upload_all_failing_returns_503_in_the_openai_envelope():
+    proxy = _audio_proxy([(503, {"error": {}}), (500, {"error": {}})])
+    with patch("services.llm_service.get_fallbacks", AsyncMock(return_value=["asr-b"])):
+        status, body = _upload(proxy, MagicMock(headers={}))
+    assert status == 503
+    assert body["error"]["type"] == "all_services_unavailable"
+    assert [a["service_id"] for a in body["error"]["attempted"]] == ["asr-a", "asr-b"]
+
+
+def test_audio_upload_without_fallbacks_is_unchanged():
+    proxy = _audio_proxy([(502, {"error": {"message": "down"}})])
+    with patch("services.llm_service.get_fallbacks", AsyncMock(return_value=[])):
+        status, body = _upload(proxy, MagicMock(headers={}))
+    assert (status, body) == (502, {"error": {"message": "down"}})
+
+
+# ── LLM failover reasons come from the exception, not the 502 ───────────────
+
+def _transport_error(exc):
+    async def raise_(*a, **k):
+        raise exc
+    return raise_
+
+
+def test_llm_timeout_is_classified_as_timeout_not_5xx():
+    proxy = _llm_proxy()
+    proxy.forward = _transport_error(httpx.ReadTimeout("slow"))
+    status, body, reason = _run(proxy._forward_traced(
+        "/v1/chat/completions", "http://llm-a/v1/chat/completions", "llm-a", "m", {"model": "m"}, {},
+    ))
+    assert (status, reason) == (502, "timeout")
+
+
+def test_llm_connection_error_is_classified_as_unreachable():
+    proxy = _llm_proxy()
+    proxy.forward = _transport_error(httpx.ConnectError("refused"))
+    _, _, reason = _run(proxy._forward_traced(
+        "/v1/chat/completions", "http://llm-a/v1/chat/completions", "llm-a", "m", {"model": "m"}, {},
+    ))
+    assert reason == "unreachable"
+
+
+def test_llm_failover_logs_the_real_reason():
+    proxy = _llm_proxy()
+    proxy._forward_traced = AsyncMock(return_value=(503, {"detail": "boom"}, "upstream_5xx"))
+    with patch("services.llm_service.get_fallbacks", AsyncMock(return_value=["llm-b"])),          patch("services.llm_service.log_failover") as log:
+        status, body = _run(proxy._fallback_if_unreachable(
+            "/v1/chat/completions", MagicMock(), "llm-a", {"model": "x"}, 502, {"detail": "down"}, "timeout",
+        ))
+    assert log.call_args.kwargs["reason"] == "timeout"
+    assert [a["reason"] for a in body["error"]["attempted"]] == ["timeout", "upstream_5xx"]
+
+
+def test_stream_open_timeout_is_classified_as_timeout():
+    proxy = _llm_proxy()
+    proxy.open_stream = _transport_error(httpx.ConnectTimeout("slow"))
+    kind, status, _ = _run(proxy.proxy_stream("http://llm-a/v1/chat/completions", {}, {}))
+    assert (kind, status) == ("error", 502)
+    assert proxy._last_stream_failure_reason == "timeout"
+
+
+# ── A hung stream start times out (and so can fail over) ─────────────────────
+
+class _HangingClient:
+    """httpx.AsyncClient stand-in whose send() never returns."""
+    def __init__(self, *a, **k):
+        self.closed = False
+    def build_request(self, *a, **k):
+        return MagicMock()
+    async def send(self, *a, **k):
+        await asyncio.sleep(10)
+    async def aclose(self):
+        self.closed = True
+
+
+def test_stream_without_response_headers_times_out():
+    from services.llm_service import OpenAIProxyService
+
+    proxy = OpenAIProxyService()
+    proxy.timeout = 0.05
+    with patch("services.llm_service.httpx.AsyncClient", _HangingClient):
+        kind, status, body = _run(proxy.proxy_stream("http://llm-a/v1/chat/completions", {}, {}))
+    assert (kind, status) == ("error", 502)
+    assert proxy._last_stream_failure_reason == "timeout"
+
+
+def _open_stream_with(lines_coro):
+    client, response = MagicMock(), MagicMock()
+    client.aclose = AsyncMock()
+    response.aclose = AsyncMock()
+    response.aiter_lines = lines_coro
+    return client, response
+
+
+def test_stream_without_a_first_line_times_out_and_closes():
+    from services.llm_service import OpenAIProxyService
+
+    async def never():
+        await asyncio.sleep(10)
+        yield "data: late"
+
+    proxy = OpenAIProxyService()
+    proxy.timeout = 0.05
+    client, response = _open_stream_with(never)
+    proxy.open_stream = AsyncMock(return_value=(client, response))
+    kind, status, body = _run(proxy.proxy_stream("http://llm-a/v1/chat/completions", {}, {}))
+    assert (kind, status) == ("error", 502)
+    assert body["error"]["type"] == "upstream_error"
+    assert proxy._last_stream_failure_reason == "timeout"
+    response.aclose.assert_awaited()
+    client.aclose.assert_awaited()
+
+
+def test_stream_that_starts_passes_every_line_through():
+    from services.llm_service import OpenAIProxyService
+
+    async def sse():
+        yield "data: one"
+        yield ""
+        yield "data: [DONE]"
+
+    proxy = OpenAIProxyService()
+    client, response = _open_stream_with(sse)
+    proxy.open_stream = AsyncMock(return_value=(client, response))
+    # Open and drain in one event loop, as the route does — a second
+    # asyncio.run would find the upstream generator already shut down.
+    async def open_and_drain():
+        kind, status, gen = await proxy.proxy_stream("http://llm-a/v1/chat/completions", {}, {})
+        return kind, status, [chunk async for chunk in gen]
+
+    kind, status, chunks = _run(open_and_drain())
+    assert (kind, status) == ("stream", 200)
+    assert chunks == ["data: one\n", "\n", "data: [DONE]\n"]
+    client.aclose.assert_awaited()
+
+
+def test_patched_proxy_stream_still_yields_a_reason():
+    # Callers/tests that replace proxy_stream leave no recorded reason; the
+    # status code then decides it.
+    from services.llm_service import OpenAIProxyService
+
+    proxy = OpenAIProxyService()
+    proxy._last_stream_failure_reason = None
+    assert proxy._stream_failure_reason(503) == "upstream_5xx"
+    assert proxy._stream_failure_reason(400) is None
+
+
+def test_audio_upload_timeout_is_classified_as_timeout():
+    from services.llm_service import OpenAIProxyService
+
+    class _Client:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, *a, **k): raise httpx.ReadTimeout("slow")
+
+    with patch("services.llm_service.httpx.AsyncClient", _Client):
+        status, _, reason = _run(OpenAIProxyService()._post_multipart(
+            _AUDIO_PATH, f"http://asr-a{_AUDIO_PATH}", _FILES, {"model": "m"}, {},
+        ))
+    assert (status, reason) == (502, "timeout")

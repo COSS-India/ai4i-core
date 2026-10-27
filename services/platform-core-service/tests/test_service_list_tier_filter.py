@@ -1,76 +1,58 @@
-"""GET /services ?tier_id= filter (AI4IDS-3488).
+"""GET /services?tier_ids= for non-admin callers (AI4IDS-3488).
 
-The Application fallback picker lists only the services mapped to the
-Institution's Tier — services with no Tier are left out (Jira: "the active
-services mapped to that Tier"). Unlike the admin-only tier_ids filter, a
-non-admin caller (Institution Admin) may use it.
+The Application fallback picker lists the services mapped to the
+Institution's Tier with the existing tier_ids filter — open to every caller,
+though the tier column stays admin-only. A non-admin tier_ids query only ever
+returns published services: auth-service rejects an unpublished fallback
+(SERVICE_NOT_PUBLISHED), so offering one would only fail on save.
 """
 import asyncio
+import importlib.util
+import inspect
+import sys
 from unittest.mock import AsyncMock, MagicMock
 
-from sqlalchemy.dialects import postgresql
+_spec = importlib.util.spec_from_file_location("app.routes.service", "app/routes/service.py")
+_route = importlib.util.module_from_spec(_spec)
+sys.modules["app.routes.service"] = _route
+_spec.loader.exec_module(_route)
 
-from app.repositories.model_management.service_repository import (
-    ServiceListFilters,
-    ServiceRepository,
-)
-
-
-def _db_capturing_stmt():
-    db = MagicMock()
-    captured = {}
-
-    async def fake_execute(stmt):
-        captured["stmt"] = stmt
-        result = MagicMock()
-        result.scalar.return_value = 0
-        result.all.return_value = []
-        return result
-
-    db.execute = AsyncMock(side_effect=fake_execute)
-    return db, captured
+_ADMIN, _NON_ADMIN = "1", "50"
 
 
-def _where(stmt) -> str:
-    sql = str(stmt.compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
-    return sql.split("WHERE", 1)[1]
+def _call(permission_ids, **filter_args):
+    svc = MagicMock()
+    svc.list_services = AsyncMock(return_value=([], 0))
+    request = MagicMock()
+    request.headers = {"X-Permission-IDS": permission_ids}
+    asyncio.run(_route.list_services(
+        request=request, response=MagicMock(headers={}), svc=svc, db=MagicMock(),
+        filters=_route.ServiceListFilterParams(**filter_args),
+        paging=_route.ServiceListSortParams(),
+    ))
+    return svc.list_services.call_args.kwargs
 
 
-def test_list_services_keeps_only_services_mapped_to_the_tier():
-    db, captured = _db_capturing_stmt()
-    asyncio.run(ServiceRepository(db).list_services(filters=ServiceListFilters(mapped_to_tier="tier-gold")))
-
-    where = _where(captured["stmt"])
-    assert "'tier-gold' = ANY (mm_services.tier_ids)" in where
-    # Untiered services are not offered.
-    assert "tier_ids IS NULL" not in where
-    assert "cardinality" not in where
+def test_non_admin_may_filter_by_tier():
+    kwargs = _call(_NON_ADMIN, tier_ids="tier-gold")
+    assert kwargs["filters"].tier_ids == ["tier-gold"]
 
 
-def test_count_services_applies_the_same_tier_filter():
-    db, captured = _db_capturing_stmt()
-    asyncio.run(ServiceRepository(db).count_services(filters=ServiceListFilters(mapped_to_tier="tier-gold")))
-
-    assert "'tier-gold' = ANY (mm_services.tier_ids)" in _where(captured["stmt"])
-
-
-def test_no_tier_means_no_tier_condition():
-    db, captured = _db_capturing_stmt()
-    asyncio.run(ServiceRepository(db).list_services())
-
-    assert "tier_ids" not in _where(captured["stmt"])
+def test_non_admin_tier_query_returns_published_only():
+    assert _call(_NON_ADMIN, tier_ids="tier-gold")["is_published"] is True
+    # Even an explicit is_published=false can't widen it.
+    assert _call(_NON_ADMIN, tier_ids="tier-gold", is_published=False)["is_published"] is True
 
 
-def test_route_accepts_tier_id_from_non_admin_callers():
-    import importlib.util
-    import sys
+def test_admin_tier_query_is_not_forced_to_published():
+    assert _call(_ADMIN, tier_ids="tier-gold")["is_published"] is None
+    assert _call(_ADMIN, tier_ids="tier-gold", is_published=False)["is_published"] is False
 
-    spec = importlib.util.spec_from_file_location("app.routes.service", "app/routes/service.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["app.routes.service"] = module
-    spec.loader.exec_module(module)
 
-    params = module.ServiceListFilterParams(is_published=True, tier_id=" tier-gold ")
-    assert params.tier_id == " tier-gold "
-    # tier_id is not admin-only: a non-admin caller (Institution Admin) may use it.
-    module._reject_admin_only_filters(params, is_admin=False)
+def test_non_admin_without_tier_filter_is_unchanged():
+    assert _call(_NON_ADMIN)["is_published"] is None
+
+
+def test_no_parallel_tier_id_parameter():
+    params = set(inspect.signature(_route.ServiceListFilterParams.__init__).parameters)
+    assert "tier_id" not in params and "tier_ids" in params

@@ -175,6 +175,12 @@ class Orchestrator:
             )
 
     @staticmethod
+    def _partly_billed(task_service: BaseTaskService) -> bool:
+        """True once a group of this attempt was served — and billed (see
+        BaseTaskService.billed_groups). Failover is safe only before that."""
+        return getattr(task_service, "billed_groups", 0) > 0
+
+    @staticmethod
     def _with_service_id(payload: Dict[str, Any], service_id: str) -> Dict[str, Any]:
         """The payload aimed at another service — config.serviceId is what
         resolution reads first, and the response echoes it back."""
@@ -215,6 +221,16 @@ class Orchestrator:
             reason = failover_reason(exc)
             if reason is None:
                 raise
+            if self._partly_billed(task_service):
+                # A fallback re-runs the whole payload, which would bill the
+                # groups that already succeeded a second time — return the
+                # error as it is today instead.
+                logger.warning(
+                    "service_failover_not_attempted requested_service_id=%s reason=%s "
+                    "billed_groups=%d (already partly served)",
+                    requested_id, reason, task_service.billed_groups,
+                )
+                raise
             if fallbacks is None:
                 fallbacks = await get_fallbacks(requested_id)
             if not fallbacks:
@@ -244,6 +260,11 @@ class Orchestrator:
                 return task_service, response, info, attempts
             except Exception as exc:
                 attempts.append((service_id, failover_reason(exc) or "fallback_rejected"))
+                if self._partly_billed(task_service):
+                    # Same rule as for the requested service: this fallback
+                    # already billed part of the payload, so the next one
+                    # must not bill it again.
+                    break
 
         log_all_failed(requested=requested_id, attempts=attempts)
         raise AllServicesUnavailableError(requested_id, attempts)

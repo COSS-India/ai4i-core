@@ -34,11 +34,25 @@ class AllServicesUnavailableError(ConnectionError):
         tried = ", ".join(sid for sid, _ in attempts)
         super().__init__(f"Service '{requested_service_id}' and its fallback service(s) are unavailable (tried: {tried})")
 
+    def _attempted(self) -> list:
+        return [{"service_id": sid, "reason": reason} for sid, reason in self.attempts]
+
+    def to_openai_error(self) -> dict:
+        """The LLM routes' shape — OpenAI clients read ``error.message``."""
+        return {
+            "error": {
+                "message": str(self),
+                "type": "all_services_unavailable",
+                "attempted": self._attempted(),
+            }
+        }
+
     def to_body(self) -> dict:
+        """The Triton routes' HTTPException ``detail``."""
         return {
             "code": "ALL_SERVICES_UNAVAILABLE",
             "message": str(self),
-            "attempted": [{"service_id": sid, "reason": reason} for sid, reason in self.attempts],
+            "attempted": self._attempted(),
         }
 
 

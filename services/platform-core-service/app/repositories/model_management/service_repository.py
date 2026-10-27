@@ -42,11 +42,6 @@ class ServiceListFilters:
     service_id: Optional[str] = None
     model_name: Optional[str] = None
     tier_ids: Optional[List[str]] = None
-    # Services explicitly mapped to this one tier — the Application fallback
-    # picker offers only "the services mapped to the Institution's Tier"
-    # (AI4IDS-3488), so untiered services are left out. Same match as
-    # tier_ids for a single tier, but open to non-admin callers (see route).
-    mapped_to_tier: Optional[str] = None
     created_from: date | datetime | None = None
     created_to: date | datetime | None = None
     published_from: date | datetime | None = None
@@ -117,8 +112,6 @@ def _apply_list_filters(stmt, filters: ServiceListFilters):
         stmt = stmt.where(_contains(Model.name, f.model_name))
     if f.tier_ids:
         stmt = stmt.where(Service.tier_ids.overlap(array(f.tier_ids, type_=String)))
-    if f.mapped_to_tier:
-        stmt = stmt.where(Service.tier_ids.any(f.mapped_to_tier))
     if f.created_from is not None:
         stmt = stmt.where(Service.created_at >= range_start(f.created_from))
     if f.created_to is not None:

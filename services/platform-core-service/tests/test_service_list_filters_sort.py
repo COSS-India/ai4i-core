@@ -161,7 +161,6 @@ class TestRoute:
     @pytest.mark.parametrize("over", [
         {"sort_by": "input_price"},
         {"sort_by": "tier"},
-        {"tier_ids": "abc"},
         {"created_from": date(2026, 1, 1)},
         {"published_to": date(2026, 1, 1)},
     ])

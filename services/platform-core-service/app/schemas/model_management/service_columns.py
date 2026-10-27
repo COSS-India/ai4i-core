@@ -65,9 +65,14 @@ MANDATORY_KEYS: FrozenSet[str] = frozenset(c.id for c in SERVICE_LIST_COLUMNS if
 DEFAULT_VISIBLE_KEYS: FrozenSet[str] = frozenset(c.id for c in SERVICE_LIST_COLUMNS if c.default_visible)
 SORTABLE_KEYS: FrozenSet[str] = frozenset(c.id for c in SERVICE_LIST_COLUMNS if c.sortable)
 ADMIN_ONLY_KEYS: FrozenSet[str] = frozenset(c.id for c in SERVICE_LIST_COLUMNS if c.admin_only)
+# Filters of admin-only columns that every caller may still use. tier_ids backs
+# the Application fallback picker (AI4IDS-3488): an Institution Admin lists the
+# services of their own Tier. The tier column itself stays admin-only, and a
+# non-admin tier_ids query only ever returns published services (routes/service.py).
+FILTER_PARAMS_OPEN_TO_ALL: FrozenSet[str] = frozenset({"tier_ids"})
 ADMIN_ONLY_FILTER_PARAMS: FrozenSet[str] = frozenset(
     p for c in SERVICE_LIST_COLUMNS if c.admin_only for p in c.filter_params
-)
+) - FILTER_PARAMS_OPEN_TO_ALL
 
 
 def columns_for_caller(is_admin: bool) -> List[ServiceListColumn]:

@@ -221,18 +221,9 @@ class ServiceListFilterParams:
             Optional[str],
             Query(
                 description=(
-                    "Comma-separated tier IDs (UUIDs). Returns services assigned to ANY of them. "
-                    "Admin/moderator only."
-                ),
-            ),
-        ] = None,
-        tier_id: Annotated[
-            Optional[str],
-            Query(
-                description=(
-                    "Only services mapped to this one tier (services with no tier are left out). "
-                    "Open to every caller — the Application fallback picker uses it with the "
-                    "Institution's tier; tier_ids is the admin-only multi-tier filter."
+                    "Comma-separated tier IDs (UUIDs). Returns services assigned to ANY of them "
+                    "(services with no tier are left out). Open to every caller; for "
+                    "non-admins it returns published services only."
                 ),
             ),
         ] = None,
@@ -282,7 +273,6 @@ class ServiceListFilterParams:
         self.service_id = service_id
         self.model_name = model_name
         self.tier_ids = tier_ids
-        self.tier_id = tier_id
         self.created_from = created_from
         self.created_to = created_to
         self.published_from = published_from
@@ -420,9 +410,16 @@ async def list_services(
     _reject_admin_only_filters(filters, is_admin)
     _validate_date_ranges(filters)
     task_types = await _resolve_task_types(filters.task_types, db)
+    tier_ids = _split_csv(filters.tier_ids) or None
+    is_published = filters.is_published
+    if tier_ids and not is_admin:
+        # A non-admin filters by tier only to pick from what their tier can
+        # call (the Application fallback picker) — never unpublished services,
+        # which auth-service would then reject as SERVICE_NOT_PUBLISHED.
+        is_published = True
     items, total = await svc.list_services(
         task_types=task_types or None,
-        is_published=filters.is_published,
+        is_published=is_published,
         created_by=filters.created_by,
         offset=paging.offset,
         limit=paging.limit,
@@ -430,8 +427,7 @@ async def list_services(
             name=filters.name or None,
             service_id=filters.service_id or None,
             model_name=filters.model_name or None,
-            tier_ids=_split_csv(filters.tier_ids) or None,
-            mapped_to_tier=(filters.tier_id or "").strip() or None,
+            tier_ids=tier_ids,
             created_from=filters.created_from,
             created_to=filters.created_to,
             published_from=filters.published_from,

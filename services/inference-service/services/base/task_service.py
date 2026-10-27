@@ -324,6 +324,12 @@ class BaseTaskService:
         # span, and bills input only), and the non-LLM Prometheus metrics
         # track input units only — so an output instance attr would be dead.
         self.billed_input = 0
+        # Groups whose ai-inference span completed — each is exported, and so
+        # billed, as soon as its call returns. The Orchestrator fails over to
+        # a fallback only while this is 0: re-running the payload after a
+        # group was billed would bill that group again (per_item call_mode,
+        # e.g. TTS chunks).
+        self.billed_groups = 0
 
         # Language labels — metric labels, not billed quantities, hence no
         # "billed_" prefix (unlike billed_input above). Read once from the
@@ -374,6 +380,7 @@ class BaseTaskService:
                 # onto an instance attr: nothing downstream reads a non-LLM
                 # output count (Prometheus tracks input units only).
                 span_ctx["output_tokens"] = count_output_tokens(group_response_data, unit_type)
+            self.billed_groups += 1
         return PostProcessFormat(
             payload=payload,
             response_data=response_data,

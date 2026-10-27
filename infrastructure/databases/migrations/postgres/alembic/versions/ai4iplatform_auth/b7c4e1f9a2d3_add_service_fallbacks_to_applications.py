@@ -1,9 +1,5 @@
 """add service_fallbacks to applications
 
-Map of requested service_id -> ordered list of fallback service_ids, set per
-Application. Existing rows default to {} (no fallback), so behaviour is
-unchanged until an Application is configured.
-
 Revision ID: b7c4e1f9a2d3
 Revises: a7c3e9f15b28
 Create Date: 2026-10-26
