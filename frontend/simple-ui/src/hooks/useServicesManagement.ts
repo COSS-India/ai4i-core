@@ -292,6 +292,304 @@ function buildServiceCreatePayload(options: {
   return serviceData;
 }
 
+/** Keep auto-filled `{modelName}` / `{modelName}/{suffix}` in sync when the model changes. */
+function nextAutoServiceId(options: {
+  previousServiceId: string;
+  previousModelName: string | undefined;
+  modelName: string;
+  taskIsLlm: boolean;
+}): string {
+  const sanitizeId = (value: string) =>
+    sanitizeServiceId(value, options.taskIsLlm);
+  const modelPrefix = options.modelName ? sanitizeId(options.modelName) : "";
+  const nextServiceId = options.previousServiceId || "";
+  const prevPrefix = options.previousModelName
+    ? sanitizeId(options.previousModelName)
+    : "";
+  const hasPrevSuffix =
+    Boolean(prevPrefix) && nextServiceId.startsWith(`${prevPrefix}/`);
+  if (nextServiceId && nextServiceId !== prevPrefix && !hasPrevSuffix) {
+    return nextServiceId;
+  }
+  const suffix = hasPrevSuffix
+    ? nextServiceId.slice(prevPrefix.length)
+    : "";
+  return `${modelPrefix}${sanitizeId(suffix)}`;
+}
+
+function formDataAfterModelSelect(options: {
+  prev: Partial<Service>;
+  modelId: string;
+  modelName: string;
+  modelSubmissionDate: string;
+  modelVersion: string;
+  resolvedModelTaskType: string;
+  isEditing: boolean;
+}): Partial<Service> {
+  const task_type =
+    options.resolvedModelTaskType || options.prev.task_type || "";
+  const next: Partial<Service> = {
+    ...options.prev,
+    modelId: options.modelId,
+    modelName: options.modelName,
+    modelSubmissionDate: options.modelSubmissionDate,
+    modelVersion: options.modelVersion,
+    task_type,
+  };
+  if (options.isEditing) return next;
+  next.serviceId = nextAutoServiceId({
+    previousServiceId: options.prev.serviceId || "",
+    previousModelName: options.prev.modelName,
+    modelName: options.modelName,
+    taskIsLlm: task_type.trim().toLowerCase() === "llm",
+  });
+  return next;
+}
+
+function clearModelFormFields(prev: Partial<Service>): Partial<Service> {
+  return {
+    ...prev,
+    modelId: "",
+    modelName: "",
+    modelSubmissionDate: "",
+    modelVersion: "",
+  };
+}
+
+function resolveCatalogTaskType(
+  rawModelTaskType: string,
+  taskTypeNames: readonly string[],
+): string {
+  const normalized = String(rawModelTaskType).trim().toLowerCase();
+  return (
+    taskTypeNames.find((name) => name.trim().toLowerCase() === normalized) ?? ""
+  );
+}
+
+function omitQueryKeys(
+  query: Record<string, string | string[] | undefined>,
+  keys: readonly string[],
+): Record<string, string> {
+  const drop = new Set(keys);
+  const next: Record<string, string> = {};
+  for (const [key, value] of Object.entries(query)) {
+    if (drop.has(key) || typeof value !== "string") continue;
+    if (key === "returnTo") {
+      const path = safeFormReturnHref(value);
+      if (!path) continue;
+      next[key] = path;
+      continue;
+    }
+    next[key] = value;
+  }
+  return next;
+}
+
+function editFormStateFromService(
+  service: Service,
+  availableTiers: readonly { id: string; name: string }[],
+): {
+  formData: Partial<Service>;
+  tierIds: string[];
+  modelId: string;
+} {
+  const modelId = service.modelId || service.model_id || "";
+  const tierIds = service.tierIds?.length
+    ? service.tierIds
+    : (service.tierNames ?? service.tiers ?? [])
+        .map((name) => availableTiers.find((tier) => tier.name === name)?.id)
+        .filter((id): id is string => Boolean(id));
+  return {
+    modelId,
+    tierIds,
+    formData: {
+      name: service.name || "",
+      serviceId: service.serviceId || service.service_id || "",
+      serviceDescription:
+        service.serviceDescription || service.description || "",
+      hardwareDescription: service.hardwareDescription || "",
+      publishedOn: service.publishedOn,
+      modelId,
+      modelName: service.model?.name || modelId,
+      endpoint: service.endpoint || service.endpoint_url || "",
+      task_type: resolveTaskType(service),
+      modelSubmissionDate: "",
+      modelVersion: service.modelVersion || service.model_version || "1.0",
+    },
+  };
+}
+
+function isDeprecatedVersionStatus(status: unknown): boolean {
+  return (
+    typeof status === "string" && status.toLowerCase() === "deprecated"
+  );
+}
+
+type ServicesQuery = Record<string, string | string[] | undefined>;
+
+function replaceServicesQuery(
+  replace: (url: { pathname: string; query: Record<string, string> }, as: undefined, opts: { shallow: boolean }) => void,
+  query: Record<string, string>,
+): void {
+  replace(
+    { pathname: "/services-management", query },
+    undefined,
+    { shallow: true },
+  );
+}
+
+type TabSyncActions = {
+  query: ServicesQuery;
+  onCreateOpen: () => void;
+  setActiveTab: (tab: number) => void;
+  bumpCreateRouteGen: () => void;
+  clearCreateReturnTo: () => void;
+  replace: (url: { pathname: string; query: Record<string, string> }, as: undefined, opts: { shallow: boolean }) => void;
+  replaceHref: (href: string) => void;
+};
+
+function openCreateFromDeepLink(actions: TabSyncActions): void {
+  actions.onCreateOpen();
+  if (!actions.query.tab) return;
+  replaceServicesQuery(actions.replace, omitQueryKeys(actions.query, ["tab"]));
+}
+
+function blockCreateWhenNoTiers(actions: TabSyncActions): void {
+  actions.setActiveTab(0);
+  showToast({ type: "warning", message: "No tiers configured" });
+  const rawReturn = actions.query.returnTo;
+  const dest =
+    typeof rawReturn === "string" ? safeFormReturnHref(rawReturn) : null;
+  actions.bumpCreateRouteGen();
+  if (dest) {
+    actions.clearCreateReturnTo();
+    actions.replaceHref(dest);
+    return;
+  }
+  if (!actions.query.tab && !actions.query.modelId) return;
+  replaceServicesQuery(
+    actions.replace,
+    omitQueryKeys(actions.query, ["tab", "modelId", "returnTo"]),
+  );
+}
+
+function blockCreateForReadOnly(actions: TabSyncActions): void {
+  actions.bumpCreateRouteGen();
+  actions.setActiveTab(0);
+  if (
+    !actions.query.tab &&
+    !actions.query.modelId &&
+    !actions.query.editServiceId
+  ) {
+    return;
+  }
+  replaceServicesQuery(
+    actions.replace,
+    omitQueryKeys(actions.query, ["tab", "modelId", "editServiceId"]),
+  );
+}
+
+/** Apply `?tab=` / create deep-link side effects for the registry page. */
+function syncServicesTabFromQuery(options: {
+  query: ServicesQuery;
+  isRegistryReadOnly: boolean;
+  isCreateServiceTabDisabled: boolean;
+  viewTabIndex: number;
+  onCreateOpen: () => void;
+  setActiveTab: (tab: number) => void;
+  bumpCreateRouteGen: () => void;
+  clearCreateReturnTo: () => void;
+  replace: (url: { pathname: string; query: Record<string, string> }, as: undefined, opts: { shallow: boolean }) => void;
+  replaceHref: (href: string) => void;
+}): void {
+  const t = options.query.tab;
+  const hasEditDeepLink =
+    typeof options.query.editServiceId === "string" &&
+    Boolean(options.query.editServiceId);
+  const isCreateDeepLink = (t === "1" || t === "create") && !hasEditDeepLink;
+  const actions: TabSyncActions = options;
+
+  if (isCreateDeepLink && !options.isRegistryReadOnly) {
+    if (options.isCreateServiceTabDisabled) {
+      blockCreateWhenNoTiers(actions);
+      return;
+    }
+    openCreateFromDeepLink(actions);
+    return;
+  }
+
+  if (options.isRegistryReadOnly && (t === "1" || t === "create")) {
+    blockCreateForReadOnly(actions);
+    return;
+  }
+
+  if (t === "2") options.setActiveTab(options.viewTabIndex);
+  else options.setActiveTab(0);
+}
+
+function modelIdInList(
+  models: readonly ModelDetails[],
+  modelId: string,
+): boolean {
+  return models.some((model) => (model.modelId || model.model_id) === modelId);
+}
+
+async function loadNonDeprecatedModel(
+  modelId: string,
+): Promise<ModelDetails | null> {
+  const modelDetails = await getModelById(modelId);
+  if (!modelDetails) return null;
+  if (isDeprecatedVersionStatus(modelDetails.versionStatus)) return null;
+  return modelDetails;
+}
+
+function stripModelIdQueryParam(options: {
+  isActive: () => boolean;
+  pathname: string;
+  currentQuery: ServicesQuery;
+  replace: (url: { pathname: string; query: Record<string, string> }, as: undefined, opts: { shallow: boolean }) => void;
+}): void {
+  if (!options.isActive()) return;
+  if (options.pathname !== "/services-management") return;
+  if (typeof options.currentQuery.modelId !== "string") return;
+  replaceServicesQuery(
+    options.replace,
+    omitQueryKeys(options.currentQuery, ["modelId"]),
+  );
+}
+
+async function preselectModelFromQueryParam(options: {
+  modelId: string;
+  models: readonly ModelDetails[];
+  isActive: () => boolean;
+  currentFormModelId: string | undefined;
+  applyModel: (modelId: string) => void;
+  setPreselectedModel: (model: ModelDetails) => void;
+  stripModelId: () => void;
+}): Promise<void> {
+  if (modelIdInList(options.models, options.modelId)) {
+    if (options.currentFormModelId !== options.modelId) {
+      options.applyModel(options.modelId);
+    }
+    options.stripModelId();
+    return;
+  }
+  try {
+    const modelDetails = await loadNonDeprecatedModel(options.modelId);
+    if (!options.isActive()) return;
+    if (modelDetails) {
+      options.setPreselectedModel(modelDetails);
+      if (options.currentFormModelId !== options.modelId) {
+        options.applyModel(options.modelId);
+      }
+    }
+  } catch (e) {
+    if (!options.isActive()) return;
+    console.error("Failed to load preselected model:", e);
+  }
+  options.stripModelId();
+}
+
 export function useServicesManagement() {
   const [services, setServices] = useState<Service[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -728,76 +1026,24 @@ export function useServicesManagement() {
 
   // Sync URL tab param to activeTab.
   useEffect(() => {
-    const t = router.query.tab;
-    const hasEditDeepLink =
-      typeof router.query.editServiceId === "string" &&
-      !!router.query.editServiceId;
-    const isCreateDeepLink = (t === "1" || t === "create") && !hasEditDeepLink;
-
-    if (isCreateDeepLink && !isRegistryReadOnly) {
-      if (isCreateServiceTabDisabled) {
-        setActiveTab(0);
-        showToast({ type: "warning", message: "No tiers configured" });
-        const rawReturn = router.query.returnTo;
-        const dest =
-          typeof rawReturn === "string" ? safeFormReturnHref(rawReturn) : null;
-        if (dest) {
-          createRouteGenRef.current += 1;
-          setCreateReturnTo(null);
-          void router.replace(dest);
-          return;
-        }
-        if (router.query.tab || router.query.modelId) {
-          createRouteGenRef.current += 1;
-          const q = { ...router.query } as Record<string, string>;
-          delete q.tab;
-          delete q.modelId;
-          delete q.returnTo;
-          router.replace(
-            { pathname: "/services-management", query: q },
-            undefined,
-            { shallow: true },
-          );
-        }
-        return;
-      }
-      onCreateOpen();
-      if (router.query.tab) {
-        const q = { ...router.query } as Record<string, string>;
-        delete q.tab;
-        router.replace(
-          { pathname: "/services-management", query: q },
-          undefined,
-          { shallow: true },
-        );
-      }
-      return;
-    }
-
-    if (isRegistryReadOnly && (t === "1" || t === "create")) {
-      createRouteGenRef.current += 1;
-      setActiveTab(0);
-      if (
-        router.query.tab ||
-        router.query.modelId ||
-        router.query.editServiceId
-      ) {
-        const q = { ...router.query } as Record<string, string>;
-        delete q.tab;
-        delete q.modelId;
-        delete q.editServiceId;
-        router.replace(
-          { pathname: "/services-management", query: q },
-          undefined,
-          { shallow: true },
-        );
-      }
-      return;
-    }
-    // tab=1 without editServiceId already opened Create and returned.
-    // tab=1 with editServiceId opens the edit modal; stay on the registry.
-    if (t === "2") setActiveTab(viewTabIndex);
-    else setActiveTab(0);
+    syncServicesTabFromQuery({
+      query: router.query,
+      isRegistryReadOnly,
+      isCreateServiceTabDisabled,
+      viewTabIndex,
+      onCreateOpen,
+      setActiveTab,
+      bumpCreateRouteGen: () => {
+        createRouteGenRef.current += 1;
+      },
+      clearCreateReturnTo: () => setCreateReturnTo(null),
+      replace: (url, as, opts) => {
+        void router.replace(url, as, opts);
+      },
+      replaceHref: (href) => {
+        void router.replace(href);
+      },
+    });
   }, [
     router.query.tab,
     router.query.editServiceId,
@@ -816,67 +1062,30 @@ export function useServicesManagement() {
     const { modelId, tab } = router.query;
     if (!modelId || typeof modelId !== "string") return;
     if ((tab === "create" || tab === "1") && isCreateServiceTabDisabled) return;
+    if (models.length === 0) return;
 
     const gen = createRouteGenRef.current;
     let cancelled = false;
+    const isActive = () => !cancelled && gen === createRouteGenRef.current;
+    const stripModelId = () =>
+      stripModelIdQueryParam({
+        isActive,
+        pathname: routerRef.current.pathname,
+        currentQuery: routerQueryRef.current,
+        replace: (url, as, opts) => {
+          void routerRef.current.replace(url, as, opts);
+        },
+      });
 
-    const stripModelIdFromUrl = () => {
-      if (cancelled || gen !== createRouteGenRef.current) return;
-      if (routerRef.current.pathname !== "/services-management") return;
-      const current = routerQueryRef.current;
-      if (typeof current.modelId !== "string") return;
-      const nextQuery: Record<string, string> = {};
-      for (const [key, value] of Object.entries(current)) {
-        if (key === "modelId" || typeof value !== "string") continue;
-        if (key === "returnTo") {
-          const path = safeFormReturnHref(value);
-          if (!path) continue;
-          nextQuery[key] = path;
-          continue;
-        }
-        nextQuery[key] = value;
-      }
-      routerRef.current.replace(
-        { pathname: "/services-management", query: nextQuery },
-        undefined,
-        { shallow: true },
-      );
-    };
-
-    const runPreselect = async () => {
-      const inActiveList = models.some(
-        (m) => (m.modelId || m.model_id) === modelId,
-      );
-      if (inActiveList) {
-        if (formData.modelId !== modelId) {
-          handleModelNameChange(modelId);
-        }
-        stripModelIdFromUrl();
-        return;
-      }
-
-      // Model not in active list - only add to dropdown if not deprecated (deprecated models must not appear in Create Service)
-      try {
-        const modelDetails = await getModelById(modelId);
-        if (cancelled || gen !== createRouteGenRef.current) return;
-        const isDeprecated =
-          modelDetails?.versionStatus?.toLowerCase() === "deprecated";
-        if (modelDetails && !isDeprecated) {
-          setPreselectedModelFromQuery(modelDetails);
-          if (formData.modelId !== modelId) {
-            handleModelNameChange(modelId);
-          }
-        }
-      } catch (e) {
-        if (cancelled || gen !== createRouteGenRef.current) return;
-        console.error("Failed to load preselected model:", e);
-      }
-      stripModelIdFromUrl();
-    };
-
-    if (models.length > 0) {
-      void runPreselect();
-    }
+    void preselectModelFromQueryParam({
+      modelId,
+      models,
+      isActive,
+      currentFormModelId: formData.modelId,
+      applyModel: handleModelNameChange,
+      setPreselectedModel: setPreselectedModelFromQuery,
+      stripModelId,
+    });
     return () => {
       cancelled = true;
     };
@@ -898,7 +1107,7 @@ export function useServicesManagement() {
   // Dropdown options: active models only (no deprecated). Include preselected from query only if not deprecated and not already in list.
   const preselectedNotDeprecated =
     preselectedModelFromQuery &&
-    preselectedModelFromQuery.versionStatus?.toLowerCase() !== "deprecated";
+    !isDeprecatedVersionStatus(preselectedModelFromQuery.versionStatus);
   const modelsForDropdown =
     preselectedNotDeprecated &&
     !models.some(
@@ -946,98 +1155,50 @@ export function useServicesManagement() {
 
   // Handle model name selection and derive model metadata
   const handleModelNameChange = async (modelId: string) => {
-    // Check session expiry before fetching model details
     if (!checkSessionExpiry()) return;
-    if (modelId) {
-      try {
-        setIsLoadingModelDetails(true);
-        const modelDetails = await getModelById(modelId);
-
-        // Extract model version (required field after migration)
-        const modelVersion =
-          modelDetails?.version || modelDetails?.modelVersion || "1.0";
-
-        // Extract model submission date (if API returns it)
-        const modelSubmissionDate = formatModelSubmissionDate(
-          modelDetails?.submittedOn ?? modelDetails?.submitted_on ?? "",
-        );
-
-        // Get model name for display
-        const modelName =
-          modelDetails?.name ||
-          modelDetails?.modelId ||
-          modelDetails?.model_id ||
-          "";
-
-        const rawModelTaskType = resolveTaskType(modelDetails);
-        // Select options use catalog `taskTypeNames` exactly — resolve
-        // case-insensitively and ignore values outside the enabled set.
-        const resolvedModelTaskType =
-          taskTypeNames.find(
-            (t) => t.trim().toLowerCase() === String(rawModelTaskType).trim().toLowerCase(),
-          ) ?? "";
-
-        setFormData((prev) => {
-          const task_type = resolvedModelTaskType || prev.task_type || "";
-          const taskIsLlm = task_type.trim().toLowerCase() === "llm";
-          // Every task type pre-fills "{modelName}"; the admin may add a suffix
-          // ("[model-name]/[GPU]") so two services on one model cannot clash.
-          // LLM sanitizes tighter — its Service ID is sent as the name too.
-          const sanitizeId = (s: string) => sanitizeServiceId(s, taskIsLlm);
-          const modelPrefix = modelName ? sanitizeId(modelName) : "";
-          let nextServiceId = prev.serviceId || "";
-          if (!editingService) {
-            const prevPrefix = prev.modelName
-              ? sanitizeId(prev.modelName)
-              : "";
-            // Suffix must start at a "/" boundary, so "llama2-x" is not
-            // mistaken for the auto-filled "llama" plus a suffix.
-            const hasPrevSuffix =
-              !!prevPrefix && nextServiceId.startsWith(`${prevPrefix}/`);
-            if (
-              !nextServiceId ||
-              nextServiceId === prevPrefix ||
-              hasPrevSuffix
-            ) {
-              // Still on the auto-generated prefix pattern — swap prefix, keep suffix
-              const suffix = hasPrevSuffix
-                ? nextServiceId.slice(prevPrefix.length)
-                : "";
-              nextServiceId = `${modelPrefix}${sanitizeId(suffix)}`;
-            }
-            // else: user hand-edited away from the previous model prefix — preserve
-          }
-          return {
-            ...prev,
-            modelId: modelId,
-            modelName: modelName,
-            modelSubmissionDate: modelSubmissionDate,
-            modelVersion: modelVersion,
-            task_type,
-            ...(editingService ? {} : { serviceId: nextServiceId }),
-          };
-        });
-      } catch (error: any) {
-        console.error("Failed to fetch model details:", error);
-        showToast({
-          type: "warning",
-          message:
-            error instanceof Error
-              ? error.message
-              : "Failed to fetch model details",
-        });
-      } finally {
-        setIsLoadingModelDetails(false);
-      }
-    } else {
-      // Clear model fields if no model selected (keep task_type)
-      setFormData((prev) => ({
-        ...prev,
-        modelId: "",
-        modelName: "",
-        modelSubmissionDate: "",
-        modelVersion: "",
-      }));
+    if (!modelId) {
+      setFormData(clearModelFormFields);
+      return;
+    }
+    try {
+      setIsLoadingModelDetails(true);
+      const modelDetails = await getModelById(modelId);
+      const modelVersion =
+        modelDetails?.version || modelDetails?.modelVersion || "1.0";
+      const modelSubmissionDate = formatModelSubmissionDate(
+        modelDetails?.submittedOn ?? modelDetails?.submitted_on ?? "",
+      );
+      const modelName =
+        modelDetails?.name ||
+        modelDetails?.modelId ||
+        modelDetails?.model_id ||
+        "";
+      const resolvedModelTaskType = resolveCatalogTaskType(
+        resolveTaskType(modelDetails),
+        taskTypeNames,
+      );
+      setFormData((prev) =>
+        formDataAfterModelSelect({
+          prev,
+          modelId,
+          modelName,
+          modelSubmissionDate,
+          modelVersion,
+          resolvedModelTaskType,
+          isEditing: Boolean(editingService),
+        }),
+      );
+    } catch (error: any) {
+      console.error("Failed to fetch model details:", error);
+      showToast({
+        type: "warning",
+        message:
+          error instanceof Error
+            ? error.message
+            : "Failed to fetch model details",
+      });
+    } finally {
+      setIsLoadingModelDetails(false);
     }
   };
 
@@ -1362,18 +1523,15 @@ export function useServicesManagement() {
           (model) => model.modelId === modelId,
         );
         if (cachedModel) {
-          const status = cachedModel.versionStatus;
           setSelectedServiceModelDeprecated(
-            typeof status === "string" && status.toLowerCase() === "deprecated",
+            isDeprecatedVersionStatus(cachedModel.versionStatus),
           );
         } else {
           try {
             const modelDetails = await getModelById(modelId);
-            const deprecated =
-              modelDetails?.versionStatus &&
-              typeof modelDetails.versionStatus === "string" &&
-              modelDetails.versionStatus.toLowerCase() === "deprecated";
-            setSelectedServiceModelDeprecated(!!deprecated);
+            setSelectedServiceModelDeprecated(
+              isDeprecatedVersionStatus(modelDetails?.versionStatus),
+            );
           } catch {
             setSelectedServiceModelDeprecated(false);
           }
@@ -1391,51 +1549,36 @@ export function useServicesManagement() {
    * the shared form state with the service's current values.
    */
   const handleEditService = async (serviceId: string) => {
-    // Check session expiry before loading the service into the edit form
     if (!checkSessionExpiry()) return;
     try {
       onCreateClose();
       const service = await getServiceById(serviceId);
-      const modelId = service.modelId || service.model_id || "";
-      setFormData({
-        name: service.name || "",
-        serviceId: service.serviceId || service.service_id || "",
-        serviceDescription:
-          service.serviceDescription || service.description || "",
-        // Read-only in edit; PATCH never resends it.
-        hardwareDescription: service.hardwareDescription || "",
-        publishedOn: service.publishedOn,
-        modelId,
-        modelName: service.model?.name || modelId,
-        endpoint: service.endpoint || service.endpoint_url || "",
-        task_type: resolveTaskType(service),
-        modelSubmissionDate: "",
-        modelVersion: service.modelVersion || service.model_version || "1.0",
-      });
+      const { formData: nextForm, tierIds, modelId } = editFormStateFromService(
+        service,
+        availableTiers,
+      );
+      setFormData(nextForm);
       const maskedAuthToken = resolveMaskedAuthToken(service);
       setAuthToken(maskedAuthToken);
       setSavedAuthTokenMask(maskedAuthToken);
-      setHasAuthToken(!!service.hasAuthToken);
+      setHasAuthToken(Boolean(service.hasAuthToken));
       setPricePerUnit(
         service.costPerUnit != null ? String(service.costPerUnit) : "",
       );
       setCachedInputPricePerUnit(
-        service.cachedInputCostPerUnit != null ? String(service.cachedInputCostPerUnit) : "",
+        service.cachedInputCostPerUnit != null
+          ? String(service.cachedInputCostPerUnit)
+          : "",
       );
       setOutputPricePerUnit(
-        service.outputCostPerUnit != null ? String(service.outputCostPerUnit) : "",
+        service.outputCostPerUnit != null
+          ? String(service.outputCostPerUnit)
+          : "",
       );
       setUnitSize(service.unitSize != null ? String(service.unitSize) : "");
-      // Prefer tier IDs; fall back to mapping tier names via the fetched tier list
-      const tierIds = service.tierIds?.length
-        ? service.tierIds
-        : (service.tierNames ?? service.tiers ?? [])
-            .map((name) => availableTiers.find((t) => t.name === name)?.id)
-            .filter((id): id is string => !!id);
       setSelectedTiers(tierIds);
       setEditingService(service);
       setCreateFormEpoch((n) => n + 1);
-      // Fill model name/submission date from the model record (read-only display)
       if (modelId) {
         handleModelNameChange(modelId);
       }
@@ -1519,11 +1662,7 @@ export function useServicesManagement() {
       const modelId = service.modelId || service.model_id;
       if (modelId) {
         const modelDetails = await getModelById(modelId);
-        const isDeprecated =
-          modelDetails?.versionStatus &&
-          typeof modelDetails.versionStatus === "string" &&
-          modelDetails.versionStatus.toLowerCase() === "deprecated";
-        if (isDeprecated) {
+        if (isDeprecatedVersionStatus(modelDetails?.versionStatus)) {
           showToast({
             type: "error",
             message:

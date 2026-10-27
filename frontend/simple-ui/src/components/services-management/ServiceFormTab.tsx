@@ -113,7 +113,7 @@ const formatSubmissionDateDisplay = (value?: string): string => {
   });
 };
 
-const ServiceFormTab: React.FC<ServiceFormTabProps> = ({
+const ServiceFormTab: React.FC<Readonly<ServiceFormTabProps>> = ({
   editingService,
   formData,
   onInputChange,

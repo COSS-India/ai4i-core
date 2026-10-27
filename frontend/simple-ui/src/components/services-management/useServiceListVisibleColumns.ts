@@ -71,7 +71,8 @@ export function useServiceListVisibleColumns(options: {
     (visibleIds: readonly string[]) => {
       if (registrySort.mode !== "sorted") return;
       const sortKey = registrySort.sort.key;
-      if (!sortKey || visibleIds.includes(sortKey)) return;
+      if (!sortKey) return;
+      if (visibleIds.includes(sortKey)) return;
       handleRegistrySortChange({ key: "name", direction: "asc" });
     },
     [handleRegistrySortChange, registrySort.mode, registrySort.sort.key],

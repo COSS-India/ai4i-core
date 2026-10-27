@@ -51,6 +51,56 @@ interface ServiceRegistryTabProps {
   onServerPageSizeChange?: (size: number) => void;
 }
 
+function serviceRegistryRowKey(service: Service): string {
+  return service.serviceId || service.service_id || "";
+}
+
+function resolveServerFilterDefs(options: {
+  serverMode: boolean;
+  serverColumns?: readonly ServiceListColumnDef[];
+  serverFilterValues?: Record<string, string>;
+  taskTypeNames: string[];
+  tierFilterOptions: ServiceTierFilterOption[];
+  onServerFilterChange?: (columnId: string, value: string) => void;
+}) {
+  if (!options.serverMode || !options.onServerFilterChange) return [];
+  const nameColumn = options.serverColumns?.find(
+    (column) => column.filterable && serviceListCellKey(column.id) === "name",
+  );
+  return buildServerServiceFilterDefs({
+    columns: options.serverColumns ?? [],
+    nameColumnId: nameColumn?.id,
+    serverFilterValues: options.serverFilterValues,
+    taskTypeNames: options.taskTypeNames,
+    tierFilterOptions: options.tierFilterOptions,
+    onChange: options.onServerFilterChange,
+  });
+}
+
+function resolveServerPagination(options: {
+  serverMode: boolean;
+  serverPage: number;
+  serverPageSize: number;
+  serverTotal: number;
+  onServerPageChange?: (page: number) => void;
+  onServerPageSizeChange?: (size: number) => void;
+}) {
+  if (
+    !options.serverMode ||
+    !options.onServerPageChange ||
+    !options.onServerPageSizeChange
+  ) {
+    return undefined;
+  }
+  return {
+    page: options.serverPage,
+    pageSize: options.serverPageSize,
+    totalItems: options.serverTotal,
+    onPageChange: options.onServerPageChange,
+    onPageSizeChange: options.onServerPageSizeChange,
+  };
+}
+
 const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
   items,
   columns,
@@ -88,19 +138,14 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
   const nameColumn = serverColumns?.find(
     (column) => column.filterable && serviceListCellKey(column.id) === "name",
   );
-
-  let serverFilterDefs: ReturnType<typeof buildServerServiceFilterDefs> = [];
-  if (serverMode && onServerFilterChange) {
-    serverFilterDefs = buildServerServiceFilterDefs({
-      columns: serverColumns ?? [],
-      nameColumnId: nameColumn?.id,
-      serverFilterValues,
-      taskTypeNames,
-      tierFilterOptions,
-      onChange: onServerFilterChange,
-    });
-  }
-
+  const serverFilterDefs = resolveServerFilterDefs({
+    serverMode,
+    serverColumns,
+    serverFilterValues,
+    taskTypeNames,
+    tierFilterOptions,
+    onServerFilterChange,
+  });
   const clientFilterDefs = buildClientServiceFilterDefs({
     filterStatus,
     onFilterStatusChange,
@@ -111,7 +156,6 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
     onFilterTierChange,
     tierFilterOptions,
   });
-
   const search = buildServiceRegistrySearch({
     serverMode,
     nameColumn,
@@ -120,25 +164,14 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
     searchQuery,
     onSearchQueryChange,
   });
-
-  let serverPagination:
-    | {
-        page: number;
-        pageSize: number;
-        totalItems: number;
-        onPageChange: (page: number) => void;
-        onPageSizeChange: (size: number) => void;
-      }
-    | undefined;
-  if (serverMode && onServerPageChange && onServerPageSizeChange) {
-    serverPagination = {
-      page: serverPage,
-      pageSize: serverPageSize,
-      totalItems: serverTotal,
-      onPageChange: onServerPageChange,
-      onPageSizeChange: onServerPageSizeChange,
-    };
-  }
+  const serverPagination = resolveServerPagination({
+    serverMode,
+    serverPage,
+    serverPageSize,
+    serverTotal,
+    onServerPageChange,
+    onServerPageSizeChange,
+  });
 
   return (
     <DataTable
@@ -148,7 +181,7 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
       columns={columns}
       sort={sort}
       onSortChange={onSortChange}
-      getRowKey={(service) => service.serviceId || service.service_id || ""}
+      getRowKey={serviceRegistryRowKey}
       onRowClick={onRowClick}
       paginate={serverMode ? "server" : "client"}
       paginationPosition="bottom"

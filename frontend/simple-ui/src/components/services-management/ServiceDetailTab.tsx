@@ -33,7 +33,7 @@ interface ServiceDetailTabProps {
   onClose: () => void;
 }
 
-const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
+const ServiceDetailTab: React.FC<Readonly<ServiceDetailTabProps>> = ({
   selectedService,
   isRegistryReadOnly,
   isServiceModelDeprecated,

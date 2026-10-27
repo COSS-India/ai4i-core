@@ -37,7 +37,7 @@ export function renderServiceTaskTypeCell(service: Service): React.ReactNode {
 
 export function renderServiceTierCell(service: Service): React.ReactNode {
   const names = service.tierNames;
-  if (!names || names.length === 0) {
+  if (!names?.length) {
     return (
       <Text fontSize="sm" color="ink.400">
         —

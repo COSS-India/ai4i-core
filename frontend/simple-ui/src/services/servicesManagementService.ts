@@ -365,6 +365,103 @@ export const getServiceById = async (serviceId: string): Promise<Service> => {
   }
 };
 
+function applyBillingFieldsToPayload(
+  apiPayload: Record<string, unknown>,
+  serviceData: Partial<Service>,
+): void {
+  if (serviceData.task_type) apiPayload.taskType = serviceData.task_type;
+  if (serviceData.costPerUnit !== undefined) {
+    apiPayload.costPerUnit = serviceData.costPerUnit;
+  }
+  // LLM only; the API rejects them for other task types.
+  if (serviceData.cachedInputCostPerUnit != null) {
+    apiPayload.cachedInputCostPerUnit = serviceData.cachedInputCostPerUnit;
+  }
+  if (serviceData.outputCostPerUnit != null) {
+    apiPayload.outputCostPerUnit = serviceData.outputCostPerUnit;
+  }
+  if (serviceData.unitSize !== undefined) {
+    apiPayload.unitSize = serviceData.unitSize;
+  }
+  if (serviceData.tierIds?.length) apiPayload.tierIds = serviceData.tierIds;
+}
+
+function applyHealthStatusToPayload(
+  apiPayload: Record<string, unknown>,
+  serviceData: Partial<Service>,
+): void {
+  if (!serviceData.healthStatus && !serviceData.status) return;
+  apiPayload.healthStatus = serviceData.healthStatus || {
+    status: serviceData.status || "active",
+    lastUpdated: new Date().toISOString(),
+  };
+}
+
+function buildCreateServiceApiPayload(
+  serviceData: Partial<Service>,
+): Record<string, unknown> {
+  const apiPayload: Record<string, unknown> = {
+    serviceId: serviceData.serviceId || serviceData.service_id,
+    name: serviceData.name,
+    description: serviceData.serviceDescription || serviceData.description,
+    hardwareDescription: serviceData.hardwareDescription,
+    publishedOn: serviceData.publishedOn || Math.floor(Date.now() / 1000),
+    modelId: serviceData.modelId || serviceData.model_id,
+    modelVersion:
+      serviceData.modelVersion || serviceData.model_version || "1.0",
+    endpoint: serviceData.endpoint || serviceData.endpoint_url,
+  };
+  applyAuthTokenToPayload(apiPayload, serviceData, { sendEmptyApiKey: true });
+  applyBillingFieldsToPayload(apiPayload, serviceData);
+  applyHealthStatusToPayload(apiPayload, serviceData);
+  return apiPayload;
+}
+
+function isPublishOnlyUpdate(serviceData: Partial<Service>): boolean {
+  return Boolean(
+    serviceData.serviceId &&
+      Object.prototype.hasOwnProperty.call(serviceData, "isPublished") &&
+      Object.keys(serviceData).length <= 2,
+  );
+}
+
+function buildUpdateServiceApiPayload(
+  serviceData: Partial<Service>,
+): Record<string, unknown> {
+  if (isPublishOnlyUpdate(serviceData)) {
+    return {
+      serviceId: serviceData.serviceId || serviceData.service_id,
+      isPublished: serviceData.isPublished,
+    };
+  }
+
+  const apiPayload: Record<string, unknown> = {
+    serviceId: serviceData.serviceId || serviceData.service_id,
+    name: serviceData.name,
+    hardwareDescription: serviceData.hardwareDescription,
+    publishedOn: serviceData.publishedOn,
+    modelId: serviceData.modelId || serviceData.model_id,
+    modelVersion: serviceData.modelVersion || serviceData.model_version,
+    endpoint: serviceData.endpoint || serviceData.endpoint_url,
+  };
+  applyAuthTokenToPayload(apiPayload, serviceData, { sendEmptyApiKey: false });
+
+  // Preserve empty string so admins can clear an existing description.
+  if ("serviceDescription" in serviceData) {
+    apiPayload.serviceDescription = serviceData.serviceDescription;
+  } else if ("description" in serviceData) {
+    apiPayload.serviceDescription = serviceData.description;
+  }
+
+  applyBillingFieldsToPayload(apiPayload, serviceData);
+  applyHealthStatusToPayload(apiPayload, serviceData);
+
+  if (Object.prototype.hasOwnProperty.call(serviceData, "isPublished")) {
+    apiPayload.isPublished = serviceData.isPublished;
+  }
+  return apiPayload;
+}
+
 /**
  * Create a new service
  * @param serviceData - The service data to create
@@ -374,51 +471,9 @@ export const createService = async (
   serviceData: Partial<Service>,
 ): Promise<Service> => {
   try {
-    // Transform snake_case to camelCase for API
-    // The API expects camelCase format
-    const apiPayload: Record<string, unknown> = {
-      serviceId: serviceData.serviceId || serviceData.service_id,
-      name: serviceData.name,
-      description: serviceData.serviceDescription || serviceData.description,
-      hardwareDescription: serviceData.hardwareDescription,
-      publishedOn: serviceData.publishedOn || Math.floor(Date.now() / 1000),
-      modelId: serviceData.modelId || serviceData.model_id,
-      modelVersion:
-        serviceData.modelVersion || serviceData.model_version || "1.0", // Default to '1.0' if not provided
-      endpoint: serviceData.endpoint || serviceData.endpoint_url,
-    };
-    applyAuthTokenToPayload(apiPayload, serviceData, { sendEmptyApiKey: true });
-
-    // Add billing/pricing fields if provided
-    if (serviceData.task_type) apiPayload.taskType = serviceData.task_type;
-    if (serviceData.costPerUnit !== undefined)
-      apiPayload.costPerUnit = serviceData.costPerUnit;
-    // LLM only; the API rejects them for other task types.
-    if (serviceData.cachedInputCostPerUnit != null)
-      apiPayload.cachedInputCostPerUnit = serviceData.cachedInputCostPerUnit;
-    if (serviceData.outputCostPerUnit != null)
-      apiPayload.outputCostPerUnit = serviceData.outputCostPerUnit;
-    if (serviceData.unitSize !== undefined)
-      apiPayload.unitSize = serviceData.unitSize;
-    if (serviceData.tierIds?.length) apiPayload.tierIds = serviceData.tierIds;
-
-    // Add optional healthStatus if provided
-    if (serviceData.healthStatus || serviceData.status) {
-      apiPayload.healthStatus = serviceData.healthStatus || {
-        status: serviceData.status || "active",
-        lastUpdated: new Date().toISOString(),
-      };
-    }
-
-    // The apiClient interceptor will automatically add:
-    // - Content-Type: application/json
-    // - Accept: application/json
-    // - Authorization: Bearer <token>
-    // - X-API-Key: <api_key> (if available)
-    // - x-auth-source: AUTH_TOKEN | API_KEY | BOTH
     const response = await apiService.post(
       apiEndpoints.platform.services.base,
-      apiPayload,
+      buildCreateServiceApiPayload(serviceData),
       { suppressErrorAlert: true, responseSchema: serviceSingleSchema },
     );
     return sanitizeService(response.data);
@@ -438,70 +493,9 @@ export const updateService = async (
   serviceData: Partial<Service>,
 ): Promise<Service> => {
   try {
-    // For publish/unpublish, only send serviceId and isPublished
-    // For other updates, send all fields
-    const isPublishUpdate =
-      serviceData.serviceId &&
-      serviceData.hasOwnProperty("isPublished") &&
-      Object.keys(serviceData).length <= 2;
-
-    let apiPayload: Record<string, unknown>;
-
-    if (isPublishUpdate) {
-      // Publish/unpublish: only send serviceId and isPublished
-      apiPayload = {
-        serviceId: serviceData.serviceId || serviceData.service_id,
-        isPublished: serviceData.isPublished,
-      };
-    } else {
-      // Full update: send all fields
-      apiPayload = {
-        serviceId: serviceData.serviceId || serviceData.service_id,
-        name: serviceData.name,
-        hardwareDescription: serviceData.hardwareDescription,
-        publishedOn: serviceData.publishedOn,
-        modelId: serviceData.modelId || serviceData.model_id,
-        modelVersion: serviceData.modelVersion || serviceData.model_version,
-        endpoint: serviceData.endpoint || serviceData.endpoint_url,
-      };
-      applyAuthTokenToPayload(apiPayload, serviceData, { sendEmptyApiKey: false });
-
-      // Preserve empty string so admins can clear an existing description.
-      if ("serviceDescription" in serviceData) {
-        apiPayload.serviceDescription = serviceData.serviceDescription;
-      } else if ("description" in serviceData) {
-        apiPayload.serviceDescription = serviceData.description;
-      }
-
-      // Add billing/pricing fields if provided (mirrors createService)
-      if (serviceData.task_type) apiPayload.taskType = serviceData.task_type;
-      if (serviceData.costPerUnit !== undefined)
-        apiPayload.costPerUnit = serviceData.costPerUnit;
-      if (serviceData.cachedInputCostPerUnit != null)
-        apiPayload.cachedInputCostPerUnit = serviceData.cachedInputCostPerUnit;
-      if (serviceData.outputCostPerUnit != null)
-        apiPayload.outputCostPerUnit = serviceData.outputCostPerUnit;
-      if (serviceData.unitSize !== undefined)
-        apiPayload.unitSize = serviceData.unitSize;
-      if (serviceData.tierIds?.length) apiPayload.tierIds = serviceData.tierIds;
-
-      // Add optional healthStatus if provided
-      if (serviceData.healthStatus || serviceData.status) {
-        apiPayload.healthStatus = serviceData.healthStatus || {
-          status: serviceData.status || "active",
-          lastUpdated: new Date().toISOString(),
-        };
-      }
-
-      // Add isPublished if provided
-      if (serviceData.hasOwnProperty("isPublished")) {
-        apiPayload.isPublished = serviceData.isPublished;
-      }
-    }
-
     const response = await apiService.patch(
       apiEndpoints.platform.services.base,
-      apiPayload,
+      buildUpdateServiceApiPayload(serviceData),
       { suppressErrorAlert: true, responseSchema: serviceSingleSchema },
     );
     return sanitizeService(response.data);
