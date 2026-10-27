@@ -1481,7 +1481,9 @@ class TenantService:
             this and may be omitted entirely for a pure window edit (both
             are optional; the two are only ever required together — see
             ``TenantBudgetRequest``), or given alongside it to top-up at
-            the same time.
+            the same time. A top-up WITHOUT a new ``budget_effective_to``
+            is rejected (422 ``budget_window_expired``) — it would only
+            grow a balance that can't be spent while the window is over.
           * No window on file at all (``tenants.budget_effective_from`` is
             None — never assigned before): both ``budget_effective_from``
             and ``budget_effective_to`` become REQUIRED (422
@@ -1598,11 +1600,21 @@ class TenantService:
                     _validate_effective_to_after_from(new_effective_from, budget_effective_to)
                     _validate_new_effective_to_not_in_past(budget_effective_to)
                     new_effective_to = budget_effective_to
+                elif action is not None:
+                    # A plain amount top-up on a lapsed window would grow a
+                    # balance nobody can spend — refuse until the window is
+                    # extended (in this call or an earlier one).
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail={
+                            "error": "budget_window_expired",
+                            "message": (
+                                f"This tenant's budget window ended on {tenant.budget_effective_to} "
+                                "— extend budget_effective_to before topping up."
+                            ),
+                        },
+                    )
                 else:
-                    # No window change requested — a plain amount top-up
-                    # on a tenant whose window is still lapsed; it
-                    # stays lapsed (still blocked) until effective_to is
-                    # given.
                     new_effective_to = tenant.budget_effective_to
         elif budget_effective_from is not None:
             # Explicit fresh founding — only reachable when this tenant has
