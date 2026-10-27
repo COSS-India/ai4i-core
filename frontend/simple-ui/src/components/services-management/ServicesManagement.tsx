@@ -508,7 +508,6 @@ const ServicesManagement: React.FC = () => {
         id: "tier",
         header: "Tier",
         sortable: true,
-        truncate: false,
         cell: renderServiceTierCell,
       },
       {

@@ -1,7 +1,7 @@
 import { Box, type TableCellProps } from "@chakra-ui/react";
 import React, { useCallback, useRef } from "react";
 
-/** Default max width for truncated table cells. */
+/** Default max width for truncated table cells (legacy helpers). */
 export const DATA_TABLE_CELL_MAX_W = "280px";
 
 const DEFAULT_TRUNCATE_CELL_PROPS = {
@@ -26,34 +26,129 @@ export function getTruncateCellProps(truncate: boolean, maxW?: TableCellProps["m
   };
 }
 
-const HARD_SIZE_KEYS = ["w", "width", "minW", "maxW", "minWidth", "maxWidth"] as const;
+/** Icon / control columns that should shrink to their content. */
+export function isShrinkWrapColumn(col: { id: string; truncate?: boolean }): boolean {
+  if (col.truncate === false && /action|activate|deprecate|delete|detail/i.test(col.id)) {
+    return true;
+  }
+  return /^(actions?|activate\/?deprecate|activate|deprecate)$/i.test(col.id);
+}
 
-function isHardColumnSize(value: unknown): boolean {
-  if (typeof value === "number") return true;
-  if (typeof value !== "string") return false;
-  return !value.trim().endsWith("%");
+/** Short / metadata columns — never treat as the flex (leftover-width) column. */
+function isWeakPrimaryColumn(col: { id: string }): boolean {
+  return /^(timestamp|created|created_?at|updated|updated_?at|published|published_?at|published_?on|status|status_?code|task|task_?type|version|method|latency|tier|roles?|permissions?|scope|mode|group|domain|budget|allocation|services?|institutions?|recipient|delivery|channel)$/i.test(
+    col.id,
+  );
 }
 
 /**
- * Admin tables use fixed layout and share width equally.
- * Pixel widths are dropped so one long value cannot resize a column.
- * Percentage widths and responsive size objects are kept.
- * Columns that do not truncate (action buttons) skip this and keep their pixel width.
+ * Column that should absorb leftover width (`width: 100%` under auto layout).
+ * Prefer long-form fields (name, error, url, …). Never fall back to timestamp/status.
  */
-export function adminFixedCellProps(props?: TableCellProps): TableCellProps {
-  if (!props) return {};
-  const next: TableCellProps = { ...props };
-  for (const key of HARD_SIZE_KEYS) {
-    if (isHardColumnSize(next[key])) {
-      delete next[key];
-    }
+export function resolvePrimaryColumnId(
+  columns: readonly { id: string; truncate?: boolean }[],
+): string | null {
+  const flexPatterns = [
+    /^(name|key|key_name|organisation|organization|username|alert|notification|policy|application|tierName|tier_name|pii|piiType|label|title)$/i,
+    /^error$/i,
+    /^(url|path|message|description|detail|body)$/i,
+    // Logs tenant column — only if nothing longer-form is visible.
+    /^institution$/i,
+  ];
+  for (const pattern of flexPatterns) {
+    const match = columns.find(
+      (column) =>
+        pattern.test(column.id) &&
+        shouldAutoTruncateColumn(column) &&
+        !isShrinkWrapColumn(column),
+    );
+    if (match) return match.id;
   }
-  return next;
+  const firstText = columns.find(
+    (column) =>
+      shouldAutoTruncateColumn(column) &&
+      !isShrinkWrapColumn(column) &&
+      !isWeakPrimaryColumn(column),
+  );
+  return firstText?.id ?? null;
 }
 
-export function adminFixedSize(value: TableCellProps["w"] | undefined): TableCellProps["w"] | undefined {
-  if (value == null || isHardColumnSize(value)) return undefined;
+export type AdminColumnLayout = {
+  w?: TableCellProps["w"];
+  minW?: TableCellProps["minW"];
+  maxW?: TableCellProps["maxW"];
+  whiteSpace?: TableCellProps["whiteSpace"];
+};
+
+/**
+ * Dynamic admin column sizing:
+ * - shrink-wrap (Actions): `width: 1%` + nowrap → as wide as icons only
+ * - primary (Name): `width: 100%` → absorbs leftover space
+ * - others: no forced width → sized from cell content
+ * Explicit `col.width` / min / max from callers still win.
+ */
+export function resolveAdminColumnLayout(
+  col: {
+    id: string;
+    truncate?: boolean;
+    width?: TableCellProps["w"];
+    minWidth?: TableCellProps["minW"];
+    maxW?: TableCellProps["maxW"];
+  },
+  primaryColumnId: string | null,
+): AdminColumnLayout {
+  if (col.width != null || col.minWidth != null || col.maxW != null) {
+    return {
+      w: col.width,
+      minW: col.minWidth,
+      maxW: col.maxW,
+      whiteSpace: isShrinkWrapColumn(col) ? "nowrap" : undefined,
+    };
+  }
+
+  if (isShrinkWrapColumn(col)) {
+    return { w: "1%", whiteSpace: "nowrap" };
+  }
+
+  if (primaryColumnId && col.id === primaryColumnId) {
+    return { w: "100%", minW: 0 };
+  }
+
+  return { whiteSpace: "nowrap" };
+}
+
+/** @deprecated Prefer resolveAdminColumnLayout — kept for existing imports. */
+export function adminFixedCellProps(props?: TableCellProps): TableCellProps {
+  return props ? { ...props } : {};
+}
+
+/** @deprecated Prefer resolveAdminColumnLayout — kept for existing imports. */
+export function adminFixedSize(
+  value: TableCellProps["w"] | undefined,
+): TableCellProps["w"] | undefined {
   return value;
+}
+
+function elementOverflows(node: Element): boolean {
+  if (!(node instanceof HTMLElement)) return false;
+  return (
+    node.scrollWidth > node.clientWidth + 1 ||
+    node.scrollHeight > node.clientHeight + 1
+  );
+}
+
+/**
+ * True when this node or any descendant is clipped (ellipsis / overflow hidden).
+ * Measuring only the wrapper misses the common case where the child Text/Badge
+ * does the truncation and the wrapper's scrollWidth equals its clientWidth.
+ */
+function treeOverflows(root: HTMLElement): boolean {
+  if (elementOverflows(root)) return true;
+  const nodes = root.querySelectorAll("*");
+  for (let index = 0; index < nodes.length; index += 1) {
+    if (elementOverflows(nodes[index])) return true;
+  }
+  return false;
 }
 
 /**
@@ -66,13 +161,12 @@ export function TruncatingCellContent({ children }: { children: React.ReactNode 
   const onMouseEnter = useCallback(() => {
     const el = ref.current;
     if (!el) return;
-    const overflowed = el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1;
-    if (overflowed) {
-      const text = (el.textContent ?? "").trim();
-      if (text) el.setAttribute("title", text);
-    } else {
-      el.removeAttribute("title");
+    const text = (el.textContent ?? "").trim();
+    if (text && treeOverflows(el)) {
+      el.setAttribute("title", text);
+      return;
     }
+    el.removeAttribute("title");
   }, []);
 
   return (
@@ -88,6 +182,7 @@ export function TruncatingCellContent({ children }: { children: React.ReactNode 
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
+          maxWidth: "100%",
         },
       }}
       onMouseEnter={onMouseEnter}

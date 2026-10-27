@@ -183,6 +183,7 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
       onSortChange={onSortChange}
       getRowKey={serviceRegistryRowKey}
       onRowClick={onRowClick}
+      showRowChevron
       paginate={serverMode ? "server" : "client"}
       paginationPosition="bottom"
       pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}

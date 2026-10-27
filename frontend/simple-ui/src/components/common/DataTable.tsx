@@ -54,9 +54,9 @@ import type {
 import {
   DATA_TABLE_CELL_MAX_W,
   TruncatingCellContent,
-  adminFixedCellProps,
-  adminFixedSize,
   getTruncateCellProps,
+  resolveAdminColumnLayout,
+  resolvePrimaryColumnId,
   shouldAutoTruncateColumn,
 } from "./dataTableUtils";
 
@@ -884,6 +884,10 @@ function AdminLayoutDataTable<T>({
 }: DataTableAdminProps<T>) {
   const { cardBg } = useAdminTableSurface();
   const rowChevron = showRowChevron ?? Boolean(onRowClick);
+  const primaryColumnId = useMemo(
+    () => resolvePrimaryColumnId(columns),
+    [columns],
+  );
 
   const clientTable = useAdminDataTable(paginate === "client" ? items : [], {
     initialPageSize,
@@ -1029,7 +1033,7 @@ function AdminLayoutDataTable<T>({
         w="100%"
         aria-busy={isLoading || undefined}
         aria-label={isLoading ? loadingMessage : undefined}
-        sx={{ tableLayout: "fixed", "th, td": { verticalAlign: "middle" } }}
+        sx={{ tableLayout: "auto", "th, td": { verticalAlign: "middle" } }}
       >
         <Thead bg="ink.50" position="sticky" top={0} zIndex={1}>
           <Tr>
@@ -1041,23 +1045,32 @@ function AdminLayoutDataTable<T>({
                   : {}),
                 ...(col.align === "center" ? { textAlign: "center" as const } : {}),
               };
-              const preservePixelSize = !shouldAutoTruncateColumn(col);
+              const layout = resolveAdminColumnLayout(col, primaryColumnId);
               return (
                 <Th
                   key={col.id}
                   py={3}
                   overflow="hidden"
-                  w={preservePixelSize ? col.width : adminFixedSize(col.width)}
-                  minW={preservePixelSize ? col.minWidth : adminFixedSize(col.minWidth)}
-                  maxW={preservePixelSize ? col.maxW : adminFixedSize(col.maxW)}
+                  w={layout.w}
+                  minW={layout.minW}
+                  maxW={layout.maxW}
+                  whiteSpace={layout.whiteSpace}
                   sx={headerSx}
-                  {...(preservePixelSize ? col.thProps : adminFixedCellProps(col.thProps))}
+                  {...(col.thProps ?? {})}
                 >
                   <AdminSortableHeader col={col} sort={sort} onSortChange={onSortChange} />
                 </Th>
               );
             })}
-            {rowChevron ? <Th w="4%" py={3} sx={DATA_TABLE_HEADER_SX} /> : null}
+            {rowChevron ? (
+              <Th
+                w="1%"
+                px={1}
+                py={3}
+                whiteSpace="nowrap"
+                sx={DATA_TABLE_HEADER_SX}
+              />
+            ) : null}
           </Tr>
         </Thead>
         <Tbody>
@@ -1076,7 +1089,9 @@ function AdminLayoutDataTable<T>({
                       <Skeleton h="14px" borderRadius="sm" />
                     </Td>
                   ))}
-                  {rowChevron ? <Td py={4} /> : null}
+                  {rowChevron ? (
+                    <Td w="1%" px={1} py={4} whiteSpace="nowrap" />
+                  ) : null}
                 </Tr>
               ))
             )
@@ -1111,17 +1126,19 @@ function AdminLayoutDataTable<T>({
                 const truncate = shouldAutoTruncateColumn(col);
                 const content = col.cell(row, index);
                 const numeric = Boolean(col.isNumeric || col.align === "center" || col.align === "right");
+                const layout = resolveAdminColumnLayout(col, primaryColumnId);
                 return (
                   <Td
                     key={col.id}
                     py={4}
                     isNumeric={col.isNumeric}
                     textAlign={col.align}
-                    w={truncate ? adminFixedSize(col.width) : col.width}
-                    minW={truncate ? adminFixedSize(col.minWidth) : col.minWidth}
-                    maxW={truncate ? adminFixedSize(col.maxW) : col.maxW}
+                    w={layout.w}
+                    minW={layout.minW}
+                    maxW={layout.maxW}
+                    whiteSpace={layout.whiteSpace}
                     sx={numeric ? { fontVariantNumeric: "tabular-nums" } : undefined}
-                    {...(truncate ? adminFixedCellProps(col.tdProps) : col.tdProps)}
+                    {...(col.tdProps ?? {})}
                     overflow="hidden"
                   >
                     {truncate ? (
@@ -1135,7 +1152,7 @@ function AdminLayoutDataTable<T>({
                 );
               })}
               {rowChevron ? (
-                <Td py={4} textAlign="right">
+                <Td w="1%" px={1} py={4} textAlign="right" whiteSpace="nowrap">
                   <ChevronRightIcon
                     className="data-table-chevron"
                     boxSize={3.5}

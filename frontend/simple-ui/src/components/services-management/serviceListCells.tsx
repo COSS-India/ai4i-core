@@ -44,10 +44,24 @@ export function renderServiceTierCell(service: Service): React.ReactNode {
       </Text>
     );
   }
+  const fullLabel = names.join(", ");
   return (
-    <HStack spacing={1} flexWrap="wrap">
+    <HStack
+      spacing={1}
+      flexWrap="nowrap"
+      overflow="hidden"
+      minW={0}
+      title={fullLabel}
+    >
       {names.map((name) => (
-        <Badge key={name} colorScheme="gray" fontSize="xs" px={2} py={0.5}>
+        <Badge
+          key={name}
+          colorScheme="gray"
+          fontSize="xs"
+          px={2}
+          py={0.5}
+          flexShrink={0}
+        >
           {name}
         </Badge>
       ))}
@@ -73,7 +87,12 @@ export function renderServiceStatusCell(service: Service): React.ReactNode {
 export function renderServiceCreatedAtCell(service: Service): React.ReactNode {
   const label = formatServiceListDate(serviceCreatedAtMillis(service));
   return (
-    <Text fontSize="sm" color={mutedOrDefault(label === "—")} noOfLines={1}>
+    <Text
+      fontSize="sm"
+      color={mutedOrDefault(label === "—")}
+      noOfLines={1}
+      title={label === "—" ? undefined : label}
+    >
       {label}
     </Text>
   );
@@ -142,7 +161,12 @@ export function renderServiceCachedInputPriceCell(
 export function renderServicePublishedOnCell(service: Service): React.ReactNode {
   const label = formatServiceListDate(servicePublishedOnMillis(service));
   return (
-    <Text fontSize="sm" color={mutedOrDefault(label === "—")} noOfLines={1}>
+    <Text
+      fontSize="sm"
+      color={mutedOrDefault(label === "—")}
+      noOfLines={1}
+      title={label === "—" ? undefined : label}
+    >
       {label}
     </Text>
   );
