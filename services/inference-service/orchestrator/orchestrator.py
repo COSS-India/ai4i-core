@@ -196,9 +196,9 @@ class Orchestrator:
 
         Moves on only when the model is unreachable (timeout, connection
         error, 5xx — see utils/failover.py). Any other failure of the
-        requested service (bad input, 4xx, …) is raised unchanged, and so is
-        every failure when no fallback is configured. A fallback that can't
-        be used (unpublished, out of Tier, rejects the input) is skipped.
+        requested service or of a fallback (bad input, 4xx, …) is raised
+        unchanged, and so is every failure when no fallback is configured. A
+        fallback that can't be used (unpublished, out of Tier) is skipped.
         A failed attempt's ai-inference span carries zero tokens, so only
         the service that answers is billed; each failover is logged
         (service_failover).
@@ -257,7 +257,12 @@ class Orchestrator:
                 response = await task_service.process(attempt_payload, info)
                 return task_service, response, info, attempts
             except Exception as exc:
-                attempts.append((service_id, failover_reason(exc) or "fallback_rejected"))
+                fb_reason = failover_reason(exc)
+                if fb_reason is None:
+                    # The fallback rejected the request (4xx / invalid input):
+                    # returned as it is, like the requested service's.
+                    raise
+                attempts.append((service_id, fb_reason))
                 if self._partly_billed(task_service):
                     # Same rule as for the requested service: this fallback
                     # already billed part of the payload, so the next one

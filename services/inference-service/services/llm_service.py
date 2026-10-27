@@ -10,6 +10,7 @@ import httpx
 
 from ai4i_core.context import (
     get_application_id,
+    get_llm_usage_model_id,
     get_trace_id,
     set_llm_usage_input_tokens,
     set_llm_usage_model_id,
@@ -98,7 +99,8 @@ class UpstreamStreamError(Exception):
 @dataclass
 class _FallbackOutcome:
     """Result of OpenAIProxyService._run_fallbacks: the fallback that answered
-    (ok) or the 503 when none did (served_id is then the requested service)."""
+    (ok), one that rejected the request with a 4xx (not ok), or the 503 when
+    none did (served_id is then the requested service)."""
 
     ok: bool
     served_id: str
@@ -420,7 +422,6 @@ class OpenAIProxyService:
                 app_id=app_id,
                 status_code=status_code,
             )
-        # ─────────────────────────────────────────────────────────────────
 
         return status_code, body
 
@@ -504,9 +505,13 @@ class OpenAIProxyService:
         upstream_5xx) or None for a client-side failure.
 
         Each fallback gets a service_failover log line; one that can't be
-        used (unpublished, out of Tier) is skipped. The first ``ok``
-        wins; all failing → 503 ALL_SERVICES_UNAVAILABLE.
+        used (unpublished, out of Tier) is skipped. The first ``ok`` wins,
+        and a fallback's client-side error (4xx) is returned as it is, like
+        the requested service's; all failing → 503 ALL_SERVICES_UNAVAILABLE.
         """
+        # _prepare_request moves the model_id metric label to each fallback
+        # it resolves; the 503 is counted under the requested service's model.
+        requested_model_id = get_llm_usage_model_id()
         attempts = [(requested_id, reason)]
         failed = requested_id
         for index, fallback_id in enumerate(fallbacks, start=1):
@@ -523,14 +528,15 @@ class OpenAIProxyService:
             ok, status_code, result, fb_reason = await attempt(
                 fallback_id, url, model_name, fb_payload, service_info, index,
             )
-            if ok:
+            if ok or fb_reason is None:
                 return _FallbackOutcome(
-                    ok=True, served_id=fallback_id, model_name=model_name,
+                    ok=ok, served_id=fallback_id, model_name=model_name,
                     payload=fb_payload, status_code=status_code, result=result,
                 )
-            attempts.append((fallback_id, fb_reason or "fallback_rejected"))
+            attempts.append((fallback_id, fb_reason))
 
         log_all_failed(requested=requested_id, attempts=attempts)
+        set_llm_usage_model_id(requested_model_id)
         return _FallbackOutcome(
             ok=False, served_id=requested_id, model_name="", payload=payload,
             status_code=503, result=AllServicesUnavailableError(requested_id, attempts).to_openai_error(),
@@ -854,6 +860,8 @@ class OpenAIProxyService:
             status_code, result = outcome.status_code, outcome.result
             if outcome.ok:
                 kind = "stream"
+            if outcome.served_id != requested_id:
+                # A fallback answered — with a stream, or with its 4xx.
                 service_id, model_name, payload = outcome.served_id, outcome.model_name, outcome.payload
         self._record_served(request, service_id)
 
