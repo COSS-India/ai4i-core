@@ -834,7 +834,7 @@ const LogsPage: React.FC = () => {
               fontSize="sm"
               color="ink.700"
               noOfLines={1}
-              title={metadataText !== "—" ? metadataText : undefined}
+              title={metadataText === "—" ? undefined : metadataText}
             >
               {metadataText}
             </Text>

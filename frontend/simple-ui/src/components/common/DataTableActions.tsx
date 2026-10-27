@@ -140,14 +140,21 @@ export type CreateActionsColumnOptions<T> = {
   getActions: (row: T, index: number) => DataTableAction[];
 };
 
+function resolveActionsJustify(
+  align: "left" | "center" | "right",
+): "flex-start" | "flex-end" | "center" | undefined {
+  if (align === "right") return "flex-end";
+  if (align === "center") return "center";
+  return undefined;
+}
+
 /** Builds a standard actions column that stops row-click propagation. */
 export function createActionsColumn<T>(
   options: CreateActionsColumnOptions<T>,
 ): DataTableColumn<T> {
   const align = options.align ?? "right";
   const width = options.width ?? DATA_TABLE_ACTIONS_COLUMN_WIDTH;
-  const justify =
-    align === "right" ? "flex-end" : align === "center" ? "center" : undefined;
+  const justify = resolveActionsJustify(align);
   return {
     id: options.id ?? "actions",
     header: options.header ?? "Actions",

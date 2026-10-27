@@ -331,9 +331,7 @@ function ServiceFormModelSection({
   formatSubmissionDateDisplay,
   modelNamePlaceholder,
 }: ModelSectionProps): React.ReactElement {
-  const submissionDate = formatSubmissionDateDisplay(
-    formData.modelSubmissionDate as string | undefined,
-  );
+  const submissionDate = formatSubmissionDateDisplay(formData.modelSubmissionDate);
   return (
     <VStack align="stretch" spacing={4}>
       <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
@@ -391,6 +389,160 @@ function ServiceFormModelSection({
   );
 }
 
+function ServiceNameField({
+  isView,
+  editingService,
+  formData,
+  onInputChange,
+  nameError,
+  markBlurred,
+}: Readonly<
+  Pick<
+    IdentitySectionProps,
+    | "isView"
+    | "editingService"
+    | "formData"
+    | "onInputChange"
+    | "nameError"
+    | "markBlurred"
+  >
+>): React.ReactElement | null {
+  if (isView) {
+    return <ReadOnlyField label="Service Name">{formData.name || "—"}</ReadOnlyField>;
+  }
+  return (
+    <FormControl isRequired isInvalid={!!nameError}>
+      <FieldLabel>Service Name</FieldLabel>
+      <Input
+        value={formData.name || ""}
+        onBlur={() => markBlurred("name")}
+        onChange={(e) =>
+          onInputChange("name", sanitizeServiceName(e.target.value))
+        }
+        placeholder={FIELD_HINTS.service.name.placeholder}
+        bg={editingService ? "ink.50" : "white"}
+        isReadOnly={!!editingService}
+        maxLength={SERVICE_NAME_MAX_LEN}
+      />
+      {nameError ? (
+        <FormErrorMessage>{nameError}</FormErrorMessage>
+      ) : (
+        <FieldHint show={!editingService}>
+          {FIELD_HINTS.service.name.helper}
+        </FieldHint>
+      )}
+    </FormControl>
+  );
+}
+
+function ServiceIdField({
+  isView,
+  editingService,
+  formData,
+  onInputChange,
+  isLlmTaskType,
+  idError,
+  markBlurred,
+}: Readonly<
+  Pick<
+    IdentitySectionProps,
+    | "isView"
+    | "editingService"
+    | "formData"
+    | "onInputChange"
+    | "isLlmTaskType"
+    | "idError"
+    | "markBlurred"
+  >
+>): React.ReactElement {
+  if (isView) {
+    return <ReadOnlyField label="Service ID">{formData.serviceId || "—"}</ReadOnlyField>;
+  }
+  const serviceIdHelper = isLlmTaskType
+    ? FIELD_HINTS.service.serviceId.llmHelper
+    : FIELD_HINTS.service.serviceId.helper;
+  return (
+    <FormControl isRequired isInvalid={!!idError}>
+      <FieldLabel>Service ID</FieldLabel>
+      <Input
+        value={formData.serviceId || ""}
+        onChange={(e) =>
+          onInputChange(
+            "serviceId",
+            sanitizeServiceId(e.target.value, isLlmTaskType),
+          )
+        }
+        onBlur={() => markBlurred("serviceId")}
+        placeholder={
+          formData.modelName
+            ? `${formData.modelName}/…`
+            : FIELD_HINTS.service.serviceId.placeholder
+        }
+        bg={editingService ? "ink.50" : "white"}
+        isReadOnly={!!editingService}
+        maxLength={SERVICE_ID_MAX_LEN}
+      />
+      {idError ? (
+        <FormErrorMessage>{idError}</FormErrorMessage>
+      ) : (
+        <FieldHint show={!editingService}>{serviceIdHelper}</FieldHint>
+      )}
+    </FormControl>
+  );
+}
+
+function ServiceDescriptionField({
+  isView,
+  editingService,
+  formData,
+  onInputChange,
+  descriptionError,
+  markBlurred,
+}: Readonly<
+  Pick<
+    IdentitySectionProps,
+    | "isView"
+    | "editingService"
+    | "formData"
+    | "onInputChange"
+    | "descriptionError"
+    | "markBlurred"
+  >
+>): React.ReactElement {
+  if (isView) {
+    return (
+      <ReadOnlyField label="Service Description" fullWidth>
+        {formData.serviceDescription || "—"}
+      </ReadOnlyField>
+    );
+  }
+  return (
+    <FormControl isInvalid={!!descriptionError}>
+      <FieldLabel>Service Description</FieldLabel>
+      <Textarea
+        value={formData.serviceDescription || ""}
+        onChange={(e) => onInputChange("serviceDescription", e.target.value)}
+        onBlur={() => markBlurred("serviceDescription")}
+        placeholder={FIELD_HINTS.service.description.placeholder}
+        bg="white"
+        rows={4}
+        maxLength={SERVICE_DESCRIPTION_MAX_LEN}
+      />
+      {descriptionError ? (
+        <FormErrorMessage>{descriptionError}</FormErrorMessage>
+      ) : (
+        <FieldHint show={!editingService}>
+          {FIELD_HINTS.service.description.helper(
+            (formData.serviceDescription || "").trim().length,
+            SERVICE_DESCRIPTION_MIN_LEN,
+            SERVICE_DESCRIPTION_MAX_LEN,
+          )}
+        </FieldHint>
+      )}
+    </FormControl>
+  );
+}
+
 function ServiceFormIdentitySection({
   isView,
   editingService,
@@ -405,99 +557,33 @@ function ServiceFormIdentitySection({
 }: IdentitySectionProps): React.ReactElement {
   return (
     <VStack align="stretch" spacing={4}>
-      {showServiceName && isView ? (
-        <ReadOnlyField label="Service Name">{formData.name || "—"}</ReadOnlyField>
+      {showServiceName ? (
+        <ServiceNameField
+          isView={isView}
+          editingService={editingService}
+          formData={formData}
+          onInputChange={onInputChange}
+          nameError={nameError}
+          markBlurred={markBlurred}
+        />
       ) : null}
-      {showServiceName && !isView && (
-        <FormControl isRequired isInvalid={!!nameError}>
-          <FieldLabel>Service Name</FieldLabel>
-          <Input
-            value={formData.name || ""}
-            onBlur={() => markBlurred("name")}
-            onChange={(e) =>
-              onInputChange("name", sanitizeServiceName(e.target.value))
-            }
-            placeholder={FIELD_HINTS.service.name.placeholder}
-            bg={editingService ? "ink.50" : "white"}
-            isReadOnly={!!editingService}
-            maxLength={SERVICE_NAME_MAX_LEN}
-          />
-          {nameError ? (
-            <FormErrorMessage>{nameError}</FormErrorMessage>
-          ) : (
-            <FieldHint show={!editingService}>
-              {FIELD_HINTS.service.name.helper}
-            </FieldHint>
-          )}
-        </FormControl>
-      )}
-
-      {isView ? (
-        <ReadOnlyField label="Service ID">{formData.serviceId || "—"}</ReadOnlyField>
-      ) : (
-        <FormControl isRequired isInvalid={!!idError}>
-          <FieldLabel>Service ID</FieldLabel>
-          <Input
-            value={formData.serviceId || ""}
-            onChange={(e) =>
-              onInputChange(
-                "serviceId",
-                sanitizeServiceId(e.target.value, isLlmTaskType),
-              )
-            }
-            onBlur={() => markBlurred("serviceId")}
-            placeholder={
-              formData.modelName
-                ? `${formData.modelName}/…`
-                : FIELD_HINTS.service.serviceId.placeholder
-            }
-            bg={editingService ? "ink.50" : "white"}
-            isReadOnly={!!editingService}
-            maxLength={SERVICE_ID_MAX_LEN}
-          />
-          {idError ? (
-            <FormErrorMessage>{idError}</FormErrorMessage>
-          ) : (
-            <FieldHint show={!editingService}>
-              {isLlmTaskType
-                ? FIELD_HINTS.service.serviceId.llmHelper
-                : FIELD_HINTS.service.serviceId.helper}
-            </FieldHint>
-          )}
-        </FormControl>
-      )}
-
-      {isView ? (
-        <ReadOnlyField label="Service Description" fullWidth>
-          {formData.serviceDescription || "—"}
-        </ReadOnlyField>
-      ) : (
-        <FormControl isInvalid={!!descriptionError}>
-          <FieldLabel>Service Description</FieldLabel>
-          <Textarea
-            value={formData.serviceDescription || ""}
-            onChange={(e) =>
-              onInputChange("serviceDescription", e.target.value)
-            }
-            onBlur={() => markBlurred("serviceDescription")}
-            placeholder={FIELD_HINTS.service.description.placeholder}
-            bg="white"
-            rows={4}
-            maxLength={SERVICE_DESCRIPTION_MAX_LEN}
-          />
-          {descriptionError ? (
-            <FormErrorMessage>{descriptionError}</FormErrorMessage>
-          ) : (
-            <FieldHint show={!editingService}>
-              {FIELD_HINTS.service.description.helper(
-                (formData.serviceDescription || "").trim().length,
-                SERVICE_DESCRIPTION_MIN_LEN,
-                SERVICE_DESCRIPTION_MAX_LEN,
-              )}
-            </FieldHint>
-          )}
-        </FormControl>
-      )}
+      <ServiceIdField
+        isView={isView}
+        editingService={editingService}
+        formData={formData}
+        onInputChange={onInputChange}
+        isLlmTaskType={isLlmTaskType}
+        idError={idError}
+        markBlurred={markBlurred}
+      />
+      <ServiceDescriptionField
+        isView={isView}
+        editingService={editingService}
+        formData={formData}
+        onInputChange={onInputChange}
+        descriptionError={descriptionError}
+        markBlurred={markBlurred}
+      />
     </VStack>
   );
 }
@@ -793,6 +879,160 @@ function TierPickerField({
   );
 }
 
+function UnitTypeField({
+  isView,
+  formData,
+  unitType,
+}: Readonly<
+  Pick<BillingSectionProps, "isView" | "formData" | "unitType">
+>): React.ReactElement {
+  if (isView) {
+    return <ReadOnlyField label="Unit Type">{unitType || "—"}</ReadOnlyField>;
+  }
+  return (
+    <FormControl>
+      <FieldLabel>Unit Type</FieldLabel>
+      <Input
+        value={unitType}
+        isReadOnly
+        bg="ink.50"
+        placeholder={
+          formData.task_type ? "—" : FIELD_HINTS.service.unitType.needTaskType
+        }
+      />
+      <FieldHint>{FIELD_HINTS.service.unitType.helper}</FieldHint>
+    </FormControl>
+  );
+}
+
+function UnitSizeField({
+  isView,
+  unitSize,
+  onUnitSizeChange,
+  unitSizeSelectOptions,
+  isLlmTaskType,
+}: Readonly<
+  Pick<
+    BillingSectionProps,
+    | "isView"
+    | "unitSize"
+    | "onUnitSizeChange"
+    | "unitSizeSelectOptions"
+    | "isLlmTaskType"
+  >
+>): React.ReactElement {
+  if (isView) {
+    return (
+      <ReadOnlyField label="Unit Size">
+        {unitSize ? Number(unitSize).toLocaleString() : "N/A"}
+      </ReadOnlyField>
+    );
+  }
+  const unitSizeHelper = isLlmTaskType
+    ? FIELD_HINTS.service.unitSize.llmHelper
+    : FIELD_HINTS.service.unitSize.helper;
+  return (
+    <FormControl isRequired>
+      <FieldLabel>Unit Size</FieldLabel>
+      <Select
+        value={unitSize}
+        onChange={(e) => onUnitSizeChange(e.target.value)}
+        placeholder={FIELD_HINTS.service.unitSize.placeholder}
+        bg="white"
+      >
+        {unitSizeSelectOptions.map((size) => (
+          <option key={size} value={size}>
+            {Number(size).toLocaleString()}
+          </option>
+        ))}
+      </Select>
+      <FieldHint>{unitSizeHelper}</FieldHint>
+    </FormControl>
+  );
+}
+
+function CurrencyField({
+  isView,
+  currency,
+  onCurrencyChange,
+}: Readonly<
+  Pick<BillingSectionProps, "isView" | "currency" | "onCurrencyChange">
+>): React.ReactElement {
+  if (isView) {
+    return <ReadOnlyField label="Currency">{currency || "INR"}</ReadOnlyField>;
+  }
+  return (
+    <FormControl isRequired>
+      <FieldLabel>Currency</FieldLabel>
+      <Select
+        value={currency}
+        onChange={(e) => onCurrencyChange(e.target.value)}
+        bg="white"
+      >
+        {CURRENCY_OPTIONS.map((c) => (
+          <option key={c} value={c}>
+            {c}
+          </option>
+        ))}
+      </Select>
+    </FormControl>
+  );
+}
+
+function BillingTierField({
+  isView,
+  selectedTiers,
+  selectedTierNames,
+  onToggleTier,
+  availableTiers,
+  filteredTiers,
+  unlistedSelectedTiers,
+  tierSearch,
+  onTierSearchChange,
+}: Readonly<
+  Pick<
+    BillingSectionProps,
+    | "isView"
+    | "selectedTiers"
+    | "selectedTierNames"
+    | "onToggleTier"
+    | "availableTiers"
+    | "filteredTiers"
+    | "unlistedSelectedTiers"
+    | "tierSearch"
+    | "onTierSearchChange"
+  >
+>): React.ReactElement {
+  if (isView) {
+    if (selectedTierNames.length === 0) {
+      return <ReadOnlyField label="Tier">N/A</ReadOnlyField>;
+    }
+    return (
+      <ReadOnlyField label="Tier">
+        <HStack spacing={1} flexWrap="wrap">
+          {selectedTierNames.map((name) => (
+            <Badge key={name} colorScheme="gray" fontSize="xs" px={2} py={0.5}>
+              {name}
+            </Badge>
+          ))}
+        </HStack>
+      </ReadOnlyField>
+    );
+  }
+  return (
+    <TierPickerField
+      selectedTiers={selectedTiers}
+      selectedTierNames={selectedTierNames}
+      onToggleTier={onToggleTier}
+      availableTiers={availableTiers}
+      filteredTiers={filteredTiers}
+      unlistedSelectedTiers={unlistedSelectedTiers}
+      tierSearch={tierSearch}
+      onTierSearchChange={onTierSearchChange}
+    />
+  );
+}
+
 function ServiceFormBillingSection({
   isView,
   formData,
@@ -822,89 +1062,42 @@ function ServiceFormBillingSection({
   isLlmTaskType,
   renderPriceField,
 }: BillingSectionProps): React.ReactElement {
+  const priceLabel = isLlmTaskType ? LLM_INPUT_PRICE_LABEL : PRICE_LABEL;
+  const priceHelper = isLlmTaskType
+    ? FIELD_HINTS.service.llmInputPrice.helper
+    : FIELD_HINTS.service.price.helper;
+  const pricePlaceholder = isLlmTaskType
+    ? FIELD_HINTS.service.llmInputPrice.placeholder
+    : FIELD_HINTS.service.price.placeholder;
+
   return (
     <VStack align="stretch" spacing={4}>
       <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
-        {isView ? (
-          <ReadOnlyField label="Unit Type">{unitType || "—"}</ReadOnlyField>
-        ) : (
-          <FormControl>
-            <FieldLabel>Unit Type</FieldLabel>
-            <Input
-              value={unitType}
-              isReadOnly
-              bg="ink.50"
-              placeholder={
-                formData.task_type
-                  ? "—"
-                  : FIELD_HINTS.service.unitType.needTaskType
-              }
-            />
-            <FieldHint>{FIELD_HINTS.service.unitType.helper}</FieldHint>
-          </FormControl>
-        )}
-
-        {isView ? (
-          <ReadOnlyField label="Unit Size">
-            {unitSize ? Number(unitSize).toLocaleString() : "N/A"}
-          </ReadOnlyField>
-        ) : (
-          <FormControl isRequired>
-            <FieldLabel>Unit Size</FieldLabel>
-            <Select
-              value={unitSize}
-              onChange={(e) => onUnitSizeChange(e.target.value)}
-              placeholder={FIELD_HINTS.service.unitSize.placeholder}
-              bg="white"
-            >
-              {unitSizeSelectOptions.map((size) => (
-                <option key={size} value={size}>
-                  {Number(size).toLocaleString()}
-                </option>
-              ))}
-            </Select>
-            <FieldHint>
-              {isLlmTaskType
-                ? FIELD_HINTS.service.unitSize.llmHelper
-                : FIELD_HINTS.service.unitSize.helper}
-            </FieldHint>
-          </FormControl>
-        )}
+        <UnitTypeField isView={isView} formData={formData} unitType={unitType} />
+        <UnitSizeField
+          isView={isView}
+          unitSize={unitSize}
+          onUnitSizeChange={onUnitSizeChange}
+          unitSizeSelectOptions={unitSizeSelectOptions}
+          isLlmTaskType={isLlmTaskType}
+        />
       </SimpleGrid>
 
       <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
         {renderPriceField(
           "pricePerUnit",
-          isLlmTaskType ? LLM_INPUT_PRICE_LABEL : PRICE_LABEL,
+          priceLabel,
           pricePerUnit,
           pricePerUnitError,
           onPricePerUnitChange,
-          isLlmTaskType
-            ? FIELD_HINTS.service.llmInputPrice.helper
-            : FIELD_HINTS.service.price.helper,
-          isLlmTaskType
-            ? FIELD_HINTS.service.llmInputPrice.placeholder
-            : FIELD_HINTS.service.price.placeholder,
+          priceHelper,
+          pricePlaceholder,
         )}
-
-        {isView ? (
-          <ReadOnlyField label="Currency">{currency || "INR"}</ReadOnlyField>
-        ) : (
-          <FormControl isRequired>
-            <FieldLabel>Currency</FieldLabel>
-            <Select
-              value={currency}
-              onChange={(e) => onCurrencyChange(e.target.value)}
-              bg="white"
-            >
-              {CURRENCY_OPTIONS.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </Select>
-          </FormControl>
-        )}
+        <CurrencyField
+          isView={isView}
+          currency={currency}
+          onCurrencyChange={onCurrencyChange}
+        />
       </SimpleGrid>
 
       {isLlmTaskType ? (
@@ -930,32 +1123,17 @@ function ServiceFormBillingSection({
         </SimpleGrid>
       ) : null}
 
-      {isView ? (
-        <ReadOnlyField label="Tier">
-          {selectedTierNames.length > 0 ? (
-            <HStack spacing={1} flexWrap="wrap">
-              {selectedTierNames.map((name) => (
-                <Badge key={name} colorScheme="gray" fontSize="xs" px={2} py={0.5}>
-                  {name}
-                </Badge>
-              ))}
-            </HStack>
-          ) : (
-            "N/A"
-          )}
-        </ReadOnlyField>
-      ) : (
-        <TierPickerField
-          selectedTiers={selectedTiers}
-          selectedTierNames={selectedTierNames}
-          onToggleTier={onToggleTier}
-          availableTiers={availableTiers}
-          filteredTiers={filteredTiers}
-          unlistedSelectedTiers={unlistedSelectedTiers}
-          tierSearch={tierSearch}
-          onTierSearchChange={onTierSearchChange}
-        />
-      )}
+      <BillingTierField
+        isView={isView}
+        selectedTiers={selectedTiers}
+        selectedTierNames={selectedTierNames}
+        onToggleTier={onToggleTier}
+        availableTiers={availableTiers}
+        filteredTiers={filteredTiers}
+        unlistedSelectedTiers={unlistedSelectedTiers}
+        tierSearch={tierSearch}
+        onTierSearchChange={onTierSearchChange}
+      />
     </VStack>
   );
 }

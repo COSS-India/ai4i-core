@@ -848,6 +848,315 @@ function CardLayoutDataTable<T>({
   return table;
 }
 
+type AdminPaginationControls = {
+  startRow: number;
+  endRow: number;
+  totalItems: number;
+  page: number;
+  totalPages: number;
+  pageSize: number;
+  pageSizeOptions: number[];
+  onPageSizeChange: (size: number) => void;
+  onFirst: () => void;
+  onPrev: () => void;
+  onNext: () => void;
+  onLast: () => void;
+  canPrev: boolean;
+  canNext: boolean;
+  resetPage: () => void;
+};
+
+function buildClientAdminPagination(
+  clientTable: ReturnType<typeof useAdminDataTable>,
+): AdminPaginationControls {
+  return {
+    startRow: clientTable.startRow,
+    endRow: clientTable.endRow,
+    totalItems: clientTable.totalItems,
+    page: clientTable.page,
+    totalPages: clientTable.totalPages,
+    pageSize: clientTable.pageSize,
+    pageSizeOptions: clientTable.pageSizeOptions,
+    onPageSizeChange: clientTable.setPageSizeAndReset,
+    onFirst: () => clientTable.setPage(1),
+    onPrev: () => clientTable.setPage((p) => Math.max(1, p - 1)),
+    onNext: () => clientTable.setPage((p) => Math.min(clientTable.totalPages, p + 1)),
+    onLast: () => clientTable.setPage(clientTable.totalPages),
+    canPrev: clientTable.canPrev,
+    canNext: clientTable.canNext,
+    resetPage: clientTable.resetPage,
+  };
+}
+
+function buildServerAdminPagination(
+  serverTable: ReturnType<typeof useAdminDataTableServer>,
+  onPageChange: (page: number) => void,
+): AdminPaginationControls {
+  return {
+    startRow: serverTable.startRow,
+    endRow: serverTable.endRow,
+    totalItems: serverTable.totalItems,
+    page: serverTable.page,
+    totalPages: serverTable.totalPages,
+    pageSize: serverTable.pageSize,
+    pageSizeOptions: serverTable.pageSizeOptions,
+    onPageSizeChange: serverTable.setPageSizeAndReset,
+    onFirst: serverTable.goFirst,
+    onPrev: serverTable.goPrev,
+    onNext: serverTable.goNext,
+    onLast: serverTable.goLast,
+    canPrev: serverTable.canPrev,
+    canNext: serverTable.canNext,
+    resetPage: () => onPageChange(1),
+  };
+}
+
+function resolveAdminPagination(
+  paginate: DataTableAdminProps<unknown>["paginate"],
+  clientTable: ReturnType<typeof useAdminDataTable>,
+  serverTable: ReturnType<typeof useAdminDataTableServer>,
+  serverPagination: UseAdminDataTableServerOptions | undefined,
+): AdminPaginationControls | null {
+  if (paginate === "client") {
+    return buildClientAdminPagination(clientTable);
+  }
+  if (paginate === "server" && serverPagination) {
+    return buildServerAdminPagination(serverTable, serverPagination.onPageChange);
+  }
+  return null;
+}
+
+function resolveAdminShowEmpty(options: {
+  isLoading: boolean;
+  paginate: DataTableAdminProps<unknown>["paginate"];
+  serverTotalItems: number;
+  clientTotalItems: number;
+  itemCount: number;
+}): boolean {
+  if (options.isLoading) return false;
+  if (options.paginate === "server") return options.serverTotalItems === 0;
+  if (options.paginate === "client") return options.clientTotalItems === 0;
+  return options.itemCount === 0;
+}
+
+function resolveAdminEmptyText(options: {
+  hasActiveFilters: boolean;
+  unfilteredCount?: number;
+  noResultsMessage: string;
+  emptyMessage: string;
+}): string {
+  if (options.hasActiveFilters) return options.noResultsMessage;
+  if (options.unfilteredCount != null && options.unfilteredCount > 0) {
+    return options.noResultsMessage;
+  }
+  return options.emptyMessage;
+}
+
+function AdminTableLoadingBody<T>({
+  columns,
+  columnCount,
+  rowChevron,
+  loadingContent,
+}: {
+  columns: DataTableColumn<T>[];
+  columnCount: number;
+  rowChevron: boolean;
+  loadingContent?: React.ReactNode;
+}): React.ReactElement {
+  if (loadingContent) {
+    return (
+      <Tr>
+        <Td colSpan={columnCount} py={0} px={0} borderBottomWidth={0}>
+          {loadingContent}
+        </Td>
+      </Tr>
+    );
+  }
+  return (
+    <>
+      {Array.from({ length: 5 }, (_, rowIndex) => (
+        <Tr key={`loading-${rowIndex}`}>
+          {columns.map((col) => (
+            <Td key={col.id} py={4}>
+              <Skeleton h="14px" borderRadius="sm" />
+            </Td>
+          ))}
+          {rowChevron ? (
+            <Td
+              w={ADMIN_CHEVRON_COLUMN_WIDTH}
+              minW={ADMIN_CHEVRON_COLUMN_WIDTH}
+              maxW={ADMIN_CHEVRON_COLUMN_WIDTH}
+              px={1}
+              py={4}
+              whiteSpace="nowrap"
+            />
+          ) : null}
+        </Tr>
+      ))}
+    </>
+  );
+}
+
+function AdminTableEmptyBody({
+  columnCount,
+  emptyContent,
+  emptyText,
+}: {
+  columnCount: number;
+  emptyContent?: React.ReactNode;
+  emptyText: string;
+}): React.ReactElement {
+  return (
+    <Tr>
+      <Td colSpan={columnCount} py={6} overflow="visible">
+        {emptyContent ?? (
+          <Alert status="info" borderRadius="md">
+            <AlertIcon />
+            <AlertDescription>{emptyText}</AlertDescription>
+          </Alert>
+        )}
+      </Td>
+    </Tr>
+  );
+}
+
+function AdminTableDataBody<T>({
+  displayItems,
+  columns,
+  columnLayouts,
+  getRowKey,
+  getSubRows,
+  onRowClick,
+  rowChevron,
+}: {
+  displayItems: T[];
+  columns: DataTableColumn<T>[];
+  columnLayouts: ReturnType<typeof resolveAdminColumnLayouts>;
+  getRowKey: (row: T) => string;
+  getSubRows?: (row: T) => readonly T[];
+  onRowClick?: (row: T) => void;
+  rowChevron: boolean;
+}): React.ReactElement {
+  return (
+    <>
+      {displayItems.flatMap((parent, parentIndex) =>
+        [parent, ...(getSubRows?.(parent) ?? [])].map((row, subIndex) => {
+          const isSubRow = subIndex > 0;
+          return (
+            <Tr
+              key={getRowKey(row)}
+              onClick={onRowClick ? () => onRowClick(row) : undefined}
+              cursor={onRowClick ? "pointer" : undefined}
+              bg={isSubRow ? "ink.50" : undefined}
+              _hover={{
+                bg: "#FAFBFE",
+                ...(rowChevron ? { "& .data-table-chevron": { color: "ink.600" } } : {}),
+              }}
+              transition="background 0.15s"
+            >
+              {columns.map((col) => {
+                const truncate = shouldAutoTruncateColumn(col);
+                const content = col.cell(row, parentIndex);
+                const numeric = Boolean(
+                  col.isNumeric || col.align === "center" || col.align === "right",
+                );
+                const layout = columnLayouts.get(col.id) ?? { minW: 0 };
+                return (
+                  <Td
+                    key={col.id}
+                    py={4}
+                    isNumeric={col.isNumeric}
+                    textAlign={col.align}
+                    w={layout.w}
+                    minW={layout.minW}
+                    maxW={layout.maxW}
+                    whiteSpace={layout.whiteSpace}
+                    sx={numeric ? { fontVariantNumeric: "tabular-nums" } : undefined}
+                    {...(col.tdProps ?? {})}
+                    overflow="hidden"
+                  >
+                    {truncate ? (
+                      <TruncatingCellContent>{content}</TruncatingCellContent>
+                    ) : (
+                      <Box minW={0} w="100%" maxW="100%">
+                        {content}
+                      </Box>
+                    )}
+                  </Td>
+                );
+              })}
+              {rowChevron ? (
+                <Td
+                  w={ADMIN_CHEVRON_COLUMN_WIDTH}
+                  minW={ADMIN_CHEVRON_COLUMN_WIDTH}
+                  maxW={ADMIN_CHEVRON_COLUMN_WIDTH}
+                  px={1}
+                  py={4}
+                  textAlign="right"
+                  whiteSpace="nowrap"
+                >
+                  <ChevronRightIcon
+                    className="data-table-chevron"
+                    boxSize={3.5}
+                    color="gray.300"
+                  />
+                </Td>
+              ) : null}
+            </Tr>
+          );
+        }),
+      )}
+    </>
+  );
+}
+
+function renderAdminTableBody<T>(options: {
+  isLoading: boolean;
+  showEmpty: boolean;
+  loadingContent?: React.ReactNode;
+  emptyContent?: React.ReactNode;
+  emptyText: string;
+  columns: DataTableColumn<T>[];
+  columnCount: number;
+  columnLayouts: ReturnType<typeof resolveAdminColumnLayouts>;
+  displayItems: T[];
+  getRowKey: (row: T) => string;
+  getSubRows?: (row: T) => readonly T[];
+  onRowClick?: (row: T) => void;
+  rowChevron: boolean;
+}): React.ReactNode {
+  if (options.isLoading) {
+    return (
+      <AdminTableLoadingBody
+        columns={options.columns}
+        columnCount={options.columnCount}
+        rowChevron={options.rowChevron}
+        loadingContent={options.loadingContent}
+      />
+    );
+  }
+  if (options.showEmpty) {
+    return (
+      <AdminTableEmptyBody
+        columnCount={options.columnCount}
+        emptyContent={options.emptyContent}
+        emptyText={options.emptyText}
+      />
+    );
+  }
+  return (
+    <AdminTableDataBody
+      displayItems={options.displayItems}
+      columns={options.columns}
+      columnLayouts={options.columnLayouts}
+      getRowKey={options.getRowKey}
+      getSubRows={options.getSubRows}
+      onRowClick={options.onRowClick}
+      rowChevron={options.rowChevron}
+    />
+  );
+}
+
 function AdminLayoutDataTable<T>({
   items,
   columns,
@@ -907,44 +1216,12 @@ function AdminLayoutDataTable<T>({
 
   const displayItems = paginate === "client" ? clientTable.paginatedItems : items;
 
-  const pagination =
-    paginate === "client"
-      ? {
-          startRow: clientTable.startRow,
-          endRow: clientTable.endRow,
-          totalItems: clientTable.totalItems,
-          page: clientTable.page,
-          totalPages: clientTable.totalPages,
-          pageSize: clientTable.pageSize,
-          pageSizeOptions: clientTable.pageSizeOptions,
-          onPageSizeChange: clientTable.setPageSizeAndReset,
-          onFirst: () => clientTable.setPage(1),
-          onPrev: () => clientTable.setPage((p) => Math.max(1, p - 1)),
-          onNext: () => clientTable.setPage((p) => Math.min(clientTable.totalPages, p + 1)),
-          onLast: () => clientTable.setPage(clientTable.totalPages),
-          canPrev: clientTable.canPrev,
-          canNext: clientTable.canNext,
-          resetPage: clientTable.resetPage,
-        }
-      : paginate === "server" && serverPagination
-        ? {
-            startRow: serverTable.startRow,
-            endRow: serverTable.endRow,
-            totalItems: serverTable.totalItems,
-            page: serverTable.page,
-            totalPages: serverTable.totalPages,
-            pageSize: serverTable.pageSize,
-            pageSizeOptions: serverTable.pageSizeOptions,
-            onPageSizeChange: serverTable.setPageSizeAndReset,
-            onFirst: serverTable.goFirst,
-            onPrev: serverTable.goPrev,
-            onNext: serverTable.goNext,
-            onLast: serverTable.goLast,
-            canPrev: serverTable.canPrev,
-            canNext: serverTable.canNext,
-            resetPage: () => serverPagination?.onPageChange(1),
-          }
-        : null;
+  const pagination = resolveAdminPagination(
+    paginate,
+    clientTable,
+    serverTable,
+    serverPagination,
+  );
 
   const handleClearFilters = useCallback(() => {
     onClearFilters?.();
@@ -962,18 +1239,20 @@ function AdminLayoutDataTable<T>({
     [pagination?.resetPage, cardBg, deferApply],
   );
 
-  const showEmpty =
-    !isLoading &&
-    (paginate === "server"
-      ? (serverPagination?.totalItems ?? 0) === 0
-      : paginate === "client"
-        ? clientTable.totalItems === 0
-        : items.length === 0);
+  const showEmpty = resolveAdminShowEmpty({
+    isLoading,
+    paginate,
+    serverTotalItems: serverPagination?.totalItems ?? 0,
+    clientTotalItems: clientTable.totalItems,
+    itemCount: items.length,
+  });
 
-  const emptyText =
-    hasActiveFilters || (unfilteredCount != null && unfilteredCount > 0)
-      ? noResultsMessage
-      : emptyMessage;
+  const emptyText = resolveAdminEmptyText({
+    hasActiveFilters,
+    unfilteredCount,
+    noResultsMessage,
+    emptyMessage,
+  });
 
   const paginationBlock =
     paginate !== false && pagination && pagination.totalItems > 0 ? (
@@ -1082,111 +1361,21 @@ function AdminLayoutDataTable<T>({
           </Tr>
         </Thead>
         <Tbody>
-          {isLoading ? (
-            loadingContent ? (
-              <Tr>
-                <Td colSpan={columnCount} py={0} px={0} borderBottomWidth={0}>
-                  {loadingContent}
-                </Td>
-              </Tr>
-            ) : (
-              Array.from({ length: 5 }, (_, rowIndex) => (
-                <Tr key={`loading-${rowIndex}`}>
-                  {columns.map((col) => (
-                    <Td key={col.id} py={4}>
-                      <Skeleton h="14px" borderRadius="sm" />
-                    </Td>
-                  ))}
-                  {rowChevron ? (
-                    <Td
-                      w={ADMIN_CHEVRON_COLUMN_WIDTH}
-                      minW={ADMIN_CHEVRON_COLUMN_WIDTH}
-                      maxW={ADMIN_CHEVRON_COLUMN_WIDTH}
-                      px={1}
-                      py={4}
-                      whiteSpace="nowrap"
-                    />
-                  ) : null}
-                </Tr>
-              ))
-            )
-          ) : showEmpty ? (
-            <Tr>
-              <Td colSpan={columnCount} py={6} overflow="visible">
-                {emptyContent ?? (
-                  <Alert status="info" borderRadius="md">
-                    <AlertIcon />
-                    <AlertDescription>{emptyText}</AlertDescription>
-                  </Alert>
-                )}
-              </Td>
-            </Tr>
-          ) : displayItems.flatMap((parent, parentIndex) =>
-            [parent, ...(getSubRows?.(parent) ?? [])].map((row, subIndex) => {
-            const isSubRow = subIndex > 0;
-            const index = parentIndex;
-            return (
-            <Tr
-              key={getRowKey(row)}
-              onClick={onRowClick ? () => onRowClick(row) : undefined}
-              cursor={onRowClick ? "pointer" : undefined}
-              bg={isSubRow ? "ink.50" : undefined}
-              _hover={{
-                bg: "#FAFBFE",
-                ...(rowChevron ? { "& .data-table-chevron": { color: "ink.600" } } : {}),
-              }}
-              transition="background 0.15s"
-            >
-              {columns.map((col) => {
-                const truncate = shouldAutoTruncateColumn(col);
-                const content = col.cell(row, index);
-                const numeric = Boolean(col.isNumeric || col.align === "center" || col.align === "right");
-                const layout = columnLayouts.get(col.id) ?? { minW: 0 };
-                return (
-                  <Td
-                    key={col.id}
-                    py={4}
-                    isNumeric={col.isNumeric}
-                    textAlign={col.align}
-                    w={layout.w}
-                    minW={layout.minW}
-                    maxW={layout.maxW}
-                    whiteSpace={layout.whiteSpace}
-                    sx={numeric ? { fontVariantNumeric: "tabular-nums" } : undefined}
-                    {...(col.tdProps ?? {})}
-                    overflow="hidden"
-                  >
-                    {truncate ? (
-                      <TruncatingCellContent>{content}</TruncatingCellContent>
-                    ) : (
-                      <Box minW={0} w="100%" maxW="100%">
-                        {content}
-                      </Box>
-                    )}
-                  </Td>
-                );
-              })}
-              {rowChevron ? (
-                <Td
-                  w={ADMIN_CHEVRON_COLUMN_WIDTH}
-                  minW={ADMIN_CHEVRON_COLUMN_WIDTH}
-                  maxW={ADMIN_CHEVRON_COLUMN_WIDTH}
-                  px={1}
-                  py={4}
-                  textAlign="right"
-                  whiteSpace="nowrap"
-                >
-                  <ChevronRightIcon
-                    className="data-table-chevron"
-                    boxSize={3.5}
-                    color="gray.300"
-                  />
-                </Td>
-              ) : null}
-            </Tr>
-            );
-            }),
-          )}
+          {renderAdminTableBody({
+            isLoading,
+            showEmpty,
+            loadingContent,
+            emptyContent,
+            emptyText,
+            columns,
+            columnCount,
+            columnLayouts,
+            displayItems,
+            getRowKey,
+            getSubRows,
+            onRowClick,
+            rowChevron,
+          })}
         </Tbody>
       </Table>
     </TableContainer>
