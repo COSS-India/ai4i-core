@@ -138,12 +138,50 @@ export const SAMPLE_NLP_MODEL_JSON = `{
       }
     },
     "response": {
-      "output": [
-        {
-          "source": "Hello, how are you?",
-          "target": "नमस्ते, आप कैसे हैं?"
-        }
-      ]
+      // The raw Triton request used to test the model's endpoint.
+      // "inputs" must match the tensors in "adapterConfig" above.
+      "triton": {
+        "inputs": [
+          {
+            "data": [
+              "Hello, how are you?"
+            ],
+            "name": "INPUT_TEXT",
+            "shape": [
+              1,
+              1
+            ],
+            "datatype": "BYTES"
+          },
+          {
+            "data": [
+              "en"
+            ],
+            "name": "INPUT_LANGUAGE_ID",
+            "shape": [
+              1,
+              1
+            ],
+            "datatype": "BYTES"
+          },
+          {
+            "data": [
+              "hi"
+            ],
+            "name": "OUTPUT_LANGUAGE_ID",
+            "shape": [
+              1,
+              1
+            ],
+            "datatype": "BYTES"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "OUTPUT_TEXT"
+          }
+        ]
+      }
     }
   },
 

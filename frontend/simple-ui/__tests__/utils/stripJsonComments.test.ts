@@ -220,7 +220,7 @@ describe("SAMPLE_NLP_MODEL_JSON", () => {
     expect(sample.adapterConfig.outputs).toEqual([
       { tensor: "OUTPUT_TEXT", dtype: "BYTES", maps_to: "target" },
     ]);
-    expect(sample.schema.response.output[0].target).toBeTruthy();
+    expect(sample.schema.response.triton.outputs[0].name).toBe("OUTPUT_TEXT");
   });
 });
 

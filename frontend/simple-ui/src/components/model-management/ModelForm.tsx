@@ -77,20 +77,30 @@ function ModelJsonUpload({
             borderRadius="md"
             bg="blue.50"
           >
-            <Text
-              as="span"
-              display="inline-block"
-              mb={2}
-              px={2}
-              py="1px"
-              fontSize="xs"
-              fontWeight="600"
-              color="ink.700"
-              bg="ink.200"
-              borderRadius="md"
-            >
-              {spec.badge}
-            </Text>
+            <HStack mb={2} justify="space-between" align="center" flexWrap="wrap" spacing={2}>
+              <Text
+                as="span"
+                px={2}
+                py="1px"
+                fontSize="xs"
+                fontWeight="600"
+                color="ink.700"
+                bg="ink.200"
+                borderRadius="md"
+              >
+                {spec.badge}
+              </Text>
+              <Button
+                size="xs"
+                variant="outline"
+                bg="white"
+                leftIcon={<FiDownload aria-hidden />}
+                onClick={() => onDownloadSample?.(spec.sampleKind)}
+                aria-label={spec.sampleLabel}
+              >
+                Sample JSON
+              </Button>
+            </HStack>
             <Link
               href={specUrls[spec.id]}
               isExternal
@@ -105,17 +115,6 @@ function ModelJsonUpload({
               {spec.shortLabel}
               <FiArrowUpRight aria-hidden />
             </Link>
-            <Button
-              mt={3}
-              size="xs"
-              variant="outline"
-              bg="white"
-              leftIcon={<FiDownload aria-hidden />}
-              onClick={() => onDownloadSample?.(spec.sampleKind)}
-              aria-label={spec.sampleLabel}
-            >
-              Sample JSON
-            </Button>
           </Box>
         ))}
       </SimpleGrid>
@@ -206,25 +205,28 @@ function ModelJsonUpload({
             />
           </Button>
           <Collapse in={requirements.isOpen} animateOpacity>
-            <Text
+            <VStack
               id="model-field-requirements"
+              align="stretch"
+              spacing={3}
               px={3}
               pb={3}
               fontSize="xs"
               color="ink.500"
               lineHeight="1.5"
             >
-              Required (ULCA): name (5–100 chars, no spaces), version, description
-              (25–1000 chars), task.type, license (closed enum), domain (closed enum,
-              at least one), trainingDataset.description, submitter.name. Optional:
-              refUrl, languages (Indic and English codes only), licenseUrl,
-              isLangDetectionEnabled, isMultilingual, adapterConfig, schema,
-              benchmarks. modelId is generated from name:version. submittedOn and
-              updatedOn are server-set unless you override them. NLP models also
-              need classInstance matching task.type (e.g. NMTTaskService for nmt).
-              LLM models need adapterConfig.model_name set to the name the AI
-              server uses. Start from the NLP or LLM sample above.
-            </Text>
+              <Text>{FIELD_HINTS.model.jsonUpload.requirements.required}</Text>
+              <VStack align="stretch" spacing={1}>
+                {FIELD_HINTS.model.jsonUpload.requirements.byKind.map((item) => (
+                  <Text key={item.label}>
+                    <Text as="span" fontWeight="600" color="ink.700">
+                      {item.label}:
+                    </Text>{" "}
+                    {item.text}
+                  </Text>
+                ))}
+              </VStack>
+            </VStack>
           </Collapse>
         </Box>
       </FormControl>

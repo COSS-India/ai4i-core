@@ -74,6 +74,21 @@ export const FIELD_HINTS = {
   model: {
     jsonUpload: {
       helper: "JSON only · validated before creation.",
+      /** Body of the collapsible "Field requirements" panel under the file picker. */
+      requirements: {
+        required:
+          "name (5–100 chars, no spaces), version, description (25–1000 chars), task.type, license, domain, trainingDataset.description, submitter.name",
+        byKind: [
+          {
+            label: "NLP models",
+            text: "classInstance must match task.type (e.g. NMTTaskService for nmt)",
+          },
+          {
+            label: "LLM models",
+            text: "adapterConfig.model_name must match your AI server’s model name",
+          },
+        ],
+      },
       /**
        * Shown beside the sample, never inside it, so the downloaded JSON stays spec-only.
        * hrefs come from getModelSpecUrls() (ULCA_MODEL_SPEC_URL / OPENAI_SPEC_URL).
