@@ -607,7 +607,9 @@ async def _run_llm_chat_stream(
         return JSONResponse(status_code=status_code, content=result)
 
     async def gen():
-        with traced_span("request", root=True, classify_status=True) as req_attrs:
+        with traced_span(
+            "request", root=True, classify_status=True, start_time=(model_ctx or {}).get("started_at"),
+        ) as req_attrs:
             _seed_llm_request_attrs(req_attrs, request)
             async for chunk in result:
                 yield chunk

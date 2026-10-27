@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import time
 from typing import Any, AsyncIterator, Dict, Optional, Tuple
 
 import httpx
@@ -733,6 +734,10 @@ class OpenAIProxyService:
 
         payload = self._with_include_usage(payload)
 
+        # The request / model / ai-inference spans open only once the stream
+        # has started (inside the generators below), so they measure from
+        # here, or they would leave out the wait for the first token.
+        started_at = time.time()
         kind, status_code, result = await self.proxy_stream(path=url, payload=payload, service_info=service_info)
         if kind == "error" and status_code >= 500:
             # Nothing has reached the client yet, so the stream can still move
@@ -765,11 +770,13 @@ class OpenAIProxyService:
             return "error", status_code, result, model_ctx
 
         async def gen() -> AsyncIterator[str]:
-            with traced_span("model") as model_attrs:
+            with traced_span("model", start_time=started_at) as model_attrs:
                 self._seed_model_attrs(model_attrs, service_id, model_name)
                 set_llm_usage_model_name(model_attrs["model_name"])
 
-                async with traced_inference(payload, _TASK_TYPE_LLM, logger) as infer_attrs:
+                async with traced_inference(
+                    payload, _TASK_TYPE_LLM, logger, start_time=started_at
+                ) as infer_attrs:
                     # service_id, tenantId and model_name must be set explicitly:
                     # the PPU Kafka consumer reads only the ai-inference span.
                     infer_attrs["service_id"] = service_id
@@ -840,7 +847,9 @@ class OpenAIProxyService:
                             )
                         yield "data: [DONE]\n\n"
 
-        return "stream", 200, gen(), None
+        # 4th element on success: when the stream was requested, for the
+        # route's "request" span (opened once the client starts reading).
+        return "stream", 200, gen(), {"started_at": started_at}
 
     @staticmethod
     def _record_stream_usage(line: str, infer_attrs: Dict[str, Any]) -> None:

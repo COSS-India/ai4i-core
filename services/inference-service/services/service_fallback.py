@@ -30,6 +30,9 @@ def _get_redis() -> aioredis.Redis:
             password=settings.REDIS_PASSWORD,
             db=settings.REDIS_DB,
             socket_timeout=settings.REDIS_TIMEOUT,
+            # Read only on the failure path: a Redis outage must not add
+            # REDIS_TIMEOUT to every failed request before its 502.
+            socket_connect_timeout=2,
             decode_responses=True,
         )
     return _redis

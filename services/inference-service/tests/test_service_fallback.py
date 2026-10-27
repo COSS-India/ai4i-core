@@ -3,6 +3,7 @@ Orchestrator and LLM proxy retry loops, the 503 mapping, and the Redis read."""
 
 import asyncio
 import sys
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -252,11 +253,12 @@ def test_llm_buffered_unresolvable_fallback_is_skipped_and_all_failing_is_503():
 def test_llm_stream_moves_to_fallback_before_first_byte():
     proxy, patches = _proxy({"llm-a": (502, {"error": "down"}), "llm-b": (200, "sse-generator")})
     request = MagicMock()
-    (kind, status, result, _), _ = _with(
+    (kind, status, result, ctx), _ = _with(
         patches, ["llm-b"], proxy.proxy_traced_stream(PATH, {"model": "llm-a", "messages": [], "stream": True}, request)
     )
     assert (kind, status) == ("stream", 200)
     assert request.state.service_id == "llm-b"
+    assert ctx["started_at"] <= time.time()  # the route's request span measures from before the first attempt
     assert proxy.proxy_stream.call_args_list[1].kwargs["payload"]["model"] == "llm-b-model"
 
 
@@ -427,3 +429,13 @@ def test_triton_404_stays_a_client_404():
         _call_triton(lambda *a, **k: _triton_response(404))
     assert type(exc.value) is RuntimeError and type(exc.value.__cause__) is LookupError
     assert http_status_for(exc.value) == 404
+
+
+# ── Streaming spans measure from before the first line was awaited ────────────
+
+def test_traced_span_measures_from_an_earlier_start():
+    from trace.request_span import traced_span
+
+    with traced_span("request", root=True, start_time=time.time() - 1.5) as attrs:
+        pass
+    assert attrs["total_time_ms"] >= 1500
