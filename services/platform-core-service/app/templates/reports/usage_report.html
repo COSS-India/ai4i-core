@@ -5,7 +5,8 @@
   WeasyPrint → one A4 page. Edit freely; the data contract is
   report_context() in pdf.py. Every value arrives pre-formatted (strings);
   only *_width values are numbers (0–100, a bar's % of its track).
-  A value of none means "not tracked yet": render the placeholder.
+  Empty values arrive already worded: "0" (no activity), "—" (a rate with
+  nothing to divide by) or "Not available" (not captured, or failed to load).
 
   WeasyPrint notes: print CSS (@page), flexbox and inline SVG work;
   external URLs and local files are blocked (data: URIs only), so keep
@@ -15,7 +16,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>{{ report_title }} – {{ period_label }}</title>
+<title>{{ report_title }} – {{ period_label }} ({{ frequency }})</title>
 <style>
   @page { size: A4; margin: 10mm 12mm 13mm 12mm;
           @bottom-left  { content: "Period {{ date_span }} (IST) · API-key inference traffic · allocation and remaining are current balances"; font: 6.5pt "DejaVu Sans", sans-serif; color: #6b6b6b; }
@@ -63,7 +64,7 @@
 </head>
 <body>
   <div class="eyebrow">{{ report_title | upper }}</div>
-  <h1>{{ period_label }}</h1>
+  <h1>{{ period_label }} ({{ frequency }})</h1>
 
   {# ── Model Portfolio ── #}
   <h2>Model Portfolio</h2>
@@ -80,15 +81,15 @@
                 transform="rotate(-90 21 21)"/>
         {% endif %}
       </svg>
-      <div class="legend"><span class="seg-active">{{ models.active }} active</span><br>
-        <span class="seg-other">{{ models.inactive }} inactive</span></div>
+      <div class="legend"><span class="seg-active">{{ models.active }}</span><br>
+        <span class="seg-other">{{ models.inactive }}</span></div>
     </div>
     <div class="panel">
       <div class="head"><span class="title">Top 5 models by usage</span><span class="note">% of requests</span></div>
       {% for m in models.top %}
       <div class="line"><span class="name clip" style="width: 40mm">{{ m.name }} <span class="sub">{{ m.task }}</span></span>
         <div class="track"><div class="fill" style="width: {{ m.width }}%"></div></div><span class="pct">{{ m.share }}</span></div>
-      {% else %}<div class="note">No model traffic in this period</div>{% endfor %}
+      {% else %}<div class="note">{{ models.top_empty }}</div>{% endfor %}
     </div>
   </div>
   {% if models.by_task %}<div class="muted-line">Registered by task type: {{ models.by_task }}</div>{% endif %}
@@ -98,14 +99,16 @@
   <div class="row">
     <div class="panel">
       <div class="head"><span class="title">Institutions · {{ adoption.institutions_total }} total</span>
-        {% if adoption.institutions_new %}<span class="new">+{{ adoption.institutions_new }} new this period</span>{% endif %}</div>
+        <span class="note">{% if adoption.institutions_new %}<span class="new">+{{ adoption.institutions_new }} new this period</span> · {% endif %}{{ adoption.institutions_active_pct }}</span></div>
       <div class="stack">{% for s in adoption.institution_segments %}<div class="{{ s.css }}" style="width: {{ s.width }}%">{{ s.count }}</div>{% endfor %}</div>
-      <div class="legend"><span class="seg-active">active</span><span class="seg-other">not active this period</span>{% if adoption.dormant_tracked %}<span class="seg-dormant">dormant</span>{% endif %}</div>
+      <div class="legend">{% for l in adoption.institution_legend %}<span class="{{ l.css }}">{{ l.text }}</span>{% endfor %}</div>
+      <div class="note">Active: at least one request in the period{% if adoption.dormant_tracked %} · Dormant: no requests this period or the previous one{% endif %}</div>
     </div>
     <div class="panel">
       <div class="head"><span class="title">Applications · {{ adoption.applications_total }} total</span><span class="note">{{ adoption.applications_active_pct }}</span></div>
       <div class="stack">{% for s in adoption.application_segments %}<div class="{{ s.css }}" style="width: {{ s.width }}%">{{ s.count }}</div>{% endfor %}</div>
-      <div class="note">Active = at least 1 request in the period</div>
+      <div class="legend">{% for l in adoption.application_legend %}<span class="{{ l.css }}">{{ l.text }}</span>{% endfor %}</div>
+      <div class="note">Active: at least one request in the period</div>
     </div>
   </div>
   <div class="row" style="margin-top: 3mm">
@@ -120,11 +123,11 @@
       {% endfor %}
     </div>
     <div class="panel">
-      <div class="head"><span class="title">Top 5 institutions by usage</span></div>
+      <div class="head"><span class="title">Top 5 institutions by usage</span><span class="note">% of requests</span></div>
       {% for i in adoption.top_institutions %}
       <div class="line"><span class="name clip" style="flex: 1">{{ i.name }} <span class="sub">{{ i.tasks }}</span></span><span class="pct">{{ i.share }}</span></div>
       <div class="track" style="margin-bottom: 1.5mm"><div class="fill" style="width: {{ i.width }}%"></div></div>
-      {% else %}<div class="note">No institution traffic in this period</div>{% endfor %}
+      {% else %}<div class="note">{{ adoption.top_empty }}</div>{% endfor %}
     </div>
   </div>
 
@@ -134,25 +137,20 @@
     {% for c in budget.cards %}
     <div class="card">
       <div class="label">{{ c.label }}</div>
-      {% if c.value is none %}<div class="value na">—</div><div class="note">{{ c.note or not_tracked }}</div>
-      {% else %}<div class="value">{{ c.value }}</div><div class="note">{{ c.note or "" }}</div>{% endif %}
+      <div class="value{{ ' na' if c.muted }}">{{ c.value }}</div><div class="note">{{ c.note }}</div>
     </div>
     {% endfor %}
   </div>
-  <div class="muted-line">Allocated and spent for the financial year: {{ not_tracked | lower }}</div>
-  {% if budget.used_width is not none %}
-  <div class="meter"><div class="spent" style="width: {{ budget.used_width }}%"></div></div>
+  <div class="muted-line">Financial year allocation: {{ budget.fy_allocation }}</div>
+  <div class="meter">{% if budget.used_width is not none %}<div class="spent" style="width: {{ budget.used_width }}%"></div>{% endif %}</div>
   <div class="meter-labels"><span>Spent to date {{ budget.used_pct }}</span><span>Remaining {{ budget.remaining_pct }}</span></div>
-  {% endif %}
-  {% if budget.exhausted is not none %}
-  <div style="margin: 1.5mm 0">Institutions that exhausted budget: {{ budget.exhausted }} · Institutions nearing limit ({{ budget.nearing_pct }}+ used): {{ budget.nearing }}</div>
-  {% endif %}
+  <div style="margin: 1.5mm 0">Institutions with budget exhausted: {{ budget.exhausted }} · Institutions nearing limit ({{ budget.nearing_pct }} or more used): {{ budget.nearing }}</div>
   <div class="panel">
-    <div class="head"><span class="title">Top 5 institutions by spend (to date)</span><span class="note">% of own allocation used</span></div>
+    <div class="head"><span class="title">Top 5 institutions by spend (this period)</span><span class="note">% of allocation used</span></div>
     {% for s in budget.top_spend %}
     <div class="line"><span class="clip" style="width: 45mm">{{ s.name }}</span><span class="name clip" style="width: 20mm">{{ s.spent }}</span>
       <div class="track"><div class="fill {{ s.css }}" style="width: {{ s.width }}%"></div></div><span class="pct">{{ s.used }}</span></div>
-    {% else %}<div class="note">No institution spend recorded</div>{% endfor %}
+    {% else %}<div class="note">{{ budget.top_spend_empty }}</div>{% endfor %}
   </div>
 </body>
 </html>
