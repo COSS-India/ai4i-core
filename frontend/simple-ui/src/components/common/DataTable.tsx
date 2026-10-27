@@ -1439,7 +1439,7 @@ function stripAdminTableContainerChrome(
   return { containerMaxH, restTableContainerProps };
 }
 
-function AdminLayoutDataTable<T>(props: DataTableAdminProps<T>) {
+function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
   const {
     items,
     columns,
