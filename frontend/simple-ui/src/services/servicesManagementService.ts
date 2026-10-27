@@ -7,6 +7,14 @@ import {
   serviceSingleSchema,
   servicesListSchema,
 } from "./dto/schemas/platform";
+import {
+  parseServiceListColumnsPayload,
+  parseServiceColumnPreferencePayload,
+  type ServiceColumnPreference,
+  SERVICE_LIST_COLUMNS,
+  SERVICE_LIST_PREFERENCE_VIEW,
+  type ServiceListColumnDef,
+} from "../components/services-management/serviceListColumns";
 import type {
   DeleteServiceResponse,
   PaginatedServices,
@@ -31,10 +39,17 @@ export const SERVICES_ALL_QUERY_KEY = ["services-all"] as const;
 export const SERVICES_ALL_STALE_MS = 5 * 60 * 1000;
 type ServiceRecord = Service & Record<string, unknown>;
 
+const secretText = (value: unknown): string => {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return "";
+};
+
 const isNonEmptySecret = (value: unknown): boolean => {
   if (value == null) return false;
-  const text = String(value).trim();
-  return text.length > 0;
+  return secretText(value).trim().length > 0;
 };
 
 /**
@@ -86,7 +101,8 @@ export const resolveMaskedAuthToken = (
   const raw =
     nestedAuthenticationToken(rec.inferenceEndPoint) ??
     nestedAuthenticationToken(rec.inference_end_point);
-  return isNonEmptySecret(raw) ? String(raw).trim() : "";
+  if (!isNonEmptySecret(raw)) return "";
+  return secretText(raw).trim();
 };
 
 const redactNestedSecrets = (endpoint: unknown): unknown => {
@@ -212,23 +228,34 @@ export const fetchAllServicesMatchingFilters = async (
   return { items, total, offset: 0, limit: null };
 };
 
+function buildServiceListQueryParams(
+  params: ServiceListParams,
+): Record<string, string | number | boolean> {
+  const queryParams: Record<string, string | number | boolean> = {};
+  if (params.offset !== undefined && params.offset > 0) {
+    queryParams.offset = params.offset;
+  }
+  if (params.limit !== undefined) queryParams.limit = params.limit;
+  // drill-down selected -> it's already in the allowlist, so it IS the intersection
+  const taskTypesParam = params.taskType ?? params.taskTypes;
+  if (taskTypesParam) queryParams.task_types = taskTypesParam;
+  if (params.isPublished !== undefined) {
+    queryParams.is_published = params.isPublished;
+  }
+  if (params.createdBy) queryParams.created_by = params.createdBy;
+  if (!params.query) return queryParams;
+  for (const [key, value] of Object.entries(params.query)) {
+    if (value !== "" && queryParams[key] === undefined) queryParams[key] = value;
+  }
+  return queryParams;
+}
+
 export const listServicesPaginated = async (
   params: ServiceListParams = {},
 ): Promise<PaginatedServices> => {
   try {
-    const queryParams: Record<string, any> = {};
-    if (params.offset !== undefined && params.offset > 0)
-      queryParams.offset = params.offset;
-    if (params.limit !== undefined) queryParams.limit = params.limit;
-    // drill-down selected -> it's already in the allowlist, so it IS the intersection
-    const taskTypesParam = params.taskType ?? params.taskTypes;
-    if (taskTypesParam) queryParams.task_types = taskTypesParam;
-    if (params.isPublished !== undefined)
-      queryParams.is_published = params.isPublished;
-    if (params.createdBy) queryParams.created_by = params.createdBy;
-
     const response = await apiService.get(apiEndpoints.platform.services.base, {
-      params: queryParams,
+      params: buildServiceListQueryParams(params),
       suppressErrorAlert: true,
       responseSchema: servicesListSchema,
     });
@@ -244,12 +271,89 @@ export const listServicesPaginated = async (
 
     return {
       items,
-      total: Number.isNaN(total) ? items.length : total,
+      total,
       offset: params.offset ?? 0,
       limit: params.limit ?? null,
     };
   } catch (error: any) {
     console.error("List services (paginated) error:", error);
+    throw error;
+  }
+};
+
+const httpStatus = (error: unknown): number | undefined =>
+  (error as { response?: { status?: number } } | null)?.response?.status;
+
+export type ServiceListColumnsResult = {
+  columns: ServiceListColumnDef[];
+  /** `api` when GET /services/columns answered; otherwise the offline catalogue. */
+  source: "api" | "fallback";
+};
+
+/**
+ * Column catalogue for the service registry picker.
+ * Falls back to the offline catalogue only when the endpoint is absent (404/405).
+ * Other failures propagate so the hook can treat them as a load error.
+ */
+export const getServiceListColumns = async (): Promise<ServiceListColumnsResult> => {
+  try {
+    const response = await apiService.get(apiEndpoints.platform.services.columns, {
+      suppressErrorAlert: true,
+    });
+    const columns = parseServiceListColumnsPayload(response.data);
+    if (columns) return { columns, source: "api" };
+    console.warn(
+      "GET /services/columns returned an unexpected body; using the offline catalogue.",
+    );
+    return { columns: [...SERVICE_LIST_COLUMNS], source: "fallback" };
+  } catch (error) {
+    const status = httpStatus(error);
+    if (status === 404 || status === 405) {
+      return { columns: [...SERVICE_LIST_COLUMNS], source: "fallback" };
+    }
+    throw error;
+  }
+};
+
+/**
+ * Column preference for the service list.
+ * GET always returns 200 with role defaults when nothing is saved (`isDefault: true`).
+ */
+export const getServiceColumnPreference = async (): Promise<ServiceColumnPreference | null> => {
+  try {
+    const response = await apiService.get(
+      apiEndpoints.platform.columnPreferences(SERVICE_LIST_PREFERENCE_VIEW),
+      { suppressErrorAlert: true },
+    );
+    return parseServiceColumnPreferencePayload(response.data);
+  } catch (error) {
+    // Legacy: older builds returned 404 when nothing was saved.
+    if (httpStatus(error) === 404) return null;
+    throw error;
+  }
+};
+
+export const saveServiceColumnPreference = async (
+  visibleColumns: readonly string[],
+): Promise<ServiceColumnPreference | null> => {
+  const response = await apiService.put(
+    apiEndpoints.platform.columnPreferences(SERVICE_LIST_PREFERENCE_VIEW),
+    { visibleColumns: [...visibleColumns] },
+    { suppressErrorAlert: true },
+  );
+  return parseServiceColumnPreferencePayload(response.data);
+};
+
+/** DELETE resets to role defaults and returns them with `isDefault: true`. */
+export const resetServiceColumnPreference = async (): Promise<ServiceColumnPreference | null> => {
+  try {
+    const response = await apiService.delete(
+      apiEndpoints.platform.columnPreferences(SERVICE_LIST_PREFERENCE_VIEW),
+      { suppressErrorAlert: true },
+    );
+    return parseServiceColumnPreferencePayload(response.data);
+  } catch (error) {
+    if (httpStatus(error) === 404) return null;
     throw error;
   }
 };
@@ -277,6 +381,103 @@ export const getServiceById = async (serviceId: string): Promise<Service> => {
   }
 };
 
+function applyBillingFieldsToPayload(
+  apiPayload: Record<string, unknown>,
+  serviceData: Partial<Service>,
+): void {
+  if (serviceData.task_type) apiPayload.taskType = serviceData.task_type;
+  if (serviceData.costPerUnit !== undefined) {
+    apiPayload.costPerUnit = serviceData.costPerUnit;
+  }
+  // LLM only; the API rejects them for other task types.
+  if (serviceData.cachedInputCostPerUnit != null) {
+    apiPayload.cachedInputCostPerUnit = serviceData.cachedInputCostPerUnit;
+  }
+  if (serviceData.outputCostPerUnit != null) {
+    apiPayload.outputCostPerUnit = serviceData.outputCostPerUnit;
+  }
+  if (serviceData.unitSize !== undefined) {
+    apiPayload.unitSize = serviceData.unitSize;
+  }
+  if (serviceData.tierIds?.length) apiPayload.tierIds = serviceData.tierIds;
+}
+
+function applyHealthStatusToPayload(
+  apiPayload: Record<string, unknown>,
+  serviceData: Partial<Service>,
+): void {
+  if (!serviceData.healthStatus && !serviceData.status) return;
+  apiPayload.healthStatus = serviceData.healthStatus || {
+    status: serviceData.status || "active",
+    lastUpdated: new Date().toISOString(),
+  };
+}
+
+function buildCreateServiceApiPayload(
+  serviceData: Partial<Service>,
+): Record<string, unknown> {
+  const apiPayload: Record<string, unknown> = {
+    serviceId: serviceData.serviceId || serviceData.service_id,
+    name: serviceData.name,
+    description: serviceData.serviceDescription || serviceData.description,
+    hardwareDescription: serviceData.hardwareDescription,
+    publishedOn: serviceData.publishedOn || Math.floor(Date.now() / 1000),
+    modelId: serviceData.modelId || serviceData.model_id,
+    modelVersion:
+      serviceData.modelVersion || serviceData.model_version || "1.0",
+    endpoint: serviceData.endpoint || serviceData.endpoint_url,
+  };
+  applyAuthTokenToPayload(apiPayload, serviceData, { sendEmptyApiKey: true });
+  applyBillingFieldsToPayload(apiPayload, serviceData);
+  applyHealthStatusToPayload(apiPayload, serviceData);
+  return apiPayload;
+}
+
+function isPublishOnlyUpdate(serviceData: Partial<Service>): boolean {
+  return Boolean(
+    serviceData.serviceId &&
+      Object.hasOwn(serviceData, "isPublished") &&
+      Object.keys(serviceData).length <= 2,
+  );
+}
+
+function buildUpdateServiceApiPayload(
+  serviceData: Partial<Service>,
+): Record<string, unknown> {
+  if (isPublishOnlyUpdate(serviceData)) {
+    return {
+      serviceId: serviceData.serviceId || serviceData.service_id,
+      isPublished: serviceData.isPublished,
+    };
+  }
+
+  const apiPayload: Record<string, unknown> = {
+    serviceId: serviceData.serviceId || serviceData.service_id,
+    name: serviceData.name,
+    hardwareDescription: serviceData.hardwareDescription,
+    publishedOn: serviceData.publishedOn,
+    modelId: serviceData.modelId || serviceData.model_id,
+    modelVersion: serviceData.modelVersion || serviceData.model_version,
+    endpoint: serviceData.endpoint || serviceData.endpoint_url,
+  };
+  applyAuthTokenToPayload(apiPayload, serviceData, { sendEmptyApiKey: false });
+
+  // Preserve empty string so admins can clear an existing description.
+  if ("serviceDescription" in serviceData) {
+    apiPayload.serviceDescription = serviceData.serviceDescription;
+  } else if ("description" in serviceData) {
+    apiPayload.serviceDescription = serviceData.description;
+  }
+
+  applyBillingFieldsToPayload(apiPayload, serviceData);
+  applyHealthStatusToPayload(apiPayload, serviceData);
+
+  if (Object.hasOwn(serviceData, "isPublished")) {
+    apiPayload.isPublished = serviceData.isPublished;
+  }
+  return apiPayload;
+}
+
 /**
  * Create a new service
  * @param serviceData - The service data to create
@@ -286,51 +487,9 @@ export const createService = async (
   serviceData: Partial<Service>,
 ): Promise<Service> => {
   try {
-    // Transform snake_case to camelCase for API
-    // The API expects camelCase format
-    const apiPayload: Record<string, unknown> = {
-      serviceId: serviceData.serviceId || serviceData.service_id,
-      name: serviceData.name,
-      description: serviceData.serviceDescription || serviceData.description,
-      hardwareDescription: serviceData.hardwareDescription,
-      publishedOn: serviceData.publishedOn || Math.floor(Date.now() / 1000),
-      modelId: serviceData.modelId || serviceData.model_id,
-      modelVersion:
-        serviceData.modelVersion || serviceData.model_version || "1.0", // Default to '1.0' if not provided
-      endpoint: serviceData.endpoint || serviceData.endpoint_url,
-    };
-    applyAuthTokenToPayload(apiPayload, serviceData, { sendEmptyApiKey: true });
-
-    // Add billing/pricing fields if provided
-    if (serviceData.task_type) apiPayload.taskType = serviceData.task_type;
-    if (serviceData.costPerUnit !== undefined)
-      apiPayload.costPerUnit = serviceData.costPerUnit;
-    // LLM only; the API rejects them for other task types.
-    if (serviceData.cachedInputCostPerUnit != null)
-      apiPayload.cachedInputCostPerUnit = serviceData.cachedInputCostPerUnit;
-    if (serviceData.outputCostPerUnit != null)
-      apiPayload.outputCostPerUnit = serviceData.outputCostPerUnit;
-    if (serviceData.unitSize !== undefined)
-      apiPayload.unitSize = serviceData.unitSize;
-    if (serviceData.tierIds?.length) apiPayload.tierIds = serviceData.tierIds;
-
-    // Add optional healthStatus if provided
-    if (serviceData.healthStatus || serviceData.status) {
-      apiPayload.healthStatus = serviceData.healthStatus || {
-        status: serviceData.status || "active",
-        lastUpdated: new Date().toISOString(),
-      };
-    }
-
-    // The apiClient interceptor will automatically add:
-    // - Content-Type: application/json
-    // - Accept: application/json
-    // - Authorization: Bearer <token>
-    // - X-API-Key: <api_key> (if available)
-    // - x-auth-source: AUTH_TOKEN | API_KEY | BOTH
     const response = await apiService.post(
       apiEndpoints.platform.services.base,
-      apiPayload,
+      buildCreateServiceApiPayload(serviceData),
       { suppressErrorAlert: true, responseSchema: serviceSingleSchema },
     );
     return sanitizeService(response.data);
@@ -350,70 +509,9 @@ export const updateService = async (
   serviceData: Partial<Service>,
 ): Promise<Service> => {
   try {
-    // For publish/unpublish, only send serviceId and isPublished
-    // For other updates, send all fields
-    const isPublishUpdate =
-      serviceData.serviceId &&
-      serviceData.hasOwnProperty("isPublished") &&
-      Object.keys(serviceData).length <= 2;
-
-    let apiPayload: Record<string, unknown>;
-
-    if (isPublishUpdate) {
-      // Publish/unpublish: only send serviceId and isPublished
-      apiPayload = {
-        serviceId: serviceData.serviceId || serviceData.service_id,
-        isPublished: serviceData.isPublished,
-      };
-    } else {
-      // Full update: send all fields
-      apiPayload = {
-        serviceId: serviceData.serviceId || serviceData.service_id,
-        name: serviceData.name,
-        hardwareDescription: serviceData.hardwareDescription,
-        publishedOn: serviceData.publishedOn,
-        modelId: serviceData.modelId || serviceData.model_id,
-        modelVersion: serviceData.modelVersion || serviceData.model_version,
-        endpoint: serviceData.endpoint || serviceData.endpoint_url,
-      };
-      applyAuthTokenToPayload(apiPayload, serviceData, { sendEmptyApiKey: false });
-
-      // Preserve empty string so admins can clear an existing description.
-      if ("serviceDescription" in serviceData) {
-        apiPayload.serviceDescription = serviceData.serviceDescription;
-      } else if ("description" in serviceData) {
-        apiPayload.serviceDescription = serviceData.description;
-      }
-
-      // Add billing/pricing fields if provided (mirrors createService)
-      if (serviceData.task_type) apiPayload.taskType = serviceData.task_type;
-      if (serviceData.costPerUnit !== undefined)
-        apiPayload.costPerUnit = serviceData.costPerUnit;
-      if (serviceData.cachedInputCostPerUnit != null)
-        apiPayload.cachedInputCostPerUnit = serviceData.cachedInputCostPerUnit;
-      if (serviceData.outputCostPerUnit != null)
-        apiPayload.outputCostPerUnit = serviceData.outputCostPerUnit;
-      if (serviceData.unitSize !== undefined)
-        apiPayload.unitSize = serviceData.unitSize;
-      if (serviceData.tierIds?.length) apiPayload.tierIds = serviceData.tierIds;
-
-      // Add optional healthStatus if provided
-      if (serviceData.healthStatus || serviceData.status) {
-        apiPayload.healthStatus = serviceData.healthStatus || {
-          status: serviceData.status || "active",
-          lastUpdated: new Date().toISOString(),
-        };
-      }
-
-      // Add isPublished if provided
-      if (serviceData.hasOwnProperty("isPublished")) {
-        apiPayload.isPublished = serviceData.isPublished;
-      }
-    }
-
     const response = await apiService.patch(
       apiEndpoints.platform.services.base,
-      apiPayload,
+      buildUpdateServiceApiPayload(serviceData),
       { suppressErrorAlert: true, responseSchema: serviceSingleSchema },
     );
     return sanitizeService(response.data);

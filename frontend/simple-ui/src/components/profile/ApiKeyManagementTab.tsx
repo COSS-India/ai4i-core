@@ -54,7 +54,7 @@ import {
   StatusDot,
 } from "./applicationSurface";
 import DataTable, {
-  DataTableActions,
+  createActionsColumn,
   DEFAULT_PAGE_SIZE_OPTIONS,
   FieldLabel,
   type DataTableAction,
@@ -532,12 +532,15 @@ export default function ApiKeyManagementTab({
         sortAccessor: (key) =>
           key.created_at ? new Date(key.created_at).getTime() : 0,
         cell: (key) => (
-          <DataTableActions
-            justify="flex-end"
-            actions={(key.subRow ? subRowActions[key.subRow] : keyActions)(key)}
-          />
+          <Text fontSize="sm" color="ink.600">
+            {formatDate(key.created_at)}
+          </Text>
         ),
       },
+      createActionsColumn<ApiKeyTableRow>({
+        getActions: (key) =>
+          (key.subRow ? subRowActions[key.subRow] : keyActions)(key),
+      }),
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps -- toggleKeyExpanded only closes over the setter
   }, [mgmt, openSingleKeyBudget, collapsedKeyIds]);

@@ -33,7 +33,67 @@ interface ServiceDetailTabProps {
   onClose: () => void;
 }
 
-const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
+function optionalNumberToInput(value: number | null | undefined): string {
+  if (value == null) return "";
+  return String(value);
+}
+
+function serviceDetailLifecycleActions(options: {
+  selectedService: Service;
+  isRegistryReadOnly: boolean;
+  publishBlocked: boolean;
+  unpublishingServiceUuid: string | null;
+  publishingServiceUuid: string | null;
+  onRequestUnpublish: (service: Service) => void;
+  onRequestPublish: (service: Service) => void;
+}): React.ReactNode {
+  if (options.isRegistryReadOnly) return undefined;
+  const busy =
+    options.unpublishingServiceUuid !== null ||
+    options.publishingServiceUuid !== null;
+  if (options.selectedService.isPublished === true) {
+    return (
+      <Tooltip label="Unpublish" placement="top" hasArrow>
+        <IconButton
+          aria-label="Unpublish"
+          icon={<MdOutlineUnpublished />}
+          size="sm"
+          colorScheme="red"
+          variant="outline"
+          onClick={() => options.onRequestUnpublish(options.selectedService)}
+          isLoading={
+            options.unpublishingServiceUuid ===
+            options.selectedService.serviceId
+          }
+          isDisabled={busy}
+        />
+      </Tooltip>
+    );
+  }
+  const publishLabel = options.publishBlocked
+    ? "This service cannot be published because its associated model is deprecated. Restore the model to ACTIVE before publishing."
+    : "Publish";
+  return (
+    <Tooltip label={publishLabel} hasArrow placement="top">
+      <Box as="span" display="inline-block">
+        <IconButton
+          aria-label="Publish"
+          icon={<MdOutlineCheckCircle />}
+          size="sm"
+          colorScheme="green"
+          variant="outline"
+          onClick={() => options.onRequestPublish(options.selectedService)}
+          isLoading={
+            options.publishingServiceUuid === options.selectedService.serviceId
+          }
+          isDisabled={busy || options.publishBlocked}
+        />
+      </Box>
+    </Tooltip>
+  );
+}
+
+const ServiceDetailTab: React.FC<Readonly<ServiceDetailTabProps>> = ({
   selectedService,
   isRegistryReadOnly,
   isServiceModelDeprecated,
@@ -66,53 +126,15 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
       onClose={onClose}
       title={title}
       description="Service configuration."
-      actions={
-        !isRegistryReadOnly ? (
-          selectedService.isPublished === true ? (
-            <Tooltip label="Unpublish" placement="top" hasArrow>
-              <IconButton
-                aria-label="Unpublish"
-                icon={<MdOutlineUnpublished />}
-                size="sm"
-                colorScheme="red"
-                variant="outline"
-                onClick={() => onRequestUnpublish(selectedService)}
-                isLoading={unpublishingServiceUuid === selectedService.serviceId}
-                isDisabled={
-                  unpublishingServiceUuid !== null || publishingServiceUuid !== null
-                }
-              />
-            </Tooltip>
-          ) : (
-            <Tooltip
-              label={
-                publishBlocked
-                  ? "This service cannot be published because its associated model is deprecated. Restore the model to ACTIVE before publishing."
-                  : "Publish"
-              }
-              hasArrow
-              placement="top"
-            >
-              <Box as="span" display="inline-block">
-                <IconButton
-                  aria-label="Publish"
-                  icon={<MdOutlineCheckCircle />}
-                  size="sm"
-                  colorScheme="green"
-                  variant="outline"
-                  onClick={() => onRequestPublish(selectedService)}
-                  isLoading={publishingServiceUuid === selectedService.serviceId}
-                  isDisabled={
-                    unpublishingServiceUuid !== null ||
-                    publishingServiceUuid !== null ||
-                    publishBlocked
-                  }
-                />
-              </Box>
-            </Tooltip>
-          )
-        ) : undefined
-      }
+      actions={serviceDetailLifecycleActions({
+        selectedService,
+        isRegistryReadOnly,
+        publishBlocked,
+        unpublishingServiceUuid,
+        publishingServiceUuid,
+        onRequestUnpublish,
+        onRequestPublish,
+      })}
       footer={<FormActions hideSubmit cancelLabel="Close" onCancel={onClose} pt={0} />}
     >
       <VStack align="stretch" spacing={4}>
@@ -157,23 +179,17 @@ const ServiceDetailTab: React.FC<ServiceDetailTabProps> = ({
         isLoadingModels={false}
         filteredModelsForDropdown={[]}
         unitType={viewServiceUnitType}
-        pricePerUnit={
-          selectedService.costPerUnit != null ? String(selectedService.costPerUnit) : ""
-        }
+        pricePerUnit={optionalNumberToInput(selectedService.costPerUnit)}
         onPricePerUnitChange={() => undefined}
-        cachedInputPricePerUnit={
-          selectedService.cachedInputCostPerUnit != null
-            ? String(selectedService.cachedInputCostPerUnit)
-            : ""
-        }
+        cachedInputPricePerUnit={optionalNumberToInput(
+          selectedService.cachedInputCostPerUnit,
+        )}
         onCachedInputPricePerUnitChange={() => undefined}
-        outputPricePerUnit={
-          selectedService.outputCostPerUnit != null
-            ? String(selectedService.outputCostPerUnit)
-            : ""
-        }
+        outputPricePerUnit={optionalNumberToInput(
+          selectedService.outputCostPerUnit,
+        )}
         onOutputPricePerUnitChange={() => undefined}
-        unitSize={selectedService.unitSize != null ? String(selectedService.unitSize) : ""}
+        unitSize={optionalNumberToInput(selectedService.unitSize)}
         onUnitSizeChange={() => undefined}
         currency="INR"
         onCurrencyChange={() => undefined}

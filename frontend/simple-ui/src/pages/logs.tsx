@@ -757,11 +757,11 @@ const LogsPage: React.FC = () => {
         case "url":
           return (
             <Text
-              noOfLines={2}
-              maxW="400px"
               fontSize="sm"
               color="ink.700"
               fontFamily="mono"
+              noOfLines={1}
+              title={row.url || undefined}
             >
               {row.url || "—"}
             </Text>
@@ -778,12 +778,19 @@ const LogsPage: React.FC = () => {
               {row.status_code ?? "—"}
             </Text>
           );
-        case "error":
+        case "error": {
+          const errorText = row.error || "—";
           return (
-            <Text fontSize="sm" color="red.600" noOfLines={2} maxW="280px">
-              {row.error || "—"}
+            <Text
+              fontSize="sm"
+              color={row.error ? "red.600" : "ink.500"}
+              noOfLines={1}
+              title={row.error || undefined}
+            >
+              {errorText}
             </Text>
           );
+        }
         case "service":
           return (
             <Text fontSize="sm" color="ink.700">
@@ -820,12 +827,19 @@ const LogsPage: React.FC = () => {
               {row.end_user || "—"}
             </Text>
           );
-        case "metadata":
+        case "metadata": {
+          const metadataText = formatMetadataCell(row.metadata);
           return (
-            <Text fontSize="sm" color="ink.700" noOfLines={2} maxW="240px">
-              {formatMetadataCell(row.metadata)}
+            <Text
+              fontSize="sm"
+              color="ink.700"
+              noOfLines={1}
+              title={metadataText === "—" ? undefined : metadataText}
+            >
+              {metadataText}
             </Text>
           );
+        }
         case "method":
           return (
             <Text fontSize="sm" color="ink.700">
@@ -1370,7 +1384,6 @@ const LogsPage: React.FC = () => {
                     </Tooltip>
                   </HStack>
                 }
-                tableContainerProps={{ overflowX: "auto" }}
               />
 
               <TelemetryTraceDetailModal

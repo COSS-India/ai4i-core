@@ -118,10 +118,14 @@ export const apiEndpoints = {
     },
     services: {
       base: `${API_V1}/services`,
+      columns: `${API_V1}/services/columns`,
       byId: (serviceId: string) => `${API_V1}/services/${serviceId}`,
       /** Public (no JWT required) — absent from api_permissions.json, so validate allows anonymous. */
       tryItList: `${API_V1}/services/try-it-service-list`,
     },
+    /** Per-user column selection. View name for the service registry is `service-list`. */
+    columnPreferences: (view: string) =>
+      `${API_V1}/preferences/columns/${encodeURIComponent(view)}`,
     tryIt: {
       /** @deprecated Prefer nmt.tryIt — kept for NMT callers */
       execute: `${API_V1}/nmt/try-it`,

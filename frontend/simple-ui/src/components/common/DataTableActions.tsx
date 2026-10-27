@@ -2,6 +2,7 @@ import { Box, HStack, IconButton, Tooltip } from "@chakra-ui/react";
 import { DeleteIcon, DownloadIcon, EditIcon, ViewIcon } from "@chakra-ui/icons";
 import React from "react";
 import type { DataTableColumn } from "./DataTable";
+import { ADMIN_ACTIONS_COLUMN_WIDTH } from "./dataTableUtils";
 
 export type DataTableActionId =
   | "view"
@@ -126,31 +127,51 @@ export function DataTableActions({
   );
 }
 
+/** Compact Actions width under `table-layout: fixed` (fits ~3–4 icon buttons). */
+export const DATA_TABLE_ACTIONS_COLUMN_WIDTH = ADMIN_ACTIONS_COLUMN_WIDTH;
+
 export type CreateActionsColumnOptions<T> = {
   header?: React.ReactNode;
   id?: string;
   width?: string;
   minWidth?: string;
+  maxW?: string;
   align?: "left" | "center" | "right";
   getActions: (row: T, index: number) => DataTableAction[];
 };
+
+function resolveActionsJustify(
+  align: "left" | "center" | "right",
+): "flex-start" | "flex-end" | "center" | undefined {
+  if (align === "right") return "flex-end";
+  if (align === "center") return "center";
+  return undefined;
+}
 
 /** Builds a standard actions column that stops row-click propagation. */
 export function createActionsColumn<T>(
   options: CreateActionsColumnOptions<T>,
 ): DataTableColumn<T> {
-  const align = options.align ?? "left";
-  const justify = align === "right" ? "flex-end" : align === "center" ? "center" : undefined;
+  const align = options.align ?? "right";
+  const width = options.width ?? DATA_TABLE_ACTIONS_COLUMN_WIDTH;
+  const justify = resolveActionsJustify(align);
   return {
     id: options.id ?? "actions",
     header: options.header ?? "Actions",
     truncate: false,
-    width: options.width,
-    minWidth: options.minWidth ?? "120px",
+    width,
+    minWidth: options.minWidth ?? width,
+    maxW: options.maxW ?? width,
     align,
-    thProps: align !== "left" ? { textAlign: align } : undefined,
+    thProps: {
+      textAlign: align,
+      whiteSpace: "nowrap",
+      px: 2,
+    },
     tdProps: {
-      textAlign: align !== "left" ? align : undefined,
+      textAlign: align,
+      whiteSpace: "nowrap",
+      px: 2,
       onClick: (e) => e.stopPropagation(),
     },
     cell: (row, index) => (
