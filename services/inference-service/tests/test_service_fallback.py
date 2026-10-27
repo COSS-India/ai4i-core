@@ -266,3 +266,130 @@ def test_llm_stream_all_failing_is_503():
         patches, ["llm-b"], proxy.proxy_traced_stream(PATH, {"model": "llm-a", "messages": [], "stream": True}, None)
     )
     assert (kind, status) == ("error", 503) and result["error"]["type"] == "all_services_unavailable"
+
+
+# ── Stream start: headers and first line are time-limited ─────────────────────
+
+class _FakeResponse:
+    def __init__(self, lines, first_line_delay=0.0, status_code=200):
+        self.lines, self.first_line_delay, self.status_code, self.closed = lines, first_line_delay, status_code, False
+
+    async def aiter_lines(self):
+        await asyncio.sleep(self.first_line_delay)
+        for line in self.lines:
+            yield line
+
+    async def aread(self):
+        return b"{}"
+
+    async def aclose(self):
+        self.closed = True
+
+
+class _FakeClient:
+    def __init__(self, response, send_delay=0.0):
+        self.response, self.send_delay, self.closed = response, send_delay, False
+
+    def build_request(self, *args, **kwargs):
+        return object()
+
+    async def send(self, request, stream=True):
+        await asyncio.sleep(self.send_delay)
+        return self.response
+
+    async def aclose(self):
+        self.closed = True
+
+
+def _stream_proxy(client):
+    from services.llm_service import OpenAIProxyService
+
+    proxy = OpenAIProxyService()
+    proxy.timeout = 0.05
+    return proxy, patch("services.llm_service.httpx.AsyncClient", lambda *a, **k: client)
+
+
+def test_stream_hung_headers_is_a_502_error():
+    client = _FakeClient(_FakeResponse(["data: x"]), send_delay=1)
+    proxy, p = _stream_proxy(client)
+    with p:
+        kind, status, body = _run(proxy.proxy_stream("http://llm/v1/chat/completions", {"model": "m"}, {}))
+    assert (kind, status) == ("error", 502) and client.closed
+
+
+def test_stream_hung_first_line_is_a_502_error():
+    response = _FakeResponse(["data: x"], first_line_delay=1)
+    client = _FakeClient(response)
+    proxy, p = _stream_proxy(client)
+    with p:
+        kind, status, body = _run(proxy.proxy_stream("http://llm/v1/chat/completions", {"model": "m"}, {}))
+    assert (kind, status) == ("error", 502) and response.closed and client.closed
+
+
+def test_stream_first_line_is_re_yielded_and_nothing_is_lost():
+    response = _FakeResponse(["data: a", "", "data: [DONE]"])
+    client = _FakeClient(response)
+    proxy, p = _stream_proxy(client)
+
+    async def run():
+        kind, status, gen = await proxy.proxy_stream("http://llm/v1/chat/completions", {"model": "m"}, {})
+        return kind, status, [line async for line in gen]
+
+    with p:
+        kind, status, lines = _run(run())
+    assert (kind, status) == ("stream", 200)
+    assert lines == ["data: a\n", "\n", "data: [DONE]\n"]
+    assert response.closed and client.closed
+
+
+# ── Audio uploads fail over too ───────────────────────────────────────────────
+
+def _multipart_proxy(upstreams: dict):
+    from services.llm_service import LLMProxyError, OpenAIProxyService
+
+    proxy = OpenAIProxyService()
+
+    async def resolve(service_id, path):
+        return f"http://{service_id}/v1", {"id": service_id, "adapter_config": {"model_name": f"{service_id}-model"}}
+
+    async def prepare(path, payload, request=None):
+        sid = payload["model"]
+        if sid not in upstreams:
+            raise LLMProxyError(404, {"detail": "not found"}, service_id=sid)
+        return f"http://{sid}/v1", sid, f"{sid}-model", {**payload, "model": f"{sid}-model"}, {"id": sid}
+
+    async def post(path, url, files, data, service_info):
+        return upstreams[url.split("//")[1].split("/")[0]]
+
+    proxy.resolve_upstream_url = resolve
+    proxy._prepare_request = prepare
+    proxy._post_multipart = AsyncMock(side_effect=post)
+    return proxy
+
+
+FILES = {"file": ("a.wav", b"\x00\x01", "audio/wav")}
+
+
+def test_multipart_moves_to_fallback_on_5xx_with_the_same_file():
+    proxy = _multipart_proxy({"llm-a": (502, {"error": "down"}), "llm-b": (200, {"text": "hi"})})
+    request = MagicMock(headers={})
+    with patch("services.llm_service.get_fallbacks", AsyncMock(return_value=["llm-b"])):
+        status, body = _run(proxy.proxy_multipart("/v1/audio/transcriptions", files=FILES, data={"model": "llm-a"}, request=request))
+    assert (status, body) == (200, {"text": "hi"})
+    calls = proxy._post_multipart.call_args_list
+    assert [c.args[3]["model"] for c in calls] == ["llm-a-model", "llm-b-model"]
+    assert all(c.args[2] is FILES for c in calls)
+    assert request.state.service_id == "llm-b"
+
+
+def test_multipart_4xx_never_reads_the_fallback_map_and_all_failing_is_503():
+    proxy = _multipart_proxy({"llm-a": (400, {"error": "bad"})})
+    with patch("services.llm_service.get_fallbacks", AsyncMock(return_value=["llm-b"])) as get:
+        status, body = _run(proxy.proxy_multipart("/v1/audio/transcriptions", files=FILES, data={"model": "llm-a"}))
+    assert (status, body) == (400, {"error": "bad"})
+    get.assert_not_called()
+
+    proxy = _multipart_proxy({"llm-a": (502, {}), "llm-b": (503, {})})
+    with patch("services.llm_service.get_fallbacks", AsyncMock(return_value=["llm-b"])):
+        status, body = _run(proxy.proxy_multipart("/v1/audio/transcriptions", files=FILES, data={"model": "llm-a"}))
+    assert status == 503 and body["error"]["type"] == "all_services_unavailable"

@@ -223,7 +223,7 @@ class ServiceListFilterParams:
                 description=(
                     "Comma-separated tier IDs (UUIDs). Returns services assigned to ANY of them. "
                     "Open to every caller: the Application fallback picker lists the services "
-                    "mapped to the Institution's Tier with it."
+                    "mapped to the Institution's Tier with it; non-admins get published services only."
                 ),
             ),
         ] = None,
@@ -412,9 +412,13 @@ async def list_services(
     _reject_admin_only_filters(filters, is_admin)
     _validate_date_ranges(filters)
     task_types = await _resolve_task_types(filters.task_types, db)
+    tier_ids = _split_csv(filters.tier_ids) or None
+    # A non-admin filters by tier to pick from what their Tier can call (the
+    # Application fallback picker): published services only, whatever was sent.
+    is_published = True if (tier_ids and not is_admin) else filters.is_published
     items, total = await svc.list_services(
         task_types=task_types or None,
-        is_published=filters.is_published,
+        is_published=is_published,
         created_by=filters.created_by,
         offset=paging.offset,
         limit=paging.limit,
@@ -422,7 +426,7 @@ async def list_services(
             name=filters.name or None,
             service_id=filters.service_id or None,
             model_name=filters.model_name or None,
-            tier_ids=_split_csv(filters.tier_ids) or None,
+            tier_ids=tier_ids,
             created_from=filters.created_from,
             created_to=filters.created_to,
             published_from=filters.published_from,

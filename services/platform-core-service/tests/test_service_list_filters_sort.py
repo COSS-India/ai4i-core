@@ -170,6 +170,14 @@ class TestRoute:
         assert type(e.value).__name__ == "_ValidationError"  # conftest stub; real class is 422
 
     @pytest.mark.asyncio
+    async def test_non_admin_tier_ids_returns_published_only(self):
+        # The Application fallback picker: never a service the validator rejects.
+        svc = await _call("50", tier_ids="t1", is_published=False)
+        assert svc.list_services.call_args.kwargs["is_published"] is True
+        svc = await _call("1", tier_ids="t1", is_published=False)
+        assert svc.list_services.call_args.kwargs["is_published"] is False
+
+    @pytest.mark.asyncio
     async def test_admin_can_use_admin_only(self):
         svc = await _call("1", sort_by="input_price", tier_ids="a,b", created_from=date(2026, 1, 1))
         kw = svc.list_services.call_args.kwargs

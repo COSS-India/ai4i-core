@@ -536,14 +536,15 @@ class OpenAIProxyService:
         pair once headers arrive so the caller can inspect
         ``response.status_code`` before committing to a streaming reply.
 
-        Caller owns closing both (see ``_stream_lines``, which does this for
-        the success path). Raises ``UpstreamStreamError`` for a 4xx/5xx
-        upstream response.
+        Caller owns closing both (proxy_stream does this for the success
+        path). Raises ``UpstreamStreamError`` for a 4xx/5xx upstream response.
 
-        Uses a connect timeout but no read timeout: ``self.timeout`` is a
-        per-read timeout in httpx, and headers arriving fast just pushes the
-        wait for the first token into ``aiter_lines`` — a slow model under
-        load would otherwise abort the stream mid-response.
+        No httpx read timeout: ``self.timeout`` is per read in httpx, and a
+        slow model under load would otherwise abort the stream mid-response.
+        Only the start is time-limited — the response headers here, the
+        first line in proxy_stream — so a server that accepts the connection
+        and sends nothing raises ``httpx.ReadTimeout`` instead of hanging,
+        and the request can still fail over.
         """
         client = httpx.AsyncClient(
             timeout=httpx.Timeout(connect=self.timeout, read=None, write=self.timeout, pool=self.timeout)
@@ -554,7 +555,10 @@ class OpenAIProxyService:
             headers=headers,
         )
         try:
-            response = await client.send(request, stream=True)
+            response = await asyncio.wait_for(client.send(request, stream=True), timeout=self.timeout)
+        except asyncio.TimeoutError as exc:
+            await client.aclose()
+            raise httpx.ReadTimeout("LLM upstream sent no response headers in time") from exc
         except Exception:
             await client.aclose()
             raise
@@ -570,22 +574,6 @@ class OpenAIProxyService:
             raise UpstreamStreamError(response.status_code, body)
 
         return client, response
-
-    async def _stream_lines(
-        self, client: httpx.AsyncClient, response: httpx.Response
-    ) -> AsyncIterator[str]:
-        """
-        Yield raw SSE lines (blank lines included, to preserve event framing)
-        from an already-open streaming response. Closes the client/response
-        once the stream ends or the consumer stops iterating early (e.g. the
-        browser disconnects).
-        """
-        try:
-            async for line in response.aiter_lines():
-                yield line
-        finally:
-            await response.aclose()
-            await client.aclose()
 
     @staticmethod
     def _with_include_usage(payload: Any) -> Any:
@@ -623,6 +611,11 @@ class OpenAIProxyService:
         Upstream is expected to already be an OpenAI-spec SSE emitter
         (vLLM/gemma server), so this passes bytes through rather than
         re-parsing and re-serializing each chunk.
+
+        The stream only counts as started once its first line arrives within
+        ``self.timeout`` (the headers are limited in open_stream). Until then
+        nothing has reached the client, so a hung upstream is a 502 "error"
+        the caller can still fail over; after it there is no read limit.
         """
         logger.info("LLM proxy (stream) -> %s", path)
         try:
@@ -633,9 +626,31 @@ class OpenAIProxyService:
             logger.warning(_UPSTREAM_FAILED_LOG, path, exc)
             return "error", 502, {"error": {"message": str(exc), "type": "upstream_error"}}
 
+        lines = response.aiter_lines()
+        try:
+            first_line: Optional[str] = await asyncio.wait_for(lines.__anext__(), timeout=self.timeout)
+        except StopAsyncIteration:
+            first_line = None
+        except (asyncio.TimeoutError, httpx.RequestError) as exc:
+            await response.aclose()
+            await client.aclose()
+            logger.warning(_UPSTREAM_FAILED_LOG, path, type(exc).__name__)
+            return "error", 502, {
+                "error": {"message": "Upstream LLM stream did not start in time", "type": "upstream_error"}
+            }
+
         async def gen() -> AsyncIterator[str]:
-            async for line in self._stream_lines(client, response):
-                yield f"{line}\n"
+            # Raw SSE lines, blank lines included (they frame events); closes
+            # the client/response once the stream ends or the consumer stops
+            # iterating early (e.g. the browser disconnects).
+            try:
+                if first_line is not None:
+                    yield f"{first_line}\n"
+                async for line in lines:
+                    yield f"{line}\n"
+            finally:
+                await response.aclose()
+                await client.aclose()
 
         return "stream", 200, gen()
 
@@ -875,7 +890,9 @@ class OpenAIProxyService:
 
         Endpoint resolution uses MMS via the `model` form field — the OpenAI
         service identifier (same as JSON routes). The real upstream model name
-        is injected from adapter_config before forwarding.
+        is injected from adapter_config before forwarding. If that upstream is
+        unreachable (transport error / 5xx) the upload moves to the
+        Application's fallbacks for the service, like the JSON routes.
         """
         data = dict(data or {})
         service_id = data.get("model", "") or ""
@@ -926,6 +943,36 @@ class OpenAIProxyService:
             self._seed_model_attrs(model_attrs, service_id, model)
 
         logger.info("LLM proxy (multipart) -> %s (service_id=%s)", url, service_id)
+        status_code, body = await self._post_multipart(path, url, files, data, service_info)
+        if status_code >= 500:
+            # Same rule as the JSON routes: only an unreachable model moves the
+            # upload to the Application's fallbacks. The file bytes are in
+            # memory, so every fallback gets the same upload.
+            tried = False
+            async for fb_id, fb_url, fb_model, fb_data, fb_info in self._fallbacks_for(
+                path, data, service_id, request, status_code
+            ):
+                tried = True
+                with traced_span("model") as fb_model_attrs:
+                    self._seed_model_attrs(fb_model_attrs, fb_id, fb_model)
+                status_code, body = await self._post_multipart(path, fb_url, files, fb_data, fb_info)
+                if status_code < 500:
+                    if request is not None:
+                        request.state.service_id = fb_id
+                    break
+            if tried and status_code >= 500:
+                status_code, body = 503, _all_unavailable(service_id)
+        return status_code, body
+
+    async def _post_multipart(
+        self,
+        path: str,
+        url: str,
+        files: Dict[str, Any],
+        data: Dict[str, Any],
+        service_info: Dict[str, Any],
+    ) -> Tuple[int, Any]:
+        """One multipart upload to ``url``; a transport failure is a 502."""
         # No content_type override: httpx computes the multipart boundary
         # Content-Type itself from `files`, as long as headers doesn't
         # already set one — _build_headers only ever adds Authorization.
