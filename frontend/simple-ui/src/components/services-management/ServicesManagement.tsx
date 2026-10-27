@@ -50,8 +50,164 @@ function pageDescriptionForRole(isRegistryReadOnly: boolean): string {
   return EDITOR_PAGE_DESCRIPTION;
 }
 
+function serviceRowId(service: Service): string {
+  return service.serviceId || service.service_id || "";
+}
+
+function resolveDrawerFlags(options: {
+  isViewingService: boolean;
+  selectedService: Service | null;
+  editingService: Service | null;
+  isRegistryReadOnly: boolean;
+  isCreateOpen: boolean;
+  isCreateServiceTabDisabled: boolean;
+}): {
+  showServiceView: boolean;
+  showServiceEdit: boolean;
+  showServiceCreate: boolean;
+  showCreateAction: boolean;
+} {
+  const showServiceView = Boolean(
+    options.isViewingService && options.selectedService,
+  );
+  const showServiceEdit =
+    Boolean(options.editingService) &&
+    !options.isRegistryReadOnly &&
+    !showServiceView;
+  const showServiceCreate =
+    options.isCreateOpen && !showServiceEdit && !showServiceView;
+  const showCreateAction =
+    !options.isRegistryReadOnly && !options.isCreateServiceTabDisabled;
+  return {
+    showServiceView,
+    showServiceEdit,
+    showServiceCreate,
+    showCreateAction,
+  };
+}
+
+function serverRegistryProps(options: {
+  usesServer: boolean;
+  catalogue: readonly ServiceListColumnDef[];
+  setServerFilterValue: (columnId: string, value: string) => void;
+  setRegistryPage: (page: number) => void;
+  setRegistryPageSize: (size: number) => void;
+}): {
+  serverColumns: readonly ServiceListColumnDef[] | undefined;
+  onServerFilterChange: ((columnId: string, value: string) => void) | undefined;
+  onServerPageChange: ((page: number) => void) | undefined;
+  onServerPageSizeChange: ((size: number) => void) | undefined;
+} {
+  if (!options.usesServer) {
+    return {
+      serverColumns: undefined,
+      onServerFilterChange: undefined,
+      onServerPageChange: undefined,
+      onServerPageSizeChange: undefined,
+    };
+  }
+  return {
+    serverColumns: options.catalogue,
+    onServerFilterChange: options.setServerFilterValue,
+    onServerPageChange: options.setRegistryPage,
+    onServerPageSizeChange: options.setRegistryPageSize,
+  };
+}
+
+function createLeaveHref(
+  createReturnTo: string | null,
+): { href: string } | undefined {
+  if (!createReturnTo) return undefined;
+  return { href: createReturnTo };
+}
+
+function pickCreateCancelHandler(
+  createReturnTo: string | null,
+  leaveToCaller: () => void,
+  closeCreate: () => void,
+): () => void {
+  if (createReturnTo) return leaveToCaller;
+  return closeCreate;
+}
+
+function whenTrue<T>(condition: boolean, value: T): T | undefined {
+  if (!condition) return undefined;
+  return value;
+}
+
+function whenTrueNode(
+  condition: boolean,
+  node: React.ReactNode,
+): React.ReactNode {
+  if (!condition) return null;
+  return node;
+}
+
+function serviceLabel(
+  service: { name?: string; serviceId?: string; service_id?: string } | null,
+  fallback: string,
+): string {
+  if (!service) return fallback;
+  if (service.name) return service.name;
+  if (service.serviceId) return service.serviceId;
+  if (service.service_id) return service.service_id;
+  return fallback;
+}
+
+function formActionsDisabled(
+  canCreateService: boolean,
+  isSubmitting: boolean,
+): boolean {
+  if (isSubmitting) return true;
+  return !canCreateService;
+}
+
+function isSameServiceId(
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean {
+  if (!left || !right) return false;
+  return left === right;
+}
+
+function buildServiceDetailDrawer(options: {
+  show: boolean;
+  selectedService: Service | null;
+  isRegistryReadOnly: boolean;
+  selectedServiceModelDeprecated: boolean | null;
+  viewServiceUnitType: string;
+  unpublishingServiceUuid: string | null;
+  publishingServiceUuid: string | null;
+  onRequestUnpublish: (service: Service) => void;
+  onRequestPublish: (service: Service) => void;
+  onClose: () => void;
+}): React.ReactNode {
+  if (!options.show) return null;
+  if (!options.selectedService) return null;
+  return (
+    <ServiceDetailTab
+      selectedService={options.selectedService}
+      isRegistryReadOnly={options.isRegistryReadOnly}
+      isServiceModelDeprecated={isServiceModelDeprecated}
+      selectedServiceModelDeprecated={options.selectedServiceModelDeprecated}
+      viewServiceUnitType={options.viewServiceUnitType}
+      unpublishingServiceUuid={options.unpublishingServiceUuid}
+      publishingServiceUuid={options.publishingServiceUuid}
+      onRequestUnpublish={options.onRequestUnpublish}
+      onRequestPublish={options.onRequestPublish}
+      onClose={options.onClose}
+    />
+  );
+}
+
 const CREATE_SERVICE_FORM_ID = "create-service-form";
 const EDIT_SERVICE_FORM_ID = "edit-service-form";
+
+// Form id helpers sit below the constants they reference.
+function serviceFormId(editingService: Service | null): string {
+  if (editingService) return EDIT_SERVICE_FORM_ID;
+  return CREATE_SERVICE_FORM_ID;
+}
 
 function isServiceModelDeprecated(
   service: Service | null | undefined,
@@ -287,8 +443,13 @@ const ServicesManagement: React.FC = () => {
   } = useServicesManagement();
 
   const leaveCreateToCaller = useFormPageLeave(
-    createReturnTo ? { href: createReturnTo } : undefined,
+    createLeaveHref(createReturnTo),
     releaseCreateForm,
+  );
+  const createCancelHandler = pickCreateCancelHandler(
+    createReturnTo,
+    leaveCreateToCaller,
+    closeCreateModal,
   );
 
   const { user } = useAuth();
@@ -458,15 +619,50 @@ const ServicesManagement: React.FC = () => {
       serviceNameError={serviceNameError}
       hardwareDescriptionError={hardwareDescriptionError}
       onSubmit={handleSubmit}
-      formId={editingService ? EDIT_SERVICE_FORM_ID : CREATE_SERVICE_FORM_ID}
+      formId={serviceFormId(editingService)}
     />
   );
 
-  const showServiceView = Boolean(isViewingService && selectedService);
-  const showServiceEdit = Boolean(editingService) && !isRegistryReadOnly && !showServiceView;
-  const showServiceCreate = isCreateOpen && !showServiceEdit && !showServiceView;
+  const {
+    showServiceView,
+    showServiceEdit,
+    showServiceCreate,
+    showCreateAction,
+  } = resolveDrawerFlags({
+    isViewingService,
+    selectedService,
+    editingService,
+    isRegistryReadOnly,
+    isCreateOpen,
+    isCreateServiceTabDisabled,
+  });
   const pageDescription = pageDescriptionForRole(isRegistryReadOnly);
-  const showCreateAction = !isRegistryReadOnly && !isCreateServiceTabDisabled;
+  const serverProps = serverRegistryProps({
+    usesServer: serviceListUsesServer,
+    catalogue: serviceListCatalogue,
+    setServerFilterValue,
+    setRegistryPage,
+    setRegistryPageSize,
+  });
+  const actionsDisabled = formActionsDisabled(canCreateService, isSubmitting);
+  const createAction = whenTrue(
+    showCreateAction,
+    <CreateButton onClick={openCreateModal}>Create Service</CreateButton>,
+  );
+  const createDrawerBody = whenTrueNode(showServiceCreate, serviceForm);
+  const editDrawerBody = whenTrueNode(showServiceEdit, serviceForm);
+  const detailDrawer = buildServiceDetailDrawer({
+    show: showServiceView,
+    selectedService,
+    isRegistryReadOnly,
+    selectedServiceModelDeprecated,
+    viewServiceUnitType,
+    unpublishingServiceUuid,
+    publishingServiceUuid,
+    onRequestUnpublish: requestUnpublish,
+    onRequestPublish: requestPublish,
+    onClose: () => handleTabChange(0),
+  });
 
   return (
     <>
@@ -474,11 +670,7 @@ const ServicesManagement: React.FC = () => {
         crumbs={false}
         title="Services Management"
         description={pageDescription}
-        actions={
-          showCreateAction ? (
-            <CreateButton onClick={openCreateModal}>Create Service</CreateButton>
-          ) : undefined
-        }
+        actions={createAction}
       />
       <ServiceRegistryTab
         items={registryTableItems}
@@ -487,9 +679,7 @@ const ServicesManagement: React.FC = () => {
         onSortChange={handleRegistrySortChange}
         isLoading={isLoading}
         totalServicesCount={totalServicesCount}
-        onRowClick={(service) =>
-          handleViewService(service.serviceId || service.service_id || "")
-        }
+        onRowClick={(service) => handleViewService(serviceRowId(service))}
         tableKey={tableKey}
         searchQuery={searchQuery}
         onSearchQueryChange={setSearchQuery}
@@ -503,14 +693,14 @@ const ServicesManagement: React.FC = () => {
         tierFilterOptions={tierFilterOptions}
         hasActiveFilters={hasActiveFilters}
         onClearFilters={clearAllFilters}
-        serverColumns={serviceListUsesServer ? serviceListCatalogue : undefined}
+        serverColumns={serverProps.serverColumns}
         serverFilterValues={serverFilters}
-        onServerFilterChange={serviceListUsesServer ? setServerFilterValue : undefined}
+        onServerFilterChange={serverProps.onServerFilterChange}
         serverPage={registryPage}
         serverPageSize={registryPageSize}
         serverTotal={totalServicesCount}
-        onServerPageChange={serviceListUsesServer ? setRegistryPage : undefined}
-        onServerPageSizeChange={serviceListUsesServer ? setRegistryPageSize : undefined}
+        onServerPageChange={serverProps.onServerPageChange}
+        onServerPageSizeChange={serverProps.onServerPageSizeChange}
         columnPicker={
           <ServiceListColumnPicker
             columns={serviceListCatalogue}
@@ -531,44 +721,26 @@ const ServicesManagement: React.FC = () => {
           <FormActions
             cancelLabel="Cancel"
             submitLabel="Create Service"
-            onCancel={createReturnTo ? leaveCreateToCaller : closeCreateModal}
+            onCancel={createCancelHandler}
             submitType="submit"
             form={CREATE_SERVICE_FORM_ID}
             isLoading={isSubmitting}
             loadingText="Creating..."
-            isDisabled={!canCreateService || isSubmitting}
+            isDisabled={actionsDisabled}
             justify="space-between"
             pt={0}
           />
         }
       >
-        {showServiceCreate ? serviceForm : null}
+        {createDrawerBody}
       </FormDrawer>
-      {showServiceView && selectedService ? (
-        <ServiceDetailTab
-          selectedService={selectedService}
-          isRegistryReadOnly={isRegistryReadOnly}
-          isServiceModelDeprecated={isServiceModelDeprecated}
-          selectedServiceModelDeprecated={selectedServiceModelDeprecated}
-          viewServiceUnitType={viewServiceUnitType}
-          unpublishingServiceUuid={unpublishingServiceUuid}
-          publishingServiceUuid={publishingServiceUuid}
-          onRequestUnpublish={requestUnpublish}
-          onRequestPublish={requestPublish}
-          onClose={() => handleTabChange(0)}
-        />
-      ) : null}
+      {detailDrawer}
       <FormDrawer
         isOpen={showServiceEdit}
         onClose={handleCancelForm}
         lockDismiss={isSubmitting}
         size="wide"
-        title={
-          editingService?.name ||
-          editingService?.serviceId ||
-          editingService?.service_id ||
-          "Edit Service"
-        }
+        title={serviceLabel(editingService, "Edit Service")}
         description="Update pricing and tier mapping. Service metadata is read-only."
         footer={
           <FormActions
@@ -578,13 +750,13 @@ const ServicesManagement: React.FC = () => {
             form={EDIT_SERVICE_FORM_ID}
             isLoading={isSubmitting}
             loadingText="Saving..."
-            isDisabled={!canCreateService || isSubmitting}
+            isDisabled={actionsDisabled}
             justify="space-between"
             pt={0}
           />
         }
       >
-        {showServiceEdit ? serviceForm : null}
+        {editDrawerBody}
       </FormDrawer>
 
       <ConfirmDialog
@@ -595,16 +767,17 @@ const ServicesManagement: React.FC = () => {
         body={
           <>
             Are you sure you want to delete the service{" "}
-            <strong>
-              {serviceToDelete?.name || serviceToDelete?.service_id}
-            </strong>
+            <strong>{serviceLabel(serviceToDelete, "this service")}</strong>
             {"? This action cannot be undone."}
           </>
         }
         confirmLabel="Confirm"
         cancelLabel="Cancel"
         confirmColorScheme="red"
-        isConfirmLoading={deletingServiceUuid === serviceToDelete?.serviceId}
+        isConfirmLoading={isSameServiceId(
+          deletingServiceUuid,
+          serviceToDelete?.serviceId,
+        )}
         confirmLoadingText="Deleting..."
         leastDestructiveRef={cancelRef}
       />
@@ -617,18 +790,17 @@ const ServicesManagement: React.FC = () => {
         body={
           <>
             Are you sure you want to publish{" "}
-            <strong>
-              {confirmPublishService?.name || confirmPublishService?.serviceId}
-            </strong>
+            <strong>{serviceLabel(confirmPublishService, "this service")}</strong>
             {"? The service will be available for use."}
           </>
         }
         confirmLabel="Confirm"
         cancelLabel="Cancel"
         confirmColorScheme="green"
-        isConfirmLoading={
-          publishingServiceUuid === confirmPublishService?.serviceId
-        }
+        isConfirmLoading={isSameServiceId(
+          publishingServiceUuid,
+          confirmPublishService?.serviceId,
+        )}
         confirmLoadingText="Publishing..."
         leastDestructiveRef={cancelPublishRef}
       />
@@ -642,8 +814,7 @@ const ServicesManagement: React.FC = () => {
           <>
             Are you sure you want to unpublish{" "}
             <strong>
-              {confirmUnpublishService?.name ||
-                confirmUnpublishService?.serviceId}
+              {serviceLabel(confirmUnpublishService, "this service")}
             </strong>
             {"? The service will no longer be available for use."}
           </>
@@ -651,9 +822,10 @@ const ServicesManagement: React.FC = () => {
         confirmLabel="Confirm"
         cancelLabel="Cancel"
         confirmColorScheme="red"
-        isConfirmLoading={
-          unpublishingServiceUuid === confirmUnpublishService?.serviceId
-        }
+        isConfirmLoading={isSameServiceId(
+          unpublishingServiceUuid,
+          confirmUnpublishService?.serviceId,
+        )}
         confirmLoadingText="Unpublishing..."
         leastDestructiveRef={cancelUnpublishRef}
       />
