@@ -97,7 +97,7 @@
     { "endpoint": "POST:/api/v1/pii/admin/tenant-domain",                  "permissionRequired": 91, "description": "Upsert tenant→PII-domain mapping (pii_guard.admin)" },
     { "endpoint": "POST:/api/v1/pii/admin/tenant-domain/delete",           "permissionRequired": 91, "description": "Delete tenant→PII-domain mapping (pii_guard.admin)" },
     { "endpoint": "GET:/api/v1/pii/admin/audit-logs",                      "permissionRequired": 92, "description": "List PII audit logs (pii_guard.audit.read)" },
-    { "endpoint": "GET:/api/v1/pii/entities",                              "permissionRequired": 1, "description": "List supported PII entities (admin sentinel — ADMIN only)" },
+    { "endpoint": "GET:/api/v1/pii/entities",                              "permissionRequired": 105, "description": "List supported PII entities (pii_types.read — ADMIN only)" },
 
     { "endpoint": "GET:/api/v1/policy-service/pii-types",                  "permissionRequired": 105, "description": "List PII types (pii_types.read)" },
     { "endpoint": "POST:/api/v1/policy-service/pii-types",                 "permissionRequired": 106, "description": "Create PII type (pii_types.create)" },
@@ -197,7 +197,7 @@
     { "endpoint": "PUT:/api/v1/policies",                                 "permissionRequired": 102, "description": "Update a policy (policies.update — ADMIN only)" },
     { "endpoint": "DELETE:/api/v1/policies/{id}",                         "permissionRequired": 103, "description": "Delete a policy (policies.delete — ADMIN only)" },
 
-    { "endpoint": "POST:/api/v1/pii/simulate",                            "permissionRequired": 1,   "description": "Run a PII policy against sample text in the Playground (admin sentinel — ADMIN only)" },
+    { "endpoint": "POST:/api/v1/pii/simulate",                            "permissionRequired": 100, "description": "Run a PII policy against sample text in the Playground (policies.read; inference-service require_admin allows ADMIN only)" },
 
     { "endpoint": "GET:/api/v1/preferences/columns/service-list",          "permissionRequired": 51, "description": "Get the caller's saved Service List columns (service.read)" },
     { "endpoint": "PUT:/api/v1/preferences/columns/service-list",          "permissionRequired": 51, "description": "Save the caller's Service List columns (service.read)" },

@@ -555,10 +555,17 @@ def _gateway_permissions() -> dict:
 
 
 class TestGatewayPermissions:
-    def test_no_policy_entry_uses_the_admin_sentinel(self):
+    def test_no_policy_or_pii_entry_uses_the_admin_sentinel(self):
         on_sentinel = [k for k, v in _gateway_permissions().items()
-                       if k.split(":", 1)[1].startswith("/api/v1/policies") and v == 1]
+                       if k.split(":", 1)[1].startswith(("/api/v1/policies", "/api/v1/pii")) and v == 1]
         assert on_sentinel == []
+
+    @pytest.mark.parametrize("endpoint,permission", [
+        ("GET:/api/v1/pii/entities", 105),   # pii_types.read
+        ("POST:/api/v1/pii/simulate", 100),  # policies.read; inference-service require_admin keeps it ADMIN-only
+    ])
+    def test_pii_playground_entries(self, endpoint, permission):
+        assert _gateway_permissions().get(endpoint) == permission
 
     @pytest.mark.parametrize("method,path", sorted(
         (m, f"/api/v1{r.path}") for r in _policy_routes.router.routes for m in r.methods
