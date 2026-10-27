@@ -74,9 +74,6 @@ class Settings(BaseSettings):
     AUTH_SERVICE_URL: Optional[str] = Field(
         None, description="Internal URL of auth-service (fallback config on a Redis miss)"
     )
-    SERVICE_FALLBACK_CACHE_SECONDS: int = Field(
-        30, description="In-process cache of each Application's fallback map, in seconds"
-    )
 
     # Triton configuration
     DEFAULT_TRITON_TIMEOUT: int = Field(300, description="Triton inference HTTP timeout in seconds")

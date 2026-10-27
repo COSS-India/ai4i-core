@@ -534,18 +534,11 @@ def _seed_llm_request_attrs(req_attrs: dict, request: Request) -> None:
     req_attrs["task_type"] = "llm"
 
 
-def _served_service(req_attrs: Optional[dict], request: Request) -> Dict[str, str]:
-    """Which service answered (OpenAIProxyService._record_served): stamped on
-    the request span — billing writes usage_events from it — and returned as
-    headers, since an OpenAI-shaped body has no place for it."""
-    served = getattr(request.state, "service_id", "") or ""
-    requested = getattr(request.state, "requested_service_id", "") or served
-    fallback_used = bool(getattr(request.state, "fallback_used", False))
-    if req_attrs is not None:
-        req_attrs["service_id"] = served
-        req_attrs["requested_service_id"] = requested
-        req_attrs["fallback_used"] = fallback_used
-    return {"X-Served-Service-ID": served, "X-Fallback-Used": "true" if fallback_used else "false"}
+def _stamp_served_service(req_attrs: dict, request: Request) -> None:
+    """Which service answered (OpenAIProxyService._record_served), stamped on
+    the request span — billing writes usage_events from it."""
+    req_attrs["service_id"] = getattr(request.state, "service_id", "") or ""
+    req_attrs["fallback_used"] = bool(getattr(request.state, "fallback_used", False))
 
 
 async def _run_llm_chat_consolidated(request: Request, payload: Dict[str, Any], path: str) -> JSONResponse:
@@ -555,7 +548,7 @@ async def _run_llm_chat_consolidated(request: Request, payload: Dict[str, Any], 
         status_code, body = await OpenAIProxyService().proxy_traced(
             path=path, payload=payload, request=request,
         )
-        served_headers = _served_service(req_attrs, request)
+        _stamp_served_service(req_attrs, request)
         # Same values llm_service.py already read from the vLLM `usage` block
         # onto the ai-inference span (via ai4i_core.context) — bridged here so
         # ObservabilityMiddleware reads one shared count instead of re-parsing
@@ -566,7 +559,7 @@ async def _run_llm_chat_consolidated(request: Request, payload: Dict[str, Any], 
             req_attrs["status"] = "failure"
             req_attrs["status_code"] = status_code
 
-    return JSONResponse(status_code=status_code, content=body, headers=served_headers)
+    return JSONResponse(status_code=status_code, content=body)
 
 
 async def _run_llm_chat_stream(
@@ -616,12 +609,10 @@ async def _run_llm_chat_stream(
         _bridge_llm_usage_to_request(request)
         return JSONResponse(status_code=status_code, content=result)
 
-    served_headers = _served_service(None, request)
-
     async def gen():
         with traced_span("request", root=True, classify_status=True) as req_attrs:
             _seed_llm_request_attrs(req_attrs, request)
-            _served_service(req_attrs, request)
+            _stamp_served_service(req_attrs, request)
             async for chunk in result:
                 yield chunk
         # Token usage only arrives in the final SSE chunk, so this must run
@@ -637,7 +628,7 @@ async def _run_llm_chat_stream(
         media_type="text/event-stream",
         # Anti-buffering headers: without these an intermediate proxy can
         # accumulate the whole SSE body and defeat live streaming.
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", **served_headers},
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 

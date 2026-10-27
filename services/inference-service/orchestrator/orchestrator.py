@@ -17,7 +17,6 @@ from trace.request_span import (
 
 from services.base.task_service import BaseTaskService
 from services.service_fallback import (
-    fallback_span,
     get_fallbacks,
     log_all_failed,
     log_failover,
@@ -124,17 +123,14 @@ class Orchestrator:
             # Run the requested service; if it's unreachable, the Application's
             # fallbacks for it in order (none configured → exactly as before).
             requested_id = service_info.get("serviceId") or ""
-            task_service, task_response, served_info, attempts = await self._run_with_fallbacks(
+            task_service, task_response, served_info, _ = await self._run_with_fallbacks(
                 payload, service_info, None, request
             )
 
             served_id = served_info.get("serviceId") or ""
             fallback_used = served_id != requested_id
             attrs["service_id"] = served_id
-            attrs["requested_service_id"] = requested_id
             attrs["fallback_used"] = fallback_used
-            if attempts:
-                attrs["failover_reasons"] = ",".join(f"{sid}:{reason}" for sid, reason in attempts)
             if request is not None and fallback_used:
                 request.state.service_id = served_id
                 set_metric_labels(request, model_id=served_info.get("model_id") or "")
@@ -142,8 +138,6 @@ class Orchestrator:
                 model_block = task_response.get("model")
                 if isinstance(model_block, dict):
                     model_block["serviceId"] = served_id
-                    model_block["requestedServiceId"] = requested_id
-                    model_block["fallbackUsed"] = fallback_used
 
             # Mirror the count task_service already computed once onto
             # request.state, so ObservabilityMiddleware can read it instead of
@@ -201,9 +195,9 @@ class Orchestrator:
         requested service (bad input, 4xx, …) is raised unchanged, and so is
         every failure when no fallback is configured. A fallback that can't
         be used (unpublished, out of Tier, rejects the input) is skipped.
-        Each attempt gets its own model / ai-inference spans; a failed
-        attempt's ai-inference span carries zero tokens, so only the service
-        that answers is billed.
+        A failed attempt's ai-inference span carries zero tokens, so only
+        the service that answers is billed; each failover is logged
+        (service_failover).
 
         ``fallbacks`` None = look them up only once the requested service has
         actually failed over, so a healthy request never pays for the lookup.
@@ -234,32 +228,22 @@ class Orchestrator:
                 reason=failed_reason, attempt=index,
             )
             attempt_payload = self._with_service_id(payload, service_id)
-            with fallback_span(
-                requested=requested_id, failed=failed_id, fallback=service_id,
-                reason=failed_reason, attempt=index,
-            ) as fb_attrs:
-                try:
-                    # Copied, not mutated: the resolver hands out its cached dict.
-                    info = {**await self._resolve_service_and_model(attempt_payload, attempt=index), "attempt": index}
-                    # auth-service checks Tier only when the fallbacks are saved;
-                    # the tenant's Tier or the service's tier_ids may have changed
-                    # since, so re-check against the live catalogue.
-                    self._enforce_tier_gate(info, request)
-                    task_service = self._get_task_service(info)
-                except Exception as exc:
-                    log_fallback_skipped(requested=requested_id, skipped=service_id, reason=type(exc).__name__)
-                    attempts.append((service_id, "not_eligible"))
-                    fb_attrs["outcome"] = "not_eligible"
-                    continue
-                fb_attrs["model_name"] = info.get("name", "")
-                try:
-                    response = await task_service.process(attempt_payload, info)
-                    fb_attrs["outcome"] = "success"
-                    return task_service, response, info, attempts
-                except Exception as exc:
-                    error_reason = failover_reason(exc) or "fallback_rejected"
-                    attempts.append((service_id, error_reason))
-                    fb_attrs["error_reason"] = error_reason
+            try:
+                info = await self._resolve_service_and_model(attempt_payload)
+                # auth-service checks Tier only when the fallbacks are saved;
+                # the tenant's Tier or the service's tier_ids may have changed
+                # since, so re-check against the live catalogue.
+                self._enforce_tier_gate(info, request)
+                task_service = self._get_task_service(info)
+            except Exception as exc:
+                log_fallback_skipped(requested=requested_id, skipped=service_id, reason=type(exc).__name__)
+                attempts.append((service_id, "not_eligible"))
+                continue
+            try:
+                response = await task_service.process(attempt_payload, info)
+                return task_service, response, info, attempts
+            except Exception as exc:
+                attempts.append((service_id, failover_reason(exc) or "fallback_rejected"))
 
         log_all_failed(requested=requested_id, attempts=attempts)
         raise AllServicesUnavailableError(requested_id, attempts)
@@ -302,7 +286,7 @@ class Orchestrator:
         )
         return service_class(service_info=service_info)  # type: ignore
 
-    async def _resolve_service_and_model(self, payload: Dict[str, Any], attempt: int = 0) -> Dict[str, Any]:
+    async def _resolve_service_and_model(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
         Resolve the model service details from the raw request payload.
         Extracted here so the Orchestrator can route to the correct model-specific
@@ -322,10 +306,6 @@ class Orchestrator:
         with traced_span("model") as attrs:
             attrs["task_type"] = payload.get("task_type", "").upper()
             attrs.update(get_context_attributes())
-            # One model span per attempt: 0 = the requested service,
-            # 1.. = the Application's fallbacks, in order.
-            attrs["attempt"] = attempt
-            attrs["is_fallback"] = attempt > 0
 
             # Extract serviceId: check config block first, then top-level
             config_block = payload.get("config") or {}

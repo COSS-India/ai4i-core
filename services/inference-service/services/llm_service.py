@@ -21,7 +21,6 @@ from ai4i_core.observability.utils import get_llm_cached_tokens, get_llm_usage
 from config import settings
 from inference.inference_server_resolver import InferenceServerResolver
 from services.service_fallback import (
-    fallback_span,
     get_fallbacks,
     log_all_failed,
     log_failover,
@@ -103,7 +102,6 @@ class _FallbackOutcome:
 
     ok: bool
     served_id: str
-    attempt: int
     model_name: str
     payload: Any
     status_code: int
@@ -428,12 +426,11 @@ class OpenAIProxyService:
 
     @staticmethod
     def _record_served(request: Optional[Any], requested_id: str, served_id: str) -> None:
-        """Which service answered, for the route's request span, response
-        headers and metrics (ObservabilityMiddleware reads service_id)."""
+        """Which service answered, for the route's request span and metrics
+        (ObservabilityMiddleware reads service_id)."""
         if request is None:
             return
         request.state.service_id = served_id
-        request.state.requested_service_id = requested_id
         request.state.fallback_used = served_id != requested_id
 
     async def _prepare_fallback(
@@ -474,7 +471,7 @@ class OpenAIProxyService:
 
         async def attempt(fallback_id, url, model_name, fb_payload, service_info, index):
             sc, b = await self._forward_traced(
-                path, url, fallback_id, model_name, fb_payload, service_info, attempt=index,
+                path, url, fallback_id, model_name, fb_payload, service_info,
             )
             return sc < 400, sc, b
 
@@ -498,10 +495,9 @@ class OpenAIProxyService:
         ``attempt(fallback_id, url, model_name, payload, service_info,
         index) -> (ok, status_code, result)``.
 
-        Each fallback gets a "fallback request" span and a service_failover
-        log line; one that can't be used (unpublished, out of Tier) is
-        skipped. The first ``ok`` wins; all failing → 503
-        ALL_SERVICES_UNAVAILABLE.
+        Each fallback gets a service_failover log line; one that can't be
+        used (unpublished, out of Tier) is skipped. The first ``ok``
+        wins; all failing → 503 ALL_SERVICES_UNAVAILABLE.
         """
         attempts = [(requested_id, reason)]
         failed = requested_id
@@ -510,35 +506,25 @@ class OpenAIProxyService:
                 requested=requested_id, failed=failed, next_service=fallback_id,
                 reason=attempts[-1][1], attempt=index,
             )
-            with fallback_span(
-                requested=requested_id, failed=failed, fallback=fallback_id,
-                reason=attempts[-1][1], attempt=index,
-            ) as fb_attrs:
-                failed = fallback_id
-                prepared = await self._prepare_fallback(path, request, requested_id, fallback_id, payload)
-                if prepared is None:
-                    attempts.append((fallback_id, "not_eligible"))
-                    fb_attrs["outcome"] = "not_eligible"
-                    continue
-                url, model_name, fb_payload, service_info = prepared
-                fb_attrs["model_name"] = model_name
-                ok, status_code, result = await attempt(
-                    fallback_id, url, model_name, fb_payload, service_info, index,
+            failed = fallback_id
+            prepared = await self._prepare_fallback(path, request, requested_id, fallback_id, payload)
+            if prepared is None:
+                attempts.append((fallback_id, "not_eligible"))
+                continue
+            url, model_name, fb_payload, service_info = prepared
+            ok, status_code, result = await attempt(
+                fallback_id, url, model_name, fb_payload, service_info, index,
+            )
+            if ok:
+                return _FallbackOutcome(
+                    ok=True, served_id=fallback_id, model_name=model_name,
+                    payload=fb_payload, status_code=status_code, result=result,
                 )
-                fb_attrs["status_code"] = status_code
-                if ok:
-                    fb_attrs["outcome"] = "success"
-                    return _FallbackOutcome(
-                        ok=True, served_id=fallback_id, attempt=index, model_name=model_name,
-                        payload=fb_payload, status_code=status_code, result=result,
-                    )
-                error_reason = classify_upstream_failure(status_code=status_code) or "fallback_rejected"
-                fb_attrs["error_reason"] = error_reason
-                attempts.append((fallback_id, error_reason))
+            attempts.append((fallback_id, classify_upstream_failure(status_code=status_code) or "fallback_rejected"))
 
         log_all_failed(requested=requested_id, attempts=attempts)
         return _FallbackOutcome(
-            ok=False, served_id=requested_id, attempt=0, model_name="", payload=payload,
+            ok=False, served_id=requested_id, model_name="", payload=payload,
             status_code=503, result=AllServicesUnavailableError(requested_id, attempts).to_body(),
         )
 
@@ -550,14 +536,11 @@ class OpenAIProxyService:
         model_name: str,
         payload: Any,
         service_info: Dict[str, Any],
-        attempt: int = 0,
     ) -> Tuple[int, Any]:
         """One upstream call inside its own model + ai-inference spans, so
         every fallback attempt is traced (and billed only if it answers)."""
         with traced_span("model") as model_attrs:
             self._seed_model_attrs(model_attrs, service_id, model_name)
-            model_attrs["attempt"] = attempt
-            model_attrs["is_fallback"] = attempt > 0
 
             async with traced_inference(payload, _TASK_TYPE_LLM, logger) as infer_attrs:
                 # service_id, tenantId and model_name must be set explicitly:
@@ -565,8 +548,6 @@ class OpenAIProxyService:
                 infer_attrs["service_id"] = service_id
                 infer_attrs["tenantId"] = model_attrs.get("tenantId", "")
                 infer_attrs["model_name"] = model_attrs["model_name"]
-                infer_attrs["attempt"] = attempt
-                infer_attrs["is_fallback"] = attempt > 0
 
                 logger.info("LLM proxy -> %s (service_id=%s)", url, service_id)
                 try:
@@ -810,7 +791,6 @@ class OpenAIProxyService:
 
         kind, status_code, result = await self.proxy_stream(path=url, payload=payload, service_info=service_info)
         requested_id = service_id
-        served_attempt = 0
         reason = classify_upstream_failure(status_code=status_code) if kind == "error" else None
         fallbacks = await get_fallbacks(requested_id) if reason else []
         if fallbacks:
@@ -827,7 +807,6 @@ class OpenAIProxyService:
             if outcome.ok:
                 kind = "stream"
                 service_id, model_name, payload = outcome.served_id, outcome.model_name, outcome.payload
-                served_attempt = outcome.attempt
         self._record_served(request, requested_id, service_id)
 
         if kind == "error":
@@ -846,8 +825,6 @@ class OpenAIProxyService:
         async def gen() -> AsyncIterator[str]:
             with traced_span("model") as model_attrs:
                 self._seed_model_attrs(model_attrs, service_id, model_name)
-                model_attrs["attempt"] = served_attempt
-                model_attrs["is_fallback"] = served_attempt > 0
                 set_llm_usage_model_name(model_attrs["model_name"])
 
                 async with traced_inference(payload, _TASK_TYPE_LLM, logger) as infer_attrs:
@@ -857,8 +834,6 @@ class OpenAIProxyService:
                     infer_attrs["tenantId"] = model_attrs.get("tenantId", "")
                     infer_attrs["model_name"] = model_attrs["model_name"]
                     infer_attrs["output_type"] = "text"
-                    infer_attrs["attempt"] = served_attempt
-                    infer_attrs["is_fallback"] = served_attempt > 0
 
                     if not guardrail_ctx.active:
                         # No guardrail — pass lines through unchanged.

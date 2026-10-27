@@ -346,12 +346,6 @@ class BaseTaskService:
                 # The PPU Kafka consumer reads only the ai-inference span for
                 # billing, so it must always be present there (mirrors llm_service.py).
                 span_ctx["service_id"] = service_id
-                # Which attempt this is (0 = the requested service, 1.. = the
-                # Application's fallbacks) — set by the Orchestrator, so the
-                # trace view can tell the attempts' ai-inference spans apart.
-                attempt = int(serviceInfo.get("attempt") or 0)
-                span_ctx["attempt"] = attempt
-                span_ctx["is_fallback"] = attempt > 0
                 # input_type/output_type (payload-shape guessing) are seeded by
                 # traced_inference for the LLM path only — Triton uses unit_type instead.
                 span_ctx.pop("input_type", None)

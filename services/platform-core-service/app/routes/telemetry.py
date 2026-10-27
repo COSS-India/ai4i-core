@@ -35,39 +35,7 @@ ALLOWED_ROLES = {_ROLE_ADMIN, _ROLE_MODERATOR, _ROLE_TENANT_ADMIN}
 # Fixed display order for the trace-detail waterfall: every task type
 # (LLM, NMT, ASR, ...) resolves a model before calling it, so this sequence
 # is always correct regardless of task type or nesting shape.
-_SPAN_ORDER = {"request": 0, "fallback request": 0, "model": 1, "ai-inference": 2}
-# Spans of a service-fallback attempt (AI4IDS-3488) keep their real names —
-# billing reads "ai-inference" by name — and carry attributes.attempt
-# (0 = requested service, 1.. = fallbacks) instead. The trace view groups by
-# attempt and labels those spans, e.g. "fallback ai-inference".
-_FALLBACK_LABELLED_SPANS = ("model", "ai-inference")
-
-
-def _span_attempt(span: dict) -> int:
-    try:
-        return int((span.get("attributes") or {}).get("attempt") or 0)
-    except (TypeError, ValueError):
-        return 0
-
-
-def _span_sort_key(span: dict) -> tuple:
-    """Attempt first, then the fixed request → model → ai-inference order."""
-    return (_span_attempt(span), _SPAN_ORDER.get(span.get("name"), len(_SPAN_ORDER)))
-
-
-def _span_display_name(span: dict) -> str:
-    """'model' / 'ai-inference' of a fallback attempt shown as 'fallback model'
-    / 'fallback ai-inference' ('fallback 2 …' from the second fallback on)."""
-    name = span.get("name") or ""
-    attempt = _span_attempt(span)
-    if attempt <= 0:
-        return name
-    prefix = "fallback" if attempt == 1 else f"fallback {attempt}"
-    if name in _FALLBACK_LABELLED_SPANS:
-        return f"{prefix} {name}"
-    if name == "fallback request" and attempt > 1:
-        return f"{prefix} request"
-    return name
+_SPAN_ORDER = {"request": 0, "model": 1, "ai-inference": 2}
 
 # Safety cap on how many matching trace_ids we'll enumerate to build the
 # by_level/by_task breakdown. Keeps a very large filtered result set from
@@ -916,13 +884,8 @@ async def get_trace_by_id(
         # trace land within a few ms of each other regardless of actual duration
         # -- unusable for chronological ordering, and start_time/end_time never
         # reach this index. Every task type follows the same fixed span
-        # sequence, so rank by name instead of by (unreliable) time — grouped
-        # by fallback attempt, so a failed-over request reads request → model
-        # → ai-inference → fallback request → fallback model → fallback
-        # ai-inference. Labels are display-only; stored span names are unchanged.
-        spans.sort(key=_span_sort_key)
-        for span in spans:
-            span["name"] = _span_display_name(span)
+        # sequence, so rank by name instead of by (unreliable) time.
+        spans.sort(key=lambda s: _SPAN_ORDER.get(s.get("name"), len(_SPAN_ORDER)))
 
         trace_response = TraceResponse(
             trace_id=trace_id,

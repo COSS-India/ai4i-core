@@ -294,7 +294,6 @@ def test_llm_unreachable_moves_to_fallback():
         ))
     assert status == 200
     assert request.state.service_id == "llm-b"
-    assert request.state.requested_service_id == "llm-a"
     assert request.state.fallback_used is True
     # The fallback gets its own upstream model name.
     forwarded_payload = proxy._forward_traced.call_args.args[4]
@@ -315,13 +314,6 @@ def test_llm_every_service_failing_returns_503():
 
 # ── Where the fallback map comes from ─────────────────────────────────────────
 
-@pytest.fixture(autouse=True)
-def _clear_local_cache():
-    service_fallback._local_cache.clear()
-    yield
-    service_fallback._local_cache.clear()
-
-
 def test_get_fallbacks_reads_redis():
     with patch.object(service_fallback, "_read_redis", AsyncMock(return_value={"nmt-a": ["nmt-b"]})), \
          patch.object(service_fallback, "_read_auth_service", AsyncMock()) as auth:
@@ -336,12 +328,25 @@ def test_get_fallbacks_loads_from_auth_service_on_redis_miss():
     auth.assert_awaited_once_with("42")
 
 
-def test_get_fallbacks_uses_local_cache():
+def test_get_fallbacks_reads_redis_on_every_call():
     redis = AsyncMock(return_value={"nmt-a": ["nmt-b"]})
     with patch.object(service_fallback, "_read_redis", redis):
         _run(service_fallback.get_fallbacks("nmt-a", app_id="42"))
         _run(service_fallback.get_fallbacks("nmt-a", app_id="42"))
-    assert redis.await_count == 1
+    assert redis.await_count == 2
+
+
+def test_redis_read_uses_the_guardrail_client():
+    client = MagicMock()
+    client.get = AsyncMock(return_value='{"nmt-a": ["nmt-b"]}')
+    with patch("services.guardrail._get_redis", return_value=client):
+        assert _run(service_fallback._read_redis("42")) == {"nmt-a": ["nmt-b"]}
+    client.get.assert_awaited_once_with("auth:app:42:service_fallbacks")
+
+
+def test_redis_unavailable_reads_as_a_miss():
+    with patch("services.guardrail._get_redis", return_value=None):
+        assert _run(service_fallback._read_redis("42")) is None
 
 
 def test_get_fallbacks_without_application_is_empty():
@@ -438,85 +443,34 @@ def test_unreachable_primary_reads_the_map_then_fails_over():
     assert served["serviceId"] == "nmt-b"
 
 
-# ── A "fallback" span per fallback attempt ───────────────────────────────────
+# ── The failover log line (what the Jira asks for) ───────────────────────────
 
-def _record_spans():
-    """Patch traced_span so each opened span's (name, attrs) is captured."""
-    from contextlib import contextmanager
-
-    spans = []
-
-    @contextmanager
-    def fake_span(name, **kwargs):
-        attrs = {}
-        spans.append((name, attrs))
-        yield attrs
-
-    return spans, patch("trace.request_span.traced_span", fake_span)
-
-
-def test_fallback_span_records_success():
+def test_orchestrator_logs_each_failover():
     orch = _make_orchestrator()
     _wire(orch, {
         "nmt-a": _task_service(exc=UpstreamUnavailableError("down", "timeout")),
         "nmt-b": _task_service({"output": ["b"]}),
     })
-    spans, patcher = _record_spans()
-    with patcher:
+    with patch("orchestrator.orchestrator.log_failover") as log:
         _run(orch._run_with_fallbacks(PAYLOAD, _info("nmt-a"), ["nmt-b"], None))
-
-    fallback = [attrs for name, attrs in spans if name == "fallback request"]
-    assert len(fallback) == 1
-    assert fallback[0]["requested_service_id"] == "nmt-a"
-    assert fallback[0]["failed_service_id"] == "nmt-a"
-    assert fallback[0]["failover_reason"] == "timeout"
-    assert fallback[0]["fallback_service_id"] == "nmt-b"
-    assert fallback[0]["attempt"] == 1
-    assert fallback[0]["outcome"] == "success"
+    log.assert_called_once_with(
+        requested="nmt-a", failed="nmt-a", next_service="nmt-b", reason="timeout", attempt=1,
+    )
 
 
-def test_fallback_spans_record_skip_and_failure():
-    orch = _make_orchestrator()
-    _wire(orch, {
-        "nmt-a": _task_service(exc=UpstreamUnavailableError("down", "timeout")),
-        "nmt-c": _task_service(exc=UpstreamUnavailableError("down", "upstream_5xx")),
-    })
-    spans, patcher = _record_spans()
-    with patcher, pytest.raises(AllServicesUnavailableError):
-        _run(orch._run_with_fallbacks(PAYLOAD, _info("nmt-a"), ["nmt-gone", "nmt-c"], None))
-
-    fallback = [attrs for name, attrs in spans if name == "fallback request"]
-    assert [(f["fallback_service_id"], f["outcome"]) for f in fallback] == [
-        ("nmt-gone", "not_eligible"),
-        ("nmt-c", "failed"),
-    ]
-    assert fallback[1]["failed_service_id"] == "nmt-gone"
-    assert fallback[1]["error_reason"] == "upstream_5xx"
-
-
-def test_no_fallback_span_when_requested_service_answers():
-    orch = _make_orchestrator()
-    _wire(orch, {"nmt-a": _task_service({"output": ["a"]})})
-    spans, patcher = _record_spans()
-    with patcher:
-        _run(orch._run_with_fallbacks(PAYLOAD, _info("nmt-a"), ["nmt-b"], None))
-    assert not [name for name, _ in spans if name == "fallback request"]
-
-
-def test_llm_fallback_span_records_success():
+def test_llm_logs_each_failover_and_marks_fallback_used():
     proxy = _llm_proxy()
     proxy._forward_traced = AsyncMock(return_value=(200, {"choices": []}))
-    spans, patcher = _record_spans()
-    with patcher, patch("services.llm_service.get_fallbacks", AsyncMock(return_value=["llm-b"])):
+    request = MagicMock()
+    with patch("services.llm_service.get_fallbacks", AsyncMock(return_value=["llm-b"])),          patch("services.llm_service.log_failover") as log:
         _run(proxy._fallback_if_unreachable(
-            "/v1/chat/completions", MagicMock(), "llm-a", {"model": "x"}, 502, {"detail": "down"}
+            "/v1/chat/completions", request, "llm-a", {"model": "x"}, 502, {"detail": "down"}
         ))
-    fallback = [attrs for name, attrs in spans if name == "fallback request"]
-    assert len(fallback) == 1
-    assert fallback[0]["fallback_service_id"] == "llm-b"
-    assert fallback[0]["model_name"] == "llm-b-model"
-    assert fallback[0]["status_code"] == 200
-    assert fallback[0]["outcome"] == "success"
+    log.assert_called_once_with(
+        requested="llm-a", failed="llm-a", next_service="llm-b", reason="upstream_5xx", attempt=1,
+    )
+    assert request.state.service_id == "llm-b"
+    assert request.state.fallback_used is True
 
 
 # ── Shared LLM fallback loop (_run_fallbacks), as both callers use it ────────
@@ -534,7 +488,7 @@ def test_run_fallbacks_stream_style_first_open_wins():
         "/v1/chat/completions", MagicMock(), "llm-a", "upstream_5xx", ["llm-b", "llm-c"], {"model": "x"}, attempt,
     ))
     assert calls == [("llm-b", "llm-b-model", 1), ("llm-c", "llm-c-model", 2)]
-    assert outcome.ok and outcome.served_id == "llm-c" and outcome.attempt == 2
+    assert outcome.ok and outcome.served_id == "llm-c"
     assert outcome.model_name == "llm-c-model"
     assert outcome.payload["model"] == "llm-c-model"
 
@@ -572,4 +526,4 @@ def test_run_fallbacks_skips_a_fallback_that_cannot_be_resolved():
     outcome = _run(proxy._run_fallbacks(
         "/v1/chat/completions", MagicMock(), "llm-a", "upstream_5xx", ["llm-gone", "llm-b"], {"model": "x"}, attempt,
     ))
-    assert outcome.served_id == "llm-b" and outcome.attempt == 2
+    assert outcome.served_id == "llm-b"
