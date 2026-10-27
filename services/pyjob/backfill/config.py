@@ -27,8 +27,8 @@ class BackfillSettings(BaseSettings):
     PROMETHEUS_API_PATH_LABEL: str = "exported_endpoint"
 
     # The IST days to backfill, both inclusive (YYYY-MM-DD). BACKFILL_FROM must
-    # be a day Prometheus still has from its start; BACKFILL_TO must end before
-    # usage_events begins.
+    # be a day Prometheus still has from its start; no day may have recorded
+    # (rollup) rows in daily_usage, nor be within the nightly rollup's reach.
     BACKFILL_FROM: Optional[date] = None
     BACKFILL_TO: Optional[date] = None
 

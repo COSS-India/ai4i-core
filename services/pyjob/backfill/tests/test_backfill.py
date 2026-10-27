@@ -1,13 +1,23 @@
-"""backfill: the day's PromQL, LLM pricing, and the rows built from a day's
-Prometheus results. No database or Prometheus needed."""
+"""backfill: the day's PromQL, LLM pricing, the rows built from a day's
+Prometheus results, and the guard on which days may be backfilled. No
+database or Prometheus needed (the guard's queries are faked)."""
+import asyncio
 import sys
+from contextlib import asynccontextmanager
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 # services/pyjob on the path, so `backfill`, `bootstrap` and `jobs` import.
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from backfill.engine import LlmService, Lookups, build_day_rows, day_queries, token_rates  # noqa: E402
+from backfill import engine  # noqa: E402
+from backfill.engine import (  # noqa: E402
+    BackfillError, LlmService, Lookups, build_day_rows, check_days_not_recorded, day_queries,
+    first_rollup_day, token_rates,
+)
 
 TIER = "5ab0c0de-0000-4000-8000-00000000000a"
 DAY = date(2026, 10, 6)
@@ -124,3 +134,50 @@ def test_rows_that_round_to_nothing_are_dropped():
     results = {"requests": [_series(0.3, tenant_id="7", application_id="11", service_id="llm-svc")],
                "successful": [], "tokens": []}
     assert build_day_rows(DAY, results, _lookups()) == []
+
+
+# ── Which days may be backfilled ───────────────────────────────────────────
+
+TODAY = date(2026, 10, 27)
+
+
+def _fake_db(monkeypatch, rollup_days=(), event_days=()):
+    """platform_core_session answering the guard's two queries: daily_usage
+    rollup rows per day, then usage_events rows per day and task type."""
+    results = [
+        [SimpleNamespace(usage_date=d, n=n) for d, n in rollup_days],
+        [SimpleNamespace(day=d, task_type=t, n=n) for d, t, n in event_days],
+    ]
+
+    class Session:
+        async def execute(self, *_):
+            rows = results.pop(0)
+            return SimpleNamespace(all=lambda: rows)
+
+    @asynccontextmanager
+    async def session():
+        yield Session()
+
+    monkeypatch.setattr(engine, "platform_core_session", session)
+
+
+def test_the_rollup_reaches_yesterday_and_its_lookback():
+    assert first_rollup_day(TODAY, 2) == date(2026, 10, 24)
+
+
+def test_days_the_rollup_still_reaches_are_refused(monkeypatch):
+    _fake_db(monkeypatch)
+    with pytest.raises(BackfillError, match="rollup's reach"):
+        asyncio.run(check_days_not_recorded(date(2026, 10, 16), date(2026, 10, 24), TODAY, 2))
+
+
+def test_days_with_recorded_rollup_rows_are_refused(monkeypatch):
+    _fake_db(monkeypatch, rollup_days=[(date(2026, 10, 18), 5)])
+    with pytest.raises(BackfillError, match=r"2026-10-18 \(5\)"):
+        asyncio.run(check_days_not_recorded(date(2026, 10, 16), date(2026, 10, 18), TODAY, 2))
+
+
+def test_a_day_with_usage_events_but_no_rollup_rows_is_allowed(monkeypatch):
+    """The day recording started: its events cover only part of it."""
+    _fake_db(monkeypatch, event_days=[(date(2026, 10, 16), "llm", 42), (date(2026, 10, 16), "nmt", 4)])
+    asyncio.run(check_days_not_recorded(date(2026, 10, 16), date(2026, 10, 16), TODAY, 2))
