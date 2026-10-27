@@ -77,6 +77,7 @@ export const FIELD_HINTS = {
       /**
        * Shown beside the sample, never inside it, so the downloaded JSON stays spec-only.
        * hrefs come from getModelSpecUrls() (ULCA_MODEL_SPEC_URL / OPENAI_SPEC_URL).
+       * sampleKind picks the card's download from MODEL_SAMPLES (utils/sampleModelJson).
        */
       specReferences: [
         {
@@ -85,6 +86,8 @@ export const FIELD_HINTS = {
           shortLabel: "ULCA spec",
           text: "NLP model details must follow the ULCA Model specification.",
           linkLabel: "View ULCA Model specification",
+          sampleKind: "nlp",
+          sampleLabel: "Download NLP sample JSON",
         },
         {
           id: "openai",
@@ -92,6 +95,8 @@ export const FIELD_HINTS = {
           shortLabel: "OpenAI spec",
           text: "LLM model details must follow the OpenAI specification.",
           linkLabel: "View OpenAI specification",
+          sampleKind: "llm",
+          sampleLabel: "Download LLM sample JSON",
         },
       ],
     },

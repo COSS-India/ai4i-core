@@ -23,6 +23,7 @@ import React, { useEffect, useState } from "react";
 import { FiArrowUpRight, FiChevronDown, FiDownload, FiInfo } from "react-icons/fi";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import { getModelSpecUrls } from "../../config/runtimeConfig";
+import type { ModelSampleKind } from "../../utils/sampleModelJson";
 import FieldHint from "../common/FieldHint";
 import FieldLabel from "../common/FieldLabel";
 import FormSection from "../common/FormSection";
@@ -35,7 +36,7 @@ type ModelFormProps = {
   extra?: React.ReactNode;
   fileInputRef?: React.RefObject<HTMLInputElement>;
   onFileChange?: (event: React.ChangeEvent<HTMLInputElement>) => void;
-  onDownloadSample?: () => void;
+  onDownloadSample?: (kind: ModelSampleKind) => void;
   isUploading?: boolean;
   isValidating?: boolean;
   validationErrors?: string[];
@@ -51,7 +52,7 @@ type ModelJsonUploadProps = Pick<ModelFormProps, "fileInputRef" | "onDownloadSam
   onFileChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
 };
 
-/** Create-mode upload: spec links, JSON file picker, and field requirements. */
+/** Create-mode upload: per-kind spec cards (spec link + sample), JSON file picker, and field requirements. */
 function ModelJsonUpload({
   fileName,
   isBusy,
@@ -104,23 +105,24 @@ function ModelJsonUpload({
               {spec.shortLabel}
               <FiArrowUpRight aria-hidden />
             </Link>
+            <Button
+              mt={3}
+              size="xs"
+              variant="outline"
+              bg="white"
+              leftIcon={<FiDownload aria-hidden />}
+              onClick={() => onDownloadSample?.(spec.sampleKind)}
+              aria-label={spec.sampleLabel}
+            >
+              Sample JSON
+            </Button>
           </Box>
         ))}
       </SimpleGrid>
       <FormControl>
-        <HStack justify="space-between" mb={2} align="center">
-          <FieldLabel formLabelProps={{ mb: 0, htmlFor: "model-json-file" }}>
-            Upload JSON File
-          </FieldLabel>
-          <Button
-            size="sm"
-            variant="outline"
-            leftIcon={<FiDownload aria-hidden />}
-            onClick={onDownloadSample}
-          >
-            Download Sample JSON
-          </Button>
-        </HStack>
+        <FieldLabel formLabelProps={{ mb: 2, htmlFor: "model-json-file" }}>
+          Upload JSON File
+        </FieldLabel>
         <Box
           position="relative"
           h="40px"
@@ -218,7 +220,10 @@ function ModelJsonUpload({
               refUrl, languages (Indic and English codes only), licenseUrl,
               isLangDetectionEnabled, isMultilingual, adapterConfig, schema,
               benchmarks. modelId is generated from name:version. submittedOn and
-              updatedOn are server-set unless you override them.
+              updatedOn are server-set unless you override them. NLP models also
+              need classInstance matching task.type (e.g. NMTTaskService for nmt).
+              LLM models need adapterConfig.model_name set to the name the AI
+              server uses. Start from the NLP or LLM sample above.
             </Text>
           </Collapse>
         </Box>
