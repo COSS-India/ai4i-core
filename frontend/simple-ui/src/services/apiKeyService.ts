@@ -52,8 +52,6 @@ function normalizeKey(raw: unknown): ApiKeyRecord {
     rotated_key_expires_at:
       row.rotated_key_expires_at != null ? asString(row.rotated_key_expires_at) : undefined,
     rotated_key: row.rotated_key != null ? asString(row.rotated_key) : undefined,
-    api_key_revoked_at:
-      row.api_key_revoked_at != null ? asString(row.api_key_revoked_at) : undefined,
     rotated_at: row.rotated_at != null ? asString(row.rotated_at) : undefined,
   };
 }
@@ -193,7 +191,6 @@ export function toLegacyApiKeyResponse(key: ApiKeyRecord): APIKeyResponse {
     created_by: key.created_by,
     rotated_key_expires_at: key.rotated_key_expires_at,
     rotated_key: key.rotated_key,
-    api_key_revoked_at: key.api_key_revoked_at,
     rotated_at: key.rotated_at,
   } as APIKeyResponse;
 }

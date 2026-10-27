@@ -38,6 +38,7 @@ export function InstitutionAdminHome({
             <InstitutionDetailsPanel
               institution={ownInstitution.institution}
               tierName={ownInstitution.tierName}
+              tierLimits={ownInstitution.tierLimits}
               budgetLimit={ownInstitution.budgetLimit}
               currency={ownInstitution.currency}
               isLoading={ownInstitution.isLoading}

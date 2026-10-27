@@ -12,7 +12,7 @@ from sqlalchemy import text
 
 from app.core.exceptions import AppError, EntityNotFoundError, ValidationError
 from app.models.role import Permission, Role
-from app.models.user import CreationType, User
+from app.models.user import User
 from app.core.constants import RoleName
 from app.utils.common import role_name_to_str
 from app.repositories.role_repository import RoleRepository
@@ -110,14 +110,13 @@ class RoleService:
     def _assert_role_assignable_to_creation_type(target: Optional[User], role_key: str) -> None:
         """Raise 422 if a non-USER role is assigned to a self-registered user.
 
-        Self-registered accounts (email/password signup, Google OAuth) stay
-        USER-only; only admin-provisioned accounts (``creation_type=tenant``)
-        may hold other roles. Anything that is not ``tenant`` — including a
-        NULL or a future OAuth provider — is treated as self-registered so
-        the check fails closed. Enforced here because every role grant
-        (``/roles/assign``, tenant user PATCH) funnels through ``assign_role``.
+        Self-registered accounts (email/password signup, Google OAuth — see
+        ``User.is_self_registered``) stay USER-only. A future OAuth provider
+        is stored as ``default`` by OAuthService, so it is covered too.
+        Enforced here because every role grant (``/roles/assign``, tenant
+        user PATCH) funnels through ``assign_role``.
         """
-        if target is None or target.creation_type == CreationType.TENANT:
+        if target is None or not target.is_self_registered():
             return
         raise AppError(
             message=(
@@ -177,6 +176,17 @@ class RoleService:
         role = await self._roles.get_role_by_name(key)
         if not role:
             raise EntityNotFoundError(f"Role '{key}'")
+        if key == RoleName.USER.value:
+            target = await self._users.get_by_id(user_id)
+            if target is not None and target.is_self_registered():
+                raise AppError(
+                    message=(
+                        f"Cannot remove role '{key}': self-registered users must "
+                        f"always hold the '{RoleName.USER.value}' role."
+                    ),
+                    code="SELF_REGISTERED_ROLE_RESTRICTED",
+                    status_code=422,
+                )
         if key == RoleName.ADMIN.value:
             await self._assert_role_removal_keeps_a_platform_admin(user_id)
         removed = await self._roles.remove_role(user_id, role.id)

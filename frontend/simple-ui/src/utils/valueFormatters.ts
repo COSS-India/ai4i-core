@@ -8,6 +8,16 @@ export function dash(v?: string | null): string {
   return v && v.trim() ? v : EMPTY_VALUE;
 }
 
+/**
+ * "99,999,999 audio minutes/month" for a tier quota. Units arrive as
+ * catalogue ids (`audio_minutes`), so underscores read as spaces.
+ */
+export function formatMonthlyQuota(limit: number, unit?: string | null): string {
+  const amount = limit.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  const label = (unit ?? "").trim().replaceAll("_", " ").toLowerCase();
+  return label ? `${amount} ${label}/month` : `${amount}/month`;
+}
+
 /** Locale date-time for an ISO timestamp; the raw value if it will not parse. */
 export function fmtDate(v?: string | null): string {
   if (!v) return EMPTY_VALUE;

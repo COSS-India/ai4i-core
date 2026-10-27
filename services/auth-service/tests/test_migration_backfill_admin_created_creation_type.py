@@ -127,7 +127,7 @@ class TestCreationTypeBackfill:
         trans = conn.begin()
         try:
             self_registered = _insert_user(conn, creation_type="default", creds_at=T0, role="USER")
-            provisioned_pending = _insert_user(conn, creation_type="default", role="TENANT_ADMIN")
+            provisioned_pending = _insert_user(conn, creation_type="default", role="TENANT ADMIN")
             provisioned_activated = _insert_user(conn, creation_type="default", creds_at=T_LATER, role="USER")
             google = _insert_user(conn, creation_type="google", role="USER")
             seeded_admin = _insert_user(

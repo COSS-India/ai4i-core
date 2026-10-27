@@ -29,7 +29,6 @@ COLUMN_DEFINITIONS: List[Dict[str, Any]] = [
     {"key": "model",       "label": "Model",       "default": False, "filterable": False, "sortable": False, "keyword_searchable": True,  "span": "model"},
     {"key": "latency",     "label": "Latency (ms)","default": False, "filterable": False, "sortable": True,  "keyword_searchable": False, "span": "request"},
     {"key": "application", "label": "Application", "default": False, "filterable": False, "sortable": False, "keyword_searchable": True,  "span": None},
-    {"key": "api_key",     "label": "API Key",     "default": False, "filterable": False, "sortable": False, "keyword_searchable": True,  "span": None},
     {"key": "end_user",    "label": "End User",    "default": False, "filterable": True,  "sortable": False, "keyword_searchable": True,  "span": None},
     {"key": "metadata",    "label": "Metadata",    "default": False, "filterable": True,  "sortable": False, "keyword_searchable": True,  "span": None},
     {"key": "method",      "label": "Method",      "default": False, "filterable": False, "sortable": False, "keyword_searchable": False, "span": "request"},

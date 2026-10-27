@@ -7,6 +7,23 @@ export type TenantUserStatus = TenantUserStatusValue;
 /** auth-service `users.creation_type`: default = email sign-up, google = OAuth, tenant = admin-created. */
 export type CreationType = 'default' | 'google' | 'tenant';
 
+/** One task type's monthly quota in a tier, e.g. llm — 1000 tokens. */
+export interface TierQuotaLimit {
+  task_type: string;
+  unit: string;
+  /** The quota in effect this month. */
+  monthly_quota: number;
+  /** An edit applied on the 1st of next month; null when none is scheduled. */
+  pending_monthly_quota?: number | null;
+}
+
+/** Rate limit and quotas of the assigned tier, read live from platform-core. */
+export interface TierLimits {
+  /** Requests per minute; null when the tier doesn't set one. */
+  rate_limit: number | null;
+  quotas: TierQuotaLimit[];
+}
+
 export interface TenantView {
   tenant_id: string; // UUID
   contact_name: string;
@@ -28,6 +45,8 @@ export interface TenantView {
   onboarding_completed?: boolean;
   tier_id?: string | null;
   tier_name?: string | null;
+  /** Filled in by GET /tenants/{id} only; null when no tier or it can't be read. */
+  tier_limits?: TierLimits | null;
   allocated_budget?: number | null;
   budget_effective_from?: string | null;
   budget_effective_to?: string | null;
