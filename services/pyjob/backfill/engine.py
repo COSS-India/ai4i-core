@@ -11,8 +11,13 @@ as estimated rows (source = 'backfill'):
 
 The flow:
 
-    1. Check the dates, and that usage_events has no rows before the end of
-       BACKFILL_TO (those days would be counted twice).
+    1. Check the dates; that no day already has recorded rows in daily_usage
+       (source = 'rollup': the dashboard reads past days from daily_usage, so
+       the day would be counted twice); and that no day is still within the
+       nightly rollup's reach (yesterday and USAGE_ROLLUP_LOOKBACK_DAYS before
+       it), whose re-roll would mix with the backfill rows. A day with
+       usage_events but no rollup rows (e.g. the day recording started, whose
+       events cover only part of it) can be backfilled from Prometheus.
     2. Load once into memory the few details the rows need: institutions,
        applications, single-key applications, tiers, LLM services and their
        prices, the LLM inference type.
@@ -46,6 +51,7 @@ from ai4i_core.logging import get_logger
 from sqlalchemy import text
 
 from backfill.config import get_settings
+from bootstrap.config import get_settings as get_pyjob_settings
 from bootstrap.database import auth_session, platform_core_session
 
 logger = get_logger(__name__)
@@ -286,17 +292,56 @@ def _ist_midnight(day: date) -> datetime:
     return datetime.combine(day, time(), tzinfo=IST)
 
 
-async def check_no_recorded_usage_before(end: datetime) -> None:
-    """Refuse when usage_events has rows before ``end``: those days already
-    have recorded usage, which the dashboard reads too."""
-    async with platform_core_session() as session:
-        found = await session.scalar(
-            text("SELECT occurred_at FROM usage_events WHERE occurred_at < :end LIMIT 1"), {"end": end},
-        )
-    if found is not None:
+def first_rollup_day(today: date, lookback_days: int) -> date:
+    """The earliest day the nightly rollup still re-rolls: it rolls yesterday
+    and ``lookback_days`` before it (jobs/daily_usage_consolidation)."""
+    return today - timedelta(days=1 + lookback_days)
+
+
+async def check_days_not_recorded(first: date, last: date, today: date, lookback_days: int) -> None:
+    """Refuse days whose usage the dashboard already has, or soon will have,
+    from usage_events:
+
+    - a day with recorded rows in daily_usage (source = 'rollup'): the
+      dashboard reads past days from daily_usage, so it would be counted twice;
+    - a day the nightly rollup still re-rolls: its upsert would merge into the
+      backfill rows with the same dimensions and sit beside the others.
+
+    usage_events rows on a day are allowed: past days are read from
+    daily_usage, so those events don't show once the day is backfilled (the
+    day recording started has events for only part of it; Prometheus has all
+    of it). They're logged, as non-LLM events there won't be on the dashboard
+    (the backfill is LLM only)."""
+    reach = first_rollup_day(today, lookback_days)
+    if last >= reach:
         raise BackfillError(
-            f"usage_events has rows before {end.isoformat()} (e.g. {found.isoformat()}): set BACKFILL_TO"
-            " to a day before usage_events begins, or those days would be counted twice."
+            f"BACKFILL_TO ({last}) is within the nightly rollup's reach (from {reach}: yesterday and"
+            f" USAGE_ROLLUP_LOOKBACK_DAYS={lookback_days} before it); its re-roll would mix with the"
+            f" backfill rows. Use a day before {reach}, or wait."
+        )
+    async with platform_core_session() as session:
+        recorded = (await session.execute(
+            text("SELECT usage_date, count(*) AS n FROM daily_usage"
+                 " WHERE source = 'rollup' AND usage_date BETWEEN :first AND :last"
+                 " GROUP BY usage_date ORDER BY usage_date"),
+            {"first": first, "last": last},
+        )).all()
+        events = (await session.execute(
+            text("SELECT (occurred_at AT TIME ZONE 'Asia/Kolkata')::date AS day,"
+                 " coalesce(task_type, '') AS task_type, count(*) AS n FROM usage_events"
+                 " WHERE occurred_at >= :start AND occurred_at < :end GROUP BY 1, 2 ORDER BY 1, 2"),
+            {"start": _ist_midnight(first), "end": _ist_midnight(last + timedelta(days=1))},
+        )).all()
+    if recorded:
+        raise BackfillError(
+            "daily_usage already has recorded (rollup) rows on "
+            + ", ".join(f"{r.usage_date} ({r.n})" for r in recorded)
+            + ": those days would be counted twice. Leave them out of BACKFILL_FROM..BACKFILL_TO."
+        )
+    for r in events:
+        logger.warning(
+            "usage_events has rows on a day being backfilled; the dashboard will show the backfill"
+            " for it instead | day=%s task_type=%s rows=%d", r.day, r.task_type or "-", r.n,
         )
 
 
@@ -313,7 +358,9 @@ async def run() -> None:
     if last >= datetime.now(IST).date():
         raise BackfillError(f"BACKFILL_TO ({last}) must be a past day")
 
-    await check_no_recorded_usage_before(_ist_midnight(last + timedelta(days=1)))
+    await check_days_not_recorded(
+        first, last, datetime.now(IST).date(), get_pyjob_settings().USAGE_ROLLUP_LOOKBACK_DAYS,
+    )
     lookups = await load_lookups()
     logger.info(
         "Starting usage backfill | days=%s..%s tenants=%d applications=%d llm_services=%d",
