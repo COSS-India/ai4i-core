@@ -46,14 +46,16 @@ export function useServiceListVisibleColumns(options: {
     const id = preferenceUserId();
     if (!id) return;
     let cancelled = false;
-    void loadVisibleServiceColumns({
+    loadVisibleServiceColumns({
       userId: id,
       usesServer: serviceListUsesServer,
       catalogue: serviceListCatalogue,
-    }).then((next) => {
-      if (cancelled) return;
-      setVisibleColumnIds((current) => nextVisibleColumnIds(current, next));
-    });
+    })
+      .then((next) => {
+        if (cancelled) return;
+        setVisibleColumnIds((current) => nextVisibleColumnIds(current, next));
+      })
+      .catch(() => undefined);
     return () => {
       cancelled = true;
     };

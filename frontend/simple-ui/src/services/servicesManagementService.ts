@@ -38,10 +38,17 @@ export const SERVICES_ALL_QUERY_KEY = ["services-all"] as const;
 export const SERVICES_ALL_STALE_MS = 5 * 60 * 1000;
 type ServiceRecord = Service & Record<string, unknown>;
 
+const secretText = (value: unknown): string => {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return "";
+};
+
 const isNonEmptySecret = (value: unknown): boolean => {
   if (value == null) return false;
-  const text = String(value).trim();
-  return text.length > 0;
+  return secretText(value).trim().length > 0;
 };
 
 /**
@@ -93,7 +100,8 @@ export const resolveMaskedAuthToken = (
   const raw =
     nestedAuthenticationToken(rec.inferenceEndPoint) ??
     nestedAuthenticationToken(rec.inference_end_point);
-  return isNonEmptySecret(raw) ? String(raw).trim() : "";
+  if (!isNonEmptySecret(raw)) return "";
+  return secretText(raw).trim();
 };
 
 const redactNestedSecrets = (endpoint: unknown): unknown => {
@@ -420,7 +428,7 @@ function buildCreateServiceApiPayload(
 function isPublishOnlyUpdate(serviceData: Partial<Service>): boolean {
   return Boolean(
     serviceData.serviceId &&
-      Object.prototype.hasOwnProperty.call(serviceData, "isPublished") &&
+      Object.hasOwn(serviceData, "isPublished") &&
       Object.keys(serviceData).length <= 2,
   );
 }
@@ -456,7 +464,7 @@ function buildUpdateServiceApiPayload(
   applyBillingFieldsToPayload(apiPayload, serviceData);
   applyHealthStatusToPayload(apiPayload, serviceData);
 
-  if (Object.prototype.hasOwnProperty.call(serviceData, "isPublished")) {
+  if (Object.hasOwn(serviceData, "isPublished")) {
     apiPayload.isPublished = serviceData.isPublished;
   }
   return apiPayload;

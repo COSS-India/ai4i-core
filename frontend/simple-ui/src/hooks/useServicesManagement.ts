@@ -425,6 +425,16 @@ function isDeprecatedVersionStatus(status: unknown): boolean {
   );
 }
 
+function optionalNumberToInput(value: number | null | undefined): string {
+  if (value == null) return "";
+  return String(value);
+}
+
+/** Fire-and-forget without the `void` operator (Sonar S3735 / S6544). */
+function ignoreAsync(promise: Promise<unknown>): void {
+  promise.catch(() => undefined);
+}
+
 type ServicesQuery = Record<string, string | string[] | undefined>;
 
 function replaceServicesQuery(
@@ -633,7 +643,7 @@ export function useServicesManagement() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterStatus, setFilterStatus] = useState<string>("");
   const [filterTaskType, setFilterTaskType] = useState<string>("");
-  const [filterTier, setFilterTierValue] = useState<string>(
+  const [filterTier, setFilterTier] = useState<string>(
     SERVICE_TIER.FILTER.ALL,
   );
   /** The selected tier's option, kept so it stays listed across refetches. */
@@ -749,14 +759,14 @@ export function useServicesManagement() {
   );
 
   /** Remembers the label as it is picked, so a later refetch cannot orphan it. */
-  const setFilterTier = useCallback(
+  const handleFilterTierChange = useCallback(
     (next: string) => {
-      setPinnedTier(
-        next && next !== SERVICE_TIER.FILTER.NONE
-          ? (tierFilterOptions.find((o) => o.id === next) ?? null)
-          : null,
-      );
-      setFilterTierValue(next);
+      if (!next || next === SERVICE_TIER.FILTER.NONE) {
+        setPinnedTier(null);
+      } else {
+        setPinnedTier(tierFilterOptions.find((o) => o.id === next) ?? null);
+      }
+      setFilterTier(next);
     },
     [tierFilterOptions],
   );
@@ -786,7 +796,7 @@ export function useServicesManagement() {
     setSearchQuery("");
     setFilterStatus("");
     setFilterTaskType(taskTypeNames.length === 1 ? taskTypeNames[0] : "");
-    setFilterTier(SERVICE_TIER.FILTER.ALL);
+    handleFilterTierChange(SERVICE_TIER.FILTER.ALL);
     setServerFilters({});
     setRegistryPage(1);
   };
@@ -1017,7 +1027,7 @@ export function useServicesManagement() {
 
   useEffect(() => {
     if (!taskTypeFilterReady || !columnsQuery.isFetched) return;
-    fetchServices();
+    ignoreAsync(fetchServices());
   }, [fetchServices, taskTypeFilterReady, columnsQuery.isFetched]);
 
   /** AI4IDS-2949: block Create Service when the platform has no tiers. Edit remains allowed. */
@@ -1038,10 +1048,10 @@ export function useServicesManagement() {
       },
       clearCreateReturnTo: () => setCreateReturnTo(null),
       replace: (url, as, opts) => {
-        void router.replace(url, as, opts);
+        ignoreAsync(router.replace(url, as, opts));
       },
       replaceHref: (href) => {
-        void router.replace(href);
+        ignoreAsync(router.replace(href));
       },
     });
   }, [
@@ -1073,19 +1083,21 @@ export function useServicesManagement() {
         pathname: routerRef.current.pathname,
         currentQuery: routerQueryRef.current,
         replace: (url, as, opts) => {
-          void routerRef.current.replace(url, as, opts);
+          ignoreAsync(routerRef.current.replace(url, as, opts));
         },
       });
 
-    void preselectModelFromQueryParam({
-      modelId,
-      models,
-      isActive,
-      currentFormModelId: formData.modelId,
-      applyModel: handleModelNameChange,
-      setPreselectedModel: setPreselectedModelFromQuery,
-      stripModelId,
-    });
+    ignoreAsync(
+      preselectModelFromQueryParam({
+        modelId,
+        models,
+        isActive,
+        currentFormModelId: formData.modelId,
+        applyModel: handleModelNameChange,
+        setPreselectedModel: setPreselectedModelFromQuery,
+        stripModelId,
+      }),
+    );
     return () => {
       cancelled = true;
     };
@@ -1100,7 +1112,7 @@ export function useServicesManagement() {
     const currentEditId =
       editingService?.serviceId || editingService?.service_id;
     if (currentEditId === editServiceId) return;
-    handleEditService(editServiceId);
+    ignoreAsync(handleEditService(editServiceId));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router.query.editServiceId, isRegistryReadOnly]);
 
@@ -1239,9 +1251,11 @@ export function useServicesManagement() {
     delete q.returnTo;
     delete q.modelId;
     delete q.tab;
-    router.replace({ pathname: "/services-management", query: q }, undefined, {
-      shallow: true,
-    });
+    ignoreAsync(
+      router.replace({ pathname: "/services-management", query: q }, undefined, {
+        shallow: true,
+      }),
+    );
   }, [router]);
 
   const releaseCreateForm = () => {
@@ -1423,10 +1437,12 @@ export function useServicesManagement() {
       setCreateReturnTo(null);
       setActiveTab(0);
       onCreateClose();
-      router.replace(
-        { pathname: "/services-management", query: {} },
-        undefined,
-        { shallow: true },
+      ignoreAsync(
+        router.replace(
+          { pathname: "/services-management", query: {} },
+          undefined,
+          { shallow: true },
+        ),
       );
 
       await refreshRegistryAfterMutation({
@@ -1511,10 +1527,12 @@ export function useServicesManagement() {
       const q = { ...router.query } as Record<string, string>;
       delete q.editServiceId;
       q.tab = "2";
-      router.replace(
-        { pathname: "/services-management", query: q },
-        undefined,
-        { shallow: true },
+      ignoreAsync(
+        router.replace(
+          { pathname: "/services-management", query: q },
+          undefined,
+          { shallow: true },
+        ),
       );
       // Fetch model to know if deprecated (detail API may not include model.versionStatus)
       const modelId = service.modelId || service.model_id;
@@ -1562,34 +1580,30 @@ export function useServicesManagement() {
       setAuthToken(maskedAuthToken);
       setSavedAuthTokenMask(maskedAuthToken);
       setHasAuthToken(Boolean(service.hasAuthToken));
-      setPricePerUnit(
-        service.costPerUnit != null ? String(service.costPerUnit) : "",
-      );
+      setPricePerUnit(optionalNumberToInput(service.costPerUnit));
       setCachedInputPricePerUnit(
-        service.cachedInputCostPerUnit != null
-          ? String(service.cachedInputCostPerUnit)
-          : "",
+        optionalNumberToInput(service.cachedInputCostPerUnit),
       );
       setOutputPricePerUnit(
-        service.outputCostPerUnit != null
-          ? String(service.outputCostPerUnit)
-          : "",
+        optionalNumberToInput(service.outputCostPerUnit),
       );
-      setUnitSize(service.unitSize != null ? String(service.unitSize) : "");
+      setUnitSize(optionalNumberToInput(service.unitSize));
       setSelectedTiers(tierIds);
       setEditingService(service);
       setCreateFormEpoch((n) => n + 1);
       if (modelId) {
-        handleModelNameChange(modelId);
+        ignoreAsync(handleModelNameChange(modelId));
       }
       setActiveTab(0);
-      router.replace(
-        {
-          pathname: "/services-management",
-          query: { tab: "1", editServiceId: serviceId },
-        },
-        undefined,
-        { shallow: true },
+      ignoreAsync(
+        router.replace(
+          {
+            pathname: "/services-management",
+            query: { tab: "1", editServiceId: serviceId },
+          },
+          undefined,
+          { shallow: true },
+        ),
       );
     } catch (error: any) {
       showError(error);
@@ -1600,9 +1614,11 @@ export function useServicesManagement() {
     setEditingService(null);
     resetCreateForm();
     setActiveTab(0);
-    router.replace({ pathname: "/services-management", query: {} }, undefined, {
-      shallow: true,
-    });
+    ignoreAsync(
+      router.replace({ pathname: "/services-management", query: {} }, undefined, {
+        shallow: true,
+      }),
+    );
   };
 
   const handleCancelForm = () => {
@@ -1631,9 +1647,11 @@ export function useServicesManagement() {
     if (isViewTab) {
       q.tab = "2";
     }
-    router.replace({ pathname: "/services-management", query: q }, undefined, {
-      shallow: true,
-    });
+    ignoreAsync(
+      router.replace({ pathname: "/services-management", query: q }, undefined, {
+        shallow: true,
+      }),
+    );
   };
 
   const requestPublish = (service: Service) => {
@@ -1717,7 +1735,7 @@ export function useServicesManagement() {
         console.warn("Failed to refresh service after publish:", e);
       }
 
-      void fetchServices({ silent: true });
+      ignoreAsync(fetchServices({ silent: true }));
     } catch (error: any) {
       showError(error);
     } finally {
@@ -1762,7 +1780,7 @@ export function useServicesManagement() {
         console.warn("Failed to refresh service after unpublish:", e);
       }
 
-      void fetchServices({ silent: true });
+      ignoreAsync(fetchServices({ silent: true }));
     } catch (error: any) {
       showError(error);
     } finally {
@@ -1864,7 +1882,7 @@ export function useServicesManagement() {
     filterTaskType,
     setFilterTaskType,
     filterTier,
-    setFilterTier,
+    setFilterTier: handleFilterTierChange,
     tierFilterOptions,
     taskTypeNames,
     hasActiveFilters,
