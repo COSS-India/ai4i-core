@@ -610,18 +610,6 @@ class AuthService {
   }
 
   /**
-   * DELETE `/api-keys/{keyId}/current-key` — stops the current value now, during a
-   * rotation. The previous value keeps working until its window ends.
-   */
-  async revokeCurrentApiKeyValue(keyId: number): Promise<{ message: string }> {
-    return this.validatedRequest(
-      `${authPath.apiKeys}/${keyId}/current-key`,
-      authUnwrappedSchema(messageResponseSchema),
-      { method: 'DELETE' }
-    );
-  }
-
-  /**
    * POST `/api-keys/{keyId}/rotate` — issues a new key value, returned once.
    * The previous value keeps working until `rotated_key_expires_at`:
    * `graceDays` from now (required), never past the key's expiry.

@@ -53,10 +53,6 @@ class APIKey(Base):
     rotated_key_expires_at = Column(DateTime(timezone=True), nullable=True)
     # When api_key last got a new value, i.e. when the current value was issued.
     rotated_at = Column(DateTime(timezone=True), nullable=True)
-    # Set when api_key alone was revoked during a rotation: api_key stops
-    # authenticating, rotated_key keeps working until rotated_key_expires_at,
-    # and after that the key has no working value.
-    api_key_revoked_at = Column(DateTime(timezone=True), nullable=True)
 
     application = relationship("Application", back_populates="api_keys")
 
@@ -65,15 +61,6 @@ class APIKey(Base):
         if self.expires_at is None:
             return False
         return datetime.now(timezone.utc) > self.expires_at
-
-    def live_api_key(self) -> Optional[str]:
-        """api_key unless it alone was revoked."""
-        return self.api_key if self.api_key_revoked_at is None else None
-
-    def has_live_value(self) -> bool:
-        """True while some value of the row still authenticates (is_active
-        and expiry aside): api_key, or the rotated key inside its window."""
-        return bool(self.live_api_key() or self.live_rotated_key())
 
     def live_rotated_key(self) -> Optional[str]:
         """The previous key value while it still authenticates, else None."""
@@ -94,9 +81,10 @@ class APIKey(Base):
         return None
 
     def cache_key_values(self) -> list[str]:
-        """Every key value with a Redis entry to keep in step: api_key unless
-        it alone was revoked, plus the rotated key while it is live."""
-        return [v for v in (self.live_api_key(), self.live_rotated_key()) if v]
+        """Every key value with a Redis entry to keep in step: api_key, plus
+        the rotated key while it is live."""
+        rotated = self.live_rotated_key()
+        return [self.api_key, rotated] if rotated else [self.api_key]
 
     def __repr__(self) -> str:
         return f"<APIKey id={self.id} name={self.key_name!r} expired={self.is_expired()}>"

@@ -1,37 +1,43 @@
-import { API_KEY, isApiKeyWithoutLiveValue, resolveApiKeyDisplayStatus } from "../../src/config/constants";
+import { API_KEY, resolveApiKeyDisplayStatus } from "../../src/config/constants";
 import {
   applyRuntimeConfig,
   EMPTY_RUNTIME_CONFIG,
   getDefaultRotationGraceDays,
 } from "../../src/config/runtimeConfig";
-import { graceExtensionEnd, graceExtensionError, isRotationInProgress } from "../../src/utils/apiKeyUtils";
+import {
+  graceExtensionEnd,
+  graceExtensionError,
+  isGraceWithinExpiry,
+  isRotationInProgress,
+  ROTATION_GRACE_OPTIONS,
+} from "../../src/utils/apiKeyUtils";
 
 const inDays = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString();
 
 describe("API key rotation status", () => {
-  it("a current-revoked key is still active while the previous key works", () => {
-    const key = { is_active: true, api_key_revoked_at: inDays(-0.01), rotated_key_expires_at: inDays(2) };
-    expect(isApiKeyWithoutLiveValue(key)).toBe(false);
-    expect(resolveApiKeyDisplayStatus(key)).toBe(API_KEY.DISPLAY_STATUS.ACTIVE);
-    expect(isRotationInProgress(key)).toBe(true);
-  });
-
-  it("a current-revoked key is revoked once the previous key's window has ended", () => {
-    // The list drops rotated_key_expires_at once the previous value stops.
-    const key = { is_active: true, api_key_revoked_at: inDays(-3) };
-    expect(isApiKeyWithoutLiveValue(key)).toBe(true);
-    expect(resolveApiKeyDisplayStatus(key)).toBe(API_KEY.DISPLAY_STATUS.REVOKED);
-  });
-
-  it("a past window end on a current-revoked key also counts as revoked", () => {
-    const key = { is_active: true, api_key_revoked_at: inDays(-3), rotated_key_expires_at: inDays(-1) };
-    expect(resolveApiKeyDisplayStatus(key)).toBe(API_KEY.DISPLAY_STATUS.REVOKED);
-  });
-
-  it("a rotating key with a live current value stays active", () => {
+  it("a rotating key stays active while the previous key works", () => {
     const key = { is_active: true, rotated_key_expires_at: inDays(2) };
-    expect(isApiKeyWithoutLiveValue(key)).toBe(false);
+    expect(isRotationInProgress(key)).toBe(true);
     expect(resolveApiKeyDisplayStatus(key)).toBe(API_KEY.DISPLAY_STATUS.ACTIVE);
+  });
+});
+
+describe("rotation grace period options", () => {
+  const now = Date.parse("2026-10-10T10:00:00.000Z");
+
+  it("allows every option when the key expires well after them", () => {
+    const expiresAt = "2026-10-31T00:00:00.000Z";
+    expect(ROTATION_GRACE_OPTIONS.every((d) => isGraceWithinExpiry(d, expiresAt, now))).toBe(true);
+  });
+
+  it("disables options that run past the key's expiry", () => {
+    const expiresAt = "2026-10-13T10:00:00.000Z"; // 3 days out
+    expect(isGraceWithinExpiry(3, expiresAt, now)).toBe(true);
+    expect(isGraceWithinExpiry(7, expiresAt, now)).toBe(false);
+  });
+
+  it("allows any option for a key that never expires", () => {
+    expect(isGraceWithinExpiry(14, undefined, now)).toBe(true);
   });
 });
 
@@ -69,7 +75,7 @@ describe("default rotation grace days (ROTATED_API_KEY_DEFAULT_GRACE_DAYS)", () 
     expect(getDefaultRotationGraceDays()).toBe(0);
   });
 
-  it("is null when unset or invalid, so the field starts blank", () => {
+  it("is null when unset or invalid, so the longest option that fits is preselected", () => {
     for (const raw of ["", "abc", "-1", "2.5"]) {
       applyRuntimeConfig({ ...EMPTY_RUNTIME_CONFIG, rotationGraceDays: raw });
       expect(getDefaultRotationGraceDays()).toBe(null);

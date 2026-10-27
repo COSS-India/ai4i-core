@@ -44,6 +44,19 @@ export function isRotationInProgress(
   return Number.isFinite(until) && until > now;
 }
 
+/** Grace periods (days) an admin can pick when rotating a key. */
+export const ROTATION_GRACE_OPTIONS = [1, 3, 7, 14] as const;
+
+/** True when a grace period of ``days`` from now ends by the key's expiry. */
+export function isGraceWithinExpiry(
+  days: number,
+  expiresAt: string | undefined,
+  now: number = Date.now(),
+): boolean {
+  if (!expiresAt) return true;
+  return now + days * 86_400_000 <= new Date(expiresAt).getTime();
+}
+
 /** Preset extensions for a previous key's grace period, added to its current end. */
 export const GRACE_EXTENSION_OPTIONS = [
   { id: "24h", label: "24h", hours: 24 },
