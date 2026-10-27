@@ -425,13 +425,12 @@ class OpenAIProxyService:
         return status_code, body
 
     @staticmethod
-    def _record_served(request: Optional[Any], requested_id: str, served_id: str) -> None:
+    def _record_served(request: Optional[Any], served_id: str) -> None:
         """Which service answered, for the route's request span and metrics
         (ObservabilityMiddleware reads service_id)."""
         if request is None:
             return
         request.state.service_id = served_id
-        request.state.fallback_used = served_id != requested_id
 
     async def _prepare_fallback(
         self, path: str, request: Optional[Any], requested_id: str, fallback_id: str, payload: Any
@@ -472,7 +471,7 @@ class OpenAIProxyService:
             reason = classify_upstream_failure(status_code=status_code)
         fallbacks = await get_fallbacks(requested_id) if reason else []
         if not fallbacks:
-            self._record_served(request, requested_id, requested_id)
+            self._record_served(request, requested_id)
             return status_code, body
 
         async def attempt(fallback_id, url, model_name, fb_payload, service_info, index):
@@ -482,7 +481,7 @@ class OpenAIProxyService:
             return sc < 400, sc, b, fb_reason
 
         outcome = await self._run_fallbacks(path, request, requested_id, reason, fallbacks, payload, attempt)
-        self._record_served(request, requested_id, outcome.served_id)
+        self._record_served(request, outcome.served_id)
         return outcome.status_code, outcome.result
 
     async def _run_fallbacks(
@@ -856,7 +855,7 @@ class OpenAIProxyService:
             if outcome.ok:
                 kind = "stream"
                 service_id, model_name, payload = outcome.served_id, outcome.model_name, outcome.payload
-        self._record_served(request, requested_id, service_id)
+        self._record_served(request, service_id)
 
         if kind == "error":
             if guardrail_ctx.active:
@@ -1062,7 +1061,7 @@ class OpenAIProxyService:
         # memory, so each fallback gets the same upload.
         fallbacks = await get_fallbacks(service_id) if reason else []
         if not fallbacks:
-            self._record_served(request, service_id, service_id)
+            self._record_served(request, service_id)
             return status_code, body
 
         async def attempt(fallback_id, fb_url, fb_model_name, fb_data, fb_info, index):
@@ -1073,7 +1072,7 @@ class OpenAIProxyService:
             return sc < 400, sc, b, fb_reason
 
         outcome = await self._run_fallbacks(path, request, service_id, reason, fallbacks, data, attempt)
-        self._record_served(request, service_id, outcome.served_id)
+        self._record_served(request, outcome.served_id)
         return outcome.status_code, outcome.result
 
     async def _post_multipart(

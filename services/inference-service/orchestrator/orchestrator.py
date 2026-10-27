@@ -128,10 +128,8 @@ class Orchestrator:
             )
 
             served_id = served_info.get("serviceId") or ""
-            fallback_used = served_id != requested_id
             attrs["service_id"] = served_id
-            attrs["fallback_used"] = fallback_used
-            if request is not None and fallback_used:
+            if request is not None and served_id != requested_id:
                 request.state.service_id = served_id
                 set_metric_labels(request, model_id=served_info.get("model_id") or "")
             if isinstance(task_response, dict):

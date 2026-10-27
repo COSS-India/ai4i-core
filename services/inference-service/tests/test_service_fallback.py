@@ -274,7 +274,6 @@ def test_llm_success_is_returned_untouched():
     assert (status, body) == (200, {"ok": True})
     gf.assert_not_called()
     assert request.state.service_id == "llm-a"
-    assert request.state.fallback_used is False
 
 
 def test_llm_4xx_is_returned_without_fallback():
@@ -297,7 +296,6 @@ def test_llm_unreachable_moves_to_fallback():
         ))
     assert status == 200
     assert request.state.service_id == "llm-b"
-    assert request.state.fallback_used is True
     # The fallback gets its own upstream model name.
     forwarded_payload = proxy._forward_traced.call_args.args[4]
     assert forwarded_payload["model"] == "llm-b-model"
@@ -463,7 +461,7 @@ def test_orchestrator_logs_each_failover():
     )
 
 
-def test_llm_logs_each_failover_and_marks_fallback_used():
+def test_llm_logs_each_failover_and_records_served_service():
     proxy = _llm_proxy()
     proxy._forward_traced = AsyncMock(return_value=(200, {"choices": []}, None))
     request = MagicMock()
@@ -475,7 +473,6 @@ def test_llm_logs_each_failover_and_marks_fallback_used():
         requested="llm-a", failed="llm-a", next_service="llm-b", reason="upstream_5xx", attempt=1,
     )
     assert request.state.service_id == "llm-b"
-    assert request.state.fallback_used is True
 
 
 # ── Shared LLM fallback loop (_run_fallbacks), as both callers use it ────────
@@ -623,7 +620,7 @@ def test_audio_upload_unreachable_moves_to_fallback_with_the_same_file():
     assert fallback_call.args[2] is _FILES                    # same upload
     assert fallback_call.args[3]["model"] == "asr-b-model"     # fallback's upstream model
     assert fallback_call.args[3]["language"] == "hi"           # other form fields kept
-    assert request.state.service_id == "asr-b" and request.state.fallback_used is True
+    assert request.state.service_id == "asr-b"
 
 
 def test_audio_upload_4xx_is_returned_without_fallback():

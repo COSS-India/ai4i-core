@@ -538,7 +538,6 @@ def _stamp_served_service(req_attrs: dict, request: Request) -> None:
     """Which service answered (OpenAIProxyService._record_served), stamped on
     the request span — billing writes usage_events from it."""
     req_attrs["service_id"] = getattr(request.state, "service_id", "") or ""
-    req_attrs["fallback_used"] = bool(getattr(request.state, "fallback_used", False))
 
 
 async def _run_llm_chat_consolidated(request: Request, payload: Dict[str, Any], path: str) -> JSONResponse:
