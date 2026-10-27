@@ -2,6 +2,7 @@ import { Box, HStack, IconButton, Tooltip } from "@chakra-ui/react";
 import { DeleteIcon, DownloadIcon, EditIcon, ViewIcon } from "@chakra-ui/icons";
 import React from "react";
 import type { DataTableColumn } from "./DataTable";
+import { ADMIN_ACTIONS_COLUMN_WIDTH } from "./dataTableUtils";
 
 export type DataTableActionId =
   | "view"
@@ -126,11 +127,8 @@ export function DataTableActions({
   );
 }
 
-/**
- * Shrink-wrap hint for Actions under `table-layout: auto`.
- * `1%` + nowrap sizes the column to the icon cluster, not leftover table width.
- */
-export const DATA_TABLE_ACTIONS_COLUMN_WIDTH = "1%";
+/** Compact Actions width under `table-layout: fixed` (fits ~3–4 icon buttons). */
+export const DATA_TABLE_ACTIONS_COLUMN_WIDTH = ADMIN_ACTIONS_COLUMN_WIDTH;
 
 export type CreateActionsColumnOptions<T> = {
   header?: React.ReactNode;
@@ -155,8 +153,8 @@ export function createActionsColumn<T>(
     header: options.header ?? "Actions",
     truncate: false,
     width,
-    minWidth: options.minWidth,
-    maxW: options.maxW,
+    minWidth: options.minWidth ?? width,
+    maxW: options.maxW ?? width,
     align,
     thProps: {
       textAlign: align,

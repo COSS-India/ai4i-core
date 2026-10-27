@@ -52,11 +52,11 @@ import type {
   DataTableSortState,
 } from "./dataTableTypes";
 import {
+  ADMIN_CHEVRON_COLUMN_WIDTH,
   DATA_TABLE_CELL_MAX_W,
   TruncatingCellContent,
   getTruncateCellProps,
-  resolveAdminColumnLayout,
-  resolvePrimaryColumnId,
+  resolveAdminColumnLayouts,
   shouldAutoTruncateColumn,
 } from "./dataTableUtils";
 
@@ -884,8 +884,8 @@ function AdminLayoutDataTable<T>({
 }: DataTableAdminProps<T>) {
   const { cardBg } = useAdminTableSurface();
   const rowChevron = showRowChevron ?? Boolean(onRowClick);
-  const primaryColumnId = useMemo(
-    () => resolvePrimaryColumnId(columns),
+  const columnLayouts = useMemo(
+    () => resolveAdminColumnLayouts(columns),
     [columns],
   );
 
@@ -1004,13 +1004,15 @@ function AdminLayoutDataTable<T>({
     Boolean(search && !search.hideLabel) ||
     (filterDefs ?? []).some((def) => !def.hideLabel);
 
-  // Outer shell owns border/radius; strip chrome overrides from container props.
+  // Outer shell owns border/radius; strip chrome / overflow overrides so columns stay viewport-fit.
   const {
     borderWidth: _borderWidth,
     borderColor: _borderColor,
     borderRadius: _borderRadius,
     bg: _bg,
     overflow: _overflow,
+    overflowX: _overflowX,
+    overflowY: _overflowY,
     maxH: containerMaxH,
     ...restTableContainerProps
   } = tableContainerProps ?? {};
@@ -1033,7 +1035,11 @@ function AdminLayoutDataTable<T>({
         w="100%"
         aria-busy={isLoading || undefined}
         aria-label={isLoading ? loadingMessage : undefined}
-        sx={{ tableLayout: "auto", "th, td": { verticalAlign: "middle" } }}
+        sx={{
+          tableLayout: "fixed",
+          width: "100%",
+          "th, td": { verticalAlign: "middle" },
+        }}
       >
         <Thead bg="ink.50" position="sticky" top={0} zIndex={1}>
           <Tr>
@@ -1045,7 +1051,7 @@ function AdminLayoutDataTable<T>({
                   : {}),
                 ...(col.align === "center" ? { textAlign: "center" as const } : {}),
               };
-              const layout = resolveAdminColumnLayout(col, primaryColumnId);
+              const layout = columnLayouts.get(col.id) ?? { minW: 0 };
               return (
                 <Th
                   key={col.id}
@@ -1064,7 +1070,9 @@ function AdminLayoutDataTable<T>({
             })}
             {rowChevron ? (
               <Th
-                w="1%"
+                w={ADMIN_CHEVRON_COLUMN_WIDTH}
+                minW={ADMIN_CHEVRON_COLUMN_WIDTH}
+                maxW={ADMIN_CHEVRON_COLUMN_WIDTH}
                 px={1}
                 py={3}
                 whiteSpace="nowrap"
@@ -1090,7 +1098,14 @@ function AdminLayoutDataTable<T>({
                     </Td>
                   ))}
                   {rowChevron ? (
-                    <Td w="1%" px={1} py={4} whiteSpace="nowrap" />
+                    <Td
+                      w={ADMIN_CHEVRON_COLUMN_WIDTH}
+                      minW={ADMIN_CHEVRON_COLUMN_WIDTH}
+                      maxW={ADMIN_CHEVRON_COLUMN_WIDTH}
+                      px={1}
+                      py={4}
+                      whiteSpace="nowrap"
+                    />
                   ) : null}
                 </Tr>
               ))
@@ -1126,7 +1141,7 @@ function AdminLayoutDataTable<T>({
                 const truncate = shouldAutoTruncateColumn(col);
                 const content = col.cell(row, index);
                 const numeric = Boolean(col.isNumeric || col.align === "center" || col.align === "right");
-                const layout = resolveAdminColumnLayout(col, primaryColumnId);
+                const layout = columnLayouts.get(col.id) ?? { minW: 0 };
                 return (
                   <Td
                     key={col.id}
@@ -1152,7 +1167,15 @@ function AdminLayoutDataTable<T>({
                 );
               })}
               {rowChevron ? (
-                <Td w="1%" px={1} py={4} textAlign="right" whiteSpace="nowrap">
+                <Td
+                  w={ADMIN_CHEVRON_COLUMN_WIDTH}
+                  minW={ADMIN_CHEVRON_COLUMN_WIDTH}
+                  maxW={ADMIN_CHEVRON_COLUMN_WIDTH}
+                  px={1}
+                  py={4}
+                  textAlign="right"
+                  whiteSpace="nowrap"
+                >
                   <ChevronRightIcon
                     className="data-table-chevron"
                     boxSize={3.5}

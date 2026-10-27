@@ -1384,7 +1384,6 @@ const LogsPage: React.FC = () => {
                     </Tooltip>
                   </HStack>
                 }
-                tableContainerProps={{ overflowX: "auto" }}
               />
 
               <TelemetryTraceDetailModal

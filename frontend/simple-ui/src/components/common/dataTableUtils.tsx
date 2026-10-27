@@ -26,7 +26,7 @@ export function getTruncateCellProps(truncate: boolean, maxW?: TableCellProps["m
   };
 }
 
-/** Icon / control columns that should shrink to their content. */
+/** Icon / control columns that should stay compact on the right. */
 export function isShrinkWrapColumn(col: { id: string; truncate?: boolean }): boolean {
   if (col.truncate === false && /action|activate|deprecate|delete|detail/i.test(col.id)) {
     return true;
@@ -42,7 +42,7 @@ function isWeakPrimaryColumn(col: { id: string }): boolean {
 }
 
 /**
- * Column that should absorb leftover width (`width: 100%` under auto layout).
+ * Column that should absorb leftover width.
  * Prefer long-form fields (name, error, url, …). Never fall back to timestamp/status.
  */
 export function resolvePrimaryColumnId(
@@ -52,7 +52,6 @@ export function resolvePrimaryColumnId(
     /^(name|key|key_name|organisation|organization|username|alert|notification|policy|application|tierName|tier_name|pii|piiType|label|title)$/i,
     /^error$/i,
     /^(url|path|message|description|detail|body)$/i,
-    // Logs tenant column — only if nothing longer-form is visible.
     /^institution$/i,
   ];
   for (const pattern of flexPatterns) {
@@ -80,13 +79,86 @@ export type AdminColumnLayout = {
   whiteSpace?: TableCellProps["whiteSpace"];
 };
 
+/** Compact Actions width — fits up to 4 `sm` ghost IconButtons under `table-layout: fixed`. */
+export const ADMIN_ACTIONS_COLUMN_WIDTH = "9.75rem";
+export const ADMIN_CHEVRON_COLUMN_WIDTH = "2.25rem";
+
 /**
- * Dynamic admin column sizing:
- * - shrink-wrap (Actions): `width: 1%` + nowrap → as wide as icons only
- * - primary (Name): `width: 100%` → absorbs leftover space
- * - others: no forced width → sized from cell content
- * Explicit `col.width` / min / max from callers still win.
+ * Viewport-fit layouts for admin tables (`table-layout: fixed; width: 100%`).
+ * - Actions: fixed rem (always visible, no horizontal scroll)
+ * - Primary: larger % of remaining width
+ * - Others: share the rest equally and truncate
+ * Explicit caller widths still win.
  */
+export function resolveAdminColumnLayouts(
+  columns: readonly {
+    id: string;
+    truncate?: boolean;
+    width?: TableCellProps["w"];
+    minWidth?: TableCellProps["minW"];
+    maxW?: TableCellProps["maxW"];
+  }[],
+): Map<string, AdminColumnLayout> {
+  const primaryColumnId = resolvePrimaryColumnId(columns);
+  const layouts = new Map<string, AdminColumnLayout>();
+
+  const flexColumns: {
+    id: string;
+    truncate?: boolean;
+    width?: TableCellProps["w"];
+    minWidth?: TableCellProps["minW"];
+    maxW?: TableCellProps["maxW"];
+  }[] = [];
+  for (const col of columns) {
+    if (col.width != null || col.minWidth != null || col.maxW != null) {
+      layouts.set(col.id, {
+        w: col.width,
+        minW: col.minWidth,
+        maxW: col.maxW,
+        whiteSpace: isShrinkWrapColumn(col) ? "nowrap" : undefined,
+      });
+      continue;
+    }
+    if (isShrinkWrapColumn(col)) {
+      layouts.set(col.id, {
+        w: ADMIN_ACTIONS_COLUMN_WIDTH,
+        minW: ADMIN_ACTIONS_COLUMN_WIDTH,
+        maxW: ADMIN_ACTIONS_COLUMN_WIDTH,
+        whiteSpace: "nowrap",
+      });
+      continue;
+    }
+    flexColumns.push(col);
+  }
+
+  const flexCount = flexColumns.length;
+  if (flexCount === 0) return layouts;
+
+  const hasPrimary =
+    primaryColumnId != null && flexColumns.some((column) => column.id === primaryColumnId);
+  const otherCount = hasPrimary ? flexCount - 1 : flexCount;
+  /*
+   * Do NOT assign % widths that sum to 100% — rem Actions / chevron sit outside that
+   * budget and would get clipped. Give primary a modest share; leave other flex
+   * columns as minW:0 so `table-layout: fixed` distributes leftover space.
+   */
+  const primaryPct =
+    !hasPrimary || flexCount === 1
+      ? undefined
+      : Math.min(36, Math.max(22, 55 - otherCount * 6));
+
+  for (const col of flexColumns) {
+    if (hasPrimary && col.id === primaryColumnId && primaryPct != null) {
+      layouts.set(col.id, { w: `${primaryPct}%`, minW: 0 });
+    } else {
+      layouts.set(col.id, { minW: 0 });
+    }
+  }
+
+  return layouts;
+}
+
+/** @deprecated Prefer resolveAdminColumnLayouts. */
 export function resolveAdminColumnLayout(
   col: {
     id: string;
@@ -97,32 +169,21 @@ export function resolveAdminColumnLayout(
   },
   primaryColumnId: string | null,
 ): AdminColumnLayout {
-  if (col.width != null || col.minWidth != null || col.maxW != null) {
-    return {
-      w: col.width,
-      minW: col.minWidth,
-      maxW: col.maxW,
-      whiteSpace: isShrinkWrapColumn(col) ? "nowrap" : undefined,
-    };
-  }
-
-  if (isShrinkWrapColumn(col)) {
-    return { w: "1%", whiteSpace: "nowrap" };
-  }
-
-  if (primaryColumnId && col.id === primaryColumnId) {
-    return { w: "100%", minW: 0 };
-  }
-
-  return { whiteSpace: "nowrap" };
+  return (
+    resolveAdminColumnLayouts(
+      primaryColumnId && col.id !== primaryColumnId
+        ? [{ id: primaryColumnId }, col]
+        : [col],
+    ).get(col.id) ?? { minW: 0 }
+  );
 }
 
-/** @deprecated Prefer resolveAdminColumnLayout — kept for existing imports. */
+/** @deprecated Prefer resolveAdminColumnLayouts — kept for existing imports. */
 export function adminFixedCellProps(props?: TableCellProps): TableCellProps {
   return props ? { ...props } : {};
 }
 
-/** @deprecated Prefer resolveAdminColumnLayout — kept for existing imports. */
+/** @deprecated Prefer resolveAdminColumnLayouts — kept for existing imports. */
 export function adminFixedSize(
   value: TableCellProps["w"] | undefined,
 ): TableCellProps["w"] | undefined {
@@ -137,11 +198,6 @@ function elementOverflows(node: Element): boolean {
   );
 }
 
-/**
- * True when this node or any descendant is clipped (ellipsis / overflow hidden).
- * Measuring only the wrapper misses the common case where the child Text/Badge
- * does the truncation and the wrapper's scrollWidth equals its clientWidth.
- */
 function treeOverflows(root: HTMLElement): boolean {
   if (elementOverflows(root)) return true;
   const nodes = root.querySelectorAll("*");
@@ -153,7 +209,6 @@ function treeOverflows(root: HTMLElement): boolean {
 
 /**
  * Clip overflowing cell content; native `title` tooltip when truncated.
- * No Chakra Tooltip wrapper — that was collapsing some cell layouts (e.g. Name).
  */
 export function TruncatingCellContent({ children }: { children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
