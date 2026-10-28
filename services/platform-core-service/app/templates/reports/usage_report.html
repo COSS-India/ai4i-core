@@ -8,7 +8,11 @@
   Empty values arrive already worded: "0" (no activity), "—" (a rate with
   nothing to divide by) or "Not available" (not captured, or failed to load).
 
-  WeasyPrint notes: print CSS (@page), flexbox and inline SVG work;
+  Layout: .page is the A4 content box (297mm less the @page margins); the
+  .gap spacers between sections share whatever height the content leaves,
+  so a short report spreads down the page instead of bunching at the top.
+
+  WeasyPrint notes: print CSS (@page), flexbox, tables and inline SVG work;
   external URLs and local files are blocked (data: URIs only), so keep
   styles and images inline. No JavaScript.
 #}
@@ -19,138 +23,211 @@
 <title>{{ report_title }} – {{ period_label }} ({{ frequency }})</title>
 <style>
   @page { size: A4; margin: 10mm 12mm 13mm 12mm;
-          @bottom-left  { content: "Period {{ date_span }} (IST) · API-key inference traffic · allocation and remaining are current balances"; font: 6.5pt "DejaVu Sans", sans-serif; color: #6b6b6b; }
+          @bottom-left  { content: "Period {{ date_span }}{{ '' if 'IST' in date_span else ' (IST)' }} · API-key inference traffic · allocation and remaining are current balances"; font: 6.5pt "DejaVu Sans", sans-serif; color: #6b6b6b; }
           @bottom-right { content: "Generated {{ generated_at }}"; font: 6.5pt "DejaVu Sans", sans-serif; color: #6b6b6b; } }
-  :root { --navy: #1f2f6b; --amber: #d9902a; --red: #a32424; --light: #c9cfe3;
-          --card: #f4f2ed; --border: #e2dfd7; --ink: #1b1b1b; --muted: #6b6b6b; --green: #2f7d4f; }
+  :root { --navy: #1f2f6b; --amber: #d9902a; --red: #a32424; --light: #c5cae0;
+          --card: #f1efeb; --border: #d9d6cf; --ink: #1b1b1b; --muted: #555; --green: #2f7d4f; }
   * { box-sizing: border-box; }
-  body { margin: 0; font: 8pt/1.3 "DejaVu Sans", sans-serif; color: var(--ink); }
-  .eyebrow { font-weight: 700; font-size: 7pt; letter-spacing: .04em; color: var(--navy); }
-  h1 { font: 700 22pt/1.1 "DejaVu Serif", serif; margin: 1.5mm 0 2mm; }
-  h2 { font: 700 12pt/1.1 "DejaVu Serif", serif; margin: 3.5mm 0 1.8mm; }
-  .row { display: flex; gap: 3mm; }
-  .row > * { flex: 1; min-width: 0; }  /* min-width 0: long content shrinks instead of widening the row */
-  .card { background: var(--card); border-radius: 4px; padding: 2.5mm 3mm; }
-  .panel { background: #fff; border: 1px solid var(--border); border-radius: 4px; padding: 2.5mm 3mm; }
-  .label { color: var(--muted); font-size: 7pt; }
-  .value { font-weight: 700; font-size: 16pt; margin: 1mm 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .value.na { color: var(--muted); }
-  .note { color: var(--muted); font-size: 6.5pt; }
-  .title { font-weight: 700; font-size: 7.5pt; }
-  .head { display: flex; justify-content: space-between; margin-bottom: 1.5mm; }
-  .track { background: #eeeeee; border-radius: 3px; height: 4px; flex: 1; }
-  .fill { background: var(--navy); border-radius: 3px; height: 4px; }
+  body { margin: 0; font: 8.5pt/1.35 "DejaVu Sans", sans-serif; color: var(--ink); }
+  .page { min-height: 274mm; display: flex; flex-direction: column; }
+  .gap { flex: 1 1 0; min-height: 2mm; }
+  .eyebrow { font-weight: 700; font-size: 8pt; letter-spacing: .06em; color: var(--navy); }
+  h1 { font: 700 23pt/1.15 "DejaVu Serif", serif; margin: 1mm 0 0; }
+  h1.long { font-size: 19pt; }  /* a sub-day period's date and times */
+  .nowrap { white-space: nowrap; }
+  h2 { font: 700 13.5pt/1.2 "DejaVu Serif", serif; margin: 0 0 2mm; }
+
+  /* Rows of cards use CSS table display, not flex: WeasyPrint sizes a flex
+     row's height from its items laid out narrower than they end up, leaving
+     empty space under them, and ignores fixed flex widths. Table cells share
+     one height (the cards line up) and keep their widths. Divs, not table
+     elements: this is layout, not tabular data. The 3.5mm border-spacing is the
+     gutter; the -3.5mm margins take it back off the outer edges (186mm is
+     the A4 content width). */
+  .tr { display: table-row; }
+  .td { display: table-cell; vertical-align: top; }
+  .cols { display: table; width: 193mm; margin: 0 -3.5mm; border-collapse: separate; border-spacing: 3.5mm 0; table-layout: fixed; }
+  .cols + .cols { margin-top: 3.5mm; }
+  /* border-spacing is inherited: layouts nested in a card row reset it. */
+  .pair { display: table; width: 100%; table-layout: fixed; border-spacing: 0; }
+  .card { background: var(--card); border-radius: 5px; padding: 2.5mm 3.5mm; }
+  .panel { background: #fff; border: 1px solid var(--border); border-radius: 5px; padding: 2.5mm 3.5mm; }
+  .label { color: var(--muted); font-size: 8.5pt; }
+  .value { font-weight: 700; font-size: 19pt; line-height: 1.2; margin: 1mm 0 0.5mm; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .value.na { color: var(--muted); font-size: 15pt; }
+  .unit { font-size: 11pt; }
+  .note { color: var(--muted); font-size: 7.5pt; }
+  .budget .value { font-size: 17pt; } .budget .unit { font-size: 10pt; }
+  .head { display: flex; justify-content: space-between; align-items: baseline; gap: 2mm; margin-bottom: 1.5mm; }
+  .title { font-weight: 700; font-size: 9.5pt; }
+  .empty { color: var(--muted); font-size: 8.5pt; }
+
+  /* Top 5 rows: fixed columns, so names, bars and figures line up.
+     A name column that takes the free width needs width: 0 as well as
+     flex: 1 1 0: without it WeasyPrint sizes it to the whole name, and a
+     long one pushes the figures off the page. */
+  .rank { display: flex; align-items: center; gap: 2.5mm; height: 4.8mm; }
+  .rank .who { flex: 1 1 0; width: 0; }
+  .rank .bar { flex: 0 0 30%; }
+  .rank .who b { font-weight: 700; }
+  .sub { color: var(--muted); font-size: 7pt; }
+  .rank .amt { flex: 0 0 22mm; text-align: right; font-weight: 700; }
+  .rank .pct { flex: 0 0 11mm; text-align: right; font-weight: 700; }
+  .track { flex: 1 1 0; background: #ebe9e4; border-radius: 3px; height: 5px; }
+  .fill { background: var(--navy); border-radius: 3px; height: 5px; }
   .fill.amber { background: var(--amber); } .fill.red { background: var(--red); }
-  .line { display: flex; align-items: center; gap: 2mm; margin: 1mm 0; }
-  .name { font-weight: 700; } .sub { color: var(--muted); font-size: 6.5pt; font-weight: 400; }
-  .pct { font-weight: 700; width: 9mm; text-align: right; }
-  .stack { display: flex; height: 11px; border-radius: 2px; overflow: hidden; background: var(--border); margin: 1.5mm 0; }
-  .stack div { color: #fff; font-size: 6.5pt; font-weight: 700; text-align: center; line-height: 11px; }
+  .clip { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 0; }
+
+  /* Models by task type */
+  .caption { color: var(--muted); font-size: 8.5pt; margin: 2.5mm 0 0; }
+  .grid { display: table; width: 100%; table-layout: fixed; border-spacing: 0; }
+  .grid > .tr > .td { padding: 0 2.5mm; }
+  .grid > .tr > .td:first-child { padding-left: 0; } .grid > .tr > .td:last-child { padding-right: 0; }
+  .item { display: flex; gap: 2mm; padding: 0.6mm 0; border-bottom: 1px dotted #b9b6ae; }
+  .item .n { flex: 1 1 0; width: 0; } .item .c { font-weight: 700; text-align: right; }
+
+  /* Stacked bars and legends */
+  .stack { display: flex; height: 14px; border-radius: 2px; overflow: hidden; background: #ebe9e4; margin: 1mm 0 1.5mm; }
+  .stack div { color: #fff; font-size: 7.5pt; font-weight: 700; text-align: center; line-height: 14px; }
   .seg-active { background: var(--navy); } .seg-other { background: var(--light); } .seg-dormant { background: var(--amber); }
-  .legend span::before { content: ""; display: inline-block; width: 6px; height: 6px; margin: 0 2px 0 6px; }
+  .legend { margin-bottom: 1mm; }
+  .legend span { display: inline-block; margin: 0 2.5mm 0.5mm 0; background: none; color: var(--ink); font-size: 7.5pt; }
+  .legend span::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 1.2mm; }
   .legend .seg-active::before { background: var(--navy); } .legend .seg-other::before { background: var(--light); }
   .legend .seg-dormant::before { background: var(--amber); }
-  .legend span { background: none; color: var(--muted); font-size: 6.5pt; }
   .new { color: var(--green); font-weight: 700; }
-  .up { color: var(--green); font-weight: 700; font-size: 7pt; } .down { color: var(--red); font-weight: 700; font-size: 7pt; }
-  .meter { display: flex; height: 13px; background: var(--light); margin: 3mm 0 1mm; }
+  .up { color: var(--green); font-weight: 700; } .down { color: var(--red); font-weight: 700; }
+
+  /* Model donut */
+  .donut { display: flex; align-items: center; gap: 4mm; }
+  .donut .legend span { display: block; margin: 1mm 0; }
+
+  /* Requests by task type, under the inference KPIs */
+  .tasks-head { margin: 2mm 0 0.5mm; }
+  .task { display: flex; align-items: center; gap: 1.5mm; height: 4.3mm; font-size: 7.5pt; }
+  .task .n { flex: 1 1 0; width: 0; } .task .track { flex: 0 0 22%; } .task .c { flex: 0 0 13mm; text-align: right; font-weight: 700; }
+
+  /* Budget */
+  .fy { color: var(--muted); font-size: 8pt; margin-top: 2mm; }
+  .meter { display: flex; height: 13px; background: var(--light); margin: 1.5mm 0 1mm; }
   .meter .spent { background: var(--navy); }
-  .meter-labels { display: flex; justify-content: space-between; font-weight: 700; font-size: 7pt; color: var(--navy); }
-  .muted-line { color: var(--muted); font-size: 6.5pt; margin-top: 1mm; }
-  .task-name { width: 24mm; } .task-count { width: 11mm; text-align: right; }
-  .donut { display: flex; align-items: center; gap: 3mm; }
-  .clip { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 0; }
+  .meter-labels { display: flex; justify-content: space-between; font-weight: 700; font-size: 9pt; color: var(--navy); }
+  .limits { font-size: 9pt; margin: 1.5mm 0 2mm; }
 </style>
 </head>
 <body>
+<div class="page">
   <div class="eyebrow">{{ report_title | upper }}</div>
-  <h1>{{ period_label }} ({{ frequency }})</h1>
+  <h1 class="{{ 'long' if period_label | length > 24 }}">{{ period_label }} <span class="nowrap">({{ frequency }})</span></h1>
 
   {# ── Model Portfolio ── #}
+  <div class="gap"></div>
   <h2>Model Portfolio</h2>
-  <div class="row">
-    <div class="card" style="flex: 0 0 22mm">
-      <div class="label">Total models</div><div class="value">{{ models.total }}</div><div class="note">Versions</div>
+  <div class="cols"><div class="tr">
+    <div class="td card" style="width: 36mm">
+      <div class="label">Total models</div><div class="value">{{ models.total }}</div>
+      <div class="note">Registered on the platform</div>
     </div>
-    <div class="card donut" style="flex: 0 0 36mm">
-      <svg width="46" height="46" viewBox="0 0 42 42">
-        <circle cx="21" cy="21" r="15.9" fill="none" stroke="#c9cfe3" stroke-width="6"/>
+    <div class="td card" style="width: 50mm"><div class="donut">
+      <svg width="62" height="62" viewBox="0 0 42 42">
+        <circle cx="21" cy="21" r="15.9" fill="none" stroke="#c5cae0" stroke-width="5"/>
         {% if models.active_width is not none and models.active_width > 0 %}
-        <circle cx="21" cy="21" r="15.9" fill="none" stroke="#1f2f6b" stroke-width="6"
+        <circle cx="21" cy="21" r="15.9" fill="none" stroke="#1f2f6b" stroke-width="5"
                 stroke-dasharray="{{ models.active_width }} {{ 100 - models.active_width }}"
                 transform="rotate(-90 21 21)"/>
         {% endif %}
       </svg>
-      <div class="legend"><span class="seg-active">{{ models.active }}</span><br>
+      <div class="legend"><span class="seg-active">{{ models.active }}</span>
         <span class="seg-other">{{ models.inactive }}</span></div>
-    </div>
-    <div class="panel">
+    </div></div>
+    <div class="td panel">
       <div class="head"><span class="title">Top 5 models by usage</span><span class="note">% of requests</span></div>
       {% for m in models.top %}
-      <div class="line"><span class="name clip" style="width: 40mm">{{ m.name }} <span class="sub">{{ m.task }}</span></span>
-        <div class="track"><div class="fill" style="width: {{ m.width }}%"></div></div><span class="pct">{{ m.share }}</span></div>
-      {% else %}<div class="note">{{ models.top_empty }}</div>{% endfor %}
+      <div class="rank"><span class="who clip"><b>{{ m.name }}</b> <span class="sub">{{ m.task }}</span></span>
+        <div class="track bar"><div class="fill" style="width: {{ m.width }}%"></div></div><span class="pct">{{ m.share }}</span></div>
+      {% else %}<div class="empty">{{ models.top_empty }}</div>{% endfor %}
     </div>
+  </div></div>
+  {% if models.by_task %}
+  <div class="caption">Models by task type</div>
+  <div class="grid">
+    {% for row in models.by_task | batch(4) %}
+    <div class="tr">{% for t in row %}<div class="td"><div class="item"><span class="n clip">{{ t.name }}</span><span class="c">{{ t.count }}</span></div></div>{% endfor %}
+      {% for _ in range(4 - row | length) %}<div class="td"></div>{% endfor %}</div>
+    {% endfor %}
   </div>
-  {% if models.by_task %}<div class="muted-line">Registered by task type: {{ models.by_task }}</div>{% endif %}
+  {% endif %}
 
   {# ── Adoption Ratio ── #}
+  <div class="gap"></div>
   <h2>Adoption Ratio</h2>
-  <div class="row">
-    <div class="panel">
+  <div class="cols"><div class="tr">
+    <div class="td panel">
       <div class="head"><span class="title">Institutions · {{ adoption.institutions_total }} total</span>
-        <span class="note">{% if adoption.institutions_new %}<span class="new">+{{ adoption.institutions_new }} new this period</span> · {% endif %}{{ adoption.institutions_active_pct }}</span></div>
+        <span class="note">{% if adoption.institutions_new %}<span class="new">+{{ adoption.institutions_new }} new</span> · {% endif %}{{ adoption.institutions_active_pct }}</span></div>
       <div class="stack">{% for s in adoption.institution_segments %}<div class="{{ s.css }}" style="width: {{ s.width }}%">{{ s.count }}</div>{% endfor %}</div>
       <div class="legend">{% for l in adoption.institution_legend %}<span class="{{ l.css }}">{{ l.text }}</span>{% endfor %}</div>
-      <div class="note">Active: at least one request in the period{% if adoption.dormant_tracked %} · Dormant: no requests this period or the previous one{% endif %}</div>
+      <div class="note">Active: at least one request in the period{% if adoption.dormant_tracked %} · Dormant: no requests for 2 or more periods{% endif %}</div>
     </div>
-    <div class="panel">
+    <div class="td panel">
       <div class="head"><span class="title">Applications · {{ adoption.applications_total }} total</span><span class="note">{{ adoption.applications_active_pct }}</span></div>
       <div class="stack">{% for s in adoption.application_segments %}<div class="{{ s.css }}" style="width: {{ s.width }}%">{{ s.count }}</div>{% endfor %}</div>
       <div class="legend">{% for l in adoption.application_legend %}<span class="{{ l.css }}">{{ l.text }}</span>{% endfor %}</div>
       <div class="note">Active: at least one request in the period</div>
     </div>
-  </div>
-  <div class="row" style="margin-top: 3mm">
-    <div class="panel">
-      <div class="row">
-        <div><div class="label">Total inferences</div><div class="value">{{ adoption.requests }}
-          {% if adoption.requests_change %}<span class="{{ 'up' if adoption.requests_change_up else 'down' }}">{{ adoption.requests_change }}</span>{% endif %}</div></div>
-        <div><div class="label">Avg daily</div><div class="value">{{ adoption.avg_daily }}</div></div>
+  </div></div>
+  <div class="cols"><div class="tr">
+    <div class="td panel">
+      <div class="pair"><div class="tr">
+        <div class="td"><div class="label">Total inferences</div>
+          <div class="value">{{ adoption.requests }}</div>
+          <div class="note">{% if adoption.requests_change %}<span class="{{ 'up' if adoption.requests_change_up else 'down' }}">{{ adoption.requests_change }}</span> {{ adoption.vs_phrase }}{% else %}In this period{% endif %}</div></div>
+        <div class="td"><div class="label">Avg daily inferences</div><div class="value{{ ' na' if adoption.avg_daily_muted }}">{{ adoption.avg_daily }}</div>
+          <div class="note">{{ adoption.avg_daily_note }}</div></div>
+      </div></div>
+      {% if adoption.tasks %}
+      <div class="note tasks-head">By task type</div>
+      <div class="grid">
+        {% for row in adoption.tasks | batch(2) %}
+        <div class="tr">{% for t in row %}<div class="td"><div class="task"><span class="n clip">{{ t.name }}</span><div class="track"><div class="fill" style="width: {{ t.width }}%"></div></div><span class="c">{{ t.count }}</span></div></div>{% endfor %}
+          {% if row | length < 2 %}<div class="td"></div>{% endif %}</div>
+        {% endfor %}
       </div>
-      {% for t in adoption.tasks %}
-      <div class="line"><span class="task-name clip">{{ t.name }}</span><div class="track"><div class="fill" style="width: {{ t.width }}%"></div></div><span class="task-count">{{ t.count }}</span></div>
-      {% endfor %}
+      {% endif %}
     </div>
-    <div class="panel">
+    <div class="td panel">
       <div class="head"><span class="title">Top 5 institutions by usage</span><span class="note">% of requests</span></div>
       {% for i in adoption.top_institutions %}
-      <div class="line"><span class="name clip" style="flex: 1">{{ i.name }} <span class="sub">{{ i.tasks }}</span></span><span class="pct">{{ i.share }}</span></div>
-      <div class="track" style="margin-bottom: 1.5mm"><div class="fill" style="width: {{ i.width }}%"></div></div>
-      {% else %}<div class="note">{{ adoption.top_empty }}</div>{% endfor %}
+      <div class="rank"><span class="who clip"><b>{{ i.name }}</b> <span class="sub">{{ i.tasks }}</span></span>
+        <div class="track bar"><div class="fill" style="width: {{ i.width }}%"></div></div><span class="pct">{{ i.share }}</span></div>
+      {% else %}<div class="empty">{{ adoption.top_empty }}</div>{% endfor %}
     </div>
-  </div>
+  </div></div>
 
   {# ── Budget Utilisation ── #}
+  <div class="gap"></div>
   <h2>Budget Utilisation</h2>
-  <div class="row">
+  <div class="cols budget"><div class="tr">
     {% for c in budget.cards %}
-    <div class="card">
+    <div class="td card">
       <div class="label">{{ c.label }}</div>
-      <div class="value{{ ' na' if c.muted }}">{{ c.value }}</div><div class="note">{{ c.note }}</div>
+      <div class="value{{ ' na' if c.muted }}">{{ c.value }}{% if c.unit %}<span class="unit">{{ c.unit }}</span>{% endif %}</div>
+      <div class="note">{{ c.note }}</div>
     </div>
     {% endfor %}
-  </div>
-  <div class="muted-line">Financial year allocation: {{ budget.fy_allocation }}</div>
+  </div></div>
+  <div class="fy">Financial year allocation: {{ budget.fy_allocation }}</div>
   <div class="meter">{% if budget.used_width is not none %}<div class="spent" style="width: {{ budget.used_width }}%"></div>{% endif %}</div>
   <div class="meter-labels"><span>Spent to date {{ budget.used_pct }}</span><span>Remaining {{ budget.remaining_pct }}</span></div>
-  <div style="margin: 1.5mm 0">Institutions with budget exhausted: {{ budget.exhausted }} · Institutions nearing limit ({{ budget.nearing_pct }} or more used): {{ budget.nearing }}</div>
+  <div class="limits">Institutions with budget exhausted: <b>{{ budget.exhausted }}</b> · Institutions nearing limit ({{ budget.nearing_pct }} or more used): <b>{{ budget.nearing }}</b></div>
   <div class="panel">
     <div class="head"><span class="title">Top 5 institutions by spend (this period)</span><span class="note">% of allocation used</span></div>
     {% for s in budget.top_spend %}
-    <div class="line"><span class="clip" style="width: 45mm">{{ s.name }}</span><span class="name clip" style="width: 20mm">{{ s.spent }}</span>
-      <div class="track"><div class="fill {{ s.css }}" style="width: {{ s.width }}%"></div></div><span class="pct">{{ s.used }}</span></div>
-    {% else %}<div class="note">{{ budget.top_spend_empty }}</div>{% endfor %}
+    <div class="rank"><span class="who clip">{{ s.name }}</span><span class="amt">{{ s.spent }}</span>
+      <div class="track" style="flex: 0 0 60mm"><div class="fill {{ s.css }}" style="width: {{ s.width }}%"></div></div><span class="pct">{{ s.used }}</span></div>
+    {% else %}<div class="empty">{{ budget.top_spend_empty }}</div>{% endfor %}
   </div>
+  <div class="gap"></div>
+</div>
 </body>
 </html>

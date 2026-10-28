@@ -808,10 +808,12 @@ def _pages(html: str) -> int:
 class TestReportHtml:
     def test_real_values_and_placeholders(self):
         html = render_report_html(_full_data())
-        for real in ("<h1>September 2026 (Monthly)</h1>", "42", "31 active", "11 inactive", "36 total",
-                     "+2 new this period", "72% active", "84 total", "73% active", "18.40M", "+17.9%",
-                     "613.33K", "6.10M", "₹500", "₹285", "₹6.30 Cr", "₹21.00 L", "Ministry A", "IndicTrans2",
-                     "Top 5 institutions by spend (this period)", "Financial year allocation: Not available"):
+        for real in ('September 2026 <span class="nowrap">(Monthly)</span></h1>', "42", "31 active", "11 inactive",
+                     "36 total", "+2 new", "72% active", "84 total", "73% active", "18.40M", "+17.9%</span> vs August",
+                     "Avg daily inferences", "613.33K", "Per day in this period", "6.10M", "₹500", "₹285",
+                     '₹6.30<span class="unit"> Cr</span>', '₹21.00<span class="unit"> L/day</span>',
+                     "Ministry A", "IndicTrans2", "Models by task type", "Top 5 institutions by spend (this period)",
+                     "Financial year allocation: Not available"):
             assert real in html, real
         # Availability, P95, fallback rate and providers are not tracked, so not shown.
         for untracked in ("Availability", "Latency P95", "Fallback rate", "Providers"):
@@ -847,7 +849,8 @@ class TestReportHtml:
         d = ReportData(period=SEP, generated_at=AFTER_SEP)
         d.failed = ["model_usage", "institution_usage", "budget"]
         html = render_report_html(d)
-        assert "No requests in this period" not in html and "No spend in this period" not in html
+        for message in ("No model traffic", "No institution traffic", "No spend"):
+            assert message not in html, message
         assert "N/A" not in html
         assert "Usage not recorded for this period" in html
         ctx = report_context(d)
@@ -872,13 +875,17 @@ class TestReportHtml:
     def test_quiet_period_shows_zeros_and_no_activity_messages(self):
         d = self._quiet_period()
         html = render_report_html(d)
-        assert "<h1>19–25 Oct 2026 (Weekly)</h1>" in html
-        assert html.count("No requests in this period") == 2 and "No spend in this period" in html
+        assert '19–25 Oct 2026 <span class="nowrap">(Weekly)</span></h1>' in html
+        for message in ("No model traffic in this period", "No institution traffic in this period",
+                        "No spend in this period"):
+            assert html.count(message) == 1, message
         ctx = report_context(d)
         a, b = ctx["adoption"], ctx["budget"]
         assert (a["requests"], a["avg_daily"], a["requests_change"]) == ("0", "0", None)
         assert (a["institutions_active_pct"], a["applications_active_pct"]) == ("0% active", "0% active")
-        assert [c["value"] for c in b["cards"]] == ["₹71.20 Cr", "₹0", "₹70.90 Cr", "₹0"]
+        # Lakh/Crore and /day are set as a smaller unit beside the amount.
+        assert [(c["value"], c["unit"]) for c in b["cards"]] == [
+            ("₹71.20", " Cr"), ("₹0", ""), ("₹70.90", " Cr"), ("₹0", "/day")]
         assert (b["used_pct"], b["remaining_pct"], b["exhausted"], b["nearing"]) == ("<1%", ">99%", "8", "2")
         # Bars: the 0 active segments are not drawn; the rest fill the bar by count.
         assert [(s["css"], s["count"], s["width"]) for s in a["institution_segments"]] == [
@@ -888,20 +895,40 @@ class TestReportHtml:
         assert ctx["models"]["active_width"] == 0.0
 
     def test_rates_with_nothing_to_divide_by_are_a_dash(self):
-        from app.services.usage_report import pdf as pdf_module
-
         d = self._quiet_period()
         d.total_applications = d.active_applications = 0
         d.budget = BudgetSummary(Decimal(0), Decimal(0), Decimal(0), 0, 0)
-        d.period = ReportPeriod.containing("1h", datetime(2026, 10, 14, 10, 0, tzinfo=UTC))
-        d.period_spend = PeriodSpend(Decimal(0), None, None)
+        ctx = report_context(d)
+        assert ctx["adoption"]["applications_active_pct"] == "Active: —"
+        b = ctx["budget"]
+        assert (b["used_pct"], b["remaining_pct"], b["used_width"]) == ("—", "—", None)
+
+    def test_sub_day_period_has_no_per_day_figures_and_says_why(self):
+        # Dividing a 30-minute block by one day would just repeat its totals.
+        from app.services.usage_report import pdf as pdf_module
+
+        d = self._quiet_period()
+        d.period = ReportPeriod.containing("30m", datetime(2026, 10, 27, 17, 30, tzinfo=UTC))
+        d.total_requests = 10
+        d.period_spend = PeriodSpend(Decimal(696), None, None)
         # The sections directly: a sub-day date_span uses %-d, which Windows' strftime rejects.
-        adoption, budget = pdf_module._adoption(d), pdf_module._budget(d)
-        assert adoption["applications_active_pct"] == "Active: —"
-        assert adoption["avg_daily"] == "—"
-        assert (budget["used_pct"], budget["remaining_pct"], budget["used_width"]) == ("—", "—", None)
-        burn = budget["cards"][3]
-        assert burn["value"] == "—" and burn["muted"]
+        adoption = pdf_module._adoption(d)
+        assert (adoption["avg_daily"], adoption["avg_daily_note"], adoption["avg_daily_muted"]) == (
+            "—", "Not calculated for periods under a day", True)
+        spent, burn = pdf_module._budget(d)["cards"][1:4:2]
+        assert spent["value"] == "₹696"
+        assert (burn["value"], burn["unit"], burn["note"], burn["muted"]) == (
+            "—", "", "Not calculated for periods under a day", True)
+
+    def test_models_by_task_type_is_a_four_column_table(self):
+        d = _full_data()
+        d.models_by_task = {"LLM": 32, "NMT": 8, "ASR": 2, "TTS": 1, "OCR": 1}
+        html = render_report_html(d)
+        assert html.count('<div class="item">') == 5
+        grid = html.split('<div class="grid">')[1].split('<div class="caption">')[0].split("Adoption Ratio")[0]
+        rows = grid.split('<div class="tr">')[1:]
+        assert [r.count('<div class="item">') for r in rows] == [4, 1]
+        assert '<span class="n clip">LLM</span><span class="c">32</span>' in rows[0]
 
     def test_bars_match_the_values_beside_them(self):
         d = _full_data()
@@ -966,6 +993,9 @@ class TestReportPdf:
         d.top_models = [RankedModel("M" * 200, "Transliteration", 20.0)] * 5
         d.top_institutions = [RankedInstitution("I" * 300, 20.0, ["Speaker Diarization", "NMT"])] * 5
         d.requests_by_task = [(f"Task {i}", 10**9 - i) for i in range(20)]
+        # Every registered task type (3 rows of 4): with only the two above, a
+        # layout that overflowed a real month still passed.
+        d.models_by_task = {f"Audio Language Detection {i}": 10**6 for i in range(12)}
         d.budget = BudgetSummary(Decimal(10**15), Decimal(10**15), Decimal(0), 99, 99)
         d.top_by_spend = [InstitutionSpend("S" * 300, Decimal(10**15), 100.0)] * 5
         return d
