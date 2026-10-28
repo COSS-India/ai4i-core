@@ -756,7 +756,7 @@ const CLUSTER_CHILD_PROPS: FormControlProps = {
   w: "full",
 };
 
-const CLUSTER_GAP_PX = 8;
+const CLUSTER_GAP_PX = 16;
 
 function clusterStackProps(
   defs: DataTableFilterDef[],
@@ -766,7 +766,7 @@ function clusterStackProps(
     return { spacing: 3, align: "flex-start", flexShrink: 0 };
   }
   return {
-    spacing: 2,
+    spacing: 4,
     align: "flex-start",
     minW: sumClusterSize(defs, "minWidth"),
     maxW: sumClusterSize(defs, "maxWidth"),
@@ -1902,7 +1902,7 @@ function AdminFilterToolbarSection({
           align={filterToolbarAlign}
           alignActionsToInputs={toolbarLabelsVisible}
           rightContent={filterToolbarRightContent}
-          spacing={filterToolbarSingleRow ? 2 : 3}
+          spacing={filterToolbarSingleRow ? 4 : 3}
           flexWrap={filterToolbarSingleRow ? { base: "wrap", md: "nowrap" } : "wrap"}
         >
           <ConfigDrivenFilters search={search} filterDefs={filterDefs} />
