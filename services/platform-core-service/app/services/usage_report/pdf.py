@@ -38,9 +38,10 @@ _env = Environment(
 
 TEMPLATE = "usage_report.html"
 MAX_TASK_ROWS = 8
-NO_REQUESTS = "No requests in this period"
+NO_MODEL_TRAFFIC = "No model traffic in this period"
+NO_INSTITUTION_TRAFFIC = "No institution traffic in this period"
 NO_SPEND = "No spend in this period"
-BURN_RATE = "Burn rate (per day)"
+NOT_PER_DAY = "Not calculated for periods under a day"
 # A stacked-bar segment narrower than this (% of the bar) has no room for its
 # count; the legend still gives it.
 MIN_LABELLED_SEGMENT = 8.0
@@ -82,8 +83,16 @@ def _segments(parts: list[tuple[int, str, str]]) -> tuple[list[dict], list[dict]
     return segments, legend
 
 
-def _card(label: str, value: str, note: str = "") -> dict:
-    return {"label": label, "value": value, "note": note, "muted": value in (fmt.NA, fmt.NO_RATE)}
+def _card(label: str, value: str, note: str = "", unit: str = "") -> dict:
+    """A KPI card. ``unit`` follows the value ("/day") unless it is missing;
+    a Lakh/Crore suffix joins it, set smaller, so the amount fits the card."""
+    muted = value in (fmt.NA, fmt.NO_RATE)
+    if muted:
+        unit = ""
+    for suffix in (" L", " Cr"):
+        if value.endswith(suffix):
+            value, unit = value[:-len(suffix)], suffix + unit
+    return {"label": label, "value": value, "unit": unit, "note": note, "muted": muted}
 
 
 def _empty(loaded: bool, message: str) -> str:
@@ -104,10 +113,10 @@ def _models(d: ReportData) -> dict:
             {"name": m.name, "task": m.task, "share": fmt.share(m.share_pct), "width": _width(m.share_pct)}
             for m in d.top_models
         ],
-        "top_empty": _empty(active is not None, NO_REQUESTS),
-        "by_task": " · ".join(
-            f"{k} {fmt.count(v)}" for k, v in sorted(d.models_by_task.items(), key=lambda x: -x[1])
-        ),
+        "top_empty": _empty(active is not None, NO_MODEL_TRAFFIC),
+        "by_task": [
+            {"name": k, "count": fmt.count(v)} for k, v in sorted(d.models_by_task.items(), key=lambda x: (-x[1], x[0]))
+        ],
     }
 
 
@@ -150,7 +159,8 @@ def _adoption(d: ReportData) -> dict:
         "requests": fmt.count(d.total_requests),
         "requests_change": fmt.signed_pct(change) if change is not None else None,
         "requests_change_up": change is not None and change >= 0,
-        "avg_daily": _avg_daily(d.total_requests, avg),
+        "vs_phrase": d.period.vs_phrase,
+        **_avg_daily(d.total_requests, avg),
         # Bar length is the task's share of all requests.
         "tasks": [{"name": name, "count": fmt.count(n), "width": _width(n, task_total)} for name, n in rows],
         "top_institutions": [
@@ -158,36 +168,34 @@ def _adoption(d: ReportData) -> dict:
              "width": _width(i.share_pct)}
             for i in d.top_institutions
         ],
-        "top_empty": _empty("institution_usage" not in d.failed, NO_REQUESTS),
+        "top_empty": _empty("institution_usage" not in d.failed, NO_INSTITUTION_TRAFFIC),
     }
 
 
-def _avg_daily(total: Optional[int], avg: Optional[float]) -> str:
-    """Average requests per day; a period under a day has none."""
+def _avg_daily(total: Optional[int], avg: Optional[float]) -> dict:
+    """Average inferences per day, and its caption. A period under a day has
+    no per-day figure: dividing by one day would just repeat the total."""
     if total is None:
-        return fmt.NA
-    if avg is None:
-        return fmt.NO_RATE
-    return fmt.count(avg)
+        value, note = fmt.NA, ""
+    elif avg is None:
+        value, note = fmt.NO_RATE, NOT_PER_DAY
+    else:
+        value, note = fmt.count(avg), "Per day in this period"
+    return {"avg_daily": value, "avg_daily_note": note, "avg_daily_muted": value in (fmt.NA, fmt.NO_RATE)}
 
 
 def _spend_cards(d: ReportData) -> tuple[dict, dict]:
     """The Spent and Burn rate cards: spend in the period."""
-    b, ps = d.budget, d.period_spend
-    spent_label = f"Spent ({d.period.short_label})"
+    ps = d.period_spend
     if ps is None:
         note = "" if "period_spend" in d.failed else "Usage not recorded for this period"
-        return _card(spent_label, fmt.NA, note), _card(BURN_RATE, fmt.NA, note)
-    if ps.since:
-        note = f"Recorded since {ps.since.astimezone(IST):%d %b}"
-    elif b:
-        note = f"Lifetime to date: {fmt.inr(b.spent)}"
-    else:
-        note = ""
-    spent_card = _card(spent_label, fmt.inr(ps.amount), note)
-    if ps.burn_rate is None:
-        return spent_card, _card(BURN_RATE, fmt.NO_RATE, "Not calculated for periods under a day")
-    return spent_card, _card(BURN_RATE, fmt.inr(ps.burn_rate), f"Average over {ps.covered_days} day(s)")
+        return _card("Spent", fmt.NA, note), _card("Burn rate", fmt.NA, note)
+    since = f" (recorded since {ps.since.astimezone(IST):%d %b})" if ps.since else ""
+    spent_card = _card("Spent", fmt.inr(ps.amount), f"In this period{since}")
+    if ps.burn_rate is None:  # a period under a day
+        return spent_card, _card("Burn rate", fmt.NO_RATE, NOT_PER_DAY)
+    return spent_card, _card("Burn rate", fmt.inr(ps.burn_rate), f"Average spend per day in this period{since}",
+                             unit="/day")
 
 
 def _meter(b: Optional[collector.BudgetSummary]) -> dict:
@@ -221,9 +229,9 @@ def _budget(d: ReportData) -> dict:
         exhausted, nearing = fmt.count(b.exhausted), fmt.count(b.nearing_limit)
     return {
         "cards": [
-            _card("Allocated", allocated, "Sum of institution allocations"),
+            _card("Allocated", allocated, "Total across all Institutions"),
             spent_card,
-            _card("Remaining", remaining, "Allocation minus spend to date"),
+            _card("Remaining", remaining, "Allocated minus spend to date"),
             burn_card,
         ],
         "fy_allocation": fmt.NA,
