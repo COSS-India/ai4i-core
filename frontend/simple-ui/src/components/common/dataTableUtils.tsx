@@ -528,7 +528,9 @@ export function measureColumnNaturalWidths(
   columnCount: number,
 ): { header: number[]; natural: number[] } | null {
   const headRow = table.tHead?.rows[0];
-  if (!headRow || headRow.cells.length < columnCount) return null;
+  if (headRow?.cells.length == null || headRow.cells.length < columnCount) {
+    return null;
+  }
   const bodyRows = Array.from(table.tBodies[0]?.rows ?? []).filter(
     (row) =>
       row.cells.length >= columnCount &&
@@ -576,7 +578,7 @@ export function measureColumnNaturalWidths(
 }
 
 const useIsomorphicLayoutEffect =
-  typeof window === "undefined" ? useEffect : useLayoutEffect;
+  typeof globalThis.window === "undefined" ? useEffect : useLayoutEffect;
 
 type MeasuredNaturals = { key: string; header: number[]; natural: number[] };
 
@@ -591,14 +593,14 @@ function sameNumbers(a: readonly number[], b: readonly number[]): boolean {
  * Widths only ratchet up while the column set is unchanged, so paging or
  * filtering does not make columns jump around.
  */
-export function useContentColumnWidths(options: {
+export function useContentColumnWidths(options: Readonly<{
   tableRef: React.RefObject<HTMLTableElement>;
   containerRef: React.RefObject<HTMLElement>;
   columns: readonly AdminColumnInput[];
   trailingFixedPx?: number;
   enabled: boolean;
   contentKey: unknown;
-}): number[] | null {
+}>): number[] | null {
   const { tableRef, containerRef, columns, trailingFixedPx, enabled, contentKey } =
     options;
   const [naturals, setNaturals] = useState<MeasuredNaturals | null>(null);
@@ -620,7 +622,7 @@ export function useContentColumnWidths(options: {
     const container = containerRef.current;
     if (!container) return;
     setAvailable(container.clientWidth);
-    if (typeof ResizeObserver === "undefined") return;
+    if (typeof globalThis.ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => setAvailable(container.clientWidth));
     observer.observe(container);
     return () => observer.disconnect();
@@ -631,7 +633,7 @@ export function useContentColumnWidths(options: {
     const measured = measureColumnNaturalWidths(tableRef.current, columns.length);
     if (!measured) return;
     setNaturals((prev) => {
-      if (!prev || prev.key !== key) return { key, ...measured };
+      if (prev?.key !== key) return { key, ...measured };
       const natural = measured.natural.map((n, i) => Math.max(n, prev.natural[i] ?? 0));
       const header = measured.header.map((n, i) => Math.max(n, prev.header[i] ?? 0));
       if (sameNumbers(natural, prev.natural) && sameNumbers(header, prev.header)) {
@@ -642,7 +644,7 @@ export function useContentColumnWidths(options: {
   }, [enabled, key, contentKey, columns.length, tableRef]);
 
   return useMemo(() => {
-    if (!naturals || naturals.key !== key || available <= 0) return null;
+    if (naturals?.key !== key || available <= 0) return null;
     const inputs: ColumnSizingInput[] = columns.map((col, i) => {
       const mode = resolveColumnSizingMode(col);
       const header = naturals.header[i] ?? 0;
@@ -714,16 +716,18 @@ function treeOverflows(root: HTMLElement): boolean {
 export function TruncatingCellContent({
   children,
   ellipsis = true,
-}: {
+}: Readonly<{
   children: React.ReactNode;
   ellipsis?: boolean;
-}) {
+}>) {
   const ref = useRef<HTMLDivElement>(null);
 
   const onMouseEnter = useCallback(() => {
     const el = ref.current;
     if (!el) return;
-    const text = (el.innerText ?? el.textContent ?? "").replace(/\s+/g, " ").trim();
+    const text = (el.innerText ?? el.textContent ?? "")
+      .replaceAll(/\s+/g, " ")
+      .trim();
     if (text && treeOverflows(el)) {
       el.setAttribute("title", text);
       return;

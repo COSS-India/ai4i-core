@@ -2159,9 +2159,13 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
       >
         {measuredWidths ? (
           <colgroup>
-            {measuredWidths.map((width, i) => (
-              <col key={i} style={{ width: `${width}px` }} />
-            ))}
+            {measuredWidths.map((width, i) => {
+              const colKey =
+                i < columns.length ? columns[i].id : "row-chevron";
+              return (
+                <col key={colKey} style={{ width: `${width}px` }} />
+              );
+            })}
           </colgroup>
         ) : null}
         <AdminTableHead
