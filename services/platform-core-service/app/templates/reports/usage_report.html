@@ -40,8 +40,8 @@
   /* Rows of cards use CSS table display, not flex: WeasyPrint sizes a flex
      row's height from its items laid out narrower than they end up, leaving
      empty space under them, and ignores fixed flex widths. Table cells share
-     one height (the cards line up) and keep their widths. Divs, not <table>:
-     this is layout, not tabular data. The 3.5mm border-spacing is the
+     one height (the cards line up) and keep their widths. Divs, not table
+     elements: this is layout, not tabular data. The 3.5mm border-spacing is the
      gutter; the -3.5mm margins take it back off the outer edges (186mm is
      the A4 content width). */
   .tr { display: table-row; }
