@@ -204,6 +204,63 @@ function logsAccessDenialMessage(options: {
   return `You need to be assigned to ${INSTITUTION_ARTICLE} ${INSTITUTION.toLowerCase()} to view logs.`;
 }
 
+/** Redirect unauthenticated / unauthorized users away from the logs page. */
+function useLogsAccessGuards(options: {
+  authLoading: boolean;
+  isAuthenticated: boolean;
+  isUser: boolean;
+  isGuest: boolean;
+  isAdmin: boolean;
+  isTenantAdmin: boolean;
+  authTenantId: string | null;
+  user: unknown;
+}) {
+  const router = useRouter();
+  const {
+    authLoading,
+    isAuthenticated,
+    isUser,
+    isGuest,
+    isAdmin,
+    isTenantAdmin,
+    authTenantId,
+    user,
+  } = options;
+
+  useEffect(() => {
+    if (authLoading || isAuthenticated) return;
+    showToast({
+      type: "warning",
+      message: "Please log in to view logs.",
+    });
+    router.push("/auth");
+  }, [isAuthenticated, authLoading, router]);
+
+  useEffect(() => {
+    if (authLoading || !isAuthenticated) return;
+    const denial = logsAccessDenialMessage({
+      isUser,
+      isGuest,
+      isAdmin,
+      isTenantAdmin,
+      authTenantId,
+    });
+    if (!denial) return;
+    showToast({ type: "error", message: denial });
+    router.push("/");
+  }, [
+    isAuthenticated,
+    authLoading,
+    user,
+    isUser,
+    isGuest,
+    isAdmin,
+    isTenantAdmin,
+    authTenantId,
+    router,
+  ]);
+}
+
 function withSearchText(draft: DraftFilters, value: string): DraftFilters {
   return { ...draft, q: value };
 }
@@ -761,38 +818,16 @@ const LogsPage: React.FC = () => {
     setAutoRefresh(false);
   }, [followsPresent, autoRefresh]);
 
-  useEffect(() => {
-    if (authLoading || isAuthenticated) return;
-    showToast({
-      type: "warning",
-      message: "Please log in to view logs.",
-    });
-    router.push("/auth");
-  }, [isAuthenticated, authLoading, router]);
-
-  useEffect(() => {
-    if (authLoading || !isAuthenticated) return;
-    const denial = logsAccessDenialMessage({
-      isUser,
-      isGuest,
-      isAdmin,
-      isTenantAdmin,
-      authTenantId,
-    });
-    if (!denial) return;
-    showToast({ type: "error", message: denial });
-    router.push("/");
-  }, [
-    isAuthenticated,
+  useLogsAccessGuards({
     authLoading,
-    user,
+    isAuthenticated,
     isUser,
     isGuest,
     isAdmin,
     isTenantAdmin,
     authTenantId,
-    router,
-  ]);
+    user,
+  });
 
   const {
     data: tenantsData,

@@ -237,6 +237,292 @@ function renderApiKeyExpiryCell(key: ApiKeyTableRow): React.ReactNode {
   );
 }
 
+function renderApiKeyApplicationCell(key: ApiKeyTableRow): React.ReactNode {
+  const label = key.application_name ?? key.application_id ?? "—";
+  return (
+    <Tooltip label={label} placement="top" hasArrow openDelay={300}>
+      <Text fontSize="sm" isTruncated maxW="180px">
+        {label}
+      </Text>
+    </Tooltip>
+  );
+}
+
+type ApiKeyColumnContext = {
+  getPermissionCount: (key: ApiKeyTableRow) => number;
+  formatBudgetPct: (key: ApiKeyTableRow) => string;
+  resolveDisplayStatus: (key: ApiKeyTableRow) => ApiKeyDisplayStatusValue;
+  getStatusReason: (key: ApiKeyTableRow) => string | null;
+  isRotationInProgress: (key: ApiKeyTableRow) => boolean;
+  isKeyEffectivelyActive: (key: ApiKeyTableRow) => boolean;
+  isKeyRevocable: (key: ApiKeyTableRow) => boolean;
+  isKeyRotatable: (key: ApiKeyTableRow) => boolean;
+  collapsedKeyIds: ReadonlySet<number>;
+  toggleKeyExpanded: (keyId: number) => void;
+  openUpdate: (key: ApiKeyTableRow) => void;
+  openRotate: (key: ApiKeyTableRow) => void;
+  openRevoke: (key: ApiKeyTableRow) => void;
+  openExtend: (key: ApiKeyTableRow) => void;
+  openStopPrevious: (key: ApiKeyTableRow) => void;
+  openSingleKeyBudget: (
+    applicationId: string,
+    keyId: number,
+    keyName: string,
+  ) => void;
+};
+
+const REVOKE_ACTION_STYLE = {
+  color: "red.500",
+  hoverColor: "red.600",
+  hoverBg: "red.50",
+} as const;
+
+function renderApiKeyNameCell(
+  key: ApiKeyTableRow,
+  ctx: ApiKeyColumnContext,
+): React.ReactNode {
+  if (key.subRow) {
+    return (
+      <HStack spacing={2} pl={6}>
+        <Box as={FiCornerDownRight} color="ink.400" flexShrink={0} />
+        <EntityIdentity
+          name={key.subRow === "current" ? "New Key" : "Old Key"}
+          meta={key.subRow === "current" ? key.api_key : key.rotated_key}
+        />
+      </HStack>
+    );
+  }
+  const rotating =
+    SHOW_API_KEY_ROTATION_ACTIONS && ctx.isRotationInProgress(key);
+  const collapsed = ctx.collapsedKeyIds.has(key.id);
+  return (
+    <HStack spacing={1}>
+      {rotating ? (
+        <IconButton
+          aria-label={collapsed ? "Show new and old key" : "Hide new and old key"}
+          icon={collapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}
+          size="xs"
+          variant="ghost"
+          onClick={(e) => {
+            e.stopPropagation();
+            ctx.toggleKeyExpanded(key.id);
+          }}
+        />
+      ) : (
+        <Box w={6} flexShrink={0} />
+      )}
+      <EntityIdentity
+        name={key.key_name || "API key"}
+        meta={rotating ? undefined : key.api_key}
+      />
+    </HStack>
+  );
+}
+
+function renderApiKeyPermissionsColumnCell(
+  key: ApiKeyTableRow,
+  ctx: ApiKeyColumnContext,
+): React.ReactNode {
+  return <ApiKeyPermissionsCell count={ctx.getPermissionCount(key)} />;
+}
+
+function renderApiKeyAllocationColumnCell(
+  key: ApiKeyTableRow,
+  ctx: ApiKeyColumnContext,
+): React.ReactNode {
+  return (
+    <ApiKeyAllocationCell keyRow={key} pctLabel={ctx.formatBudgetPct(key)} />
+  );
+}
+
+function renderApiKeyStatusColumnCell(
+  key: ApiKeyTableRow,
+  ctx: ApiKeyColumnContext,
+): React.ReactNode {
+  return (
+    <ApiKeyStatusCell
+      status={ctx.resolveDisplayStatus(key)}
+      reason={ctx.getStatusReason(key)}
+    />
+  );
+}
+
+function buildApiKeyParentActions(
+  key: ApiKeyTableRow,
+  ctx: ApiKeyColumnContext,
+): DataTableAction[] {
+  const rotating =
+    SHOW_API_KEY_ROTATION_ACTIONS && ctx.isRotationInProgress(key);
+  const actions: DataTableAction[] = [
+    {
+      id: "edit",
+      label: "Update API key",
+      tooltip: inactiveKeyTooltip(
+        ctx.isKeyEffectivelyActive(key),
+        ctx.isKeyRevocable(key),
+        "Update key",
+        "Only effectively active API keys can be updated.",
+        "This API key has been revoked and cannot be updated.",
+      ),
+      icon: <EditIcon />,
+      disabled: !ctx.isKeyEffectivelyActive(key),
+      onClick: () => ctx.openUpdate(key),
+    },
+    {
+      id: "budget",
+      label: "Edit budget",
+      tooltip: key.application_id
+        ? inactiveKeyTooltip(
+            ctx.isKeyEffectivelyActive(key),
+            ctx.isKeyRevocable(key),
+            BUDGET_COPY.editBudget,
+            "Only effectively active API keys can have their budget edited.",
+            "This API key has been revoked and cannot have its budget edited.",
+          )
+        : BUDGET_COPY.keyHasNoApplication,
+      "aria-label": editBudgetForKey(key.key_name),
+      icon: <FiSliders />,
+      disabled: !key.application_id || !ctx.isKeyEffectivelyActive(key),
+      onClick: () => {
+        if (key.application_id) {
+          ctx.openSingleKeyBudget(key.application_id, key.id, key.key_name);
+        }
+      },
+    },
+  ];
+  if (SHOW_API_KEY_ROTATION_ACTIONS) {
+    actions.push({
+      id: "rotate",
+      label: "Rotate API key",
+      tooltip: rotateTooltip(key, ctx.isKeyRotatable(key), rotating),
+      icon: <FiRefreshCw />,
+      disabled: !ctx.isKeyRotatable(key),
+      onClick: () => ctx.openRotate(key),
+    });
+  }
+  if (!rotating) {
+    actions.push({
+      id: "revoke",
+      label: "Revoke API key",
+      tooltip: ctx.isKeyRevocable(key) ? "Revoke key" : "Already revoked",
+      icon: <FiSlash />,
+      ...REVOKE_ACTION_STYLE,
+      disabled: !ctx.isKeyRevocable(key),
+      onClick: () => ctx.openRevoke(key),
+    });
+  }
+  return actions;
+}
+
+function buildApiKeyColumns(
+  ctx: ApiKeyColumnContext,
+): DataTableColumn<ApiKeyTableRow>[] {
+  const subRowActions: Record<
+    "current" | "previous",
+    (key: ApiKeyTableRow) => DataTableAction[]
+  > = {
+    current: (key) => [
+      {
+        id: "revoke",
+        label: "Revoke API key",
+        tooltip: "Revoke the API key; the new and old keys both stop",
+        icon: <FiSlash />,
+        ...REVOKE_ACTION_STYLE,
+        onClick: () => ctx.openRevoke(key),
+      },
+    ],
+    previous: (key) => [
+      {
+        id: "extend-previous",
+        label: "Extend grace period",
+        tooltip: "Extend grace period",
+        icon: <FiClock />,
+        onClick: () => ctx.openExtend(key),
+      },
+      {
+        id: "stop-previous",
+        label: "Revoke old key",
+        tooltip: "Revoke the old key now; the new key keeps working",
+        icon: <FiSlash />,
+        ...REVOKE_ACTION_STYLE,
+        onClick: () => ctx.openStopPrevious(key),
+      },
+    ],
+  };
+
+  return [
+    {
+      id: "key_name",
+      header: "Key",
+      sortable: true,
+      sortAccessor: (key) => key.key_name ?? "",
+      cell: (key) => renderApiKeyNameCell(key, ctx),
+    },
+    {
+      id: "application",
+      header: "Application",
+      thProps: { maxW: "200px" },
+      tdProps: { maxW: "200px" },
+      sortable: true,
+      sortAccessor: (key) => key.application_name ?? key.application_id ?? "",
+      cell: renderApiKeyApplicationCell,
+    },
+    {
+      id: "permissions",
+      header: "Permissions",
+      hint: FIELD_HINTS.apiKey.col.permissions,
+      thProps: { display: { base: "none", xl: "table-cell" } },
+      tdProps: { display: { base: "none", xl: "table-cell" } },
+      cell: (key) => renderApiKeyPermissionsColumnCell(key, ctx),
+    },
+    {
+      id: "budget",
+      header: "Allocation",
+      hint: FIELD_HINTS.apiKey.col.allocation,
+      sortable: true,
+      sortAccessor: (key) =>
+        key.allocated_percentage ?? key.allocated_budget ?? -1,
+      cell: (key) => renderApiKeyAllocationColumnCell(key, ctx),
+    },
+    {
+      id: "status",
+      header: "Status",
+      hint: FIELD_HINTS.apiKey.col.status,
+      cell: (key) => renderApiKeyStatusColumnCell(key, ctx),
+    },
+    {
+      id: "created",
+      header: "Created Date",
+      sortable: true,
+      sortAccessor: (key) => {
+        const value =
+          key.subRow === "current" ? key.rotated_at ?? key.created_at : key.created_at;
+        return value ? new Date(value).getTime() : 0;
+      },
+      cell: renderApiKeyCreatedCell,
+    },
+    {
+      id: "expires",
+      header: "Expiry Date",
+      hint: FIELD_HINTS.apiKey.col.expiry,
+      sortable: true,
+      sortAccessor: (key) => {
+        const value =
+          key.subRow === "previous" ? key.rotated_key_expires_at : key.expires_at;
+        return value ? new Date(value).getTime() : Number.POSITIVE_INFINITY;
+      },
+      cell: renderApiKeyExpiryCell,
+    },
+    createActionsColumn<ApiKeyTableRow>({
+      actionCount: SHOW_API_KEY_ROTATION_ACTIONS ? 4 : 3,
+      getActions: (key) =>
+        key.subRow
+          ? subRowActions[key.subRow](key)
+          : buildApiKeyParentActions(key, ctx),
+    }),
+  ];
+}
+
 type ApiKeyManagement = ReturnType<typeof useApiKeyManagementTab>;
 
 /** Read-only details of one key, shown in the view drawer. */
@@ -412,237 +698,30 @@ export default function ApiKeyManagementTab({
           { ...key, subRow: "previous" },
         ];
 
-  const apiKeyColumns = useMemo((): DataTableColumn<ApiKeyTableRow>[] => {
-    const subRowActions: Record<"current" | "previous", (key: ApiKeyTableRow) => DataTableAction[]> = {
-      current: (key) => [
-        {
-          // Revoking the rotated key revokes the API key: both keys stop.
-          id: "revoke",
-          label: "Revoke API key",
-          tooltip: "Revoke the API key; the new and old keys both stop",
-          icon: <FiSlash />,
-          ...revokeStyle,
-          onClick: () => mgmt.handleOpenRevokeModal(key),
-        },
-      ],
-      previous: (key) => [
-        {
-          id: "extend-previous",
-          label: "Extend grace period",
-          tooltip: "Extend grace period",
-          icon: <FiClock />,
-          onClick: () => mgmt.handleOpenExtendModal(key),
-        },
-        {
-          id: "stop-previous",
-          label: "Revoke old key",
-          tooltip: "Revoke the old key now; the new key keeps working",
-          icon: <FiSlash />,
-          ...revokeStyle,
-          onClick: () => mgmt.handleOpenStopPreviousModal(key),
-        },
-      ],
-    };
-
-    const keyActions = (key: ApiKeyTableRow): DataTableAction[] => {
-      const rotating = SHOW_API_KEY_ROTATION_ACTIONS && mgmt.isRotationInProgress(key);
-      const actions: DataTableAction[] = [
-        {
-          id: "edit",
-          label: "Update API key",
-          tooltip: inactiveKeyTooltip(
-            mgmt.isKeyEffectivelyActive(key),
-            mgmt.isKeyRevocable(key),
-            "Update key",
-            "Only effectively active API keys can be updated.",
-            "This API key has been revoked and cannot be updated.",
-          ),
-          icon: <EditIcon />,
-          disabled: !mgmt.isKeyEffectivelyActive(key),
-          onClick: () => mgmt.handleOpenUpdateModal(key),
-        },
-        {
-          id: "budget",
-          label: "Edit budget",
-          tooltip: key.application_id
-            ? inactiveKeyTooltip(
-                mgmt.isKeyEffectivelyActive(key),
-                mgmt.isKeyRevocable(key),
-                BUDGET_COPY.editBudget,
-                "Only effectively active API keys can have their budget edited.",
-                "This API key has been revoked and cannot have its budget edited.",
-              )
-            : BUDGET_COPY.keyHasNoApplication,
-          "aria-label": editBudgetForKey(key.key_name),
-          icon: <FiSliders />,
-          disabled: !key.application_id || !mgmt.isKeyEffectivelyActive(key),
-          onClick: () => {
-            if (key.application_id) {
-              openSingleKeyBudget(key.application_id, key.id, key.key_name);
-            }
-          },
-        },
-      ];
-      if (SHOW_API_KEY_ROTATION_ACTIONS) {
-        actions.push({
-          id: "rotate",
-          label: "Rotate API key",
-          tooltip: rotateTooltip(key, mgmt.isKeyRotatable(key), rotating),
-          icon: <FiRefreshCw />,
-          disabled: !mgmt.isKeyRotatable(key),
-          onClick: () => mgmt.handleOpenRotateModal(key),
-        });
-      }
-      // While rotating, each key is revoked from its own row.
-      if (!rotating) {
-        actions.push({
-          id: "revoke",
-          label: "Revoke API key",
-          tooltip: mgmt.isKeyRevocable(key) ? "Revoke key" : "Already revoked",
-          icon: <FiSlash />,
-          ...revokeStyle,
-          disabled: !mgmt.isKeyRevocable(key),
-          onClick: () => mgmt.handleOpenRevokeModal(key),
-        });
-      }
-      return actions;
-    };
-
-    const revokeStyle = { color: "red.500", hoverColor: "red.600", hoverBg: "red.50" };
-
-    return [
-      {
-        id: "key_name",
-        header: "Key",
-        sortable: true,
-        sortAccessor: (key) => key.key_name ?? "",
-        cell: (key) => {
-          if (key.subRow) {
-            return (
-              <HStack spacing={2} pl={6}>
-                <Box as={FiCornerDownRight} color="ink.400" flexShrink={0} />
-                <EntityIdentity
-                  name={key.subRow === "current" ? "New Key" : "Old Key"}
-                  meta={key.subRow === "current" ? key.api_key : key.rotated_key}
-                />
-              </HStack>
-            );
-          }
-          const rotating = SHOW_API_KEY_ROTATION_ACTIONS && mgmt.isRotationInProgress(key);
-          const collapsed = collapsedKeyIds.has(key.id);
-          return (
-            <HStack spacing={1}>
-              {rotating ? (
-                <IconButton
-                  aria-label={collapsed ? "Show new and old key" : "Hide new and old key"}
-                  icon={collapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}
-                  size="xs"
-                  variant="ghost"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggleKeyExpanded(key.id);
-                  }}
-                />
-              ) : (
-                <Box w={6} flexShrink={0} />
-              )}
-              <EntityIdentity
-                name={key.key_name || "API key"}
-                meta={rotating ? undefined : key.api_key}
-              />
-            </HStack>
-          );
-        },
-      },
-      {
-        id: "application",
-        header: "Application",
-        thProps: { maxW: "200px" },
-        tdProps: { maxW: "200px" },
-        sortable: true,
-        sortAccessor: (key) => key.application_name ?? key.application_id ?? "",
-        cell: (key) => (
-          <Tooltip
-            label={key.application_name ?? key.application_id ?? "—"}
-            placement="top"
-            hasArrow
-            openDelay={300}
-          >
-            <Text fontSize="sm" isTruncated maxW="180px">
-              {key.application_name ?? key.application_id ?? "—"}
-            </Text>
-          </Tooltip>
-        ),
-      },
-      {
-        id: "permissions",
-        header: "Permissions",
-        hint: FIELD_HINTS.apiKey.col.permissions,
-        thProps: { display: { base: "none", xl: "table-cell" } },
-        tdProps: { display: { base: "none", xl: "table-cell" } },
-        cell: (key) => (
-          <ApiKeyPermissionsCell
-            count={mgmt.visiblePermissionsForKey(key).length}
-          />
-        ),
-      },
-      {
-        id: "budget",
-        header: "Allocation",
-        hint: FIELD_HINTS.apiKey.col.allocation,
-        sortable: true,
-        sortAccessor: (key) =>
-          key.allocated_percentage ?? key.allocated_budget ?? -1,
-        cell: (key) => (
-          <ApiKeyAllocationCell
-            keyRow={key}
-            pctLabel={mgmt.formatBudgetPct(key)}
-          />
-        ),
-      },
-      {
-        id: "status",
-        header: "Status",
-        hint: FIELD_HINTS.apiKey.col.status,
-        cell: (key) => (
-          <ApiKeyStatusCell
-            status={mgmt.resolveKeyDisplayStatus(key)}
-            reason={
-              mgmt.getKeyInactiveReason(key) ?? mgmt.getKeyRevokedReason(key)
-            }
-          />
-        ),
-      },
-      {
-        id: "created",
-        header: "Created Date",
-        sortable: true,
-        sortAccessor: (key) => {
-          const value = key.subRow === "current" ? key.rotated_at ?? key.created_at : key.created_at;
-          return value ? new Date(value).getTime() : 0;
-        },
-        cell: renderApiKeyCreatedCell,
-      },
-      {
-        id: "expires",
-        header: "Expiry Date",
-        hint: FIELD_HINTS.apiKey.col.expiry,
-        sortable: true,
-        sortAccessor: (key) => {
-          const value = key.subRow === "previous" ? key.rotated_key_expires_at : key.expires_at;
-          return value ? new Date(value).getTime() : Number.POSITIVE_INFINITY;
-        },
-        cell: renderApiKeyExpiryCell,
-      },
-      createActionsColumn<ApiKeyTableRow>({
-        // Parent rows: edit + budget (+ rotate/revoke when enabled). Row click opens details.
-        actionCount: SHOW_API_KEY_ROTATION_ACTIONS ? 4 : 3,
-        getActions: (key) =>
-          (key.subRow ? subRowActions[key.subRow] : keyActions)(key),
+  const apiKeyColumns = useMemo(
+    (): DataTableColumn<ApiKeyTableRow>[] =>
+      buildApiKeyColumns({
+        getPermissionCount: (key) => mgmt.visiblePermissionsForKey(key).length,
+        formatBudgetPct: mgmt.formatBudgetPct,
+        resolveDisplayStatus: mgmt.resolveKeyDisplayStatus,
+        getStatusReason: (key) =>
+          mgmt.getKeyInactiveReason(key) ?? mgmt.getKeyRevokedReason(key),
+        isRotationInProgress: mgmt.isRotationInProgress,
+        isKeyEffectivelyActive: mgmt.isKeyEffectivelyActive,
+        isKeyRevocable: mgmt.isKeyRevocable,
+        isKeyRotatable: mgmt.isKeyRotatable,
+        collapsedKeyIds,
+        toggleKeyExpanded,
+        openUpdate: mgmt.handleOpenUpdateModal,
+        openRotate: mgmt.handleOpenRotateModal,
+        openRevoke: mgmt.handleOpenRevokeModal,
+        openExtend: mgmt.handleOpenExtendModal,
+        openStopPrevious: mgmt.handleOpenStopPreviousModal,
+        openSingleKeyBudget,
       }),
-    ];
     // eslint-disable-next-line react-hooks/exhaustive-deps -- toggleKeyExpanded only closes over the setter
-  }, [mgmt, openSingleKeyBudget, collapsedKeyIds]);
+    [mgmt, openSingleKeyBudget, collapsedKeyIds],
+  );
 
   useEffect(() => {
     onRegisterRefresh?.(mgmt.handleFetchAllApiKeys);

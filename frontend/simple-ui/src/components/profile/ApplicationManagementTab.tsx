@@ -105,6 +105,325 @@ function ApplicationTableEmpty({
 
 const HIDE_KEYS_COL = { display: { base: "none", lg: "table-cell" } } as const;
 
+type ApplicationMgr = ReturnType<typeof useApplicationManagement>;
+
+function ApplicationFormDrawer({
+  mgr,
+  currency,
+  boundHint,
+  setBoundHint,
+}: Readonly<{
+  mgr: ApplicationMgr;
+  currency: string;
+  boundHint: string | null;
+  setBoundHint: (hint: string | null) => void;
+}>) {
+  const isEditing = mgr.editOpen;
+  const isCreating = mgr.createOpen;
+  const viewApp = mgr.viewOpen ? mgr.selected : null;
+  const createPct = Number(mgr.form.allocated_percentage);
+  const createPreview =
+    mgr.form.allocated_percentage.trim() === "" || !Number.isFinite(createPct)
+      ? null
+      : (createPct / 100) * mgr.tenantBudget;
+  const createBudgetError = mgr.formErrors.allocated_percentage || boundHint;
+  const createPreviewHint =
+    createPreview == null
+      ? ""
+      : ` · ≈ ${formatSpendMoney(createPreview, currency)}`;
+
+  const closeDrawer = () => {
+    if ((isEditing || isCreating) && mgr.isSaving) return;
+    if (isEditing) {
+      mgr.setEditOpen(false);
+      return;
+    }
+    if (isCreating) {
+      mgr.setCreateOpen(false);
+      return;
+    }
+    mgr.setViewOpen(false);
+  };
+
+  const showViewActions = Boolean(viewApp) && !isEditing && !isCreating;
+  const showViewBody = Boolean(viewApp) && !isEditing && !isCreating;
+
+  return (
+    <FormDrawer
+      isOpen={isEditing || isCreating || Boolean(viewApp)}
+      onClose={closeDrawer}
+      lockDismiss={(isEditing || isCreating) && mgr.isSaving}
+      actions={
+        showViewActions && viewApp ? (
+          <Button
+            leftIcon={<FiEdit2 />}
+            size="sm"
+            variant="outline"
+            onClick={() => mgr.openEdit(viewApp)}
+          >
+            Edit
+          </Button>
+        ) : undefined
+      }
+      title={applicationDrawerTitle({
+        isEditing,
+        isCreating,
+        formName: mgr.form.name,
+        selectedName: mgr.selected?.name,
+        viewName: viewApp?.name,
+      })}
+      description={applicationDrawerDescription({
+        isEditing,
+        isCreating,
+        selectedName: mgr.selected?.name,
+      })}
+      footer={
+        isEditing || isCreating ? (
+          <FormActions
+            cancelLabel="Cancel"
+            submitLabel={isEditing ? "Save Changes" : "Create Application"}
+            onCancel={closeDrawer}
+            onSubmit={() => void (isEditing ? mgr.handleEdit() : mgr.handleCreate())}
+            isLoading={mgr.isSaving}
+            loadingText={isEditing ? "Saving..." : "Creating..."}
+            justify="space-between"
+            pt={0}
+          />
+        ) : (
+          <FormActions hideSubmit cancelLabel="Close" onCancel={closeDrawer} pt={0} />
+        )
+      }
+    >
+      {isEditing ? (
+        <>
+          <ApplicationIdentityFields
+            mode="edit"
+            form={mgr.form}
+            setForm={mgr.setForm}
+            errors={mgr.formErrors}
+            banner={mgr.formBanner}
+          />
+          <Text fontSize="sm" color="ink.500" mt={4}>
+            {APPLICATION_BUDGET_MANAGED_NOTE}
+          </Text>
+        </>
+      ) : null}
+      {isCreating ? (
+        <>
+          <ApplicationIdentityFields
+            mode="create"
+            form={mgr.form}
+            setForm={mgr.setForm}
+            errors={mgr.formErrors}
+            banner={mgr.formBanner}
+          />
+          <FormSection title="Budget">
+            <FormControl isInvalid={Boolean(createBudgetError)}>
+              <FieldLabel hint={FIELD_HINTS.application.budget.tip}>
+                Budget allocation
+              </FieldLabel>
+              <PercentageStepper
+                value={mgr.form.allocated_percentage}
+                onChange={(next) => {
+                  setBoundHint(null);
+                  mgr.setForm((prev) => ({ ...prev, allocated_percentage: next }));
+                }}
+                onBoundHit={(bound) => setBoundHint(percentageBoundMessage(bound))}
+              />
+              <FormErrorMessage>{createBudgetError}</FormErrorMessage>
+              <FieldHint show={createBudgetError == null}>
+                {mgr.remainingPct.toFixed(2)}% remaining
+                {createPreviewHint}
+              </FieldHint>
+            </FormControl>
+          </FormSection>
+        </>
+      ) : null}
+      {showViewBody && viewApp ? (
+        <>
+          <ApplicationIdentityFields
+            mode="view"
+            form={{
+              name: viewApp.name,
+              description: viewApp.description ?? "",
+              domain: viewApp.domain ?? "",
+              allocated_percentage: "",
+            }}
+            setForm={() => undefined}
+            errors={{}}
+            banner={null}
+          />
+          <FormSection title="Budget">
+            <ReadOnlyField label="Status">
+              <ApplicationStatusText status={viewApp.status} />
+            </ReadOnlyField>
+            <ReadOnlyField label="Allocation">
+              {formatPct(viewApp.allocated_percentage)}
+              {viewApp.allocated_budget == null
+                ? ""
+                : ` · ${rupees(viewApp.allocated_budget, currency)}`}
+            </ReadOnlyField>
+            <ReadOnlyField label="Active API keys">
+              {viewApp.api_key_count == null ? "—" : String(viewApp.api_key_count)}
+            </ReadOnlyField>
+          </FormSection>
+        </>
+      ) : null}
+    </FormDrawer>
+  );
+}
+
+function ApplicationListPanel({
+  mgr,
+  currency,
+  columns,
+  sortedApplications,
+  appSort,
+}: Readonly<{
+  mgr: ApplicationMgr;
+  currency: string;
+  columns: DataTableColumn<Application>[];
+  sortedApplications: Application[];
+  appSort: ReturnType<typeof useDeferredColumnSort>;
+}>) {
+  const summaryPending =
+    mgr.isLoading && mgr.applications.length === 0 && !mgr.loadError;
+  const hasSearch = mgr.searchInput.trim() !== "";
+  const showPartialLoadError = Boolean(mgr.loadError && mgr.applications.length > 0);
+  const showFullLoadError = Boolean(mgr.loadError && mgr.applications.length === 0);
+
+  return (
+    <VStack align="stretch" spacing={4}>
+      <HStack justify="space-between" align="flex-start" spacing={4} flexWrap="wrap">
+        <Box minW={0}>
+          <Text as="h2" fontSize="xl" fontWeight="700" color="ink.800" letterSpacing="-0.02em">
+            Applications
+          </Text>
+          <Text fontSize="sm" color="ink.500" mt={1} maxW="520px">
+            Manage applications onboarded under this institution and their budget allocation.
+          </Text>
+        </Box>
+        <HStack spacing={2} flexShrink={0} flexWrap="wrap" justify="flex-end">
+          <Button
+            leftIcon={<FiRefreshCw />}
+            size="sm"
+            variant="ghost"
+            onClick={() => void mgr.reload()}
+          >
+            Refresh
+          </Button>
+          <Button
+            leftIcon={<FiSliders />}
+            size="sm"
+            variant="outline"
+            onClick={() => void mgr.openBulkBudget()}
+          >
+            {BUDGET_COPY.bulkUpdateBudgets}
+          </Button>
+          <CreateButton onClick={mgr.openCreate}>Create Application</CreateButton>
+        </HStack>
+      </HStack>
+
+      {summaryPending ? (
+        <InstitutionAllocationSkeleton />
+      ) : (
+        <InstitutionAllocationPanel
+          applicationCount={mgr.institutionApplicationCount ?? mgr.total}
+          allocatedPct={mgr.totalAllocatedPct}
+          availablePct={mgr.remainingPct}
+          institutionBudget={mgr.tenantBudget}
+          currency={currency}
+          overAllocated={mgr.totalAllocatedPct > 100 + 1e-6}
+        />
+      )}
+
+      {mgr.institutionBudgetUnset && !summaryPending ? (
+        <Alert status="warning" borderRadius="md">
+          <AlertIcon />
+          {FIELD_HINTS.application.institutionBudgetNotSet}
+        </Alert>
+      ) : null}
+
+      {showPartialLoadError ? (
+        <Alert status="error" borderRadius="md">
+          <AlertIcon />
+          Unable to load applications. Please try again.
+          <Button size="xs" variant="outline" colorScheme="red" ml={3} onClick={() => void mgr.reload()}>
+            Retry
+          </Button>
+        </Alert>
+      ) : null}
+
+      {showFullLoadError ? (
+        <ApplicationLoadError onRetry={() => void mgr.reload()} />
+      ) : (
+        <DataTable
+          layout="admin"
+          toolbarAttached
+          items={sortedApplications}
+          columns={columns}
+          getRowKey={(app) => app.application_id}
+          sort={appSort.sort}
+          onSortChange={appSort.onSortChange}
+          onRowClick={mgr.openView}
+          paginate="server"
+          paginationPosition="bottom"
+          pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
+          initialPageSize={mgr.pageSize}
+          serverPagination={{
+            page: mgr.page,
+            pageSize: mgr.pageSize,
+            totalItems: mgr.total,
+            onPageChange: mgr.setPage,
+            onPageSizeChange: mgr.setPageSize,
+          }}
+          isLoading={mgr.isLoading && mgr.applications.length === 0 && !mgr.loadError}
+          emptyContent={
+            <ApplicationTableEmpty
+              hasSearch={hasSearch}
+              onClearSearch={() => mgr.setSearchInput("")}
+              onCreate={mgr.openCreate}
+            />
+          }
+          emptyMessage="No applications yet."
+          noResultsMessage="No applications match this search."
+          unfilteredCount={mgr.total}
+          hasActiveFilters={hasSearch}
+          onClearFilters={() => mgr.setSearchInput("")}
+          search={{
+            label: "Search applications",
+            hideLabel: true,
+            value: mgr.searchInput,
+            onChange: mgr.setSearchInput,
+            placeholder: "Search applications...",
+            fields: ["name", "domain"],
+          }}
+        />
+      )}
+
+      <ApplicationBudgetModal mgr={mgr} currency={currency} />
+
+      <ApplicationBulkBudgetModal
+        isOpen={mgr.bulkBudgetOpen}
+        onClose={() => mgr.setBulkBudgetOpen(false)}
+        isLoading={mgr.bulkLoading}
+        isSaving={mgr.isSaving}
+        banner={mgr.bulkBanner}
+        tenantBudget={mgr.tenantBudget}
+        institutionBudgetUnset={mgr.institutionBudgetUnset}
+        currency={currency}
+        liveTotalPct={mgr.bulkLiveTotalPct}
+        rows={mgr.bulkRows}
+        onRowFocus={mgr.onBulkRowFocus}
+        onPctChange={mgr.onBulkPctChange}
+        onPctBoundHit={mgr.onBulkPctBoundHit}
+        onSave={() => void mgr.handleSaveBulkBudget()}
+        canSave={mgr.bulkCanSave}
+      />
+    </VStack>
+  );
+}
+
 function buildApplicationColumns(options: {
   currency: string;
   onEdit: (app: Application) => void;
@@ -259,275 +578,21 @@ export default function ApplicationManagementTab({
     );
   }
 
-  const createPct = Number(mgr.form.allocated_percentage);
-  const createPreview =
-    mgr.form.allocated_percentage.trim() === "" || !Number.isFinite(createPct)
-      ? null
-      : (createPct / 100) * mgr.tenantBudget;
-  const createBudgetError = mgr.formErrors.allocated_percentage || boundHint;
-  const summaryPending = mgr.isLoading && mgr.applications.length === 0 && !mgr.loadError;
-
-  const isEditing = mgr.editOpen;
-  const isCreating = mgr.createOpen;
-  const viewApp = mgr.viewOpen ? mgr.selected : null;
-  const closeDrawer = () => {
-    if ((isEditing || isCreating) && mgr.isSaving) return;
-    if (isEditing) mgr.setEditOpen(false);
-    else if (isCreating) mgr.setCreateOpen(false);
-    else mgr.setViewOpen(false);
-  };
-
   return (
     <>
-      <FormDrawer
-        isOpen={isEditing || isCreating || Boolean(viewApp)}
-        onClose={closeDrawer}
-        lockDismiss={(isEditing || isCreating) && mgr.isSaving}
-        actions={
-          viewApp && !isEditing && !isCreating ? (
-            <Button
-              leftIcon={<FiEdit2 />}
-              size="sm"
-              variant="outline"
-              onClick={() => mgr.openEdit(viewApp)}
-            >
-              Edit
-            </Button>
-          ) : undefined
-        }
-        title={applicationDrawerTitle({
-          isEditing,
-          isCreating,
-          formName: mgr.form.name,
-          selectedName: mgr.selected?.name,
-          viewName: viewApp?.name,
-        })}
-        description={applicationDrawerDescription({
-          isEditing,
-          isCreating,
-          selectedName: mgr.selected?.name,
-        })}
-        footer={
-          isEditing || isCreating ? (
-            <FormActions
-              cancelLabel="Cancel"
-              submitLabel={isEditing ? "Save Changes" : "Create Application"}
-              onCancel={closeDrawer}
-              onSubmit={() => void (isEditing ? mgr.handleEdit() : mgr.handleCreate())}
-              isLoading={mgr.isSaving}
-              loadingText={isEditing ? "Saving..." : "Creating..."}
-              justify="space-between"
-              pt={0}
-            />
-          ) : (
-            <FormActions hideSubmit cancelLabel="Close" onCancel={closeDrawer} pt={0} />
-          )
-        }
-      >
-        {isEditing ? (
-          <>
-            <ApplicationIdentityFields
-              mode="edit"
-              form={mgr.form}
-              setForm={mgr.setForm}
-              errors={mgr.formErrors}
-              banner={mgr.formBanner}
-            />
-            <Text fontSize="sm" color="ink.500" mt={4}>
-              {APPLICATION_BUDGET_MANAGED_NOTE}
-            </Text>
-          </>
-        ) : null}
-        {isCreating ? (
-          <>
-            <ApplicationIdentityFields
-              mode="create"
-              form={mgr.form}
-              setForm={mgr.setForm}
-              errors={mgr.formErrors}
-              banner={mgr.formBanner}
-            />
-            <FormSection title="Budget">
-              <FormControl isInvalid={Boolean(createBudgetError)}>
-                <FieldLabel hint={FIELD_HINTS.application.budget.tip}>
-                  Budget allocation
-                </FieldLabel>
-                <PercentageStepper
-                  value={mgr.form.allocated_percentage}
-                  onChange={(next) => {
-                    setBoundHint(null);
-                    mgr.setForm((prev) => ({ ...prev, allocated_percentage: next }));
-                  }}
-                  onBoundHit={(bound) => setBoundHint(percentageBoundMessage(bound))}
-                />
-                <FormErrorMessage>{createBudgetError}</FormErrorMessage>
-                <FieldHint show={createBudgetError == null}>
-                  {mgr.remainingPct.toFixed(2)}% remaining
-                  {createPreview != null ? ` · ≈ ${formatSpendMoney(createPreview, currency)}` : ""}
-                </FieldHint>
-              </FormControl>
-            </FormSection>
-          </>
-        ) : null}
-        {!isEditing && !isCreating && viewApp ? (
-          <>
-            <ApplicationIdentityFields
-              mode="view"
-              form={{
-                name: viewApp.name,
-                description: viewApp.description ?? "",
-                domain: viewApp.domain ?? "",
-                allocated_percentage: "",
-              }}
-              setForm={() => undefined}
-              errors={{}}
-              banner={null}
-            />
-            <FormSection title="Budget">
-              <ReadOnlyField label="Status">
-                <ApplicationStatusText status={viewApp.status} />
-              </ReadOnlyField>
-              <ReadOnlyField label="Allocation">
-                {formatPct(viewApp.allocated_percentage)}
-                {viewApp.allocated_budget != null
-                  ? ` · ${rupees(viewApp.allocated_budget, currency)}`
-                  : ""}
-              </ReadOnlyField>
-              <ReadOnlyField label="Active API keys">
-                {viewApp.api_key_count == null ? "—" : String(viewApp.api_key_count)}
-              </ReadOnlyField>
-            </FormSection>
-          </>
-        ) : null}
-      </FormDrawer>
-    <VStack align="stretch" spacing={4}>
-      <HStack justify="space-between" align="flex-start" spacing={4} flexWrap="wrap">
-        <Box minW={0}>
-          <Text as="h2" fontSize="xl" fontWeight="700" color="ink.800" letterSpacing="-0.02em">
-            Applications
-          </Text>
-          <Text fontSize="sm" color="ink.500" mt={1} maxW="520px">
-            Manage applications onboarded under this institution and their budget allocation.
-          </Text>
-        </Box>
-        <HStack spacing={2} flexShrink={0} flexWrap="wrap" justify="flex-end">
-          <Button
-            leftIcon={<FiRefreshCw />}
-            size="sm"
-            variant="ghost"
-            onClick={() => void mgr.reload()}
-          >
-            Refresh
-          </Button>
-          <Button
-            leftIcon={<FiSliders />}
-            size="sm"
-            variant="outline"
-            onClick={() => void mgr.openBulkBudget()}
-          >
-            {BUDGET_COPY.bulkUpdateBudgets}
-          </Button>
-          <CreateButton onClick={mgr.openCreate}>Create Application</CreateButton>
-        </HStack>
-      </HStack>
-
-      {summaryPending ? (
-        <InstitutionAllocationSkeleton />
-      ) : (
-        <InstitutionAllocationPanel
-          applicationCount={mgr.institutionApplicationCount ?? mgr.total}
-          allocatedPct={mgr.totalAllocatedPct}
-          availablePct={mgr.remainingPct}
-          institutionBudget={mgr.tenantBudget}
-          currency={currency}
-          overAllocated={mgr.totalAllocatedPct > 100 + 1e-6}
-        />
-      )}
-
-      {mgr.institutionBudgetUnset && !summaryPending ? (
-        <Alert status="warning" borderRadius="md">
-          <AlertIcon />
-          {FIELD_HINTS.application.institutionBudgetNotSet}
-        </Alert>
-      ) : null}
-
-      {mgr.loadError && mgr.applications.length > 0 ? (
-        <Alert status="error" borderRadius="md">
-          <AlertIcon />
-          Unable to load applications. Please try again.
-          <Button size="xs" variant="outline" colorScheme="red" ml={3} onClick={() => void mgr.reload()}>
-            Retry
-          </Button>
-        </Alert>
-      ) : null}
-
-      {mgr.loadError && mgr.applications.length === 0 ? (
-        <ApplicationLoadError onRetry={() => void mgr.reload()} />
-      ) : (
-      <DataTable
-        layout="admin"
-        toolbarAttached
-        items={sortedApplications}
-        columns={columns}
-        getRowKey={(app) => app.application_id}
-        sort={appSort.sort}
-        onSortChange={appSort.onSortChange}
-        onRowClick={mgr.openView}
-        paginate="server"
-        paginationPosition="bottom"
-        pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
-        initialPageSize={mgr.pageSize}
-        serverPagination={{
-          page: mgr.page,
-          pageSize: mgr.pageSize,
-          totalItems: mgr.total,
-          onPageChange: mgr.setPage,
-          onPageSizeChange: mgr.setPageSize,
-        }}
-        isLoading={mgr.isLoading && mgr.applications.length === 0 && !mgr.loadError}
-        emptyContent={
-          <ApplicationTableEmpty
-            hasSearch={mgr.searchInput.trim() !== ""}
-            onClearSearch={() => mgr.setSearchInput("")}
-            onCreate={mgr.openCreate}
-          />
-        }
-        emptyMessage="No applications yet."
-        noResultsMessage="No applications match this search."
-        unfilteredCount={mgr.total}
-        hasActiveFilters={mgr.searchInput.trim() !== ""}
-        onClearFilters={() => mgr.setSearchInput("")}
-        search={{
-          label: "Search applications",
-          hideLabel: true,
-          value: mgr.searchInput,
-          onChange: mgr.setSearchInput,
-          placeholder: "Search applications...",
-          fields: ["name", "domain"],
-        }}
-      />
-      )}
-
-      <ApplicationBudgetModal mgr={mgr} currency={currency} />
-
-      <ApplicationBulkBudgetModal
-        isOpen={mgr.bulkBudgetOpen}
-        onClose={() => mgr.setBulkBudgetOpen(false)}
-        isLoading={mgr.bulkLoading}
-        isSaving={mgr.isSaving}
-        banner={mgr.bulkBanner}
-        tenantBudget={mgr.tenantBudget}
-        institutionBudgetUnset={mgr.institutionBudgetUnset}
+      <ApplicationFormDrawer
+        mgr={mgr}
         currency={currency}
-        liveTotalPct={mgr.bulkLiveTotalPct}
-        rows={mgr.bulkRows}
-        onRowFocus={mgr.onBulkRowFocus}
-        onPctChange={mgr.onBulkPctChange}
-        onPctBoundHit={mgr.onBulkPctBoundHit}
-        onSave={() => void mgr.handleSaveBulkBudget()}
-        canSave={mgr.bulkCanSave}
+        boundHint={boundHint}
+        setBoundHint={setBoundHint}
       />
-    </VStack>
+      <ApplicationListPanel
+        mgr={mgr}
+        currency={currency}
+        columns={columns}
+        sortedApplications={sortedApplications}
+        appSort={appSort}
+      />
     </>
   );
 }
