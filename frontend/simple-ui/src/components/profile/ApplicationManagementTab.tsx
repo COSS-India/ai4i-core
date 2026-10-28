@@ -107,6 +107,174 @@ const HIDE_KEYS_COL = { display: { base: "none", lg: "table-cell" } } as const;
 
 type ApplicationMgr = ReturnType<typeof useApplicationManagement>;
 
+function createBudgetPreviewAmount(
+  allocatedPercentage: string,
+  tenantBudget: number,
+): number | null {
+  const pct = Number(allocatedPercentage);
+  if (allocatedPercentage.trim() === "" || !Number.isFinite(pct)) return null;
+  return (pct / 100) * tenantBudget;
+}
+
+function closeApplicationDrawer(
+  mgr: ApplicationMgr,
+  isEditing: boolean,
+  isCreating: boolean,
+): void {
+  if ((isEditing || isCreating) && mgr.isSaving) return;
+  if (isEditing) {
+    mgr.setEditOpen(false);
+    return;
+  }
+  if (isCreating) {
+    mgr.setCreateOpen(false);
+    return;
+  }
+  mgr.setViewOpen(false);
+}
+
+function ApplicationDrawerEditBody({
+  mgr,
+}: Readonly<{ mgr: ApplicationMgr }>) {
+  return (
+    <>
+      <ApplicationIdentityFields
+        mode="edit"
+        form={mgr.form}
+        setForm={mgr.setForm}
+        errors={mgr.formErrors}
+        banner={mgr.formBanner}
+      />
+      <Text fontSize="sm" color="ink.500" mt={4}>
+        {APPLICATION_BUDGET_MANAGED_NOTE}
+      </Text>
+    </>
+  );
+}
+
+function ApplicationDrawerCreateBody({
+  mgr,
+  currency,
+  boundHint,
+  setBoundHint,
+}: Readonly<{
+  mgr: ApplicationMgr;
+  currency: string;
+  boundHint: string | null;
+  setBoundHint: (hint: string | null) => void;
+}>) {
+  const createPreview = createBudgetPreviewAmount(
+    mgr.form.allocated_percentage,
+    mgr.tenantBudget,
+  );
+  const createBudgetError = mgr.formErrors.allocated_percentage || boundHint;
+  const createPreviewHint =
+    createPreview == null
+      ? ""
+      : ` · ≈ ${formatSpendMoney(createPreview, currency)}`;
+
+  return (
+    <>
+      <ApplicationIdentityFields
+        mode="create"
+        form={mgr.form}
+        setForm={mgr.setForm}
+        errors={mgr.formErrors}
+        banner={mgr.formBanner}
+      />
+      <FormSection title="Budget">
+        <FormControl isInvalid={Boolean(createBudgetError)}>
+          <FieldLabel hint={FIELD_HINTS.application.budget.tip}>
+            Budget allocation
+          </FieldLabel>
+          <PercentageStepper
+            value={mgr.form.allocated_percentage}
+            onChange={(next) => {
+              setBoundHint(null);
+              mgr.setForm((prev) => ({ ...prev, allocated_percentage: next }));
+            }}
+            onBoundHit={(bound) => setBoundHint(percentageBoundMessage(bound))}
+          />
+          <FormErrorMessage>{createBudgetError}</FormErrorMessage>
+          <FieldHint show={createBudgetError == null}>
+            {mgr.remainingPct.toFixed(2)}% remaining
+            {createPreviewHint}
+          </FieldHint>
+        </FormControl>
+      </FormSection>
+    </>
+  );
+}
+
+function ApplicationDrawerViewBody({
+  viewApp,
+  currency,
+}: Readonly<{ viewApp: Application; currency: string }>) {
+  const allocationExtra =
+    viewApp.allocated_budget == null
+      ? ""
+      : ` · ${rupees(viewApp.allocated_budget, currency)}`;
+  const keyCount =
+    viewApp.api_key_count == null ? "—" : String(viewApp.api_key_count);
+
+  return (
+    <>
+      <ApplicationIdentityFields
+        mode="view"
+        form={{
+          name: viewApp.name,
+          description: viewApp.description ?? "",
+          domain: viewApp.domain ?? "",
+          allocated_percentage: "",
+        }}
+        setForm={() => undefined}
+        errors={{}}
+        banner={null}
+      />
+      <FormSection title="Budget">
+        <ReadOnlyField label="Status">
+          <ApplicationStatusText status={viewApp.status} />
+        </ReadOnlyField>
+        <ReadOnlyField label="Allocation">
+          {formatPct(viewApp.allocated_percentage)}
+          {allocationExtra}
+        </ReadOnlyField>
+        <ReadOnlyField label="Active API keys">{keyCount}</ReadOnlyField>
+      </FormSection>
+    </>
+  );
+}
+
+function ApplicationDrawerFooter({
+  isEditing,
+  isCreating,
+  isSaving,
+  onClose,
+  onSubmit,
+}: Readonly<{
+  isEditing: boolean;
+  isCreating: boolean;
+  isSaving: boolean;
+  onClose: () => void;
+  onSubmit: () => void;
+}>) {
+  if (isEditing || isCreating) {
+    return (
+      <FormActions
+        cancelLabel="Cancel"
+        submitLabel={isEditing ? "Save Changes" : "Create Application"}
+        onCancel={onClose}
+        onSubmit={onSubmit}
+        isLoading={isSaving}
+        loadingText={isEditing ? "Saving..." : "Creating..."}
+        justify="space-between"
+        pt={0}
+      />
+    );
+  }
+  return <FormActions hideSubmit cancelLabel="Close" onCancel={onClose} pt={0} />;
+}
+
 function ApplicationFormDrawer({
   mgr,
   currency,
@@ -121,32 +289,8 @@ function ApplicationFormDrawer({
   const isEditing = mgr.editOpen;
   const isCreating = mgr.createOpen;
   const viewApp = mgr.viewOpen ? mgr.selected : null;
-  const createPct = Number(mgr.form.allocated_percentage);
-  const createPreview =
-    mgr.form.allocated_percentage.trim() === "" || !Number.isFinite(createPct)
-      ? null
-      : (createPct / 100) * mgr.tenantBudget;
-  const createBudgetError = mgr.formErrors.allocated_percentage || boundHint;
-  const createPreviewHint =
-    createPreview == null
-      ? ""
-      : ` · ≈ ${formatSpendMoney(createPreview, currency)}`;
-
-  const closeDrawer = () => {
-    if ((isEditing || isCreating) && mgr.isSaving) return;
-    if (isEditing) {
-      mgr.setEditOpen(false);
-      return;
-    }
-    if (isCreating) {
-      mgr.setCreateOpen(false);
-      return;
-    }
-    mgr.setViewOpen(false);
-  };
-
-  const showViewActions = Boolean(viewApp) && !isEditing && !isCreating;
-  const showViewBody = Boolean(viewApp) && !isEditing && !isCreating;
+  const isViewing = Boolean(viewApp) && !isEditing && !isCreating;
+  const closeDrawer = () => closeApplicationDrawer(mgr, isEditing, isCreating);
 
   return (
     <FormDrawer
@@ -154,7 +298,7 @@ function ApplicationFormDrawer({
       onClose={closeDrawer}
       lockDismiss={(isEditing || isCreating) && mgr.isSaving}
       actions={
-        showViewActions && viewApp ? (
+        isViewing && viewApp ? (
           <Button
             leftIcon={<FiEdit2 />}
             size="sm"
@@ -178,96 +322,26 @@ function ApplicationFormDrawer({
         selectedName: mgr.selected?.name,
       })}
       footer={
-        isEditing || isCreating ? (
-          <FormActions
-            cancelLabel="Cancel"
-            submitLabel={isEditing ? "Save Changes" : "Create Application"}
-            onCancel={closeDrawer}
-            onSubmit={() => void (isEditing ? mgr.handleEdit() : mgr.handleCreate())}
-            isLoading={mgr.isSaving}
-            loadingText={isEditing ? "Saving..." : "Creating..."}
-            justify="space-between"
-            pt={0}
-          />
-        ) : (
-          <FormActions hideSubmit cancelLabel="Close" onCancel={closeDrawer} pt={0} />
-        )
+        <ApplicationDrawerFooter
+          isEditing={isEditing}
+          isCreating={isCreating}
+          isSaving={mgr.isSaving}
+          onClose={closeDrawer}
+          onSubmit={() => void (isEditing ? mgr.handleEdit() : mgr.handleCreate())}
+        />
       }
     >
-      {isEditing ? (
-        <>
-          <ApplicationIdentityFields
-            mode="edit"
-            form={mgr.form}
-            setForm={mgr.setForm}
-            errors={mgr.formErrors}
-            banner={mgr.formBanner}
-          />
-          <Text fontSize="sm" color="ink.500" mt={4}>
-            {APPLICATION_BUDGET_MANAGED_NOTE}
-          </Text>
-        </>
-      ) : null}
+      {isEditing ? <ApplicationDrawerEditBody mgr={mgr} /> : null}
       {isCreating ? (
-        <>
-          <ApplicationIdentityFields
-            mode="create"
-            form={mgr.form}
-            setForm={mgr.setForm}
-            errors={mgr.formErrors}
-            banner={mgr.formBanner}
-          />
-          <FormSection title="Budget">
-            <FormControl isInvalid={Boolean(createBudgetError)}>
-              <FieldLabel hint={FIELD_HINTS.application.budget.tip}>
-                Budget allocation
-              </FieldLabel>
-              <PercentageStepper
-                value={mgr.form.allocated_percentage}
-                onChange={(next) => {
-                  setBoundHint(null);
-                  mgr.setForm((prev) => ({ ...prev, allocated_percentage: next }));
-                }}
-                onBoundHit={(bound) => setBoundHint(percentageBoundMessage(bound))}
-              />
-              <FormErrorMessage>{createBudgetError}</FormErrorMessage>
-              <FieldHint show={createBudgetError == null}>
-                {mgr.remainingPct.toFixed(2)}% remaining
-                {createPreviewHint}
-              </FieldHint>
-            </FormControl>
-          </FormSection>
-        </>
+        <ApplicationDrawerCreateBody
+          mgr={mgr}
+          currency={currency}
+          boundHint={boundHint}
+          setBoundHint={setBoundHint}
+        />
       ) : null}
-      {showViewBody && viewApp ? (
-        <>
-          <ApplicationIdentityFields
-            mode="view"
-            form={{
-              name: viewApp.name,
-              description: viewApp.description ?? "",
-              domain: viewApp.domain ?? "",
-              allocated_percentage: "",
-            }}
-            setForm={() => undefined}
-            errors={{}}
-            banner={null}
-          />
-          <FormSection title="Budget">
-            <ReadOnlyField label="Status">
-              <ApplicationStatusText status={viewApp.status} />
-            </ReadOnlyField>
-            <ReadOnlyField label="Allocation">
-              {formatPct(viewApp.allocated_percentage)}
-              {viewApp.allocated_budget == null
-                ? ""
-                : ` · ${rupees(viewApp.allocated_budget, currency)}`}
-            </ReadOnlyField>
-            <ReadOnlyField label="Active API keys">
-              {viewApp.api_key_count == null ? "—" : String(viewApp.api_key_count)}
-            </ReadOnlyField>
-          </FormSection>
-        </>
+      {isViewing && viewApp ? (
+        <ApplicationDrawerViewBody viewApp={viewApp} currency={currency} />
       ) : null}
     </FormDrawer>
   );

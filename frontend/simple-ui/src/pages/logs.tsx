@@ -57,6 +57,7 @@ import {
   resolveTelemetryTenantId,
   TelemetryTraceRecord,
   TelemetryTraceSortBy,
+  type TelemetryTraceColumnDef,
 } from "../services/observabilityService";
 import { showToast } from "../utils/toast";
 import {
@@ -709,6 +710,73 @@ function buildLogsFilterDefs(options: {
   return defs;
 }
 
+function filterActiveTenants(
+  tenantsData: { tenants?: Array<{ status?: string; tenant_id: string; organisation?: string }> } | undefined,
+): Array<{ tenant_id: string; organisation?: string; status?: string }> {
+  if (!tenantsData?.tenants || !Array.isArray(tenantsData.tenants)) {
+    return [];
+  }
+  return tenantsData.tenants.filter((tenant) =>
+    isTenantStatus(tenant?.status, TENANT.STATUS.ACTIVE),
+  );
+}
+
+function resolveLogsColumnDefs(
+  columnsResponse: { columns?: TelemetryTraceColumnDef[] } | undefined,
+  isAdmin: boolean,
+): TelemetryTraceColumnDef[] {
+  const raw =
+    columnsResponse?.columns && columnsResponse.columns.length > 0
+      ? columnsResponse.columns
+      : FALLBACK_COLUMN_DEFS;
+  const normalized = normalizeColumnDefs(raw);
+  if (isAdmin) return normalized;
+  return normalized.filter((c) => !isAdminOnlyColumnKey(c.key));
+}
+
+function hasLogsAppliedFilters(
+  applied: AppliedFilters,
+  canPickTenant: boolean,
+): boolean {
+  if (applied.level !== "") return true;
+  if (canPickTenant && applied.selectedTenantId !== "") return true;
+  if (applied.q !== "") return true;
+  if (applied.user !== "") return true;
+  if (applied.metadataKey !== "") return true;
+  if (applied.serviceId !== "") return true;
+  if (applied.statusCode !== "") return true;
+  if (applied.taskType !== "") return true;
+  return false;
+}
+
+function resolveNarrowRangeMessage(tracesError: unknown): string | null {
+  if (!tracesError) return null;
+  const message = (tracesError as Error).message;
+  if (typeof message !== "string") return null;
+  if (!message.toLowerCase().includes("narrow")) return null;
+  return message;
+}
+
+function LogsAccessDeniedCard({
+  cardBg,
+  borderColor,
+}: Readonly<{ cardBg: string; borderColor: string }>) {
+  return (
+    <Card bg={cardBg} border="1px" borderColor={borderColor} boxShadow="sm" w="full">
+      <CardBody>
+        <Flex direction="column" align="center" justify="center" py={12}>
+          <Text fontSize="lg" color="ink.500" fontWeight="medium" mb={2}>
+            Access Denied
+          </Text>
+          <Text fontSize="sm" color="ink.400" textAlign="center">
+            You do not have permission to view logs.
+          </Text>
+        </Flex>
+      </CardBody>
+    </Card>
+  );
+}
+
 const LogsPage: React.FC = () => {
   const router = useRouter();
   const { isAuthenticated, isLoading: authLoading, user } = useAuth();
@@ -837,14 +905,10 @@ const LogsPage: React.FC = () => {
     enabled: isAuthenticated && canPickTenant,
   });
 
-  const activeTenants = useMemo(() => {
-    if (!tenantsData?.tenants || !Array.isArray(tenantsData.tenants)) {
-      return [];
-    }
-    return tenantsData.tenants.filter((tenant: { status?: string }) =>
-      isTenantStatus(tenant?.status, TENANT.STATUS.ACTIVE),
-    );
-  }, [tenantsData]);
+  const activeTenants = useMemo(
+    () => filterActiveTenants(tenantsData),
+    [tenantsData],
+  );
 
   const tenantById = useMemo(
     () => new Map(activeTenants.map((tenant) => [tenant.tenant_id, tenant])),
@@ -875,17 +939,11 @@ const LogsPage: React.FC = () => {
     retry: false,
   });
 
-  const columnDefs = useMemo(() => {
-    const raw =
-      columnsResponse?.columns && columnsResponse.columns.length > 0
-        ? columnsResponse.columns
-        : FALLBACK_COLUMN_DEFS;
-    const normalized = normalizeColumnDefs(raw);
-    // Error column is admin-only on the screen (AC-6); BE catalogue has no admin_only flag.
-    return isAdmin
-      ? normalized
-      : normalized.filter((c) => !isAdminOnlyColumnKey(c.key));
-  }, [columnsResponse, isAdmin]);
+  // Error column is admin-only on the screen (AC-6); BE catalogue has no admin_only flag.
+  const columnDefs = useMemo(
+    () => resolveLogsColumnDefs(columnsResponse, isAdmin),
+    [columnsResponse, isAdmin],
+  );
 
   // Hydrate once after auth + catalogue settle so admin-only columns (e.g. Error) are kept.
   const didHydrateColumns = useRef(false);
@@ -1176,22 +1234,11 @@ const LogsPage: React.FC = () => {
     }));
   }, [columnDefs, selectedColumns, cellForColumn]);
 
-  const hasAppliedFilters =
-    applied.level !== "" ||
-    (canPickTenant && applied.selectedTenantId !== "") ||
-    applied.q !== "" ||
-    applied.user !== "" ||
-    applied.metadataKey !== "" ||
-    applied.serviceId !== "" ||
-    applied.statusCode !== "" ||
-    applied.taskType !== "";
-
-  const narrowRangeMessage =
-    tracesError &&
-    typeof (tracesError as Error).message === "string" &&
-    (tracesError as Error).message.toLowerCase().includes("narrow")
-      ? (tracesError as Error).message
-      : null;
+  const hasAppliedFilters = hasLogsAppliedFilters(applied, canPickTenant);
+  const narrowRangeMessage = resolveNarrowRangeMessage(tracesError);
+  const showAccessDenied =
+    !authLoading && isAuthenticated && (isUser || isGuest);
+  const showLoginPrompt = !authLoading && !isAuthenticated;
 
   const logsFilterDefs = useMemo(
     () =>
@@ -1233,35 +1280,8 @@ const LogsPage: React.FC = () => {
 
       <ContentLayout>
         <VStack spacing={6} w="full" align="stretch">
-          {!authLoading && isAuthenticated && (isUser || isGuest) ? (
-            <Card
-              bg={cardBg}
-              border="1px"
-              borderColor={borderColor}
-              boxShadow="sm"
-              w="full"
-            >
-              <CardBody>
-                <Flex
-                  direction="column"
-                  align="center"
-                  justify="center"
-                  py={12}
-                >
-                  <Text
-                    fontSize="lg"
-                    color="ink.500"
-                    fontWeight="medium"
-                    mb={2}
-                  >
-                    Access Denied
-                  </Text>
-                  <Text fontSize="sm" color="ink.400" textAlign="center">
-                    You do not have permission to view logs.
-                  </Text>
-                </Flex>
-              </CardBody>
-            </Card>
+          {showAccessDenied ? (
+            <LogsAccessDeniedCard cardBg={cardBg} borderColor={borderColor} />
           ) : (
             <>
               <ManagementPageHeader
@@ -1269,7 +1289,7 @@ const LogsPage: React.FC = () => {
                 description="View telemetry traces and request outcomes"
               />
 
-              {!authLoading && !isAuthenticated && (
+              {showLoginPrompt ? (
                 <Alert status="warning">
                   <AlertIcon />
                   <AlertDescription>
@@ -1284,9 +1304,9 @@ const LogsPage: React.FC = () => {
                     </Button>
                   </AlertDescription>
                 </Alert>
-              )}
+              ) : null}
 
-              {tracesError && (
+              {tracesError ? (
                 <Alert status="error">
                   <AlertIcon />
                   <AlertDescription>
@@ -1295,9 +1315,9 @@ const LogsPage: React.FC = () => {
                       "Error loading traces"}
                   </AlertDescription>
                 </Alert>
-              )}
+              ) : null}
 
-              {aggregationStats && (
+              {aggregationStats ? (
                 <SimpleGrid columns={{ base: 2, md: 3 }} spacing={4}>
                   <Card
                     bg={cardBg}
@@ -1375,7 +1395,7 @@ const LogsPage: React.FC = () => {
                     </CardBody>
                   </Card>
                 </SimpleGrid>
-              )}
+              ) : null}
 
               <DataTable
                 layout="admin"
