@@ -314,7 +314,7 @@ function initialMonths(today: MeteringDayKey): { left: MeteringCalendarMonth; ri
   return { left: clampMonth(shiftMonth(max, -1), min, max), right: max };
 }
 
-/** "Custom" time filter: a two-month IST calendar with Apply / Cancel. */
+/** "Custom range" time filter: a two-month IST calendar with Apply / Cancel. */
 const CustomRangePicker: React.FC<CustomRangePickerProps> = ({
   appliedRange,
   onApply,
