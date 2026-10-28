@@ -1,5 +1,5 @@
 // Service Registry tab: filterable/searchable table of all registered services
-import React, { useCallback } from "react";
+import React, { useCallback, useMemo } from "react";
 import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
   type DataTableColumn,
@@ -15,7 +15,6 @@ import {
 import {
   buildClientServiceFilterDefs,
   buildServerServiceFilterDefs,
-  buildServiceRegistrySearch,
   SERVICE_COLUMN_SEARCH_KEYS,
 } from "./serviceRegistryFilters";
 
@@ -28,8 +27,6 @@ interface ServiceRegistryTabProps {
   totalServicesCount: number;
   onRowClick: (service: Service) => void;
   tableKey: string;
-  searchQuery: string;
-  onSearchQueryChange: (value: string) => void;
   filterStatus: string;
   onFilterStatusChange: (value: string) => void;
   filterTaskType: string;
@@ -106,8 +103,6 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
   totalServicesCount,
   onRowClick,
   tableKey,
-  searchQuery,
-  onSearchQueryChange,
   filterStatus,
   onFilterStatusChange,
   filterTaskType,
@@ -144,11 +139,6 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
     onFilterTaskTypeChange,
     taskTypeNames,
   });
-  const search = buildServiceRegistrySearch({
-    serverMode,
-    searchQuery,
-    onSearchQueryChange,
-  });
   const serverPagination = resolveServerPagination({
     serverMode,
     serverPage,
@@ -157,6 +147,20 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
     onServerPageChange,
     onServerPageSizeChange,
   });
+
+  // Name lives only on the Name column — no toolbar search fighting the same param.
+  const columnFilters = useMemo((): DataTableColumnFilters | undefined => {
+    if (!serverMode || !serverColumns) return undefined;
+    const next: DataTableColumnFilters = {};
+    for (const column of serverColumns) {
+      if (!SERVICE_COLUMN_SEARCH_KEYS.has(serviceListCellKey(column.id))) {
+        continue;
+      }
+      const value = serverFilterValues?.[column.id];
+      if (value) next[column.id] = value;
+    }
+    return next;
+  }, [serverMode, serverColumns, serverFilterValues]);
 
   const handleColumnFiltersChange = useCallback(
     (next: DataTableColumnFilters) => {
@@ -194,9 +198,10 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
       hasActiveFilters={hasActiveFilters}
       onClearFilters={onClearFilters}
       filterToolbarRightContent={columnPicker}
-      search={search}
       filterDefs={serverMode ? serverFilterDefs : clientFilterDefs}
       columnSearch
+      autoColumnSort
+      columnFilters={columnFilters}
       onColumnFiltersChange={serverMode ? handleColumnFiltersChange : undefined}
     />
   );

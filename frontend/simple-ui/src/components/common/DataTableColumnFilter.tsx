@@ -22,7 +22,7 @@ export type FilterableColumn<T> = {
   header: React.ReactNode;
   /** `false` opts a column out of the automatic search box. */
   filter?: DataTableColumnFilterConfig | false;
-  /** Value matched by client-side column search. Defaults to `sortAccessor`, then `row[id]`. */
+  /** Value matched by client-side column search. Defaults to `sortAccessor`, then `row[id]`. Arrays match if any element equals the select value. */
   filterAccessor?: (row: T) => unknown;
   sortAccessor?: (row: T) => string | number;
   cell?: (row: T, index: number) => React.ReactNode;
@@ -175,6 +175,26 @@ export function withAutoColumnSort<T, C extends FilterableColumn<T> & { sortable
   });
 }
 
+function rowMatchesColumnFilter<T>(
+  col: FilterableColumn<T>,
+  row: T,
+  index: number,
+  needle: string,
+): boolean {
+  if (col.filter && col.filter.type === "select" && col.filterAccessor) {
+    const raw = col.filterAccessor(row);
+    if (Array.isArray(raw)) {
+      return raw.some((value) => String(value).toLowerCase() === needle);
+    }
+    return valueText(raw).toLowerCase() === needle;
+  }
+  const texts = cellFilterTexts(col, row, index).map((text) => text.toLowerCase());
+  if (col.filter && col.filter.type === "select") {
+    return texts.includes(needle);
+  }
+  return texts.some((text) => text.includes(needle));
+}
+
 /** Client-side match for tables that hold every row in memory. */
 export function applyColumnFilters<T>(
   rows: readonly T[],
@@ -184,13 +204,9 @@ export function applyColumnFilters<T>(
   const active = columns.filter((col) => col.filter && filters[col.id]);
   if (active.length === 0) return [...rows];
   return rows.filter((row, index) =>
-    active.every((col) => {
-      const needle = filters[col.id].toLowerCase();
-      const texts = cellFilterTexts(col, row, index).map((text) => text.toLowerCase());
-      return col.filter && col.filter.type === "select"
-        ? texts.includes(needle)
-        : texts.some((text) => text.includes(needle));
-    }),
+    active.every((col) =>
+      rowMatchesColumnFilter(col, row, index, filters[col.id].toLowerCase()),
+    ),
   );
 }
 

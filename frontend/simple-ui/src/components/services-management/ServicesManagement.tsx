@@ -350,8 +350,6 @@ const ServicesManagement: React.FC = () => {
     totalServicesCount,
     isLoading,
     tableKey,
-    searchQuery,
-    setSearchQuery,
     filterStatus,
     setFilterStatus,
     filterTaskType,
@@ -514,6 +512,16 @@ const ServicesManagement: React.FC = () => {
         hint: FIELD_HINTS.service.col.tier,
         sortable: true,
         minWidth: "7rem",
+        // API expects tier ids on `tier_ids`; a text box would send the name.
+        filter: {
+          type: "select",
+          options: tierFilterOptions.map((tier) => ({
+            label: tier.name,
+            value: tier.id,
+          })),
+        },
+        filterAccessor: (service) =>
+          (service.tierIds ?? []).map((id) => String(id)),
         cell: renderServiceTierCell,
       },
       {
@@ -588,7 +596,7 @@ const ServicesManagement: React.FC = () => {
       );
     }
     return columns;
-  }, [actionsContext]);
+  }, [actionsContext, tierFilterOptions]);
 
   const serviceColumns = useMemo(
     () =>
@@ -702,8 +710,6 @@ const ServicesManagement: React.FC = () => {
         totalServicesCount={totalServicesCount}
         onRowClick={(service) => handleViewService(serviceRowId(service))}
         tableKey={tableKey}
-        searchQuery={searchQuery}
-        onSearchQueryChange={setSearchQuery}
         filterStatus={filterStatus}
         onFilterStatusChange={setFilterStatus}
         filterTaskType={filterTaskType}

@@ -13,10 +13,7 @@ import {
   serviceModelName,
   type ServiceListColumnDef,
 } from "../components/services-management/serviceListColumns";
-import {
-  serviceMatchesSearch,
-  serviceSelectOptions,
-} from "../components/services-management/serviceRegistryFilters";
+import { serviceSelectOptions } from "../components/services-management/serviceRegistryFilters";
 import {
   applyServicePublishPatch,
   fetchRegistryServicesPage,
@@ -722,13 +719,12 @@ export function useServicesManagement() {
   // and the rows are already one server page.
   // Toolbar search filters by name. Status/task type are in the fetch query.
   // Tier / model / service id are column searches on the table.
+  // Name search is the Name column filter (DataTable applyColumnFilters on client;
+  // serverFilters[name] on server). Do not also filter here by searchQuery.
   const registryTableItems = useMemo(() => {
     if (serviceListUsesServer) return services;
-    const filtered = services.filter((service) =>
-      serviceMatchesSearch(service, searchQuery),
-    );
-    return registrySort.apply(filtered);
-  }, [services, searchQuery, registrySort, serviceListUsesServer]);
+    return registrySort.apply(services);
+  }, [services, registrySort, serviceListUsesServer]);
 
   const tiersQuery = useQuery({
     queryKey: ACTIVE_TIERS_QUERY_KEY,

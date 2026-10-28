@@ -116,7 +116,6 @@ type DraftFilters = {
   timePreset: LogTimePreset;
   taskType: string;
   level: string;
-  method: string;
   startTime: string;
   endTime: string;
   selectedTenantId: string;
@@ -235,7 +234,6 @@ function appliedFromDraft(next: DraftFilters): AppliedFilters | null {
     q,
     taskType: next.taskType,
     level: next.level,
-    method: next.method,
     startTime: next.startTime,
     endTime: next.endTime,
     selectedTenantId: next.selectedTenantId,
@@ -252,7 +250,6 @@ type AppliedFilters = {
   q: string;
   taskType: string;
   level: string;
-  method: string;
   startTime: string;
   endTime: string;
   selectedTenantId: string;
@@ -552,22 +549,6 @@ function buildLogsFilterDefs(options: {
       ],
     },
     {
-      id: "method",
-      label: "Method",
-      type: "select",
-      param: "method",
-      value: draft.method,
-      onChange: (v) => replaceDraft({ ...draftRef.current, method: v }),
-      ...logsControlLayout(84, 104),
-      options: [
-        { label: "All", value: "" },
-        ...["GET", "POST", "PUT", "PATCH", "DELETE"].map((m) => ({
-          label: m,
-          value: m,
-        })),
-      ],
-    },
-    {
       id: "timePreset",
       label: "Time range",
       type: "select",
@@ -672,7 +653,6 @@ function hasLogsAppliedFilters(
   },
 ): boolean {
   if (applied.level !== "") return true;
-  if (applied.method !== "") return true;
   if (options.canPickTenant && applied.selectedTenantId !== "") return true;
   if (applied.q !== "") return true;
   if (applied.taskType !== "") return true;
@@ -989,6 +969,7 @@ function LogsDashboardMain(props: LogsDashboardMainProps) {
       <DataTable
         layout="admin"
         columnSearch
+        autoColumnSort
         items={props.traceRows}
         columns={props.traceColumns}
         getRowKey={(row) =>
@@ -1102,7 +1083,6 @@ const LogsPage: React.FC = () => {
     timePreset: "custom",
     taskType: "",
     level: "",
-    method: "",
     startTime: initialRange.startTime,
     endTime: initialRange.endTime,
     selectedTenantId: "",
@@ -1112,7 +1092,6 @@ const LogsPage: React.FC = () => {
     q: "",
     taskType: "",
     level: "",
-    method: "",
     startTime: initialRange.startTime,
     endTime: initialRange.endTime,
     selectedTenantId: "",
@@ -1283,7 +1262,6 @@ const LogsPage: React.FC = () => {
       timePreset: "custom",
       taskType: "",
       level: "",
-      method: "",
       startTime: range.startTime,
       endTime: range.endTime,
       selectedTenantId: "",
@@ -1294,7 +1272,6 @@ const LogsPage: React.FC = () => {
       q: "",
       taskType: "",
       level: "",
-      method: "",
       startTime: range.startTime,
       endTime: range.endTime,
       selectedTenantId: "",
@@ -1369,10 +1346,6 @@ const LogsPage: React.FC = () => {
         level:
           applied.level && applied.level.trim() !== ""
             ? applied.level
-            : undefined,
-        method:
-          applied.method && applied.method.trim() !== ""
-            ? applied.method
             : undefined,
         startDate: apiStartDate,
         endDate: apiEndDate,

@@ -238,6 +238,11 @@ export interface DataTableAdminProps<T> extends DataTableSharedProps<T> {
    */
   columnSearch?: boolean;
   /**
+   * Opt in to making every non-actions / non-toolbar-filter column sortable.
+   * Off by default so other admin tables keep their explicit `sortable` flags.
+   */
+  autoColumnSort?: boolean;
+  /**
    * Per-column search values (see `DataTableColumn.filter`). Omit to let
    * DataTable keep them; pass with `onColumnFiltersChange` when the API filters.
    */
@@ -2111,6 +2116,7 @@ function useAdminColumnFilteredItems<T>(options: Readonly<{
   columns: DataTableColumn<T>[];
   filterDefs?: DataTableFilterDef[];
   columnSearch: boolean;
+  autoColumnSort: boolean;
   paginate: "client" | "server" | false;
   columnFiltersProp?: DataTableColumnFilters;
   onColumnFiltersChange?: (next: DataTableColumnFilters) => void;
@@ -2121,6 +2127,7 @@ function useAdminColumnFilteredItems<T>(options: Readonly<{
     columns,
     filterDefs,
     columnSearch,
+    autoColumnSort,
     paginate,
     columnFiltersProp,
     onColumnFiltersChange,
@@ -2139,14 +2146,21 @@ function useAdminColumnFilteredItems<T>(options: Readonly<{
     const withFilters = columnSearch
       ? withAutoColumnFilters<T, DataTableColumn<T>>(columns, pageOnlyHelper)
       : columns;
+    if (!autoColumnSort) return withFilters;
     return withAutoColumnSort<T, DataTableColumn<T>>(withFilters, filterDefs);
-  }, [columnSearch, paginate, columns, filterDefs]);
-  // Always apply column filters to the rows on screen. Server tables still
-  // query the API for supported params; page-only columns (e.g. latency) work
-  // on the loaded page without a horizontal-scroll escape hatch.
+  }, [columnSearch, autoColumnSort, paginate, columns, filterDefs]);
+  // When the parent owns server filtering (`onColumnFiltersChange` + server
+  // paginate), do not re-match the loaded page — API inputs like
+  // `500, 503` / `env = prod` would empty the table. Client tables still filter
+  // in memory.
+  const apiOwnsColumnFilters =
+    paginate === "server" && Boolean(onColumnFiltersChange);
   const visibleItems = useMemo(
-    () => applyColumnFilters(items, searchColumns, columnFilters),
-    [items, searchColumns, columnFilters],
+    () =>
+      apiOwnsColumnFilters
+        ? [...items]
+        : applyColumnFilters(items, searchColumns, columnFilters),
+    [apiOwnsColumnFilters, items, searchColumns, columnFilters],
   );
 
   return {
@@ -2167,6 +2181,7 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
     search,
     filterDefs,
     columnSearch = false,
+    autoColumnSort = false,
     columnFilters: columnFiltersProp,
     onColumnFiltersChange,
     hasActiveFilters: hasToolbarFilters = false,
@@ -2221,6 +2236,7 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
     columns,
     filterDefs,
     columnSearch,
+    autoColumnSort,
     paginate,
     columnFiltersProp,
     onColumnFiltersChange,
@@ -2272,18 +2288,19 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
     serverPagination,
   );
 
+  const resetPage = pagination?.resetPage;
   const handleClearFilters = useCallback(() => {
     if (columnFilterCount > 0) setColumnFilters({});
     onClearFilters?.();
-    pagination?.resetPage();
-  }, [columnFilterCount, setColumnFilters, onClearFilters, pagination?.resetPage]);
+    resetPage?.();
+  }, [columnFilterCount, setColumnFilters, onClearFilters, resetPage]);
 
   const handleColumnFiltersChange = useCallback(
     (next: DataTableColumnFilters) => {
       setColumnFilters(next);
-      pagination?.resetPage();
+      resetPage?.();
     },
-    [setColumnFilters, pagination?.resetPage],
+    [setColumnFilters, resetPage],
   );
   const canClearFilters = Boolean(onClearFilters) || columnFilterCount > 0;
 
@@ -2327,7 +2344,7 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
       ref={tableContainerRef}
       maxH={containerMaxH ?? maxHeight}
       overflowY="auto"
-      overflowX="hidden"
+      overflowX="auto"
       bg="white"
       {...restTableContainerProps}
     >

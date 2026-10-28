@@ -1,10 +1,7 @@
 import { formatModelTaskTypeLabel } from "../../config/constants";
 import type { ServiceTierFilterOption } from "../../hooks/useServicesManagement";
 import type { Service } from "../../types/platform";
-import type {
-  DataTableFilterDef,
-  DataTableSearchConfig,
-} from "../common/dataTableTypes";
+import type { DataTableFilterDef } from "../common/dataTableTypes";
 import {
   serviceListCellKey,
   serviceListServiceId,
@@ -209,23 +206,6 @@ export function buildClientServiceFilterDefs(options: {
       options: taskOptions,
     },
   ];
-}
-
-/** @deprecated Name search moved to the Name column. Kept for call-site compatibility. */
-export function buildServiceRegistrySearch(options: {
-  serverMode: boolean;
-  searchQuery: string;
-  onSearchQueryChange: (value: string) => void;
-}): DataTableSearchConfig {
-  return {
-    label: "Search",
-    value: options.searchQuery,
-    onChange: options.onSearchQueryChange,
-    placeholder: "Search by name",
-    width: { base: "full", sm: "240px" },
-    debounceMs: options.serverMode ? 400 : undefined,
-    fields: ["name"],
-  };
 }
 
 export function statusFilterToPublished(status: string): boolean | undefined {

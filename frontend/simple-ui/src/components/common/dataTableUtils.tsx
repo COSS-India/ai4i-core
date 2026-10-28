@@ -525,17 +525,17 @@ function shrinkLevelForBudget(
 
 function fitWidthsToAvailable(widths: number[], available: number): number[] {
   const assigned = widths.reduce((sum, w) => sum + w, 0);
-  if (assigned > available) {
-    const scale = available / assigned;
-    return widths.map((w) => Math.max(40, Math.floor(w * scale)));
+  if (assigned <= available) {
+    return widths.map((w) => Math.round(w));
   }
-  return widths.map((w) => Math.round(w));
+  // Prefer horizontal scroll over unreadable columns (floor = MIN_SHRINK).
+  return widths.map((w) => Math.max(MIN_SHRINK_COLUMN_PX, Math.round(w)));
 }
 
 /**
- * Viewport-fit widths with no horizontal scrollbar:
+ * Viewport-fit widths:
  * - room to spare: only `shrink` columns grow; fixed/content stay tight
- * - too tight: level down `shrink` columns, then scale everything to fit
+ * - too tight: level down `shrink` columns, then keep a readable floor and scroll
  */
 export function distributeColumnWidths(
   cols: readonly ColumnSizingInput[],
