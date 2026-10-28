@@ -529,9 +529,11 @@ export function TableDateField({
   const { resetPage, inputBg, deferApply } = useDataTableFilterContext();
   const commitOnChange = !onBlur;
 
+  const isDateTime = inputType === "datetime-local";
+
   return (
     <FormControl
-      w={{ base: "full", sm: "220px" }}
+      w={{ base: "full", sm: isDateTime ? "168px" : "160px" }}
       isInvalid={Boolean(error)}
       {...formControlProps}
     >
@@ -552,12 +554,37 @@ export function TableDateField({
         }}
         bg={inputBg}
         aria-label={label}
-        fontSize={inputType === "datetime-local" ? "xs" : undefined}
-        px={inputType === "datetime-local" ? 2 : undefined}
+        fontSize={isDateTime ? "xs" : undefined}
+        px={isDateTime ? 1.5 : undefined}
         sx={{
           minWidth: 0,
-          "&::-webkit-datetime-edit": { padding: 0, minWidth: 0 },
-          "&::-webkit-calendar-picker-indicator": { margin: 0, padding: 0 },
+          ...(isDateTime
+            ? {
+                "&::-webkit-datetime-edit": { padding: 0, minWidth: 0 },
+                "&::-webkit-datetime-edit-fields-wrapper": {
+                  padding: 0,
+                  minWidth: 0,
+                },
+                "&::-webkit-datetime-edit-text": { padding: "0 1px" },
+                "&::-webkit-datetime-edit-year-field": { padding: 0 },
+                "&::-webkit-datetime-edit-month-field": { padding: 0 },
+                "&::-webkit-datetime-edit-day-field": { padding: 0 },
+                "&::-webkit-datetime-edit-hour-field": { padding: 0 },
+                "&::-webkit-datetime-edit-minute-field": { padding: 0 },
+                "&::-webkit-datetime-edit-ampm-field": { padding: 0 },
+                "&::-webkit-calendar-picker-indicator": {
+                  margin: 0,
+                  marginLeft: "2px",
+                  padding: 0,
+                  width: "14px",
+                  height: "14px",
+                  cursor: "pointer",
+                },
+              }
+            : {
+                "&::-webkit-datetime-edit": { padding: 0, minWidth: 0 },
+                "&::-webkit-calendar-picker-indicator": { margin: 0, padding: 0 },
+              }),
         }}
         {...inputProps}
       />
@@ -791,17 +818,17 @@ const CLUSTER_CHILD_PROPS: FormControlProps = {
   w: "full",
 };
 
-const CLUSTER_GAP_PX = 16;
+const CLUSTER_GAP_PX = 8;
 
 function clusterStackProps(
   defs: DataTableFilterDef[],
 ): React.ComponentProps<typeof HStack> {
   const flex = sumClusterFlex(defs);
   if (!flex) {
-    return { spacing: 3, align: "flex-start", flexShrink: 0 };
+    return { spacing: 2, align: "flex-start", flexShrink: 0 };
   }
   return {
-    spacing: 4,
+    spacing: 2,
     align: "flex-start",
     minW: sumClusterSize(defs, "minWidth"),
     maxW: sumClusterSize(defs, "maxWidth"),
@@ -1967,7 +1994,7 @@ function AdminFilterToolbarSection({
           align={filterToolbarAlign}
           alignActionsToInputs={toolbarLabelsVisible}
           rightContent={filterToolbarRightContent}
-          spacing={filterToolbarSingleRow ? 4 : 3}
+          spacing={filterToolbarSingleRow ? 2 : 3}
           flexWrap="wrap"
         >
           <ConfigDrivenFilters search={search} filterDefs={filterDefs} />

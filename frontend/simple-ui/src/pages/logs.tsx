@@ -459,13 +459,13 @@ type LogsControlLayout = {
 };
 
 /**
- * Toolbar controls wrap instead of scrolling. They may shrink slightly so the
- * full filter row stays on screen.
+ * Toolbar controls wrap instead of scrolling. Prefer compact widths so filters
+ * and Columns / Auto-refresh stay on one row.
  */
 function logsControlLayout(minPx: number, maxPx: number): LogsControlLayout {
   return {
     width: { base: "full", md: "auto" },
-    minWidth: { md: `${Math.min(minPx, 96)}px` },
+    minWidth: { md: `${Math.min(minPx, 72)}px` },
     maxWidth: { md: `${maxPx}px` },
     flex: { base: "1 1 100%", md: `0 1 ${minPx}px` },
   };
@@ -510,7 +510,7 @@ function buildLogsFilterDefs(options: {
       onChange: (v) =>
         replaceDraft({ ...draftRef.current, selectedTenantId: v }),
       hint: FIELD_HINTS.logs.tenant.tip,
-      ...logsControlLayout(148, 200),
+      ...logsControlLayout(120, 152),
       options: tenantFilterOptions(
         tenantsLoading,
         tenantsError,
@@ -527,7 +527,7 @@ function buildLogsFilterDefs(options: {
       param: "task_types",
       value: draft.taskType,
       onChange: (v) => replaceDraft({ ...draftRef.current, taskType: v }),
-      ...logsControlLayout(96, 140),
+      ...logsControlLayout(88, 120),
       options: [
         { label: "All", value: "" },
         ...taskTypeNames.map((tt) => ({
@@ -543,7 +543,7 @@ function buildLogsFilterDefs(options: {
       param: "level",
       value: draft.level,
       onChange: (v) => replaceDraft({ ...draftRef.current, level: v }),
-      ...logsControlLayout(104, 132),
+      ...logsControlLayout(88, 112),
       options: [
         { label: "All", value: "" },
         { label: "Success", value: "success" },
@@ -557,7 +557,7 @@ function buildLogsFilterDefs(options: {
       param: "method",
       value: draft.method,
       onChange: (v) => replaceDraft({ ...draftRef.current, method: v }),
-      ...logsControlLayout(100, 120),
+      ...logsControlLayout(84, 104),
       options: [
         { label: "All", value: "" },
         ...["GET", "POST", "PUT", "PATCH", "DELETE"].map((m) => ({
@@ -584,7 +584,7 @@ function buildLogsFilterDefs(options: {
           ...rangeForTimePreset(preset),
         });
       },
-      ...logsControlLayout(136, 160),
+      ...logsControlLayout(112, 136),
       options: [
         { label: "Custom", value: "custom" },
         ...LOG_TIME_PRESETS.map((preset) => ({
@@ -610,7 +610,7 @@ function buildLogsFilterDefs(options: {
       error: timeRangeError,
       inputType: "datetime-local",
       hint: FIELD_HINTS.logs.startTime.tip,
-      ...logsControlLayout(198, 220),
+      ...logsControlLayout(156, 172),
       cluster: "log-time",
     },
     {
@@ -630,7 +630,7 @@ function buildLogsFilterDefs(options: {
       error: timeRangeError,
       inputType: "datetime-local",
       hint: FIELD_HINTS.logs.endTime.tip,
-      ...logsControlLayout(198, 220),
+      ...logsControlLayout(156, 172),
       cluster: "log-time",
     },
   );
@@ -1027,7 +1027,7 @@ function LogsDashboardMain(props: LogsDashboardMainProps) {
           placeholder: props.searchPlaceholder,
           hint: props.searchHint,
           error: props.searchError,
-          ...logsControlLayout(148, 200),
+          ...logsControlLayout(120, 152),
         }}
         filterDefs={props.filterDefs}
         filterToolbarSingleRow

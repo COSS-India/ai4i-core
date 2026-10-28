@@ -377,14 +377,15 @@ export function TableFilterToolbar({
           </Button>
         </Box>
       ) : null}
+      {/*
+        Growable spacer (not margin-left:auto) so when rightContent wraps it
+        starts at the left of the next row instead of leaving a blank strip.
+      */}
+      {rightContent && pinRightContent ? (
+        <Box flex="1 1 0" minW={0} h="1px" aria-hidden />
+      ) : null}
       {rightContent ? (
-        <HStack
-          spacing={2}
-          pt={labelOffset}
-          align="center"
-          flexShrink={0}
-          ml={pinRightContent ? "auto" : undefined}
-        >
+        <HStack spacing={2} pt={labelOffset} align="center" flexShrink={0}>
           {rightContent}
         </HStack>
       ) : null}
