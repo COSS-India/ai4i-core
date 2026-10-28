@@ -37,18 +37,19 @@
   .nowrap { white-space: nowrap; }
   h2 { font: 700 13.5pt/1.2 "DejaVu Serif", serif; margin: 0 0 2mm; }
 
-  /* Rows of cards are tables, not flex rows: WeasyPrint sizes a flex row's
-     height from its items laid out narrower than they end up, leaving empty
-     space under them, and ignores fixed flex widths. Table cells share one
-     height (the cards line up) and keep their widths. The 3.5mm border-spacing
-     is the gutter; the -3.5mm margins take it back off the outer edges
-     (186mm is the A4 content width). These are layout tables, not data:
-     role="presentation", no <th>. */
-  table.cols { width: 193mm; margin: 0 -3.5mm; border-collapse: separate; border-spacing: 3.5mm 0; table-layout: fixed; }
-  table.cols + table.cols { margin-top: 3.5mm; }
-  table.cols > tbody > tr > td, table.cols > tr > td { vertical-align: top; }
-  table.pair { width: 100%; border-collapse: collapse; table-layout: fixed; }
-  table.pair td { padding: 0; vertical-align: top; }
+  /* Rows of cards use CSS table display, not flex: WeasyPrint sizes a flex
+     row's height from its items laid out narrower than they end up, leaving
+     empty space under them, and ignores fixed flex widths. Table cells share
+     one height (the cards line up) and keep their widths. Divs, not <table>:
+     this is layout, not tabular data. The 3.5mm border-spacing is the
+     gutter; the -3.5mm margins take it back off the outer edges (186mm is
+     the A4 content width). */
+  .tr { display: table-row; }
+  .td { display: table-cell; vertical-align: top; }
+  .cols { display: table; width: 193mm; margin: 0 -3.5mm; border-collapse: separate; border-spacing: 3.5mm 0; table-layout: fixed; }
+  .cols + .cols { margin-top: 3.5mm; }
+  /* border-spacing is inherited: layouts nested in a card row reset it. */
+  .pair { display: table; width: 100%; table-layout: fixed; border-spacing: 0; }
   .card { background: var(--card); border-radius: 5px; padding: 2.5mm 3.5mm; }
   .panel { background: #fff; border: 1px solid var(--border); border-radius: 5px; padding: 2.5mm 3.5mm; }
   .label { color: var(--muted); font-size: 8.5pt; }
@@ -79,9 +80,9 @@
 
   /* Models by task type */
   .caption { color: var(--muted); font-size: 8.5pt; margin: 2.5mm 0 0; }
-  table.grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
-  table.grid td { padding: 0 2.5mm; vertical-align: top; }
-  table.grid td:first-child { padding-left: 0; } table.grid td:last-child { padding-right: 0; }
+  .grid { display: table; width: 100%; table-layout: fixed; border-spacing: 0; }
+  .grid > .tr > .td { padding: 0 2.5mm; }
+  .grid > .tr > .td:first-child { padding-left: 0; } .grid > .tr > .td:last-child { padding-right: 0; }
   .item { display: flex; gap: 2mm; padding: 0.6mm 0; border-bottom: 1px dotted #b9b6ae; }
   .item .n { flex: 1 1 0; width: 0; } .item .c { font-weight: 700; text-align: right; }
 
@@ -122,12 +123,12 @@
   {# ── Model Portfolio ── #}
   <div class="gap"></div>
   <h2>Model Portfolio</h2>
-  <table role="presentation" class="cols"><tr>
-    <td class="card" style="width: 36mm">
+  <div class="cols"><div class="tr">
+    <div class="td card" style="width: 36mm">
       <div class="label">Total models</div><div class="value">{{ models.total }}</div>
       <div class="note">Registered on the platform</div>
-    </td>
-    <td class="card" style="width: 50mm"><div class="donut">
+    </div>
+    <div class="td card" style="width: 50mm"><div class="donut">
       <svg width="62" height="62" viewBox="0 0 42 42">
         <circle cx="21" cy="21" r="15.9" fill="none" stroke="#c5cae0" stroke-width="5"/>
         {% if models.active_width is not none and models.active_width > 0 %}
@@ -138,83 +139,83 @@
       </svg>
       <div class="legend"><span class="seg-active">{{ models.active }}</span>
         <span class="seg-other">{{ models.inactive }}</span></div>
-    </div></td>
-    <td class="panel">
+    </div></div>
+    <div class="td panel">
       <div class="head"><span class="title">Top 5 models by usage</span><span class="note">% of requests</span></div>
       {% for m in models.top %}
       <div class="rank"><span class="who clip"><b>{{ m.name }}</b> <span class="sub">{{ m.task }}</span></span>
         <div class="track bar"><div class="fill" style="width: {{ m.width }}%"></div></div><span class="pct">{{ m.share }}</span></div>
       {% else %}<div class="empty">{{ models.top_empty }}</div>{% endfor %}
-    </td>
-  </tr></table>
+    </div>
+  </div></div>
   {% if models.by_task %}
   <div class="caption">Models by task type</div>
-  <table role="presentation" class="grid">
+  <div class="grid">
     {% for row in models.by_task | batch(4) %}
-    <tr>{% for t in row %}<td><div class="item"><span class="n clip">{{ t.name }}</span><span class="c">{{ t.count }}</span></div></td>{% endfor %}
-      {% for _ in range(4 - row | length) %}<td></td>{% endfor %}</tr>
+    <div class="tr">{% for t in row %}<div class="td"><div class="item"><span class="n clip">{{ t.name }}</span><span class="c">{{ t.count }}</span></div></div>{% endfor %}
+      {% for _ in range(4 - row | length) %}<div class="td"></div>{% endfor %}</div>
     {% endfor %}
-  </table>
+  </div>
   {% endif %}
 
   {# ── Adoption Ratio ── #}
   <div class="gap"></div>
   <h2>Adoption Ratio</h2>
-  <table role="presentation" class="cols"><tr>
-    <td class="panel">
+  <div class="cols"><div class="tr">
+    <div class="td panel">
       <div class="head"><span class="title">Institutions · {{ adoption.institutions_total }} total</span>
         <span class="note">{% if adoption.institutions_new %}<span class="new">+{{ adoption.institutions_new }} new</span> · {% endif %}{{ adoption.institutions_active_pct }}</span></div>
       <div class="stack">{% for s in adoption.institution_segments %}<div class="{{ s.css }}" style="width: {{ s.width }}%">{{ s.count }}</div>{% endfor %}</div>
       <div class="legend">{% for l in adoption.institution_legend %}<span class="{{ l.css }}">{{ l.text }}</span>{% endfor %}</div>
       <div class="note">Active: at least one request in the period{% if adoption.dormant_tracked %} · Dormant: no requests for 2 or more periods{% endif %}</div>
-    </td>
-    <td class="panel">
+    </div>
+    <div class="td panel">
       <div class="head"><span class="title">Applications · {{ adoption.applications_total }} total</span><span class="note">{{ adoption.applications_active_pct }}</span></div>
       <div class="stack">{% for s in adoption.application_segments %}<div class="{{ s.css }}" style="width: {{ s.width }}%">{{ s.count }}</div>{% endfor %}</div>
       <div class="legend">{% for l in adoption.application_legend %}<span class="{{ l.css }}">{{ l.text }}</span>{% endfor %}</div>
       <div class="note">Active: at least one request in the period</div>
-    </td>
-  </tr></table>
-  <table role="presentation" class="cols"><tr>
-    <td class="panel">
-      <table role="presentation" class="pair"><tr>
-        <td><div class="label">Total inferences</div>
+    </div>
+  </div></div>
+  <div class="cols"><div class="tr">
+    <div class="td panel">
+      <div class="pair"><div class="tr">
+        <div class="td"><div class="label">Total inferences</div>
           <div class="value">{{ adoption.requests }}</div>
-          <div class="note">{% if adoption.requests_change %}<span class="{{ 'up' if adoption.requests_change_up else 'down' }}">{{ adoption.requests_change }}</span> {{ adoption.vs_phrase }}{% else %}In this period{% endif %}</div></td>
-        <td><div class="label">Avg daily inferences</div><div class="value{{ ' na' if adoption.avg_daily_muted }}">{{ adoption.avg_daily }}</div>
-          <div class="note">{{ adoption.avg_daily_note }}</div></td>
-      </tr></table>
+          <div class="note">{% if adoption.requests_change %}<span class="{{ 'up' if adoption.requests_change_up else 'down' }}">{{ adoption.requests_change }}</span> {{ adoption.vs_phrase }}{% else %}In this period{% endif %}</div></div>
+        <div class="td"><div class="label">Avg daily inferences</div><div class="value{{ ' na' if adoption.avg_daily_muted }}">{{ adoption.avg_daily }}</div>
+          <div class="note">{{ adoption.avg_daily_note }}</div></div>
+      </div></div>
       {% if adoption.tasks %}
       <div class="note tasks-head">By task type</div>
-      <table role="presentation" class="grid">
+      <div class="grid">
         {% for row in adoption.tasks | batch(2) %}
-        <tr>{% for t in row %}<td><div class="task"><span class="n clip">{{ t.name }}</span><div class="track"><div class="fill" style="width: {{ t.width }}%"></div></div><span class="c">{{ t.count }}</span></div></td>{% endfor %}
-          {% if row | length < 2 %}<td></td>{% endif %}</tr>
+        <div class="tr">{% for t in row %}<div class="td"><div class="task"><span class="n clip">{{ t.name }}</span><div class="track"><div class="fill" style="width: {{ t.width }}%"></div></div><span class="c">{{ t.count }}</span></div></div>{% endfor %}
+          {% if row | length < 2 %}<div class="td"></div>{% endif %}</div>
         {% endfor %}
-      </table>
+      </div>
       {% endif %}
-    </td>
-    <td class="panel">
+    </div>
+    <div class="td panel">
       <div class="head"><span class="title">Top 5 institutions by usage</span><span class="note">% of requests</span></div>
       {% for i in adoption.top_institutions %}
       <div class="rank"><span class="who clip"><b>{{ i.name }}</b> <span class="sub">{{ i.tasks }}</span></span>
         <div class="track bar"><div class="fill" style="width: {{ i.width }}%"></div></div><span class="pct">{{ i.share }}</span></div>
       {% else %}<div class="empty">{{ adoption.top_empty }}</div>{% endfor %}
-    </td>
-  </tr></table>
+    </div>
+  </div></div>
 
   {# ── Budget Utilisation ── #}
   <div class="gap"></div>
   <h2>Budget Utilisation</h2>
-  <table role="presentation" class="cols budget"><tr>
+  <div class="cols budget"><div class="tr">
     {% for c in budget.cards %}
-    <td class="card">
+    <div class="td card">
       <div class="label">{{ c.label }}</div>
       <div class="value{{ ' na' if c.muted }}">{{ c.value }}{% if c.unit %}<span class="unit">{{ c.unit }}</span>{% endif %}</div>
       <div class="note">{{ c.note }}</div>
-    </td>
+    </div>
     {% endfor %}
-  </tr></table>
+  </div></div>
   <div class="fy">Financial year allocation: {{ budget.fy_allocation }}</div>
   <div class="meter">{% if budget.used_width is not none %}<div class="spent" style="width: {{ budget.used_width }}%"></div>{% endif %}</div>
   <div class="meter-labels"><span>Spent to date {{ budget.used_pct }}</span><span>Remaining {{ budget.remaining_pct }}</span></div>

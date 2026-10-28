@@ -925,7 +925,8 @@ class TestReportHtml:
         d.models_by_task = {"LLM": 32, "NMT": 8, "ASR": 2, "TTS": 1, "OCR": 1}
         html = render_report_html(d)
         assert html.count('<div class="item">') == 5
-        rows = html.split('<table role="presentation" class="grid">')[1].split("</table>")[0].split("<tr>")[1:]
+        grid = html.split('<div class="grid">')[1].split('<div class="caption">')[0].split("Adoption Ratio")[0]
+        rows = grid.split('<div class="tr">')[1:]
         assert [r.count('<div class="item">') for r in rows] == [4, 1]
         assert '<span class="n clip">LLM</span><span class="c">32</span>' in rows[0]
 
