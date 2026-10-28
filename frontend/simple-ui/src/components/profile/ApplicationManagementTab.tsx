@@ -335,7 +335,7 @@ export default function ApplicationManagementTab({
                   onBoundHit={(bound) => setBoundHint(percentageBoundMessage(bound))}
                 />
                 <FormErrorMessage>{createBudgetError}</FormErrorMessage>
-                <FieldHint show={!createBudgetError}>
+                <FieldHint show={createBudgetError == null}>
                   {mgr.remainingPct.toFixed(2)}% remaining
                   {createPreview != null ? ` · ≈ ${formatSpendMoney(createPreview, currency)}` : ""}
                 </FieldHint>

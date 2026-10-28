@@ -57,6 +57,8 @@ export type DataTableFilterDef = {
   param?: string;
   value: string;
   onChange: (value: string) => void;
+  /** For `date` filters: apply the draft value on blur instead of every keystroke. */
+  onBlur?: () => void;
   options?: DataTableFilterOption[];
   defaultValue?: string;
   placeholder?: string;
@@ -73,7 +75,7 @@ export type DataTableFilterDef = {
    */
   inputType?: "text" | "number" | "date" | "datetime-local";
   /**
-   * Validation message for `text` filters. When set the field is marked
+   * Validation message for `text` / `date` filters. When set the field is marked
    * invalid (aria-invalid) and this replaces `helper` under the input.
    */
   error?: string;

@@ -162,18 +162,35 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
     searchQuery,
     onSearchQueryChange,
   });
-  const searchInFilter: DataTableFilterDef = {
-    id: "searchIn",
-    label: "Search in",
-    type: "multiselect",
-    value: searchFields,
-    onChange: onSearchFieldsChange,
-    width: { base: "full", sm: "168px" },
-    options: [
-      { label: "All fields", value: "" },
-      ...searchFieldOptions,
-    ],
-  };
+  // Server list ANDs text filters and empty selection only sends name — label that
+  // default as "Name" and keep Search in single-select so fields are not ANDed.
+  const searchInFilter: DataTableFilterDef = serverMode
+    ? {
+        id: "searchIn",
+        label: "Search in",
+        type: "select",
+        value: searchFields,
+        onChange: onSearchFieldsChange,
+        width: { base: "full", sm: "168px" },
+        options: [
+          { label: "Name", value: "" },
+          ...searchFieldOptions.filter(
+            (option) => option.value.replaceAll("_", "").toLowerCase() !== "name",
+          ),
+        ],
+      }
+    : {
+        id: "searchIn",
+        label: "Search in",
+        type: "multiselect",
+        value: searchFields,
+        onChange: onSearchFieldsChange,
+        width: { base: "full", sm: "168px" },
+        options: [
+          { label: "All fields", value: "" },
+          ...searchFieldOptions,
+        ],
+      };
   const serverPagination = resolveServerPagination({
     serverMode,
     serverPage,

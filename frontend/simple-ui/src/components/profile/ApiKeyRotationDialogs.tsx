@@ -62,7 +62,7 @@ function RotateDialog({ mgmt }: DialogProps) {
         <VStack align="stretch" spacing={3}>
           <Text fontSize="sm" color="ink.700" lineHeight="1.5">
             A new key is issued for <Text as="b">{mgmt.keyToRotate?.key_name}</Text> and shown
-            once. The new key keeps working for the grace period so you can switch your
+            once. The old key keeps working for the grace period so you can switch your
             applications over, then stops. Budget, permissions and expiry stay the same.
           </Text>
           <FormControl isRequired>

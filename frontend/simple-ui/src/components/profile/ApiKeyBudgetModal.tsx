@@ -54,6 +54,113 @@ function applicationRemainingAmount(
   );
 }
 
+type BudgetBodyProps = Readonly<{
+  isLoading: boolean;
+  banner: string | null;
+  applicationName: string;
+  applicationBudgetUnset: boolean;
+  focusedKeyId: number | null;
+  row: KeyBudgetDraft | undefined;
+  applicationRemaining: number | null;
+  rangeLabel: string;
+  fieldError: string | null;
+  draftPct: number | undefined;
+  currency: string;
+  onPctChange: (apiKeyId: number, value: string) => void;
+  onPctBoundHit: (apiKeyId: number, bound: PercentageBound) => void;
+}>;
+
+function ApiKeyBudgetModalBody({
+  isLoading,
+  banner,
+  applicationName,
+  applicationBudgetUnset,
+  focusedKeyId,
+  row,
+  applicationRemaining,
+  rangeLabel,
+  fieldError,
+  draftPct,
+  currency,
+  onPctChange,
+  onPctBoundHit,
+}: BudgetBodyProps) {
+  const showInactive = !isLoading && focusedKeyId != null && row == null;
+  const showUnsetBudget = applicationBudgetUnset && !isLoading;
+  const remainingColor =
+    applicationRemaining != null && applicationRemaining >= 0 ? "green.700" : "ink.800";
+
+  return (
+    <VStack align="stretch" spacing={4}>
+      <Text fontSize="sm" color="ink.600" noOfLines={2} wordBreak="break-word">
+        {BUDGET_COPY.applicationPrefix}{" "}
+        <Text as="span" fontWeight="600" color="ink.800">
+          {isLoading ? BUDGET_COPY.loading : applicationName || "—"}
+        </Text>
+      </Text>
+      {showUnsetBudget ? (
+        <Alert status="warning" borderRadius="md">
+          <AlertIcon />
+          {BUDGET_VALIDATION.applicationBudgetUnavailable}
+        </Alert>
+      ) : null}
+      {banner ? (
+        <Alert status="error" borderRadius="md">
+          <AlertIcon />
+          {banner}
+        </Alert>
+      ) : null}
+      {showInactive ? (
+        <Alert status="info" borderRadius="md">
+          <AlertIcon />
+          {BUDGET_COPY.inactiveKeyNotEditable}
+        </Alert>
+      ) : (
+        <>
+          <Box>
+            <Text fontSize="sm" fontWeight="600" color="ink.800" mb={2}>
+              {BUDGET_COPY.currentBudget}
+            </Text>
+            <ApplicationBudgetFacts
+              allocatedPct={isLoading ? undefined : row?.originalPct}
+              allocatedAmount={isLoading ? undefined : row?.originalAmount}
+              allocatedLabel={isLoading ? BUDGET_COPY.loading : undefined}
+              consumedLabel={
+                isLoading ? BUDGET_COPY.loading : formatBudgetPct(row?.consumed_percentage)
+              }
+              consumedSub={
+                isLoading ? undefined : formatBudgetMoney(row?.consumed_budget, currency)
+              }
+              remainingValue={
+                isLoading ? BUDGET_COPY.loading : formatBudgetMoney(applicationRemaining, currency)
+              }
+              remainingSub={isLoading ? undefined : BUDGET_COPY.leftOnThisApplication}
+              remainingColor={remainingColor}
+              rangeLabel={rangeLabel}
+              currency={currency}
+            />
+          </Box>
+          <BudgetAllocationField
+            value={row?.pctInput ?? ""}
+            onChange={(next) => {
+              if (row) onPctChange(row.api_key_id, next);
+            }}
+            onBoundHit={(bound) => {
+              if (row) onPctBoundHit(row.api_key_id, bound);
+            }}
+            isDisabled={!row || isLoading}
+            amountText={formatBudgetMoney(row?.resolvedAmount, currency)}
+            fillPct={draftPct != null && Number.isFinite(draftPct) ? draftPct : 0}
+            error={fieldError}
+            notice={row?.inputNotice}
+            hint={FIELD_HINTS.apiKey.budget.tip}
+          />
+        </>
+      )}
+    </VStack>
+  );
+}
+
 export default function ApiKeyBudgetModal({
   isOpen,
   onClose,
@@ -107,73 +214,21 @@ export default function ApiKeyBudgetModal({
         />
       }
     >
-      <VStack align="stretch" spacing={4}>
-        <Text fontSize="sm" color="ink.600" noOfLines={2} wordBreak="break-word">
-          {BUDGET_COPY.applicationPrefix}{" "}
-          <Text as="span" fontWeight="600" color="ink.800">
-            {isLoading ? BUDGET_COPY.loading : applicationName || "—"}
-          </Text>
-        </Text>
-        {applicationBudgetUnset && !isLoading ? (
-          <Alert status="warning" borderRadius="md">
-            <AlertIcon />
-            {BUDGET_VALIDATION.applicationBudgetUnavailable}
-          </Alert>
-        ) : null}
-        {banner ? (
-          <Alert status="error" borderRadius="md">
-            <AlertIcon />
-            {banner}
-          </Alert>
-        ) : null}
-        {!isLoading && focusedKeyId != null && !row ? (
-          <Alert status="info" borderRadius="md">
-            <AlertIcon />
-            {BUDGET_COPY.inactiveKeyNotEditable}
-          </Alert>
-        ) : (
-          <>
-            <Box>
-              <Text fontSize="sm" fontWeight="600" color="ink.800" mb={2}>
-                {BUDGET_COPY.currentBudget}
-              </Text>
-              <ApplicationBudgetFacts
-                allocatedPct={isLoading ? undefined : row?.originalPct}
-                allocatedAmount={isLoading ? undefined : row?.originalAmount}
-                allocatedLabel={isLoading ? BUDGET_COPY.loading : undefined}
-                consumedLabel={isLoading ? BUDGET_COPY.loading : formatBudgetPct(row?.consumed_percentage)}
-                consumedSub={
-                  isLoading ? undefined : formatBudgetMoney(row?.consumed_budget, currency)
-                }
-                remainingValue={
-                  isLoading ? BUDGET_COPY.loading : formatBudgetMoney(applicationRemaining, currency)
-                }
-                remainingSub={isLoading ? undefined : BUDGET_COPY.leftOnThisApplication}
-                remainingColor={
-                  applicationRemaining != null && applicationRemaining >= 0 ? "green.700" : "ink.800"
-                }
-                rangeLabel={rangeLabel}
-                currency={currency}
-              />
-            </Box>
-            <BudgetAllocationField
-              value={row?.pctInput ?? ""}
-              onChange={(next) => {
-                if (row) onPctChange(row.api_key_id, next);
-              }}
-              onBoundHit={(bound) => {
-                if (row) onPctBoundHit(row.api_key_id, bound);
-              }}
-              isDisabled={!row || isLoading}
-              amountText={formatBudgetMoney(row?.resolvedAmount, currency)}
-              fillPct={draftPct != null && Number.isFinite(draftPct) ? draftPct : 0}
-              error={fieldError}
-              notice={row?.inputNotice}
-              hint={FIELD_HINTS.apiKey.budget.tip}
-            />
-          </>
-        )}
-      </VStack>
+      <ApiKeyBudgetModalBody
+        isLoading={isLoading}
+        banner={banner}
+        applicationName={applicationName}
+        applicationBudgetUnset={applicationBudgetUnset}
+        focusedKeyId={focusedKeyId}
+        row={row}
+        applicationRemaining={applicationRemaining}
+        rangeLabel={rangeLabel}
+        fieldError={fieldError}
+        draftPct={draftPct ?? undefined}
+        currency={currency}
+        onPctChange={onPctChange}
+        onPctBoundHit={onPctBoundHit}
+      />
     </StandardModal>
   );
 }

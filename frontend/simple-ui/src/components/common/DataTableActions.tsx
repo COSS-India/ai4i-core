@@ -69,7 +69,7 @@ export function DataTableActions({
   className = "row-actions",
   stopPropagation = true,
   justify = "flex-end",
-}: DataTableActionsProps) {
+}: Readonly<DataTableActionsProps>) {
   const visible = actions.filter((a) => a.visible !== false);
   if (visible.length === 0) {
     // Keep vertical rhythm when some rows have no icons (e.g. MODEL PII types).

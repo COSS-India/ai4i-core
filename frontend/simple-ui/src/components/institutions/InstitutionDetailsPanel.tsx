@@ -146,29 +146,32 @@ export default function InstitutionDetailsPanel({
     budgetLabel = formatSpendMoney(budgetLimit, currency);
   }
 
+  const tierExtrasContent =
+    tierName && !tierBudgetErrorMessage ? (
+      <TierUsageLimits tierLimits={tierLimits} />
+    ) : tierBudgetErrorMessage ? (
+      <Alert status="warning" borderRadius="md">
+        <AlertIcon />
+        <Text fontSize="sm">{tierBudgetErrorMessage}</Text>
+      </Alert>
+    ) : null;
+
   return (
     <VStack align="stretch" spacing={4} w="full">
-      <HStack justify="flex-end" color="ink.500" spacing={2}>
-        <FiEye aria-hidden />
-        <Text fontSize="sm">View only</Text>
+      <HStack justify="space-between" align="center" flexWrap="wrap" gap={2}>
+        <Text as="h2" fontSize="lg" fontWeight="semibold" color="ink.800" minW={0}>
+          {institution.organisation}
+        </Text>
+        <HStack color="ink.500" spacing={2} flexShrink={0}>
+          <FiEye aria-hidden />
+          <Text fontSize="sm">View only</Text>
+        </HStack>
       </HStack>
       <InstitutionOverview
         tenant={institution}
         tierLabel={tierLabel}
         budgetLabel={budgetLabel}
-        tierExtras={
-          <>
-            {tierName && !tierBudgetErrorMessage ? (
-              <TierUsageLimits tierLimits={tierLimits} />
-            ) : null}
-            {tierBudgetErrorMessage ? (
-              <Alert status="warning" borderRadius="md" mt={tierName ? 3 : 0}>
-                <AlertIcon />
-                <Text fontSize="sm">{tierBudgetErrorMessage}</Text>
-              </Alert>
-            ) : null}
-          </>
-        }
+        tierExtras={tierExtrasContent}
         footer={
           <HStack
             spacing={2}

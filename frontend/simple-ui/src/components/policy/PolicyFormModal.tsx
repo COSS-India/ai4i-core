@@ -79,7 +79,10 @@ export function PolicyFormModal({
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loadedPolicy, setLoadedPolicy] = useState<PolicyOut | null>(null);
-  const resolvedMode = mode ?? (policyId ? "edit" : "create");
+  let resolvedMode = mode;
+  if (resolvedMode == null) {
+    resolvedMode = policyId ? "edit" : "create";
+  }
   const readOnly = resolvedMode === "view";
   const tenantsQuery = useTenantsList({ enabled: isOpen });
   const tenantsError = tenantsQuery.isError
@@ -342,9 +345,11 @@ export function PolicyFormModal({
           )}
           {readOnly ? (
             <ReadOnlyField label="PII types (policy configuration)">
-              {selectedPii.length
-                ? selectedPii.map((id) => piiById.get(id)?.pii_type_label || id).join(", ")
-                : "—"}
+              {selectedPii.length === 0
+                ? "—"
+                : selectedPii
+                    .map((id) => piiById.get(id)?.pii_type_label || id)
+                    .join(", ")}
             </ReadOnlyField>
           ) : (
           <FormControl isRequired>

@@ -31,7 +31,13 @@ import {
   Portal,
 } from "@chakra-ui/react";
 import Head from "next/head";
-import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useMemo,
+  useRef,
+  useCallback,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   RepeatIcon,
@@ -72,7 +78,11 @@ import TelemetryTraceDetailModal from "@/components/observability/TelemetryTrace
 import { getPlatformName } from "../config/runtimeConfig";
 import { FIELD_HINTS } from "../config/fieldHints";
 import FieldLabel from "../components/common/FieldLabel";
-import { isPlatformAdminUser, isTenantAdminUser, userHasRole } from "../utils/rbac";
+import {
+  isPlatformAdminUser,
+  isTenantAdminUser,
+  userHasRole,
+} from "../utils/rbac";
 import {
   AUTO_REFRESH_MS,
   DEFAULT_COLUMN_KEYS,
@@ -98,20 +108,21 @@ import {
   writeStoredColumns,
 } from "../utils/logsDashboard";
 
-const LOG_SEARCH_FIELDS = ["service", "statusCode", "endUser", "metadata"] as const;
+const LOG_SEARCH_FIELDS = [
+  "service",
+  "statusCode",
+  "endUser",
+  "metadata",
+] as const;
 type LogSearchField = (typeof LOG_SEARCH_FIELDS)[number];
 
 type DraftFilters = {
   q: string;
-  /** Comma-separated search fields. Empty means every field (keyword search). */
+  /** Single search field. Empty means every field (keyword search). */
   searchScope: string;
   timePreset: LogTimePreset;
   taskType: string;
   level: string;
-  serviceId: string;
-  statusCode: string;
-  endUser: string;
-  metadata: string;
   startTime: string;
   endTime: string;
   selectedTenantId: string;
@@ -119,58 +130,93 @@ type DraftFilters = {
 
 function selectedSearchFields(scope: string): Set<LogSearchField> {
   const selected = new Set<LogSearchField>();
-  for (const part of scope.split(",")) {
-    const field = part.trim();
-    if ((LOG_SEARCH_FIELDS as readonly string[]).includes(field)) {
-      selected.add(field as LogSearchField);
-    }
+  const field = scope.trim();
+  if ((LOG_SEARCH_FIELDS as readonly string[]).includes(field)) {
+    selected.add(field as LogSearchField);
   }
   return selected;
+}
+
+/** Empty or inverted ranges must not hit the API. */
+function dateRangeError(startTime: string, endTime: string): string | undefined {
+  if (!startTime.trim() || !endTime.trim()) {
+    return "Start and end time are required.";
+  }
+  const start = new Date(startTime);
+  const end = new Date(endTime);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
+    return "Enter a valid start and end time.";
+  }
+  if (start > end) {
+    return "Start time must be before end time.";
+  }
+  return undefined;
 }
 
 function withSearchText(draft: DraftFilters, value: string): DraftFilters {
   return { ...draft, q: value };
 }
 
-function searchFieldCopy(field: LogSearchField | undefined): { placeholder: string; hint: string } {
+function searchFieldCopy(field: LogSearchField | undefined): {
+  placeholder: string;
+  hint: string;
+} {
   if (field === "service") {
-    return { placeholder: FIELD_HINTS.logs.service.placeholder, hint: FIELD_HINTS.logs.service.tip };
+    return {
+      placeholder: FIELD_HINTS.logs.service.placeholder,
+      hint: FIELD_HINTS.logs.service.tip,
+    };
   }
   if (field === "statusCode") {
-    return { placeholder: FIELD_HINTS.logs.statusCode.placeholder, hint: FIELD_HINTS.logs.statusCode.tip };
+    return {
+      placeholder: FIELD_HINTS.logs.statusCode.placeholder,
+      hint: FIELD_HINTS.logs.statusCode.tip,
+    };
   }
   if (field === "endUser") {
-    return { placeholder: FIELD_HINTS.logs.endUser.placeholder, hint: FIELD_HINTS.logs.endUser.tip };
+    return {
+      placeholder: FIELD_HINTS.logs.endUser.placeholder,
+      hint: FIELD_HINTS.logs.endUser.tip,
+    };
   }
   if (field === "metadata") {
-    return { placeholder: FIELD_HINTS.logs.metadata.placeholder, hint: FIELD_HINTS.logs.metadata.tip };
+    return {
+      placeholder: FIELD_HINTS.logs.metadata.placeholder,
+      hint: FIELD_HINTS.logs.metadata.tip,
+    };
   }
-  return { placeholder: FIELD_HINTS.logs.search.placeholder, hint: FIELD_HINTS.logs.search.tip };
+  return {
+    placeholder: FIELD_HINTS.logs.search.placeholder,
+    hint: FIELD_HINTS.logs.search.tip,
+  };
+}
+
+function fieldText(fields: Set<LogSearchField>, id: LogSearchField, text: string): string {
+  return fields.has(id) ? text : "";
 }
 
 function appliedFromDraft(next: DraftFilters): AppliedFilters | null {
+  if (dateRangeError(next.startTime, next.endTime)) return null;
   const text = next.q.trim();
   const fields = selectedSearchFields(next.searchScope);
-  const searchingAll = fields.size === 0;
-  const q = searchingAll ? text : "";
-  const serviceId = fields.has("service") ? text : "";
-  const endUser = fields.has("endUser") ? text : "";
-  const metadataRaw = fields.has("metadata") ? text : "";
-  const statusRaw = fields.has("statusCode") ? text : "";
-  if (q.length > KEYWORD_MAX_LENGTH || endUser.length > END_USER_MAX_LENGTH) return null;
-  const meta = parseMetadataFilter(metadataRaw);
+  const q = fields.size === 0 ? text : "";
+  const endUser = fieldText(fields, "endUser", text);
+  if (q.length > KEYWORD_MAX_LENGTH || endUser.length > END_USER_MAX_LENGTH) {
+    return null;
+  }
+  const meta = parseMetadataFilter(fieldText(fields, "metadata", text));
   if (meta && "error" in meta) return null;
-  const codes = parseStatusCodeFilter(statusRaw);
+  const codes = parseStatusCodeFilter(fieldText(fields, "statusCode", text));
   if (codes && "error" in codes) return null;
   return {
     q,
     taskType: next.taskType,
     level: next.level,
-    serviceId,
-    statusCode: codes && "value" in codes ? codes.value : "",
+    serviceId: fieldText(fields, "service", text),
+    statusCode: codes?.value ?? "",
     user: endUser,
-    metadataKey: meta && "key" in meta ? meta.key : "",
-    metadataValue: meta && "key" in meta ? meta.value : "",
+    metadataKey: meta?.key ?? "",
+    metadataValue: meta?.value ?? "",
     startTime: next.startTime,
     endTime: next.endTime,
     selectedTenantId: next.selectedTenantId,
@@ -178,7 +224,9 @@ function appliedFromDraft(next: DraftFilters): AppliedFilters | null {
 }
 
 function sameApplied(left: AppliedFilters, right: AppliedFilters): boolean {
-  return (Object.keys(left) as (keyof AppliedFilters)[]).every((key) => left[key] === right[key]);
+  return (Object.keys(left) as (keyof AppliedFilters)[]).every(
+    (key) => left[key] === right[key],
+  );
 }
 
 type AppliedFilters = {
@@ -255,6 +303,107 @@ function renderTraceStatusCell(
   );
 }
 
+function formatTimestamp(timestamp: string): string {
+  try {
+    return new Date(timestamp).toLocaleString();
+  } catch {
+    return timestamp;
+  }
+}
+
+function plainTraceCell(
+  value: React.ReactNode,
+  opts?: { mono?: boolean; weight?: string; color?: string },
+): React.ReactNode {
+  return (
+    <Text
+      fontSize="sm"
+      color={opts?.color ?? "ink.700"}
+      fontWeight={opts?.weight}
+      fontFamily={opts?.mono ? "mono" : undefined}
+    >
+      {value || "—"}
+    </Text>
+  );
+}
+
+function renderTraceDataCell(
+  key: string,
+  row: TelemetryTraceRecord,
+  options: {
+    isAdmin: boolean;
+    resolveTenantName: (tenantId?: string | null) => string;
+  },
+): React.ReactNode {
+  if (key === "timestamp") {
+    return (
+      <Text fontSize="sm" color="ink.600">
+        {row.timestamp ? formatTimestamp(row.timestamp) : "—"}
+      </Text>
+    );
+  }
+  if (key === "status") return renderTraceStatusCell(row, options.isAdmin);
+  if (key === "task_type") return plainTraceCell(row.task_type, { weight: "medium" });
+  if (key === "url") {
+    return (
+      <Text
+        fontSize="sm"
+        color="ink.700"
+        fontFamily="mono"
+        noOfLines={1}
+        title={row.url || undefined}
+      >
+        {row.url || "—"}
+      </Text>
+    );
+  }
+  if (key === "institution") {
+    return (
+      <Text fontSize="sm" color="ink.600">
+        {options.resolveTenantName(row.tenant_id)}
+      </Text>
+    );
+  }
+  if (key === "status_code") return plainTraceCell(row.status_code ?? "—");
+  if (key === "error") {
+    return (
+      <Text
+        fontSize="sm"
+        color={row.error ? "red.600" : "ink.500"}
+        noOfLines={1}
+        title={row.error || undefined}
+      >
+        {row.error || "—"}
+      </Text>
+    );
+  }
+  if (key === "service") return plainTraceCell(row.service);
+  if (key === "model") return plainTraceCell(row.model);
+  if (key === "latency") return plainTraceCell(row.latency ?? "—");
+  if (key === "application") return plainTraceCell(row.application, { mono: true });
+  if (key === "api_key") return plainTraceCell(row.api_key, { mono: true });
+  if (key === "end_user") return plainTraceCell(row.end_user);
+  if (key === "metadata") {
+    const metadataText = formatMetadataCell(row.metadata);
+    return (
+      <Text
+        fontSize="sm"
+        color="ink.700"
+        noOfLines={1}
+        title={metadataText === "—" ? undefined : metadataText}
+      >
+        {metadataText}
+      </Text>
+    );
+  }
+  if (key === "method") return plainTraceCell(row.method);
+  return (
+    <Text fontSize="sm" color="ink.500">
+      —
+    </Text>
+  );
+}
+
 const LogsPage: React.FC = () => {
   const router = useRouter();
   const { isAuthenticated, isLoading: authLoading, user } = useAuth();
@@ -268,10 +417,6 @@ const LogsPage: React.FC = () => {
     timePreset: "custom",
     taskType: "",
     level: "",
-    serviceId: "",
-    statusCode: "",
-    endUser: "",
-    metadata: "",
     startTime: initialRange.startTime,
     endTime: initialRange.endTime,
     selectedTenantId: "",
@@ -313,7 +458,8 @@ const LogsPage: React.FC = () => {
     key: "timestamp",
     direction: "desc",
   });
-  const [selectedColumns, setSelectedColumns] = useState<string[]>(DEFAULT_COLUMN_KEYS);
+  const [selectedColumns, setSelectedColumns] =
+    useState<string[]>(DEFAULT_COLUMN_KEYS);
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
   const [isTraceModalOpen, setIsTraceModalOpen] = useState(false);
 
@@ -326,7 +472,7 @@ const LogsPage: React.FC = () => {
 
   const authTenantId = useMemo(
     () => user?.tenant_id?.trim() || getTenantIdFromToken() || null,
-    [user?.tenant_id]
+    [user?.tenant_id],
   );
 
   const apiTenantId = useMemo(
@@ -337,7 +483,7 @@ const LogsPage: React.FC = () => {
         selectedTenantId: applied.selectedTenantId,
         authTenantId,
       }),
-    [isAdmin, isTenantAdmin, applied.selectedTenantId, authTenantId]
+    [isAdmin, isTenantAdmin, applied.selectedTenantId, authTenantId],
   );
 
   const searchFields = selectedSearchFields(draft.searchScope);
@@ -357,17 +503,24 @@ const LogsPage: React.FC = () => {
     [draft.q, draft.searchScope],
   );
   const metadataError =
-    metadataFilter && "error" in metadataFilter ? metadataFilter.error : undefined;
+    metadataFilter && "error" in metadataFilter
+      ? metadataFilter.error
+      : undefined;
   const statusCodeFilter = useMemo(
-    () => (searchFields.has("statusCode") ? parseStatusCodeFilter(draft.q) : null),
+    () =>
+      searchFields.has("statusCode") ? parseStatusCodeFilter(draft.q) : null,
     [draft.q, draft.searchScope],
   );
   const statusCodeError =
-    statusCodeFilter && "error" in statusCodeFilter ? statusCodeFilter.error : undefined;
+    statusCodeFilter && "error" in statusCodeFilter
+      ? statusCodeFilter.error
+      : undefined;
   const searchError = searchingAllFields
     ? keywordError
     : endUserError || metadataError || statusCodeError;
-  const onlySearchField = searchFields.size === 1 ? Array.from(searchFields)[0] : undefined;
+  const timeRangeError = dateRangeError(draft.startTime, draft.endTime);
+  const onlySearchField =
+    searchFields.size === 1 ? Array.from(searchFields)[0] : undefined;
 
   useEffect(() => {
     if (!followsPresent && autoRefresh) {
@@ -423,23 +576,26 @@ const LogsPage: React.FC = () => {
     router,
   ]);
 
-  const { data: tenantsData, isLoading: tenantsLoading, error: tenantsError } =
-    useTenantsList({
-      enabled: isAuthenticated && canPickTenant,
-    });
+  const {
+    data: tenantsData,
+    isLoading: tenantsLoading,
+    error: tenantsError,
+  } = useTenantsList({
+    enabled: isAuthenticated && canPickTenant,
+  });
 
   const activeTenants = useMemo(() => {
     if (!tenantsData?.tenants || !Array.isArray(tenantsData.tenants)) {
       return [];
     }
     return tenantsData.tenants.filter((tenant: { status?: string }) =>
-      isTenantStatus(tenant?.status, TENANT.STATUS.ACTIVE)
+      isTenantStatus(tenant?.status, TENANT.STATUS.ACTIVE),
     );
   }, [tenantsData]);
 
   const tenantById = useMemo(
     () => new Map(activeTenants.map((tenant) => [tenant.tenant_id, tenant])),
-    [activeTenants]
+    [activeTenants],
   );
 
   const resolveTenantName = useCallback(
@@ -448,13 +604,10 @@ const LogsPage: React.FC = () => {
       const tenant = tenantById.get(tenantId);
       return tenant?.organisation || tenantId;
     },
-    [tenantById]
+    [tenantById],
   );
 
-  const {
-    data: columnsResponse,
-    isFetched: columnsFetched,
-  } = useQuery({
+  const { data: columnsResponse, isFetched: columnsFetched } = useQuery({
     queryKey: ["telemetry-traces-columns"],
     queryFn: async () => {
       try {
@@ -529,10 +682,6 @@ const LogsPage: React.FC = () => {
       timePreset: "custom",
       taskType: "",
       level: "",
-      serviceId: "",
-      statusCode: "",
-      endUser: "",
-      metadata: "",
       startTime: range.startTime,
       endTime: range.endTime,
       selectedTenantId: "",
@@ -567,9 +716,9 @@ const LogsPage: React.FC = () => {
       buildColumnsQueryParam(
         selectedColumns,
         columnDefs.map((c) => c.key),
-        { includeError: isAdmin }
+        { includeError: isAdmin },
       ),
-    [selectedColumns, isAdmin, columnDefs]
+    [selectedColumns, isAdmin, columnDefs],
   );
 
   const {
@@ -632,8 +781,7 @@ const LogsPage: React.FC = () => {
     // Default app retry is 1; skip for AC-17 narrow-range 400 so the costly
     // keyword pre-query (up to 20,001 trace IDs) does not run twice.
     retry: (count, err) =>
-      count < 1 &&
-      !(err as Error)?.message?.toLowerCase().includes("narrow"),
+      count < 1 && !(err as Error)?.message?.toLowerCase().includes("narrow"),
   });
 
   useEffect(() => {
@@ -668,7 +816,7 @@ const LogsPage: React.FC = () => {
         const timeRangeMs = endDate.getTime() - startDate.getTime();
         const nextEnd = formatDateTimeLocal(now);
         const nextStart = formatDateTimeLocal(
-          new Date(now.getTime() - timeRangeMs)
+          new Date(now.getTime() - timeRangeMs),
         );
         setDraft((prev) => ({
           ...prev,
@@ -715,14 +863,6 @@ const LogsPage: React.FC = () => {
     return () => clearInterval(refreshTimer);
   }, [autoRefresh, followsPresent]);
 
-  const formatTimestamp = (timestamp: string) => {
-    try {
-      return new Date(timestamp).toLocaleString();
-    } catch {
-      return timestamp;
-    }
-  };
-
   const traceRows = tracesData?.data ?? [];
   const aggregationStats = tracesData?.aggregations;
   const successCount =
@@ -752,7 +892,7 @@ const LogsPage: React.FC = () => {
       setSelectedColumns(ordered);
       writeStoredColumns(ordered);
     },
-    [columnDefs]
+    [columnDefs],
   );
 
   const resetColumns = useCallback(() => {
@@ -767,88 +907,10 @@ const LogsPage: React.FC = () => {
     setPage(1);
   }, []);
 
-  const renderStatusCell = useCallback(
-    (row: TelemetryTraceRecord) => renderTraceStatusCell(row, isAdmin),
-    [isAdmin],
-  );
-
   const cellForColumn = useCallback(
-    (key: string, row: TelemetryTraceRecord): React.ReactNode => {
-      const plain = (value: React.ReactNode, opts?: { mono?: boolean; weight?: string }) => (
-        <Text
-          fontSize="sm"
-          color="ink.700"
-          fontWeight={opts?.weight}
-          fontFamily={opts?.mono ? "mono" : undefined}
-        >
-          {value || "—"}
-        </Text>
-      );
-      const cells: Record<string, () => React.ReactNode> = {
-        timestamp: () => (
-          <Text fontSize="sm" color="ink.600">
-            {row.timestamp ? formatTimestamp(row.timestamp) : "—"}
-          </Text>
-        ),
-        status: () => renderStatusCell(row),
-        task_type: () => plain(row.task_type, { weight: "medium" }),
-        url: () => (
-          <Text
-            fontSize="sm"
-            color="ink.700"
-            fontFamily="mono"
-            noOfLines={1}
-            title={row.url || undefined}
-          >
-            {row.url || "—"}
-          </Text>
-        ),
-        institution: () => (
-          <Text fontSize="sm" color="ink.600">
-            {resolveTenantName(row.tenant_id)}
-          </Text>
-        ),
-        status_code: () => plain(row.status_code ?? "—"),
-        error: () => (
-          <Text
-            fontSize="sm"
-            color={row.error ? "red.600" : "ink.500"}
-            noOfLines={1}
-            title={row.error || undefined}
-          >
-            {row.error || "—"}
-          </Text>
-        ),
-        service: () => plain(row.service),
-        model: () => plain(row.model),
-        latency: () => plain(row.latency != null ? row.latency : "—"),
-        application: () => plain(row.application, { mono: true }),
-        api_key: () => plain(row.api_key, { mono: true }),
-        end_user: () => plain(row.end_user),
-        metadata: () => {
-          const metadataText = formatMetadataCell(row.metadata);
-          return (
-            <Text
-              fontSize="sm"
-              color="ink.700"
-              noOfLines={1}
-              title={metadataText === "—" ? undefined : metadataText}
-            >
-              {metadataText}
-            </Text>
-          );
-        },
-        method: () => plain(row.method),
-      };
-      return (
-        cells[key]?.() ?? (
-          <Text fontSize="sm" color="ink.500">
-            —
-          </Text>
-        )
-      );
-    },
-    [renderStatusCell, resolveTenantName]
+    (key: string, row: TelemetryTraceRecord): React.ReactNode =>
+      renderTraceDataCell(key, row, { isAdmin, resolveTenantName }),
+    [isAdmin, resolveTenantName],
   );
 
   const traceColumns = useMemo((): DataTableColumn<TelemetryTraceRecord>[] => {
@@ -899,7 +961,12 @@ const LogsPage: React.FC = () => {
               w="full"
             >
               <CardBody>
-                <Flex direction="column" align="center" justify="center" py={12}>
+                <Flex
+                  direction="column"
+                  align="center"
+                  justify="center"
+                  py={12}
+                >
                   <Text
                     fontSize="lg"
                     color="ink.500"
@@ -1072,7 +1139,8 @@ const LogsPage: React.FC = () => {
                   label: "Search",
                   value: draft.q,
                   debounceMs: 400,
-                  onChange: (v) => replaceDraft(withSearchText(draftRef.current, v)),
+                  onChange: (v) =>
+                    replaceDraft(withSearchText(draftRef.current, v)),
                   onSubmit: () => commitFilters(draftRef.current),
                   placeholder: searchFieldCopy(onlySearchField).placeholder,
                   hint: searchFieldCopy(onlySearchField).hint,
@@ -1083,7 +1151,7 @@ const LogsPage: React.FC = () => {
                   {
                     id: "searchScope",
                     label: "Search in",
-                    type: "multiselect",
+                    type: "select",
                     value: draft.searchScope,
                     onChange: (v) =>
                       replaceDraft({ ...draftRef.current, searchScope: v }),
@@ -1105,13 +1173,17 @@ const LogsPage: React.FC = () => {
                           param: "tenant_id",
                           value: draft.selectedTenantId,
                           onChange: (v: string) =>
-                            replaceDraft({ ...draftRef.current, selectedTenantId: v }),
+                            replaceDraft({
+                              ...draftRef.current,
+                              selectedTenantId: v,
+                            }),
                           hint: FIELD_HINTS.logs.tenant.tip,
                           width: { base: "full", sm: "180px" },
                           options: [
                             { label: `All ${INSTITUTIONS}`, value: "" },
-                            ...(!tenantsLoading && !tenantsError
-                              ? activeTenants.map(
+                            ...(tenantsLoading || tenantsError
+                              ? []
+                              : activeTenants.map(
                                   (tenant: {
                                     tenant_id: string;
                                     organisation?: string;
@@ -1120,8 +1192,7 @@ const LogsPage: React.FC = () => {
                                       tenant.organisation || tenant.tenant_id,
                                     value: tenant.tenant_id,
                                   }),
-                                )
-                              : []),
+                                )),
                           ],
                         },
                       ]
@@ -1132,7 +1203,8 @@ const LogsPage: React.FC = () => {
                     type: "select",
                     param: "task_types",
                     value: draft.taskType,
-                    onChange: (v) => replaceDraft({ ...draftRef.current, taskType: v }),
+                    onChange: (v) =>
+                      replaceDraft({ ...draftRef.current, taskType: v }),
                     width: { base: "full", sm: "150px" },
                     options: [
                       { label: "All", value: "" },
@@ -1148,7 +1220,8 @@ const LogsPage: React.FC = () => {
                     type: "select",
                     param: "level",
                     value: draft.level,
-                    onChange: (v) => replaceDraft({ ...draftRef.current, level: v }),
+                    onChange: (v) =>
+                      replaceDraft({ ...draftRef.current, level: v }),
                     width: { base: "full", sm: "132px" },
                     options: [
                       { label: "All Statuses", value: "" },
@@ -1163,7 +1236,10 @@ const LogsPage: React.FC = () => {
                     value: draft.timePreset,
                     onChange: (v) => {
                       if (v === "custom") {
-                        replaceDraft({ ...draftRef.current, timePreset: "custom" }, false);
+                        replaceDraft(
+                          { ...draftRef.current, timePreset: "custom" },
+                          false,
+                        );
                         return;
                       }
                       const preset = v as Exclude<LogTimePreset, "custom">;
@@ -1190,7 +1266,16 @@ const LogsPage: React.FC = () => {
                     param: "start_time",
                     value: draft.startTime,
                     onChange: (v) =>
-                      replaceDraft({ ...draftRef.current, timePreset: "custom", startTime: v }),
+                      replaceDraft(
+                        {
+                          ...draftRef.current,
+                          timePreset: "custom",
+                          startTime: v,
+                        },
+                        false,
+                      ),
+                    onBlur: () => commitFilters(draftRef.current),
+                    error: timeRangeError,
                     inputType: "datetime-local",
                     hint: FIELD_HINTS.logs.startTime.tip,
                     width: { base: "full", sm: "196px" },
@@ -1204,8 +1289,17 @@ const LogsPage: React.FC = () => {
                     value: draft.endTime,
                     onChange: (v) => {
                       setFollowsPresent(false);
-                      replaceDraft({ ...draftRef.current, timePreset: "custom", endTime: v });
+                      replaceDraft(
+                        {
+                          ...draftRef.current,
+                          timePreset: "custom",
+                          endTime: v,
+                        },
+                        false,
+                      );
                     },
+                    onBlur: () => commitFilters(draftRef.current),
+                    error: timeRangeError,
                     inputType: "datetime-local",
                     hint: FIELD_HINTS.logs.endTime.tip,
                     width: { base: "full", sm: "196px" },
@@ -1233,7 +1327,12 @@ const LogsPage: React.FC = () => {
                         </Box>
                       </Tooltip>
                       <Portal>
-                        <MenuList maxH="320px" overflowY="auto" minW="240px" py={2}>
+                        <MenuList
+                          maxH="320px"
+                          overflowY="auto"
+                          minW="240px"
+                          py={2}
+                        >
                           <Text
                             px={3}
                             pb={1}
@@ -1258,7 +1357,9 @@ const LogsPage: React.FC = () => {
                                   // Absolute next set (not flip) so a double-fired
                                   // click cannot cancel the selection.
                                   const next = checked
-                                    ? selectedColumns.filter((k) => k !== col.key)
+                                    ? selectedColumns.filter(
+                                        (k) => k !== col.key,
+                                      )
                                     : [...selectedColumns, col.key];
                                   applyColumnSelection(next);
                                 }}

@@ -93,9 +93,19 @@ export default function FieldLabel({
   }
 
   if (variant === "header") {
+    // Right-aligned control columns (e.g. Actions) stay on one line; other
+    // headers may wrap so long labels are not clipped in narrow columns.
+    const nowrap = align === "right";
     return (
-      <HStack spacing={1} align="center" justify={justify} w="100%">
-        <Text as="span" color="inherit" whiteSpace="nowrap" {...textProps}>
+      <HStack spacing={1} align="center" justify={justify} w="100%" minW={0}>
+        <Text
+          as="span"
+          color="inherit"
+          whiteSpace={nowrap ? "nowrap" : "normal"}
+          noOfLines={nowrap ? undefined : 2}
+          title={typeof children === "string" ? children : undefined}
+          {...textProps}
+        >
           {children}
         </Text>
         {tipNode}

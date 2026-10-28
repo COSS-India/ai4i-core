@@ -135,6 +135,10 @@ function formatApiKeyTableDate(value?: string): string {
   return value ? new Date(value).toLocaleDateString() : "—";
 }
 
+function formatApiKeyTableDateTime(value?: string): string {
+  return value ? new Date(value).toLocaleString() : "—";
+}
+
 function ApiKeyStatusCell({
   status,
   reason,
@@ -152,6 +156,35 @@ function ApiKeyStatusCell({
         {indicator}
       </Box>
     </Tooltip>
+  );
+}
+
+function renderApiKeyCreatedCell(key: ApiKeyTableRow): React.ReactNode {
+  const value = key.subRow === "current" ? key.rotated_at ?? key.created_at : key.created_at;
+  return (
+    <Text fontSize="sm" color="ink.600">
+      {formatApiKeyTableDate(value)}
+    </Text>
+  );
+}
+
+function renderApiKeyExpiryCell(key: ApiKeyTableRow): React.ReactNode {
+  if (key.subRow === "previous") {
+    return (
+      <VStack align="start" spacing={0}>
+        <Text fontSize="sm" color="ink.600">
+          {formatApiKeyTableDateTime(key.rotated_key_expires_at)}
+        </Text>
+        <Text fontSize="xs" color="ink.500">
+          Grace period ends
+        </Text>
+      </VStack>
+    );
+  }
+  return (
+    <Text fontSize="sm" color="ink.600">
+      {key.expires_at ? formatApiKeyTableDate(key.expires_at) : "Never"}
+    </Text>
   );
 }
 
@@ -555,13 +588,7 @@ export default function ApiKeyManagementTab({
           const value = key.subRow === "current" ? key.rotated_at ?? key.created_at : key.created_at;
           return value ? new Date(value).getTime() : 0;
         },
-        cell: (key) => (
-          <Text fontSize="sm" color="ink.600">
-            {formatApiKeyTableDate(
-              key.subRow === "current" ? key.rotated_at ?? key.created_at : key.created_at,
-            )}
-          </Text>
-        ),
+        cell: renderApiKeyCreatedCell,
       },
       {
         id: "expires",
@@ -572,20 +599,7 @@ export default function ApiKeyManagementTab({
           const value = key.subRow === "previous" ? key.rotated_key_expires_at : key.expires_at;
           return value ? new Date(value).getTime() : Number.POSITIVE_INFINITY;
         },
-        cell: (key) => {
-          if (key.subRow === "previous") {
-            return (
-              <Text fontSize="sm" color="ink.600">
-                {formatApiKeyTableDate(key.rotated_key_expires_at)}
-              </Text>
-            );
-          }
-          return (
-            <Text fontSize="sm" color="ink.600">
-              {key.expires_at ? formatApiKeyTableDate(key.expires_at) : "Never"}
-            </Text>
-          );
-        },
+        cell: renderApiKeyExpiryCell,
       },
       createActionsColumn<ApiKeyTableRow>({
         // Parent rows: edit + budget (+ rotate/revoke when enabled). Row click opens details.

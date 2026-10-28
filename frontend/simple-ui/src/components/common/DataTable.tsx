@@ -1,4 +1,8 @@
-import { ChevronDownIcon, ChevronRightIcon, SearchIcon } from "@chakra-ui/icons";
+import {
+  ChevronDownIcon,
+  ChevronRightIcon,
+  SearchIcon,
+} from "@chakra-ui/icons";
 import {
   Alert,
   AlertDescription,
@@ -38,7 +42,15 @@ import {
   VStack,
   type TableProps,
 } from "@chakra-ui/react";
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   DEFAULT_PAGE_SIZE_OPTIONS,
   useAdminDataTable,
@@ -189,7 +201,7 @@ export interface DataTableAdminProps<T> extends DataTableSharedProps<T> {
    */
   search?: DataTableSearchConfig;
   /**
-   * Config-driven filter controls (`select`, `text`, `date`; `multiselect` reserved).
+   * Config-driven filter controls (`select`, `multiselect`, `text`, `date`).
    * Parent maps values → API via each filter’s `onChange` / `param`.
    * `param` / `search.fields` are documentation for call sites — DataTable does not read them.
    */
@@ -239,7 +251,9 @@ export interface DataTableAdminProps<T> extends DataTableSharedProps<T> {
 
 export type DataTableProps<T> = DataTableCardProps<T> | DataTableAdminProps<T>;
 
-function buildSortAccessors<T>(columns: DataTableColumn<T>[]): Record<string, (row: T) => string | number> {
+function buildSortAccessors<T>(
+  columns: DataTableColumn<T>[],
+): Record<string, (row: T) => string | number> {
   const accessors: Record<string, (row: T) => string | number> = {};
   for (const col of columns) {
     if (!col.sortable) continue;
@@ -247,7 +261,8 @@ function buildSortAccessors<T>(columns: DataTableColumn<T>[]): Record<string, (r
       col.sortAccessor ??
       ((row: T) => {
         const value = (row as Record<string, unknown>)[col.id];
-        if (typeof value === "number" || typeof value === "string") return value;
+        if (typeof value === "number" || typeof value === "string")
+          return value;
         return String(value ?? "");
       });
   }
@@ -343,7 +358,10 @@ export function TableSearchField({
       isInvalid={Boolean(error)}
       {...formControlProps}
     >
-      <FieldLabel hint={hint} formLabelProps={hideLabel ? { srOnly: true, mb: 0 } : undefined}>
+      <FieldLabel
+        hint={hint}
+        formLabelProps={hideLabel ? { srOnly: true, mb: 0 } : undefined}
+      >
         {label}
       </FieldLabel>
       <InputGroup size="sm" {...inputGroupProps}>
@@ -409,7 +427,11 @@ export function TableTextField({
   const { resetPage, inputBg, deferApply } = useDataTableFilterContext();
 
   return (
-    <FormControl w={{ base: "full", sm: "200px" }} isInvalid={!!error} {...formControlProps}>
+    <FormControl
+      w={{ base: "full", sm: "200px" }}
+      isInvalid={!!error}
+      {...formControlProps}
+    >
       <FieldLabel hint={hint}>{label}</FieldLabel>
       <Input
         type={inputType}
@@ -440,8 +462,10 @@ export function TableDateField({
   label,
   value,
   onChange,
+  onBlur,
   helper,
   hint,
+  error,
   inputType = "date",
   formControlProps,
   inputProps,
@@ -449,16 +473,24 @@ export function TableDateField({
   label: string;
   value: string;
   onChange: (value: string) => void;
+  /** When set, parent can defer applying filters until blur. */
+  onBlur?: () => void;
   helper?: string;
   hint?: string;
+  error?: string;
   inputType?: "date" | "datetime-local";
   formControlProps?: FormControlProps;
-  inputProps?: Omit<InputProps, "value" | "onChange" | "type">;
+  inputProps?: Omit<InputProps, "value" | "onChange" | "type" | "onBlur">;
 }) {
   const { resetPage, inputBg, deferApply } = useDataTableFilterContext();
+  const commitOnChange = !onBlur;
 
   return (
-    <FormControl w={{ base: "full", sm: "220px" }} {...formControlProps}>
+    <FormControl
+      w={{ base: "full", sm: "220px" }}
+      isInvalid={Boolean(error)}
+      {...formControlProps}
+    >
       <FieldLabel hint={hint}>{label}</FieldLabel>
       <Input
         type={inputType}
@@ -466,13 +498,17 @@ export function TableDateField({
         value={value}
         onChange={(e) => {
           onChange(e.target.value);
-          if (!deferApply) resetPage();
+          if (commitOnChange && !deferApply) resetPage();
+        }}
+        onBlur={() => {
+          onBlur?.();
+          if (onBlur && !deferApply) resetPage();
         }}
         bg={inputBg}
         aria-label={label}
         {...inputProps}
       />
-      <FieldHint>{helper}</FieldHint>
+      {error ? <FormErrorMessage>{error}</FormErrorMessage> : <FieldHint>{helper}</FieldHint>}
     </FormControl>
   );
 }
@@ -502,7 +538,10 @@ export function TableSelectField({
   const { resetPage, inputBg, deferApply } = useDataTableFilterContext();
   return (
     <FormControl w={{ base: "full", sm: "200px" }} {...formControlProps}>
-      <FieldLabel hint={hint} formLabelProps={hideLabel ? { srOnly: true, mb: 0 } : undefined}>
+      <FieldLabel
+        hint={hint}
+        formLabelProps={hideLabel ? { srOnly: true, mb: 0 } : undefined}
+      >
         {label}
       </FieldLabel>
       <Select
@@ -524,7 +563,12 @@ export function TableSelectField({
 }
 
 function selectedMultiValues(value: string): Set<string> {
-  return new Set(value.split(",").map((part) => part.trim()).filter(Boolean));
+  return new Set(
+    value
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean),
+  );
 }
 
 /** Checkbox menu. Empty value means nothing is selected (parent treats that as all). */
@@ -552,7 +596,8 @@ export function TableMultiSelectField({
   const { resetPage, inputBg, deferApply } = useDataTableFilterContext();
   const selected = selectedMultiValues(value);
   const choices = options.filter((option) => option.value !== "");
-  const allLabel = options.find((option) => option.value === "")?.label ?? emptyLabel;
+  const allLabel =
+    options.find((option) => option.value === "")?.label ?? emptyLabel;
   const summary =
     selected.size === 0
       ? allLabel
@@ -579,7 +624,10 @@ export function TableMultiSelectField({
 
   return (
     <FormControl w={{ base: "full", sm: "200px" }} {...formControlProps}>
-      <FieldLabel hint={hint} formLabelProps={hideLabel ? { srOnly: true, mb: 0 } : undefined}>
+      <FieldLabel
+        hint={hint}
+        formLabelProps={hideLabel ? { srOnly: true, mb: 0 } : undefined}
+      >
         {label}
       </FieldLabel>
       <Menu closeOnSelect={false} matchWidth>
@@ -603,10 +651,26 @@ export function TableMultiSelectField({
         <Portal>
           <MenuList maxH="280px" overflowY="auto" zIndex={20} minW="200px">
             {options.map((option) => {
-              const checked = option.value === "" ? selected.size === 0 : selected.has(option.value);
+              const checked =
+                option.value === ""
+                  ? selected.size === 0
+                  : selected.has(option.value);
               return (
-                <MenuItem key={option.value || "all"} onClick={() => toggle(option.value)} closeOnSelect={false}>
-                  <Checkbox isChecked={checked} pointerEvents="none" colorScheme="blue" mr={2}>
+                <MenuItem
+                  key={option.value || "all"}
+                  role="menuitemcheckbox"
+                  aria-checked={checked}
+                  onClick={() => toggle(option.value)}
+                  closeOnSelect={false}
+                >
+                  <Checkbox
+                    isChecked={checked}
+                    pointerEvents="none"
+                    tabIndex={-1}
+                    aria-hidden
+                    colorScheme="blue"
+                    mr={2}
+                  >
                     <Text as="span" fontSize="sm">
                       {option.label}
                     </Text>
@@ -643,7 +707,11 @@ function ConfigDrivenFilters({
           error={search.error}
           hideLabel={search.hideLabel}
           debounceMs={search.debounceMs}
-          formControlProps={search.width ? { w: search.width as FormControlProps["w"] } : undefined}
+          formControlProps={
+            search.width
+              ? { w: search.width as FormControlProps["w"] }
+              : undefined
+          }
         />
       ) : null}
       {clusteredFilterDefs(filterDefs).map((group) => {
@@ -745,8 +813,10 @@ function renderDateFilterDef(def: DataTableFilterDef): React.ReactNode {
       label={def.label}
       value={def.value}
       onChange={def.onChange}
+      onBlur={def.onBlur}
       helper={def.helper}
       hint={def.hint}
+      error={def.error}
       inputType={dateType}
       formControlProps={filterWidthProps(def)}
     />
@@ -781,7 +851,8 @@ function AdminSortableHeader<T>({
 
   if (col.sortable && onSortChange) {
     const key = columnSortKey(col);
-    const labelText = typeof col.header === "string" ? col.header : String(col.header ?? key);
+    const labelText =
+      typeof col.header === "string" ? col.header : String(col.header ?? key);
     const isActive = Boolean(sort && (sort.key === key || sort.key === col.id));
     const direction = isActive && sort ? sort.direction : "asc";
     return (
@@ -809,7 +880,7 @@ function AdminSortableHeader<T>({
   return <>{col.header}</>;
 }
 
-function cardColumnHeaderSx<T>(col: DataTableColumn<T>) {
+function columnHeaderSx<T>(col: DataTableColumn<T>) {
   return {
     ...DATA_TABLE_HEADER_SX,
     ...(col.isNumeric || col.align === "right"
@@ -851,6 +922,89 @@ function renderCardColumnHeader<T>(
   return col.header;
 }
 
+function cardLayoutDefaults(variant: DataTableCardProps<unknown>["variant"]) {
+  const compact = variant === "compact";
+  return {
+    borderRadius: compact ? "10px" : "14px",
+    cellPy: compact ? 3 : 4,
+    containerMt: compact ? 0 : 1,
+  } as const;
+}
+
+function CardLayoutDataRow<T>({
+  row,
+  index,
+  columns,
+  cellPy,
+  clickable,
+  onRowClick,
+  rowAriaLabel,
+  showRowChevron,
+  renderAfterRow,
+}: Readonly<{
+  row: T;
+  index: number;
+  columns: DataTableColumn<T>[];
+  cellPy: number | string;
+  clickable: boolean;
+  onRowClick?: (row: T) => void;
+  rowAriaLabel?: (row: T) => string;
+  showRowChevron: boolean;
+  renderAfterRow?: (row: T) => React.ReactNode;
+}>) {
+  const rowProps = clickable
+    ? {
+        tabIndex: 0,
+        "aria-label": rowAriaLabel?.(row) ?? "View details",
+        cursor: "pointer" as const,
+        _hover: {
+          bg: "#FAFBFE",
+          "& .data-table-chevron": { color: "ink.600" },
+        },
+        onClick: () => onRowClick?.(row),
+        onKeyDown: (e: React.KeyboardEvent) => {
+          // Only activate the row when the row itself is focused — not nested
+          // controls (actions, checkboxes, links).
+          if (e.target !== e.currentTarget) return;
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onRowClick?.(row);
+          }
+        },
+      }
+    : {};
+
+  return (
+    <>
+      <Tr {...rowProps}>
+        {columns.map((col) => (
+          <Td
+            key={col.id}
+            py={cellPy}
+            isNumeric={col.isNumeric}
+            textAlign={col.align}
+            w={shrinkToContentWidth(col)}
+            minW={col.minWidth}
+            whiteSpace={shouldAutoTruncateColumn(col) ? undefined : "nowrap"}
+          >
+            {col.cell(row, index)}
+          </Td>
+        ))}
+        {showRowChevron ? (
+          <Td py={cellPy} textAlign="right">
+            <ChevronRightIcon
+              className="data-table-chevron"
+              boxSize={3.5}
+              color="ink.400"
+            />
+          </Td>
+        ) : null}
+      </Tr>
+      {renderAfterRow?.(row) ?? null}
+    </>
+  );
+}
+
 function CardLayoutDataTable<T>({
   columns,
   rows,
@@ -872,15 +1026,23 @@ function CardLayoutDataTable<T>({
   renderAfterRow,
   showFooter = false,
   variant = "default",
-  borderRadius = variant === "compact" ? "10px" : "14px",
+  borderRadius,
   theadBg = "ink.50",
-  cellPy = variant === "compact" ? 3 : 4,
+  cellPy,
   tableMinWidth,
-  containerMt = variant === "compact" ? 0 : 1,
+  containerMt,
   tableProps,
-}: DataTableCardProps<T>) {
+}: Readonly<DataTableCardProps<T>>) {
+  const defaults = cardLayoutDefaults(variant);
+  const resolvedBorderRadius = borderRadius ?? defaults.borderRadius;
+  const resolvedCellPy = cellPy ?? defaults.cellPy;
+  const resolvedContainerMt = containerMt ?? defaults.containerMt;
   const sortAccessors = useMemo(() => buildSortAccessors(columns), [columns]);
-  const initialSortKey = defaultSortKey ?? columns.find((c) => c.sortable)?.id ?? columns[0]?.id ?? "";
+  const initialSortKey =
+    defaultSortKey ??
+    columns.find((c) => c.sortable)?.id ??
+    columns[0]?.id ??
+    "";
   const parentOwnsSort = Boolean(onSortChange);
 
   const { sortedRows, sortKey, sortDirection, setSortState } = useTableSort(
@@ -903,17 +1065,18 @@ function CardLayoutDataTable<T>({
     setSortState(next);
   };
 
-  const displayRows = sortingEnabled && !parentOwnsSort ? sortedRows : [...rows];
+  const displayRows =
+    sortingEnabled && !parentOwnsSort ? sortedRows : [...rows];
   const hasFooter = showFooter && columns.some((c) => c.footer != null);
   const clickable = Boolean(onRowClick);
 
   const table = (
     <Box
       overflowX="auto"
-      mt={containerMt}
+      mt={resolvedContainerMt}
       borderWidth="1px"
       borderColor="ink.200"
-      borderRadius={borderRadius}
+      borderRadius={resolvedBorderRadius}
       bg="white"
     >
       <Table
@@ -931,7 +1094,7 @@ function CardLayoutDataTable<T>({
                   w={shrinkToContentWidth(col)}
                   minW={col.minWidth}
                   isNumeric={col.isNumeric}
-                  sx={cardColumnHeaderSx(col)}
+                  sx={columnHeaderSx(col)}
                   whiteSpace={
                     shouldAutoTruncateColumn(col) ? undefined : "nowrap"
                   }
@@ -950,66 +1113,34 @@ function CardLayoutDataTable<T>({
           </Tr>
         </Thead>
         <Tbody>
-          {displayRows.map((row, index) => {
-            const key = rowKey(row);
-            const rowProps = clickable
-              ? {
-                  role: "button" as const,
-                  tabIndex: 0,
-                  "aria-label": rowAriaLabel?.(row),
-                  cursor: "pointer" as const,
-                  _hover: {
-                    bg: "#FAFBFE",
-                    "& .data-table-chevron": { color: "ink.600" },
-                  },
-                  onClick: () => onRowClick?.(row),
-                  onKeyDown: (e: React.KeyboardEvent) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      onRowClick?.(row);
-                    }
-                  },
-                }
-              : {};
-
-            return (
-              <React.Fragment key={key}>
-                <Tr {...rowProps}>
-                  {columns.map((col) => (
-                    <Td
-                      key={col.id}
-                      py={cellPy}
-                      isNumeric={col.isNumeric}
-                      textAlign={col.align}
-                      w={shrinkToContentWidth(col)}
-                      minW={col.minWidth}
-                      whiteSpace={shouldAutoTruncateColumn(col) ? undefined : "nowrap"}
-                    >
-                      {col.cell(row, index)}
-                    </Td>
-                  ))}
-                  {showRowChevron ? (
-                    <Td py={cellPy} textAlign="right">
-                      <ChevronRightIcon
-                        className="data-table-chevron"
-                        boxSize={3.5}
-                        color="ink.400"
-                      />
-                    </Td>
-                  ) : null}
-                </Tr>
-                {renderAfterRow?.(row) ?? null}
-              </React.Fragment>
-            );
-          })}
+          {displayRows.map((row, index) => (
+            <CardLayoutDataRow
+              key={rowKey(row)}
+              row={row}
+              index={index}
+              columns={columns}
+              cellPy={resolvedCellPy}
+              clickable={clickable}
+              onRowClick={onRowClick}
+              rowAriaLabel={rowAriaLabel}
+              showRowChevron={showRowChevron}
+              renderAfterRow={renderAfterRow}
+            />
+          ))}
           {hasFooter ? (
             <Tr bg={theadBg}>
               {columns.map((col) => (
-                <Td key={col.id} py={cellPy} fontWeight="extrabold" fontSize="13px" color="gray.800">
+                <Td
+                  key={col.id}
+                  py={resolvedCellPy}
+                  fontWeight="extrabold"
+                  fontSize="13px"
+                  color="gray.800"
+                >
                   {col.footer ?? null}
                 </Td>
               ))}
-              {showRowChevron ? <Td py={cellPy} /> : null}
+              {showRowChevron ? <Td py={resolvedCellPy} /> : null}
             </Tr>
           ) : null}
         </Tbody>
@@ -1079,7 +1210,8 @@ function buildClientAdminPagination(
     onPageSizeChange: clientTable.setPageSizeAndReset,
     onFirst: () => clientTable.setPage(1),
     onPrev: () => clientTable.setPage((p) => Math.max(1, p - 1)),
-    onNext: () => clientTable.setPage((p) => Math.min(clientTable.totalPages, p + 1)),
+    onNext: () =>
+      clientTable.setPage((p) => Math.min(clientTable.totalPages, p + 1)),
     onLast: () => clientTable.setPage(clientTable.totalPages),
     canPrev: clientTable.canPrev,
     canNext: clientTable.canNext,
@@ -1120,7 +1252,10 @@ function resolveAdminPagination(
     return buildClientAdminPagination(clientTable);
   }
   if (paginate === "server" && serverPagination) {
-    return buildServerAdminPagination(serverTable, serverPagination.onPageChange);
+    return buildServerAdminPagination(
+      serverTable,
+      serverPagination.onPageChange,
+    );
   }
   return null;
 }
@@ -1241,7 +1376,9 @@ function renderAdminDataCell<T>(
 ): React.ReactElement {
   const truncate = shouldAutoTruncateColumn(col);
   const content = col.cell(row, parentIndex);
-  const numeric = Boolean(col.isNumeric || col.align === "center" || col.align === "right");
+  const numeric = Boolean(
+    col.isNumeric || col.align === "center" || col.align === "right",
+  );
   return (
     <Td
       key={col.id}
@@ -1273,6 +1410,8 @@ function adminRowKeyDownHandler<T>(
 ): ((e: React.KeyboardEvent) => void) | undefined {
   if (!onRowClick) return undefined;
   return (e: React.KeyboardEvent) => {
+    // Nested controls (actions, links) own Enter/Space; only the row itself opens.
+    if (e.target !== e.currentTarget) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       onRowClick(row);
@@ -1323,8 +1462,8 @@ function AdminTableDataRow<T>({
   return (
     <Tr
       key={getRowKey(row)}
-      role={clickable ? "button" : undefined}
       tabIndex={clickable ? 0 : undefined}
+      aria-label={clickable ? "Open row" : undefined}
       onClick={clickable ? () => onRowClick?.(row) : undefined}
       onKeyDown={adminRowKeyDownHandler(onRowClick, row)}
       cursor={clickable ? "pointer" : undefined}
@@ -1336,7 +1475,12 @@ function AdminTableDataRow<T>({
       transition="background 0.15s"
     >
       {columns.map((col) =>
-        renderAdminDataCell(col, row, parentIndex, columnLayouts.get(col.id) ?? { minW: 0 }),
+        renderAdminDataCell(
+          col,
+          row,
+          parentIndex,
+          columnLayouts.get(col.id) ?? { minW: 0 },
+        ),
       )}
       {rowChevron ? <AdminRowChevronCell /> : null}
     </Tr>
@@ -1420,14 +1564,6 @@ function renderAdminTableBody<T>(options: {
   );
 }
 
-function adminHeaderSx<T>(col: DataTableColumn<T>) {
-  return {
-    ...DATA_TABLE_HEADER_SX,
-    ...(col.isNumeric || col.align === "right" ? { textAlign: "right" as const } : {}),
-    ...(col.align === "center" ? { textAlign: "center" as const } : {}),
-  };
-}
-
 function AdminTableHead<T>({
   columns,
   columnLayouts,
@@ -1455,10 +1591,14 @@ function AdminTableHead<T>({
               minW={layout.minW}
               maxW={layout.maxW}
               whiteSpace={layout.whiteSpace}
-              sx={adminHeaderSx(col)}
+              sx={columnHeaderSx(col)}
               {...(col.thProps ?? {})}
             >
-              <AdminSortableHeader col={col} sort={sort} onSortChange={onSortChange} />
+              <AdminSortableHeader
+                col={col}
+                sort={sort}
+                onSortChange={onSortChange}
+              />
             </Th>
           );
         })}
@@ -1545,7 +1685,12 @@ function AdminFilterToolbarSection({
     >
       <VStack spacing={4} align="stretch">
         {showFiltersHeading ? (
-          <Text fontSize="sm" fontWeight="semibold" color="gray.700" userSelect="none">
+          <Text
+            fontSize="sm"
+            fontWeight="semibold"
+            color="gray.700"
+            userSelect="none"
+          >
             {filtersHeading}
           </Text>
         ) : null}
@@ -1717,7 +1862,8 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
     },
   );
 
-  const displayItems = paginate === "client" ? clientTable.paginatedItems : items;
+  const displayItems =
+    paginate === "client" ? clientTable.paginatedItems : items;
   const pagination = resolveAdminPagination(
     paginate,
     clientTable,
