@@ -64,6 +64,7 @@ def _all_unavailable(service_id: str) -> Dict[str, Any]:
 # single place that stamps it, so success and every rejection path get it
 # the same way instead of repeating the literal at each call site.
 _TASK_TYPE_LLM = "LLM"
+_SSE_DATA_PREFIX = "data:"
 
 
 class LLMProxyError(Exception):
@@ -892,9 +893,9 @@ class OpenAIProxyService:
         last_chunk: Optional[Dict[str, Any]] = None
         async for line in result:
             self._record_stream_usage(line, infer_attrs)
-            if not line.startswith("data:"):
+            if not line.startswith(_SSE_DATA_PREFIX):
                 continue
-            data = line[len("data:"):].strip()
+            data = line[len(_SSE_DATA_PREFIX):].strip()
             if not data or data == "[DONE]":
                 continue
             try:
@@ -942,9 +943,9 @@ class OpenAIProxyService:
         instead of the truthiness of the extracted counts, tells those apart
         so a real zero-token usage chunk still gets recorded.
         """
-        if not line.startswith("data:"):
+        if not line.startswith(_SSE_DATA_PREFIX):
             return
-        data = line[len("data:"):].strip()
+        data = line[len(_SSE_DATA_PREFIX):].strip()
         if not data or data == "[DONE]":
             return
         try:
