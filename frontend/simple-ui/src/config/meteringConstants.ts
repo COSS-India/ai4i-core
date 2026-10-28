@@ -15,8 +15,7 @@ export const METERING = {
     FORBIDDEN_403: "You do not have permission to view this metering data.",
     /** `detail.code` of a 422 for a period the API rejects. */
     INVALID_PERIOD_CODE: "INVALID_PERIOD",
-    INVALID_PERIOD_RESET:
-      "That date range can't be shown, so the dashboard is back on Last 1 hour.",
+    INVALID_PERIOD_RESET: "That date range can't be shown, so the dashboard is back on Today.",
     BAD_REQUEST_400: "Invalid metering request parameters.",
   },
   BANNERS: {
@@ -84,27 +83,26 @@ export const METERING = {
     },
     EMPTY_VALUE: "—",
   },
-  /** Preset period buttons; a custom range comes from the date picker.
-   * Labels match Logs; keys still map to calendar-day API periods. */
+  /** Preset period buttons; a custom range comes from the date picker. */
   PERIODS: [
-    { key: "today", label: "Last 1 hour" },
-    { key: "yesterday", label: "Last 24 hours" },
+    { key: "today", label: "Today" },
+    { key: "yesterday", label: "Yesterday" },
     { key: "last_7_days", label: "Last 7 days" },
   ] as const satisfies ReadonlyArray<{ key: MeteringPresetPeriodKey; label: string }>,
-  /** Preset period in running text, e.g. "Consumption across all Models – last 1 hour". */
+  /** Preset period in running text, e.g. "Consumption across all Models – today". */
   PERIOD_LABELS: {
-    today: "last 1 hour",
-    yesterday: "last 24 hours",
+    today: "today",
+    yesterday: "yesterday",
     last_7_days: "last 7 days",
   } as const satisfies Record<MeteringPresetPeriodKey, string>,
   /** Custom date ranges are calendar days in IST, whatever the browser zone. */
   IST_TIME_ZONE: "Asia/Kolkata",
   CUSTOM_RANGE: {
-    TITLE: "Custom",
+    TITLE: "Custom date range",
     SUBTITLE: "Select a start date and an end date (any day up to today)",
     APPLY: "Apply",
     CANCEL: "Cancel",
-    CLEAR: "Clear custom",
+    CLEAR: "Clear custom range",
     PREVIOUS_MONTH: "Previous month",
     NEXT_MONTH: "Next month",
     /** Title hint: clicking the month title opens the year / month picker. */
@@ -140,7 +138,7 @@ export const METERING = {
   CONTROLS: {
     ALL_TENANTS: `All ${INSTITUTIONS}`,
     TOP_N_PREFIX: "Top",
-    CUSTOM_RANGE: "Custom",
+    CUSTOM_RANGE: "Custom range",
     LAST_REFRESHED_PREFIX: "Last refreshed:",
     REFRESH: "Refresh",
   },
