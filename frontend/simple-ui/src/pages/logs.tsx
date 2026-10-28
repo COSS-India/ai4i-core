@@ -102,26 +102,13 @@ import {
   isFailureStatus,
   isSuccessStatus,
   KEYWORD_MAX_LENGTH,
-  END_USER_MAX_LENGTH,
   normalizeColumnDefs,
-  parseMetadataFilter,
-  parseStatusCodeFilter,
   readStoredColumns,
   writeStoredColumns,
 } from "../utils/logsDashboard";
 
-const LOG_SEARCH_FIELDS = [
-  "service",
-  "statusCode",
-  "endUser",
-  "metadata",
-] as const;
-type LogSearchField = (typeof LOG_SEARCH_FIELDS)[number];
-
 type DraftFilters = {
   q: string;
-  /** Single search field. Empty means every field (keyword search). */
-  searchScope: string;
   timePreset: LogTimePreset;
   taskType: string;
   level: string;
@@ -129,15 +116,6 @@ type DraftFilters = {
   endTime: string;
   selectedTenantId: string;
 };
-
-function selectedSearchFields(scope: string): Set<LogSearchField> {
-  const selected = new Set<LogSearchField>();
-  const field = scope.trim();
-  if ((LOG_SEARCH_FIELDS as readonly string[]).includes(field)) {
-    selected.add(field as LogSearchField);
-  }
-  return selected;
-}
 
 /** Empty or inverted ranges must not hit the API. */
 function dateRangeError(startTime: string, endTime: string): string | undefined {
@@ -155,32 +133,10 @@ function dateRangeError(startTime: string, endTime: string): string | undefined 
   return undefined;
 }
 
-function resolveLogsSearchError(options: {
-  searchingAllFields: boolean;
-  q: string;
-  searchFields: Set<LogSearchField>;
-  metadataFilter: ReturnType<typeof parseMetadataFilter>;
-  statusCodeFilter: ReturnType<typeof parseStatusCodeFilter>;
-}): string | undefined {
-  const trimmed = options.q.trim();
-  if (options.searchingAllFields) {
-    return trimmed.length > KEYWORD_MAX_LENGTH
-      ? FIELD_HINTS.logs.search.tooLong
-      : undefined;
-  }
-  if (
-    options.searchFields.has("endUser") &&
-    trimmed.length > END_USER_MAX_LENGTH
-  ) {
-    return FIELD_HINTS.logs.endUser.tooLong;
-  }
-  if (options.metadataFilter && "error" in options.metadataFilter) {
-    return options.metadataFilter.error;
-  }
-  if (options.statusCodeFilter && "error" in options.statusCodeFilter) {
-    return options.statusCodeFilter.error;
-  }
-  return undefined;
+function resolveLogsSearchError(q: string): string | undefined {
+  return q.trim().length > KEYWORD_MAX_LENGTH
+    ? FIELD_HINTS.logs.search.tooLong
+    : undefined;
 }
 
 function logsAccessDenialMessage(options: {
@@ -266,65 +222,14 @@ function withSearchText(draft: DraftFilters, value: string): DraftFilters {
   return { ...draft, q: value };
 }
 
-const SEARCH_FIELD_COPY: Record<
-  LogSearchField,
-  { placeholder: string; hint: string }
-> = {
-  service: {
-    placeholder: FIELD_HINTS.logs.service.placeholder,
-    hint: FIELD_HINTS.logs.service.tip,
-  },
-  statusCode: {
-    placeholder: FIELD_HINTS.logs.statusCode.placeholder,
-    hint: FIELD_HINTS.logs.statusCode.tip,
-  },
-  endUser: {
-    placeholder: FIELD_HINTS.logs.endUser.placeholder,
-    hint: FIELD_HINTS.logs.endUser.tip,
-  },
-  metadata: {
-    placeholder: FIELD_HINTS.logs.metadata.placeholder,
-    hint: FIELD_HINTS.logs.metadata.tip,
-  },
-};
-
-function searchFieldCopy(field: LogSearchField | undefined): {
-  placeholder: string;
-  hint: string;
-} {
-  if (field) return SEARCH_FIELD_COPY[field];
-  return {
-    placeholder: FIELD_HINTS.logs.search.placeholder,
-    hint: FIELD_HINTS.logs.search.tip,
-  };
-}
-
-function fieldText(fields: Set<LogSearchField>, id: LogSearchField, text: string): string {
-  return fields.has(id) ? text : "";
-}
-
 function appliedFromDraft(next: DraftFilters): AppliedFilters | null {
   if (dateRangeError(next.startTime, next.endTime)) return null;
-  const text = next.q.trim();
-  const fields = selectedSearchFields(next.searchScope);
-  const q = fields.size === 0 ? text : "";
-  const endUser = fieldText(fields, "endUser", text);
-  if (q.length > KEYWORD_MAX_LENGTH || endUser.length > END_USER_MAX_LENGTH) {
-    return null;
-  }
-  const meta = parseMetadataFilter(fieldText(fields, "metadata", text));
-  if (meta && "error" in meta) return null;
-  const codes = parseStatusCodeFilter(fieldText(fields, "statusCode", text));
-  if (codes && "error" in codes) return null;
+  const q = next.q.trim();
+  if (q.length > KEYWORD_MAX_LENGTH) return null;
   return {
     q,
     taskType: next.taskType,
     level: next.level,
-    serviceId: fieldText(fields, "service", text),
-    statusCode: codes?.value ?? "",
-    user: endUser,
-    metadataKey: meta?.key ?? "",
-    metadataValue: meta?.value ?? "",
     startTime: next.startTime,
     endTime: next.endTime,
     selectedTenantId: next.selectedTenantId,
@@ -341,11 +246,6 @@ type AppliedFilters = {
   q: string;
   taskType: string;
   level: string;
-  serviceId: string;
-  statusCode: string;
-  user: string;
-  metadataKey: string;
-  metadataValue: string;
   startTime: string;
   endTime: string;
   selectedTenantId: string;
@@ -545,6 +445,26 @@ function tenantFilterOptions(
   ];
 }
 
+type LogsControlLayout = {
+  width: { base: "full"; md: "auto" };
+  minWidth: { md: string };
+  maxWidth: { md: string };
+  flex: { base: string; md: string };
+};
+
+/**
+ * Shrink-to-fit on one toolbar row. Grow stays 0 so short filters (Status,
+ * Task Type) do not stretch into large gaps before Columns / Auto-refresh.
+ */
+function logsControlLayout(minPx: number, maxPx: number): LogsControlLayout {
+  return {
+    width: { base: "full", md: "auto" },
+    minWidth: { md: `${minPx}px` },
+    maxWidth: { md: `${maxPx}px` },
+    flex: { base: "1 1 100%", md: `0 1 ${minPx}px` },
+  };
+}
+
 function buildLogsFilterDefs(options: {
   draft: DraftFilters;
   replaceDraft: (next: DraftFilters, commit?: boolean) => void;
@@ -572,23 +492,7 @@ function buildLogsFilterDefs(options: {
     draftRef,
   } = options;
 
-  const defs: DataTableFilterDef[] = [
-    {
-      id: "searchScope",
-      label: "Search in",
-      type: "select",
-      value: draft.searchScope,
-      onChange: (v) => replaceDraft({ ...draftRef.current, searchScope: v }),
-      width: { base: "full", sm: "168px" },
-      options: [
-        { label: "All fields", value: "" },
-        { label: "Service", value: "service" },
-        { label: "Status code", value: "statusCode" },
-        { label: "End user", value: "endUser" },
-        { label: "Metadata", value: "metadata" },
-      ],
-    },
-  ];
+  const defs: DataTableFilterDef[] = [];
 
   if (canPickTenant) {
     defs.push({
@@ -600,7 +504,7 @@ function buildLogsFilterDefs(options: {
       onChange: (v) =>
         replaceDraft({ ...draftRef.current, selectedTenantId: v }),
       hint: FIELD_HINTS.logs.tenant.tip,
-      width: { base: "full", sm: "180px" },
+      ...logsControlLayout(136, 180),
       options: tenantFilterOptions(
         tenantsLoading,
         tenantsError,
@@ -617,7 +521,7 @@ function buildLogsFilterDefs(options: {
       param: "task_types",
       value: draft.taskType,
       onChange: (v) => replaceDraft({ ...draftRef.current, taskType: v }),
-      width: { base: "full", sm: "150px" },
+      ...logsControlLayout(88, 140),
       options: [
         { label: "All", value: "" },
         ...taskTypeNames.map((tt) => ({
@@ -633,7 +537,7 @@ function buildLogsFilterDefs(options: {
       param: "level",
       value: draft.level,
       onChange: (v) => replaceDraft({ ...draftRef.current, level: v }),
-      width: { base: "full", sm: "132px" },
+      ...logsControlLayout(112, 140),
       options: [
         { label: "All Statuses", value: "" },
         { label: "Success", value: "success" },
@@ -658,7 +562,7 @@ function buildLogsFilterDefs(options: {
           ...rangeForTimePreset(preset),
         });
       },
-      width: { base: "full", sm: "156px" },
+      ...logsControlLayout(118, 156),
       options: [
         { label: "Custom", value: "custom" },
         ...LOG_TIME_PRESETS.map((preset) => ({
@@ -684,7 +588,7 @@ function buildLogsFilterDefs(options: {
       error: timeRangeError,
       inputType: "datetime-local",
       hint: FIELD_HINTS.logs.startTime.tip,
-      width: { base: "full", sm: "196px" },
+      ...logsControlLayout(164, 200),
       cluster: "log-time",
     },
     {
@@ -704,7 +608,7 @@ function buildLogsFilterDefs(options: {
       error: timeRangeError,
       inputType: "datetime-local",
       hint: FIELD_HINTS.logs.endTime.tip,
-      width: { base: "full", sm: "196px" },
+      ...logsControlLayout(164, 200),
       cluster: "log-time",
     },
   );
@@ -743,10 +647,6 @@ function hasLogsAppliedFilters(
   if (applied.level !== "") return true;
   if (canPickTenant && applied.selectedTenantId !== "") return true;
   if (applied.q !== "") return true;
-  if (applied.user !== "") return true;
-  if (applied.metadataKey !== "") return true;
-  if (applied.serviceId !== "") return true;
-  if (applied.statusCode !== "") return true;
   if (applied.taskType !== "") return true;
   return false;
 }
@@ -804,13 +704,6 @@ function isLogsRoleDenied(isUser: boolean, isGuest: boolean): boolean {
 
 function canPickLogsTenant(isAdmin: boolean, isTenantAdmin: boolean): boolean {
   return isAdmin && !isTenantAdmin;
-}
-
-function soleSearchField(
-  searchFields: ReadonlySet<LogSearchField>,
-): LogSearchField | undefined {
-  if (searchFields.size !== 1) return undefined;
-  return Array.from(searchFields)[0];
 }
 
 function tracesQueryEnabled(options: {
@@ -1099,11 +992,12 @@ function LogsDashboardMain(props: LogsDashboardMainProps) {
           placeholder: props.searchPlaceholder,
           hint: props.searchHint,
           error: props.searchError,
-          width: { base: "full", sm: "240px" },
+          ...logsControlLayout(128, 210),
         }}
         filterDefs={props.filterDefs}
+        filterToolbarSingleRow
         filterToolbarRightContent={
-          <HStack spacing={3} flexWrap="wrap" align="center">
+          <HStack spacing={2} flexShrink={0} flexWrap="nowrap" align="center">
             <LogsColumnPicker
               columnDefs={props.columnDefs}
               selectedColumns={props.selectedColumns}
@@ -1168,7 +1062,6 @@ const LogsPage: React.FC = () => {
 
   const [draft, setDraft] = useState<DraftFilters>({
     q: "",
-    searchScope: "",
     timePreset: "custom",
     taskType: "",
     level: "",
@@ -1181,11 +1074,6 @@ const LogsPage: React.FC = () => {
     q: "",
     taskType: "",
     level: "",
-    serviceId: "",
-    statusCode: "",
-    user: "",
-    metadataKey: "",
-    metadataValue: "",
     startTime: initialRange.startTime,
     endTime: initialRange.endTime,
     selectedTenantId: "",
@@ -1241,26 +1129,8 @@ const LogsPage: React.FC = () => {
     [isAdmin, isTenantAdmin, applied.selectedTenantId, authTenantId],
   );
 
-  const searchFields = selectedSearchFields(draft.searchScope);
-  const searchingAllFields = searchFields.size === 0;
-  const metadataFilter = useMemo(
-    () => (searchFields.has("metadata") ? parseMetadataFilter(draft.q) : null),
-    [draft.q, draft.searchScope],
-  );
-  const statusCodeFilter = useMemo(
-    () =>
-      searchFields.has("statusCode") ? parseStatusCodeFilter(draft.q) : null,
-    [draft.q, draft.searchScope],
-  );
-  const searchError = resolveLogsSearchError({
-    searchingAllFields,
-    q: draft.q,
-    searchFields,
-    metadataFilter,
-    statusCodeFilter,
-  });
+  const searchError = resolveLogsSearchError(draft.q);
   const timeRangeError = dateRangeError(draft.startTime, draft.endTime);
-  const onlySearchField = soleSearchField(searchFields);
 
   useEffect(() => {
     if (followsPresent || !autoRefresh) return;
@@ -1370,7 +1240,6 @@ const LogsPage: React.FC = () => {
     const range = defaultTimeRange();
     const clearedDraft: DraftFilters = {
       q: "",
-      searchScope: "",
       timePreset: "custom",
       taskType: "",
       level: "",
@@ -1384,11 +1253,6 @@ const LogsPage: React.FC = () => {
       q: "",
       taskType: "",
       level: "",
-      serviceId: "",
-      statusCode: "",
-      user: "",
-      metadataKey: "",
-      metadataValue: "",
       startTime: range.startTime,
       endTime: range.endTime,
       selectedTenantId: "",
@@ -1454,12 +1318,7 @@ const LogsPage: React.FC = () => {
         page,
         pageSize,
         tenant_id: apiTenantId,
-        user: applied.user || undefined,
-        metadataKey: applied.metadataKey || undefined,
-        metadataValue: applied.metadataValue || undefined,
         q: applied.q || undefined,
-        serviceId: applied.serviceId || undefined,
-        statusCode: applied.statusCode || undefined,
         sortBy,
         sortOrder,
         columns: columnsParam || undefined,
@@ -1622,8 +1481,6 @@ const LogsPage: React.FC = () => {
   const showAccessDenied =
     !authLoading && isAuthenticated && isLogsRoleDenied(isUser, isGuest);
   const showLoginPrompt = !authLoading && !isAuthenticated;
-  const searchCopy = searchFieldCopy(onlySearchField);
-
   const logsFilterDefs = useMemo(
     () =>
       buildLogsFilterDefs({
@@ -1691,8 +1548,8 @@ const LogsPage: React.FC = () => {
         searchValue={draft.q}
         onSearchChange={(v) => replaceDraft(withSearchText(draftRef.current, v))}
         onSearchSubmit={() => commitFilters(draftRef.current)}
-        searchPlaceholder={searchCopy.placeholder}
-        searchHint={searchCopy.hint}
+        searchPlaceholder={FIELD_HINTS.logs.search.placeholder}
+        searchHint={FIELD_HINTS.logs.search.tip}
         searchError={searchError}
         filterDefs={logsFilterDefs}
         columnDefs={columnDefs}

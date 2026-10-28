@@ -2781,7 +2781,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
   // ═══════════════════════════════════════════════
   const renderAlertHistorySection = () => (
     <>
-      {/* Same shell + filter toolbar pattern as Alert Definitions (Card, toolbar, Clear all) */}
+      {/* Same shell + filter toolbar pattern as Alert Definitions (Card, toolbar, Reset) */}
       <Card bg={cardBg} borderColor={cardBorder} borderWidth="1px" boxShadow="none">
         <CardBody>
           <DataTable

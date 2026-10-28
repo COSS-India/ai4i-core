@@ -350,9 +350,12 @@ const ServicesManagement: React.FC = () => {
     tableKey,
     searchQuery,
     setSearchQuery,
-    searchFields,
-    onSearchFieldsChange,
-    searchFieldOptions,
+    filterModelName,
+    setFilterModelName,
+    modelNameFilterOptions,
+    filterServiceId,
+    setFilterServiceId,
+    serviceIdFilterOptions,
     filterStatus,
     setFilterStatus,
     filterTaskType,
@@ -698,9 +701,12 @@ const ServicesManagement: React.FC = () => {
         tableKey={tableKey}
         searchQuery={searchQuery}
         onSearchQueryChange={setSearchQuery}
-        searchFields={searchFields}
-        onSearchFieldsChange={onSearchFieldsChange}
-        searchFieldOptions={searchFieldOptions}
+        filterModelName={filterModelName}
+        onFilterModelNameChange={setFilterModelName}
+        modelNameOptions={modelNameFilterOptions}
+        filterServiceId={filterServiceId}
+        onFilterServiceIdChange={setFilterServiceId}
+        serviceIdOptions={serviceIdFilterOptions}
         filterStatus={filterStatus}
         onFilterStatusChange={setFilterStatus}
         filterTaskType={filterTaskType}
