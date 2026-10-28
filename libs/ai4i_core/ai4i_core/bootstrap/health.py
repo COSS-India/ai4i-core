@@ -5,21 +5,25 @@ Used by ALL microservices. Returns 503 on probe failure (K8s compatible).
 """
 
 import logging
+from collections.abc import Callable
+from typing import Optional
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import redis.asyncio as aioredis
-
 from .database import get_db
-from .redis import get_redis
+from .redis import get_redis_client as _default_get_redis_client
 
 logger = logging.getLogger(__name__)
 
 
-def create_health_router(service_name: str = "service", version: str = "1.0.0") -> APIRouter:
+def create_health_router(
+    service_name: str = "service",
+    version: str = "1.0.0",
+    get_redis_client: Optional[Callable] = None,
+) -> APIRouter:
     """
     Create a health router with /, /health, /ready endpoints.
     The /ready endpoint checks DB and Redis connectivity.
@@ -37,7 +41,6 @@ def create_health_router(service_name: str = "service", version: str = "1.0.0") 
     @router.get("/ready")
     async def readiness(
         db: AsyncSession = Depends(get_db),
-        redis_client: aioredis.Redis = Depends(get_redis),
     ):
         checks: dict[str, str] = {}
 
@@ -49,7 +52,9 @@ def create_health_router(service_name: str = "service", version: str = "1.0.0") 
             checks["database"] = "unavailable"
 
         try:
-            await redis_client.ping()
+            _get_client = get_redis_client or _default_get_redis_client
+            rc = _get_client()
+            await rc.ping()
             checks["redis"] = "ok"
         except Exception as exc:
             logger.warning("Readiness: redis check failed: %s", exc)

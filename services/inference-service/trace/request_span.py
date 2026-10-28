@@ -156,10 +156,13 @@ def finalize_span(span, attributes: dict, *, error=None, ok: bool = False) -> No
     Set attributes on a span and record its status.
     Single helper for the request/model/ai-inference span finalization.
     """
+    error_description = attributes.pop("_error_description", None)
     for key, value in attributes.items():
         span.set_attribute(key, value)
     if error is not None:
         span.set_status(StatusCode.ERROR, str(error))
+    elif error_description is not None:
+        span.set_status(StatusCode.ERROR, error_description)
     elif ok:
         span.set_status(StatusCode.OK)
 

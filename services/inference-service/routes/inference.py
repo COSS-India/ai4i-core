@@ -535,6 +535,17 @@ def _seed_llm_request_attrs(req_attrs: dict, request: Request) -> None:
     req_attrs["task_type"] = "llm"
 
 
+def _llm_error_description(status_code: int, body: Any) -> str:
+    """Extract a safe error description for the OTel span status from an upstream error response."""
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict) and error.get("message"):
+            return str(error["message"])
+        if body.get("detail"):
+            return str(body["detail"])
+    return f"LLM upstream error {status_code}"
+
+
 async def _run_llm_chat_consolidated(request: Request, payload: Dict[str, Any], path: str) -> JSONResponse:
     with traced_span("request", root=True, classify_status=True) as req_attrs:
         _seed_llm_request_attrs(req_attrs, request)
@@ -555,6 +566,7 @@ async def _run_llm_chat_consolidated(request: Request, payload: Dict[str, Any], 
         if status_code >= 400:
             req_attrs["status"] = "failure"
             req_attrs["status_code"] = status_code
+            req_attrs["_error_description"] = _llm_error_description(status_code, body)
 
     return JSONResponse(status_code=status_code, content=body)
 
@@ -583,6 +595,7 @@ async def _run_llm_chat_stream(
             _seed_llm_request_attrs(req_attrs, request)
             req_attrs["status"] = "failure"
             req_attrs["status_code"] = status_code
+            req_attrs["_error_description"] = _llm_error_description(status_code, result)
             # Built here, inside "request" (now the active OTel context),
             # instead of inside proxy_traced_stream() — which returns before
             # this span exists, so a "model" span opened there would have no
@@ -663,6 +676,7 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
             _seed_llm_request_attrs(req_attrs, request)
             req_attrs["status"] = "failure"
             req_attrs["status_code"] = 400
+            req_attrs["_error_description"] = message
             with traced_span("model") as model_attrs:
                 OpenAIProxyService._seed_model_attrs(
                     model_attrs, service_id, failure_status_code=400,
