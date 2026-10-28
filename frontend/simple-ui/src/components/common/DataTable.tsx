@@ -810,6 +810,29 @@ function filterWidthProps(
   return sizeControlProps(def);
 }
 
+type CssSizeToken = string | Record<string, string>;
+
+function cssTokenString(value: CssSizeToken): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function cssTokenAt(
+  value: CssSizeToken,
+  breakpoint: string,
+): string | undefined {
+  return typeof value === "string" ? value : value[breakpoint];
+}
+
+function collectBreakpoints(values: CssSizeToken[]): string[] {
+  const breakpoints = new Set<string>();
+  for (const value of values) {
+    if (typeof value === "object") {
+      Object.keys(value).forEach((key) => breakpoints.add(key));
+    }
+  }
+  return Array.from(breakpoints);
+}
+
 function parseFlexParts(value: string): { grow: number; basis: number; percent: boolean } {
   const parts = value.trim().split(/\s+/);
   const basis = parts[2] ?? "0";
@@ -820,6 +843,15 @@ function parseFlexParts(value: string): { grow: number; basis: number; percent: 
   };
 }
 
+function sumParsedFlex(
+  parsed: ReturnType<typeof parseFlexParts>[],
+): string {
+  if (parsed.some((part) => part.percent)) return "1 1 100%";
+  const grow = parsed.reduce((sum, part) => sum + part.grow, 0);
+  const basis = parsed.reduce((sum, part) => sum + part.basis, 0) + CLUSTER_GAP_PX;
+  return `${grow} 1 ${basis}px`;
+}
+
 function sumClusterFlex(
   defs: DataTableFilterDef[],
 ): FormControlProps["flex"] | undefined {
@@ -828,35 +860,46 @@ function sumClusterFlex(
     .filter((value): value is NonNullable<DataTableFilterDef["flex"]> => value != null);
   if (values.length === 0) return undefined;
 
-  const breakpoints = new Set<string>();
-  for (const value of values) {
-    if (typeof value === "object") Object.keys(value).forEach((key) => breakpoints.add(key));
-  }
-  if (breakpoints.size === 0) {
-    const parsed = values.map((value) => parseFlexParts(String(value)));
-    if (parsed.some((part) => part.percent)) return "1 1 100%";
-    const grow = parsed.reduce((sum, part) => sum + part.grow, 0);
-    const basis = parsed.reduce((sum, part) => sum + part.basis, 0) + CLUSTER_GAP_PX;
-    return `${grow} 1 ${basis}px`;
+  const breakpoints = collectBreakpoints(values);
+  if (breakpoints.length === 0) {
+    const parsed = values
+      .map(cssTokenString)
+      .filter((token): token is string => token != null)
+      .map(parseFlexParts);
+    return sumParsedFlex(parsed);
   }
 
   const result: Record<string, string> = {};
-  for (const breakpoint of Array.from(breakpoints)) {
+  for (const breakpoint of breakpoints) {
     const parsed = values
       .map((value) => {
-        const raw = typeof value === "string" ? value : value[breakpoint];
+        const raw = cssTokenAt(value, breakpoint);
         return raw ? parseFlexParts(raw) : null;
       })
       .filter((part): part is NonNullable<typeof part> => part != null);
-    if (parsed.some((part) => part.percent)) {
-      result[breakpoint] = "1 1 100%";
-      continue;
-    }
-    const grow = parsed.reduce((sum, part) => sum + part.grow, 0);
-    const basis = parsed.reduce((sum, part) => sum + part.basis, 0) + CLUSTER_GAP_PX;
-    result[breakpoint] = `${grow} 1 ${basis}px`;
+    result[breakpoint] = sumParsedFlex(parsed);
   }
   return result;
+}
+
+function sumPxTokens(values: CssSizeToken[]): number {
+  return values.reduce((sum, value) => {
+    const token = cssTokenString(value);
+    return sum + (token ? Number.parseFloat(token) || 0 : 0);
+  }, 0);
+}
+
+function sumPxAtBreakpoint(
+  values: CssSizeToken[],
+  breakpoint: string,
+): number | undefined {
+  let px = 0;
+  for (const value of values) {
+    const raw = cssTokenAt(value, breakpoint);
+    if (!raw || Number.isNaN(Number.parseFloat(raw))) return undefined;
+    px += Number.parseFloat(raw);
+  }
+  return px;
 }
 
 function sumClusterSize(
@@ -868,29 +911,14 @@ function sumClusterSize(
     .filter((value): value is NonNullable<DataTableFilterDef["minWidth"]> => value != null);
   if (values.length === 0) return undefined;
 
-  const breakpoints = new Set<string>();
-  for (const value of values) {
-    if (typeof value === "object") Object.keys(value).forEach((bp) => breakpoints.add(bp));
-  }
+  const breakpoints = collectBreakpoints(values);
   const addGap = (px: number) => `${px + (defs.length - 1) * CLUSTER_GAP_PX}px`;
-  if (breakpoints.size === 0) {
-    const px = values.reduce((sum, value) => sum + (Number.parseFloat(String(value)) || 0), 0);
-    return addGap(px);
-  }
+  if (breakpoints.length === 0) return addGap(sumPxTokens(values));
 
   const result: Record<string, string> = {};
-  for (const breakpoint of Array.from(breakpoints)) {
-    let px = 0;
-    let numeric = true;
-    for (const value of values) {
-      const raw = typeof value === "string" ? value : value[breakpoint];
-      if (!raw || Number.isNaN(Number.parseFloat(raw))) {
-        numeric = false;
-        break;
-      }
-      px += Number.parseFloat(raw);
-    }
-    if (numeric) result[breakpoint] = addGap(px);
+  for (const breakpoint of breakpoints) {
+    const px = sumPxAtBreakpoint(values, breakpoint);
+    if (px != null) result[breakpoint] = addGap(px);
   }
   return Object.keys(result).length > 0 ? result : undefined;
 }

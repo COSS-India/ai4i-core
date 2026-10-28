@@ -339,7 +339,7 @@ export function TableFilterToolbar({
   justify = "flex-start",
   alignActionsToInputs = true,
   flexWrap = "wrap",
-}: {
+}: Readonly<{
   children: React.ReactNode;
   hasActiveFilters?: boolean;
   onClear?: () => void;
@@ -351,7 +351,7 @@ export function TableFilterToolbar({
   /** Offset actions by a form-label height. Turn off when every control hides its label. */
   alignActionsToInputs?: boolean;
   flexWrap?: React.ComponentProps<typeof HStack>["flexWrap"];
-}) {
+}>) {
   const actions =
     (hasActiveFilters && onClear) || rightContent ? (
       <HStack
