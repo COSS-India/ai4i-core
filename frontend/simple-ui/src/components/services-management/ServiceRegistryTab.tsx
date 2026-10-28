@@ -160,12 +160,12 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
 
   const handleColumnFiltersChange = useCallback(
     (next: DataTableColumnFilters) => {
-      if (!serverMode || !serverColumns || !onServerFilterChange) return;
-      for (const column of serverColumns) {
-        if (!SERVICE_COLUMN_SEARCH_KEYS.has(serviceListCellKey(column.id))) {
-          continue;
+      if (serverMode && serverColumns && onServerFilterChange) {
+        for (const column of serverColumns) {
+          if (SERVICE_COLUMN_SEARCH_KEYS.has(serviceListCellKey(column.id))) {
+            onServerFilterChange(column.id, next[column.id] ?? "");
+          }
         }
-        onServerFilterChange(column.id, next[column.id] ?? "");
       }
     },
     [serverMode, serverColumns, onServerFilterChange],

@@ -7,9 +7,11 @@ import { INSTITUTION } from "../config/constants";
 import type {
   DataTableColumnFilterConfig,
   DataTableColumnFilters,
+  DataTableSortState,
 } from "../components/common/dataTableTypes";
 import type {
   TelemetryTraceColumnDef,
+  TelemetryTraceRecord,
   TelemetryTraceSortBy,
 } from "../types/observability";
 
@@ -55,6 +57,39 @@ export const SORTABLE_API_KEYS: Record<string, TelemetryTraceSortBy> = {
   latency: "latency",
   status_code: "status_code",
 };
+
+function traceRowField(row: TelemetryTraceRecord, key: string): unknown {
+  return Reflect.get(row, key);
+}
+
+function compareTraceRowValues(a: unknown, b: unknown, dir: 1 | -1): number {
+  if (a == null && b == null) return 0;
+  if (a == null) return 1;
+  if (b == null) return -1;
+  if (typeof a === "number" && typeof b === "number") return (a - b) * dir;
+  return (
+    String(a).localeCompare(String(b), undefined, { sensitivity: "base" }) * dir
+  );
+}
+
+/**
+ * API sorts the full result set for keys in {@link SORTABLE_API_KEYS};
+ * every other column sorts the loaded page only.
+ */
+export function sortTraceRowsClientSide(
+  rows: readonly TelemetryTraceRecord[],
+  sort: DataTableSortState,
+): TelemetryTraceRecord[] {
+  if (SORTABLE_API_KEYS[sort.key]) return [...rows];
+  const dir: 1 | -1 = sort.direction === "asc" ? 1 : -1;
+  return [...rows].sort((left, right) =>
+    compareTraceRowValues(
+      traceRowField(left, sort.key),
+      traceRowField(right, sort.key),
+      dir,
+    ),
+  );
+}
 
 /** Toolbar owns these — no per-column box (same field only once). */
 /** No column search — toolbar (or time range) already owns these. */

@@ -94,6 +94,7 @@ import {
   buildColumnsQueryParam,
   columnFiltersToTraceParams,
   logsColumnFilterConfig,
+  sortTraceRowsClientSide,
   convertToISOFormat,
   defaultTimeRange,
   formatDateTimeLocal,
@@ -1536,19 +1537,10 @@ const LogsPage: React.FC = () => {
   }, [columnDefs, selectedColumns, cellForColumn]);
 
   // API sorts the full result set; other columns sort the loaded page only.
-  const displayTraceRows = useMemo(() => {
-    if (SORTABLE_API_KEYS[sort.key]) return traceRows;
-    const dir = sort.direction === "asc" ? 1 : -1;
-    return [...traceRows].sort((left, right) => {
-      const a = (left as unknown as Record<string, unknown>)[sort.key];
-      const b = (right as unknown as Record<string, unknown>)[sort.key];
-      if (a == null && b == null) return 0;
-      if (a == null) return 1;
-      if (b == null) return -1;
-      if (typeof a === "number" && typeof b === "number") return (a - b) * dir;
-      return String(a).localeCompare(String(b), undefined, { sensitivity: "base" }) * dir;
-    });
-  }, [traceRows, sort]);
+  const displayTraceRows = useMemo(
+    () => sortTraceRowsClientSide(traceRows, sort),
+    [traceRows, sort],
+  );
 
   const hasAppliedFilters = hasLogsAppliedFilters(applied, {
     canPickTenant,

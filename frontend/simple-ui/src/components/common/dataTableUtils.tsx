@@ -625,6 +625,64 @@ function visibilitySignature(visible: readonly boolean[]): string {
   return visible.map((v) => (v ? "1" : "0")).join("");
 }
 
+function sizingInputForColumn(
+  col: AdminColumnInput,
+  header: number,
+  measured: number,
+): ColumnSizingInput {
+  const mode = resolveColumnSizingMode(col);
+  if (mode === "fixed") {
+    const px = resolveFixedColumnWidthPx(col) ?? measured;
+    return { natural: px, header: px, mode };
+  }
+  const cap = cssLengthToPx(col.maxW);
+  const uncapped = Math.max(header, measured);
+  if (cap == null) {
+    return { natural: uncapped, header, mode, minPx: cssLengthToPx(col.minWidth) };
+  }
+  return {
+    natural: Math.min(uncapped, cap),
+    header: Math.min(header, cap),
+    mode,
+    minPx: cssLengthToPx(col.minWidth),
+  };
+}
+
+/** Turn measured naturals into `<col>` pixel widths for the visible columns. */
+export function buildMeasuredColumnWidths(options: Readonly<{
+  naturals: MeasuredNaturals;
+  key: string;
+  available: number;
+  columns: readonly AdminColumnInput[];
+  trailingFixedPx?: number;
+  trailingColumnId: string;
+}>): MeasuredColumnWidth[] | null {
+  const { naturals, key, available, columns, trailingFixedPx, trailingColumnId } =
+    options;
+  if (!naturals.key.startsWith(`${key}#`) || available <= 0) return null;
+
+  const visibleIndexes = columns
+    .map((_, i) => i)
+    .filter((i) => naturals.visible[i]);
+  const ids = visibleIndexes.map((i) => columns[i].id);
+  const inputs: ColumnSizingInput[] = visibleIndexes.map((i) => {
+    const header = naturals.header[i] ?? 0;
+    return sizingInputForColumn(
+      columns[i],
+      header,
+      naturals.natural[i] ?? header,
+    );
+  });
+  if (trailingFixedPx) {
+    inputs.push({ natural: trailingFixedPx, header: trailingFixedPx, mode: "fixed" });
+    ids.push(trailingColumnId);
+  }
+  return distributeColumnWidths(inputs, available).map((width, i) => ({
+    id: ids[i],
+    width,
+  }));
+}
+
 /**
  * Pixel widths for a fixed-layout table's `<colgroup>`, derived from the data
  * actually on screen. Returns null until the first measurement.
@@ -697,39 +755,20 @@ export function useContentColumnWidths(options: Readonly<{
     // `available` re-measures when a resize crosses a breakpoint that hides columns.
   }, [enabled, key, contentKey, columns.length, tableRef, available, freeze]);
 
-  return useMemo(() => {
-    if (!naturals?.key.startsWith(`${key}#`) || available <= 0) return null;
-    const visibleIndexes = columns
-      .map((_, i) => i)
-      .filter((i) => naturals.visible[i]);
-    const ids = visibleIndexes.map((i) => columns[i].id);
-    const inputs: ColumnSizingInput[] = visibleIndexes.map((i) => {
-      const col = columns[i];
-      const mode = resolveColumnSizingMode(col);
-      const header = naturals.header[i] ?? 0;
-      const measured = naturals.natural[i] ?? header;
-      if (mode === "fixed") {
-        const px = resolveFixedColumnWidthPx(col) ?? measured;
-        return { natural: px, header: px, mode };
-      }
-      const cap = cssLengthToPx(col.maxW);
-      const uncapped = Math.max(header, measured);
-      return {
-        natural: cap == null ? uncapped : Math.min(uncapped, cap),
-        header: cap == null ? header : Math.min(header, cap),
-        mode,
-        minPx: cssLengthToPx(col.minWidth),
-      };
-    });
-    if (trailingFixedPx) {
-      inputs.push({ natural: trailingFixedPx, header: trailingFixedPx, mode: "fixed" });
-      ids.push(trailingColumnId);
-    }
-    return distributeColumnWidths(inputs, available).map((width, i) => ({
-      id: ids[i],
-      width,
-    }));
-  }, [naturals, key, available, columns, trailingFixedPx, trailingColumnId]);
+  return useMemo(
+    () =>
+      naturals
+        ? buildMeasuredColumnWidths({
+            naturals,
+            key,
+            available,
+            columns,
+            trailingFixedPx,
+            trailingColumnId,
+          })
+        : null,
+    [naturals, key, available, columns, trailingFixedPx, trailingColumnId],
+  );
 }
 
 /** @deprecated Prefer resolveAdminColumnLayouts. */

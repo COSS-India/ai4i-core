@@ -2101,6 +2101,65 @@ function stripAdminTableContainerChrome(
 
 const PAGE_ONLY_SEARCH_HELPER = "Searches the rows on this page only";
 
+/**
+ * Column-search state, sortable column list, and the rows visible after
+ * client-side column filters. Kept out of AdminLayoutDataTable so that
+ * component stays under Sonar's cognitive-complexity limit.
+ */
+function useAdminColumnFilteredItems<T>(options: Readonly<{
+  items: readonly T[];
+  columns: DataTableColumn<T>[];
+  filterDefs?: DataTableFilterDef[];
+  columnSearch: boolean;
+  paginate: "client" | "server" | false;
+  columnFiltersProp?: DataTableColumnFilters;
+  onColumnFiltersChange?: (next: DataTableColumnFilters) => void;
+  hasToolbarFilters: boolean;
+}>) {
+  const {
+    items,
+    columns,
+    filterDefs,
+    columnSearch,
+    paginate,
+    columnFiltersProp,
+    onColumnFiltersChange,
+    hasToolbarFilters,
+  } = options;
+
+  const [columnFilters, setColumnFilters] = useColumnFilterState(
+    columnFiltersProp,
+    onColumnFiltersChange,
+  );
+  const columnFilterCount = activeColumnFilterCount(columnFilters);
+  const hasActiveFilters = hasToolbarFilters || columnFilterCount > 0;
+  const searchColumns = useMemo(() => {
+    const withFilters = columnSearch
+      ? withAutoColumnFilters<T, DataTableColumn<T>>(
+          columns,
+          paginate === "server" ? PAGE_ONLY_SEARCH_HELPER : undefined,
+        )
+      : columns;
+    return withAutoColumnSort<T, DataTableColumn<T>>(withFilters, filterDefs);
+  }, [columnSearch, paginate, columns, filterDefs]);
+  // Always apply column filters to the rows on screen. Server tables still
+  // query the API for supported params; page-only columns (e.g. latency) work
+  // on the loaded page without a horizontal-scroll escape hatch.
+  const visibleItems = useMemo(
+    () => applyColumnFilters(items, searchColumns, columnFilters),
+    [items, searchColumns, columnFilters],
+  );
+
+  return {
+    columnFilters,
+    setColumnFilters,
+    columnFilterCount,
+    hasActiveFilters,
+    searchColumns,
+    visibleItems,
+  };
+}
+
 function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
   const {
     items,
@@ -2151,28 +2210,23 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
   const tableRef = useRef<HTMLTableElement>(null);
   const tableContainerRef = useRef<HTMLDivElement>(null);
 
-  const [columnFilters, setColumnFilters] = useColumnFilterState(
+  const {
+    columnFilters,
+    setColumnFilters,
+    columnFilterCount,
+    hasActiveFilters,
+    searchColumns,
+    visibleItems,
+  } = useAdminColumnFilteredItems({
+    items,
+    columns,
+    filterDefs,
+    columnSearch,
+    paginate,
     columnFiltersProp,
     onColumnFiltersChange,
-  );
-  const columnFilterCount = activeColumnFilterCount(columnFilters);
-  const hasActiveFilters = hasToolbarFilters || columnFilterCount > 0;
-  const searchColumns = useMemo(() => {
-    const withFilters = columnSearch
-      ? withAutoColumnFilters<T, DataTableColumn<T>>(
-          columns,
-          paginate === "server" ? PAGE_ONLY_SEARCH_HELPER : undefined,
-        )
-      : columns;
-    return withAutoColumnSort<T, DataTableColumn<T>>(withFilters, filterDefs);
-  }, [columnSearch, paginate, columns, filterDefs]);
-  // Always apply column filters to the rows on screen. Server tables still
-  // query the API for supported params; page-only columns (e.g. latency) work
-  // on the loaded page without a horizontal-scroll escape hatch.
-  const visibleItems = useMemo(
-    () => applyColumnFilters(items, searchColumns, columnFilters),
-    [items, searchColumns, columnFilters],
-  );
+    hasToolbarFilters,
+  });
 
   const clientTable = useAdminDataTable(paginate === "client" ? visibleItems : [], {
     initialPageSize,
