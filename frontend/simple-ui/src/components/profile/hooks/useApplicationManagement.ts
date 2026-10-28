@@ -163,6 +163,8 @@ export function useApplicationManagement(
   const [viewOpen, setViewOpen] = useState(false);
   const [budgetOpen, setBudgetOpen] = useState(false);
   const [selected, setSelected] = useState<Application | null>(null);
+  /** Set after a successful create; drives the "configure fallbacks or skip" prompt. */
+  const [createdApplication, setCreatedApplication] = useState<Application | null>(null);
   const [form, setForm] = useState<ApplicationForm>(EMPTY_FORM);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   const [formBanner, setFormBanner] = useState<string | null>(null);
@@ -546,6 +548,8 @@ export function useApplicationManagement(
     setViewOpen(true);
   };
 
+  const dismissCreatedPrompt = () => setCreatedApplication(null);
+
   const openBudget = (app: Application) => {
     if (!isApplicationBudgetEditable(app.status)) return;
     setSelected(app);
@@ -646,14 +650,15 @@ export function useApplicationManagement(
     setFormBanner(null);
     const pct = parsePct(form.allocated_percentage);
     try {
-      await createApplication(tenantId, {
+      const created = await createApplication(tenantId, {
         name: form.name.trim(),
         description: form.description.trim() || undefined,
         domain: form.domain.trim() || undefined,
         allocated_percentage: pct == null || pct === "invalid" ? undefined : pct,
       });
-      toast({ title: "Application created.", status: "success", duration: 3000, isClosable: true });
       setCreateOpen(false);
+      // The prompt's title confirms the create, so no success toast here.
+      setCreatedApplication(created.name ? created : { ...created, name: form.name.trim() });
       setPage(1);
       await reload();
     } catch (error) {
@@ -807,6 +812,8 @@ export function useApplicationManagement(
     openEdit,
     openView,
     openBudget,
+    createdApplication,
+    dismissCreatedPrompt,
     handleCreate,
     handleEdit,
     handleSaveBudget,

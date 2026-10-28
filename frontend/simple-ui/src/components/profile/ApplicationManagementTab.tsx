@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Alert,
   AlertIcon,
@@ -13,6 +13,7 @@ import {
 } from "@chakra-ui/react";
 import { EditIcon } from "@chakra-ui/icons";
 import { FiEdit2, FiRefreshCw, FiSliders } from "react-icons/fi";
+import { LuSplit } from "react-icons/lu";
 import DataTable, {
   createActionsColumn,
   DEFAULT_PAGE_SIZE_OPTIONS,
@@ -26,11 +27,15 @@ import FormSection from "../common/FormSection";
 import ReadOnlyField from "../common/ReadOnlyField";
 import ApplicationBudgetModal from "./ApplicationBudgetModal";
 import ApplicationBulkBudgetModal from "./ApplicationBulkBudgetModal";
+import ApplicationCreatedDialog from "./ApplicationCreatedDialog";
+import ServiceFallbacksModal from "./ServiceFallbacksModal";
+import ServiceFallbacksSummary from "./ServiceFallbacksSummary";
 import ApplicationIdentityFields from "./ApplicationIdentityFields";
 import FieldHint from "../common/FieldHint";
 import PercentageStepper from "../common/PercentageStepper";
 import { FIELD_HINTS } from "../../config/fieldHints";
 import { APPLICATION_BUDGET_MANAGED_NOTE, BUDGET_COPY, editBudgetForName, percentageBoundMessage } from "../../config/budgetMessages";
+import { SERVICE_FALLBACK_COPY } from "../../config/serviceFallbackMessages";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
 import type { Application } from "../../types/application";
 import {
@@ -43,6 +48,7 @@ import {
   InstitutionAllocationSkeleton,
 } from "./applicationSurface";
 import { useApplicationManagement } from "./hooks/useApplicationManagement";
+import { useFallbackCatalogue, useServiceFallbackEditor } from "./hooks/useServiceFallbacks";
 import { useDeferredColumnSort } from "../../utils/tableSort";
 
 function formatPct(value: number | null | undefined): string {
@@ -55,6 +61,21 @@ function formatPct(value: number | null | undefined): string {
 function rupees(amount: number | null | undefined, currency: string): string {
   if (amount == null) return "—";
   return formatSpendMoney(amount, currency);
+}
+
+const FALLBACK_ACTION = SERVICE_FALLBACK_COPY.action;
+
+function FallbackActionTooltip({ count }: Readonly<{ count: number }>) {
+  return (
+    <Box py={0.5}>
+      <Text fontSize="xs" fontWeight="700" color="inherit">
+        {FALLBACK_ACTION.label}
+      </Text>
+      <Text fontSize="xs" color="inherit">
+        {count > 0 ? FALLBACK_ACTION.configured(count) : FALLBACK_ACTION.notConfigured}
+      </Text>
+    </Box>
+  );
 }
 
 function applicationDrawerTitle(options: {
@@ -106,6 +127,7 @@ function ApplicationTableEmpty({
 const HIDE_KEYS_COL = { display: { base: "none", lg: "table-cell" } } as const;
 
 type ApplicationMgr = ReturnType<typeof useApplicationManagement>;
+type FallbackCatalogueState = ReturnType<typeof useFallbackCatalogue>;
 
 function createBudgetPreviewAmount(
   allocatedPercentage: string,
@@ -209,7 +231,14 @@ function ApplicationDrawerCreateBody({
 function ApplicationDrawerViewBody({
   viewApp,
   currency,
-}: Readonly<{ viewApp: Application; currency: string }>) {
+  fallbackCatalogue,
+  onConfigureFallbacks,
+}: Readonly<{
+  viewApp: Application;
+  currency: string;
+  fallbackCatalogue: FallbackCatalogueState;
+  onConfigureFallbacks: (app: Application) => void;
+}>) {
   const allocationExtra =
     viewApp.allocated_budget == null
       ? ""
@@ -241,6 +270,12 @@ function ApplicationDrawerViewBody({
         </ReadOnlyField>
         <ReadOnlyField label="Active API keys">{keyCount}</ReadOnlyField>
       </FormSection>
+      <ServiceFallbacksSummary
+        fallbacks={viewApp.service_fallbacks}
+        catalogue={fallbackCatalogue.catalogue}
+        isLoading={fallbackCatalogue.status === "loading"}
+        onConfigure={() => onConfigureFallbacks(viewApp)}
+      />
     </>
   );
 }
@@ -280,11 +315,15 @@ function ApplicationFormDrawer({
   currency,
   boundHint,
   setBoundHint,
+  fallbackCatalogue,
+  onConfigureFallbacks,
 }: Readonly<{
   mgr: ApplicationMgr;
   currency: string;
   boundHint: string | null;
   setBoundHint: (hint: string | null) => void;
+  fallbackCatalogue: FallbackCatalogueState;
+  onConfigureFallbacks: (app: Application) => void;
 }>) {
   const isEditing = mgr.editOpen;
   const isCreating = mgr.createOpen;
@@ -341,7 +380,12 @@ function ApplicationFormDrawer({
         />
       ) : null}
       {isViewing && viewApp ? (
-        <ApplicationDrawerViewBody viewApp={viewApp} currency={currency} />
+        <ApplicationDrawerViewBody
+          viewApp={viewApp}
+          currency={currency}
+          fallbackCatalogue={fallbackCatalogue}
+          onConfigureFallbacks={onConfigureFallbacks}
+        />
       ) : null}
     </FormDrawer>
   );
@@ -502,6 +546,7 @@ function buildApplicationColumns(options: {
   currency: string;
   onEdit: (app: Application) => void;
   onBudget: (app: Application) => void;
+  onFallbacks: (app: Application) => void;
 }): DataTableColumn<Application>[] {
   return [
     {
@@ -570,10 +615,11 @@ function buildApplicationColumns(options: {
       cell: (app) => <ApplicationStatusText status={app.status} />,
     },
     createActionsColumn<Application>({
-      actionCount: 2,
+      actionCount: 3,
       getActions: (app) => {
         const budgetActionLabel = editBudgetForName(app.name);
         const budgetDisabled = app.status !== "ACTIVE";
+        const fallbackCount = Object.keys(app.service_fallbacks).length;
         return [
           {
             id: "edit",
@@ -595,6 +641,17 @@ function buildApplicationColumns(options: {
             disabled: budgetDisabled,
             onClick: () => options.onBudget(app),
           },
+          {
+            id: "fallbacks",
+            label: FALLBACK_ACTION.label,
+            icon: <Icon as={LuSplit} />,
+            tooltip: <FallbackActionTooltip count={fallbackCount} />,
+            "aria-label": `${FALLBACK_ACTION.label} for ${app.name}`,
+            color: fallbackCount > 0 ? "teal.600" : undefined,
+            hoverColor: "teal.700",
+            hoverBg: "teal.50",
+            onClick: () => options.onFallbacks(app),
+          },
         ];
       },
     }),
@@ -612,6 +669,42 @@ export default function ApplicationManagementTab({
 }>) {
   const mgr = useApplicationManagement(tenantId, institutionBudget, currency);
   const [boundHint, setBoundHint] = useState<string | null>(null);
+  const [fallbacksOpen, setFallbacksOpen] = useState(false);
+  /** Reopen the details drawer when the editor was opened from it. */
+  const [fallbacksFromView, setFallbacksFromView] = useState(false);
+
+  // Loaded for the details view and the editor; the created prompt warms it up.
+  const fallbackCatalogue = useFallbackCatalogue(
+    tenantId,
+    mgr.viewOpen || fallbacksOpen || mgr.createdApplication != null,
+  );
+  const fallbackEditor = useServiceFallbackEditor({
+    tenantId,
+    catalogue: fallbackCatalogue.catalogue,
+    catalogueReady: fallbackCatalogue.status === "ready",
+    onSaved: () => {
+      mgr.reload();
+    },
+    onClose: (app) => {
+      setFallbacksOpen(false);
+      if (fallbacksFromView) mgr.openView(app);
+      setFallbacksFromView(false);
+    },
+  });
+  const openFallbackEditor = fallbackEditor.open;
+  const refreshFallbackCatalogue = fallbackCatalogue.refresh;
+  const { setViewOpen } = mgr;
+  const openFallbacks = useCallback(
+    (app: Application, fromView: boolean) => {
+      setFallbacksFromView(fromView);
+      setFallbacksOpen(true);
+      if (fromView) setViewOpen(false);
+      openFallbackEditor(app);
+      // Services may have been unpublished or added to the Tier since the last load.
+      refreshFallbackCatalogue();
+    },
+    [openFallbackEditor, refreshFallbackCatalogue, setViewOpen],
+  );
 
   useEffect(() => {
     if (!mgr.createOpen) setBoundHint(null);
@@ -639,8 +732,9 @@ export default function ApplicationManagementTab({
         currency,
         onEdit: mgr.openEdit,
         onBudget: mgr.openBudget,
+        onFallbacks: (app) => openFallbacks(app, false),
       }),
-    [currency, mgr.openEdit, mgr.openBudget],
+    [currency, mgr.openEdit, mgr.openBudget, openFallbacks],
   );
 
   if (!tenantId) {
@@ -659,6 +753,8 @@ export default function ApplicationManagementTab({
         currency={currency}
         boundHint={boundHint}
         setBoundHint={setBoundHint}
+        fallbackCatalogue={fallbackCatalogue}
+        onConfigureFallbacks={(app) => openFallbacks(app, true)}
       />
       <ApplicationListPanel
         mgr={mgr}
@@ -667,6 +763,15 @@ export default function ApplicationManagementTab({
         sortedApplications={sortedApplications}
         appSort={appSort}
       />
+      <ApplicationCreatedDialog
+        application={mgr.createdApplication}
+        onSkip={mgr.dismissCreatedPrompt}
+        onConfigure={(app) => {
+          mgr.dismissCreatedPrompt();
+          openFallbacks(app, false);
+        }}
+      />
+      <ServiceFallbacksModal editor={fallbackEditor} catalogueState={fallbackCatalogue} />
     </>
   );
 }
