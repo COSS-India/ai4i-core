@@ -453,8 +453,8 @@ type LogsControlLayout = {
 };
 
 /**
- * Shrink-to-fit on one toolbar row. Grow stays 0 so short filters (Status,
- * Task Type) do not stretch into large gaps before Columns / Auto-refresh.
+ * Shrink-to-fit on one toolbar row. Grow stays 0 so short filters stay
+ * compact and the gaps between them stay even.
  */
 function logsControlLayout(minPx: number, maxPx: number): LogsControlLayout {
   return {
@@ -642,12 +642,19 @@ function resolveLogsColumnDefs(
 
 function hasLogsAppliedFilters(
   applied: AppliedFilters,
-  canPickTenant: boolean,
+  options: {
+    canPickTenant: boolean;
+    timePreset: LogTimePreset;
+    followsPresent: boolean;
+  },
 ): boolean {
   if (applied.level !== "") return true;
-  if (canPickTenant && applied.selectedTenantId !== "") return true;
+  if (options.canPickTenant && applied.selectedTenantId !== "") return true;
   if (applied.q !== "") return true;
   if (applied.taskType !== "") return true;
+  // Presets and edited start/end are real filters; default is custom + live end.
+  if (options.timePreset !== "custom") return true;
+  if (!options.followsPresent) return true;
   return false;
 }
 
@@ -996,6 +1003,7 @@ function LogsDashboardMain(props: LogsDashboardMainProps) {
         }}
         filterDefs={props.filterDefs}
         filterToolbarSingleRow
+        toolbarAttached
         filterToolbarRightContent={
           <HStack spacing={2} flexShrink={0} flexWrap="nowrap" align="center">
             <LogsColumnPicker
@@ -1476,7 +1484,11 @@ const LogsPage: React.FC = () => {
     }));
   }, [columnDefs, selectedColumns, cellForColumn]);
 
-  const hasAppliedFilters = hasLogsAppliedFilters(applied, canPickTenant);
+  const hasAppliedFilters = hasLogsAppliedFilters(applied, {
+    canPickTenant,
+    timePreset: draft.timePreset,
+    followsPresent,
+  });
   const narrowRangeMessage = resolveNarrowRangeMessage(tracesError);
   const showAccessDenied =
     !authLoading && isAuthenticated && isLogsRoleDenied(isUser, isGuest);

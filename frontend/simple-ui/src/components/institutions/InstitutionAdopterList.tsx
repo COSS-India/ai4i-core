@@ -62,8 +62,6 @@ export function InstitutionAdopterList({
       {
         id: "organisation",
         header: INSTITUTION,
-        thProps: { maxW: "300px" },
-        tdProps: { maxW: "300px" },
         sortable: true,
         sortAccessor: (t) => t.organisation ?? "",
         cell: (t) => (
@@ -86,7 +84,7 @@ export function InstitutionAdopterList({
               hasArrow
               openDelay={300}
             >
-              <HStack spacing={2} minW={0} maxW="220px">
+              <HStack spacing={2} minW={0}>
                 <Text fontWeight="medium" fontSize="sm" isTruncated>
                   {t.organisation}
                 </Text>
@@ -128,8 +126,7 @@ export function InstitutionAdopterList({
       {
         id: "email",
         header: "Email",
-        thProps: { maxW: "240px" },
-        tdProps: { maxW: "240px" },
+        truncate: false,
         sortable: true,
         sortAccessor: (t) => t.email ?? "",
         cell: renderInstitutionEmailTableCell,

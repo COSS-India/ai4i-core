@@ -61,13 +61,11 @@ const TIER_REMOVAL_ENABLED = false;
 const TIER_NAME_COLUMN: DataTableColumn<Tier> = {
   id: "name",
   header: "Tier Name",
-  thProps: { maxW: "280px" },
-  tdProps: { maxW: "280px" },
   sortable: true,
   sortAccessor: (tier) => tier.name ?? "",
   cell: (tier) => (
     <Tooltip label={tier.name} placement="top" hasArrow openDelay={300}>
-      <Text fontSize="sm" fontWeight="medium" isTruncated maxW="260px">
+      <Text fontSize="sm" fontWeight="medium" isTruncated>
         {tier.name}
       </Text>
     </Tooltip>

@@ -1,5 +1,12 @@
 import { Box, type TableCellProps } from "@chakra-ui/react";
-import React, { useCallback, useRef } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 /** Default max width for truncated table cells (legacy helpers). */
 export const DATA_TABLE_CELL_MAX_W = "280px";
@@ -84,6 +91,13 @@ const COMPACT_COLUMN_WIDTHS: Record<string, string> = {
   // Fits "Unpublished" badge + hint/sort on Services; icon + STATUS on Logs.
   status: "8.5rem",
   level: "6.5rem",
+  // Locale datetime / date — pin so they do not absorb leftover flex width.
+  timestamp: "11.5rem",
+  createdat: "11.5rem",
+  created_at: "11.5rem",
+  created: "7.5rem",
+  // Short version tokens ("v6") — header still needs a little room for sort.
+  version: "5.5rem",
   // "MODEL TASK TYPE" header + sort carets (Services).
   task: "10rem",
   modeltasktype: "10rem",
@@ -93,6 +107,10 @@ const COMPACT_COLUMN_WIDTHS: Record<string, string> = {
   method: "5.25rem",
   statuscode: "6.75rem",
   status_code: "6.75rem",
+  // Count columns (Models "No. of Services", Tier services/institutions).
+  servicecount: "7.5rem",
+  services: "6.5rem",
+  institutions: "7rem",
 };
 
 function normalizeColumnId(id: string): string {
@@ -161,6 +179,35 @@ function compactColumnWidth(col: { id: string }): string | undefined {
 
 function isCompactColumn(col: { id: string }): boolean {
   return compactColumnWidth(col) != null;
+}
+
+/** Short, scannable values (dates, badges, counts) — sized to content, never truncated. */
+const CONTENT_WIDTH_IDS = new Set([
+  ...Object.keys(COMPACT_COLUMN_WIDTHS),
+  "expires",
+  "expiry",
+  "expires_at",
+  "budget",
+  "allocation",
+  "permissions",
+  "latency",
+  "updated",
+  "updatedat",
+  "updated_at",
+  "published",
+  "publishedat",
+  "publishedon",
+  "published_on",
+  "inputprice",
+  "outputprice",
+  "cachedinputprice",
+]);
+
+function isContentWidthColumn(col: { id: string }): boolean {
+  return (
+    CONTENT_WIDTH_IDS.has(normalizeColumnId(col.id)) ||
+    CONTENT_WIDTH_IDS.has(compactColumnId(col.id))
+  );
 }
 
 const PRIMARY_FLEX_IDS = [
@@ -246,7 +293,8 @@ function pinnedCompactColumnLayout(col: AdminColumnInput): AdminColumnLayout {
 }
 
 function primaryFlexPercent(otherCount: number): number {
-  return Math.min(36, Math.max(22, 55 - otherCount * 6));
+  // Keep the lead column readable without eating half the table.
+  return Math.min(22, Math.max(14, 38 - otherCount * 5));
 }
 
 function hasExplicitColumnWidth(col: AdminColumnInput): boolean {
@@ -368,6 +416,256 @@ export function resolveAdminColumnLayouts(
   return layouts;
 }
 
+/**
+ * - `fixed`: control rails and caller-pinned widths; never grow or shrink.
+ * - `content`: dates, badges, counts; always show in full.
+ * - `shrink`: free text; first to give up width, truncated with an ellipsis.
+ */
+export type ColumnSizingMode = "fixed" | "content" | "shrink";
+
+export type ColumnSizingInput = {
+  /** Widest of header and cells, px including cell padding. */
+  natural: number;
+  header: number;
+  mode: ColumnSizingMode;
+  minPx?: number;
+};
+
+/** Below this a truncated value stops being recognisable. */
+const MIN_SHRINK_COLUMN_PX = 128;
+
+export function resolveColumnSizingMode(col: AdminColumnInput): ColumnSizingMode {
+  if (isShrinkWrapColumn(col)) return "fixed";
+  if (col.width != null && !isFluidWidthHint(col.width)) return "fixed";
+  if (isContentWidthColumn(col)) return "content";
+  return "shrink";
+}
+
+/** px for `"12px"` / `"9rem"` / numbers; undefined for %, auto and responsive objects. */
+export function cssLengthToPx(value: unknown): number | undefined {
+  if (typeof value === "number") return value;
+  if (typeof value !== "string") return undefined;
+  const v = value.trim().toLowerCase();
+  const n = Number.parseFloat(v);
+  if (Number.isNaN(n)) return undefined;
+  if (v.endsWith("px")) return n;
+  if (v.endsWith("rem") || v.endsWith("em")) return n * 16;
+  return undefined;
+}
+
+function shrinkFloor(col: ColumnSizingInput): number {
+  if (col.mode !== "shrink") return col.natural;
+  return Math.min(
+    col.natural,
+    Math.max(col.header, col.minPx ?? MIN_SHRINK_COLUMN_PX),
+  );
+}
+
+/**
+ * Content-first widths that fill `available`:
+ * - room to spare: every non-fixed column grows in proportion to its content
+ * - too tight: the widest `shrink` columns are levelled down first, never
+ *   below their header or a readable minimum
+ */
+export function distributeColumnWidths(
+  cols: readonly ColumnSizingInput[],
+  available: number,
+): number[] {
+  const widths = cols.map((c) => c.natural);
+  if (available <= 0) return widths;
+  const total = widths.reduce((sum, w) => sum + w, 0);
+
+  if (total <= available) {
+    const growable = cols
+      .map((c, i) => (c.mode === "fixed" ? -1 : i))
+      .filter((i) => i >= 0);
+    const weight = growable.reduce((sum, i) => sum + cols[i].natural, 0);
+    if (weight > 0) {
+      const extra = available - total;
+      for (const i of growable) widths[i] += (extra * cols[i].natural) / weight;
+    }
+    return widths.map((w) => Math.floor(w));
+  }
+
+  const shrinkable = cols
+    .map((c, i) => (c.mode === "shrink" ? i : -1))
+    .filter((i) => i >= 0);
+  const locked = cols.reduce(
+    (sum, c) => (c.mode === "shrink" ? sum : sum + c.natural),
+    0,
+  );
+  const budget = available - locked;
+  const floors = cols.map(shrinkFloor);
+  const widthAt = (level: number) =>
+    shrinkable.reduce(
+      (sum, i) => sum + Math.max(floors[i], Math.min(cols[i].natural, level)),
+      0,
+    );
+
+  let level = 0;
+  if (widthAt(0) < budget) {
+    let lo = 0;
+    let hi = Math.max(...shrinkable.map((i) => cols[i].natural));
+    for (let step = 0; step < 24; step++) {
+      const mid = (lo + hi) / 2;
+      if (widthAt(mid) <= budget) lo = mid;
+      else hi = mid;
+    }
+    level = lo;
+  }
+  for (const i of shrinkable) {
+    widths[i] = Math.max(floors[i], Math.min(cols[i].natural, level));
+  }
+  return widths.map((w) => Math.round(w));
+}
+
+/**
+ * Natural (unconstrained, single-line) width of each column, measured from
+ * offscreen clones of the rendered header and body cells.
+ */
+export function measureColumnNaturalWidths(
+  table: HTMLTableElement,
+  columnCount: number,
+): { header: number[]; natural: number[] } | null {
+  const headRow = table.tHead?.rows[0];
+  if (!headRow || headRow.cells.length < columnCount) return null;
+  const bodyRows = Array.from(table.tBodies[0]?.rows ?? []).filter(
+    (row) =>
+      row.cells.length >= columnCount &&
+      Array.from(row.cells).every((cell) => cell.colSpan === 1),
+  );
+
+  const sandbox = document.createElement("div");
+  sandbox.setAttribute("aria-hidden", "true");
+  Object.assign(sandbox.style, {
+    position: "absolute",
+    top: "0",
+    left: "-100000px",
+    visibility: "hidden",
+    pointerEvents: "none",
+  });
+  const clones = [headRow, ...bodyRows].map((row) =>
+    Array.from({ length: columnCount }, (_, i) => {
+      const clone = row.cells[i].cloneNode(true) as HTMLElement;
+      Object.assign(clone.style, {
+        display: "block",
+        width: "max-content",
+        minWidth: "0",
+        maxWidth: "none",
+        overflow: "visible",
+      });
+      sandbox.appendChild(clone);
+      return clone;
+    }),
+  );
+
+  document.body.appendChild(sandbox);
+  try {
+    const widthOf = (el: HTMLElement) => Math.ceil(el.getBoundingClientRect().width);
+    const header = clones[0].map(widthOf);
+    const natural = [...header];
+    for (const rowClones of clones.slice(1)) {
+      rowClones.forEach((clone, i) => {
+        natural[i] = Math.max(natural[i], widthOf(clone));
+      });
+    }
+    return { header, natural };
+  } finally {
+    sandbox.remove();
+  }
+}
+
+const useIsomorphicLayoutEffect =
+  typeof window === "undefined" ? useEffect : useLayoutEffect;
+
+type MeasuredNaturals = { key: string; header: number[]; natural: number[] };
+
+function sameNumbers(a: readonly number[], b: readonly number[]): boolean {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
+/**
+ * Pixel widths for a fixed-layout table's `<colgroup>`, derived from the data
+ * actually on screen. Returns null until the first measurement.
+ *
+ * Widths only ratchet up while the column set is unchanged, so paging or
+ * filtering does not make columns jump around.
+ */
+export function useContentColumnWidths(options: {
+  tableRef: React.RefObject<HTMLTableElement>;
+  containerRef: React.RefObject<HTMLElement>;
+  columns: readonly AdminColumnInput[];
+  trailingFixedPx?: number;
+  enabled: boolean;
+  contentKey: unknown;
+}): number[] | null {
+  const { tableRef, containerRef, columns, trailingFixedPx, enabled, contentKey } =
+    options;
+  const [naturals, setNaturals] = useState<MeasuredNaturals | null>(null);
+  const [available, setAvailable] = useState(0);
+  const [fontsVersion, setFontsVersion] = useState(0);
+  const key = `${fontsVersion}:${columns.map((c) => c.id).join("|")}`;
+
+  useEffect(() => {
+    let cancelled = false;
+    document.fonts?.ready.then(() => {
+      if (!cancelled) setFontsVersion((v) => v + 1);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useIsomorphicLayoutEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    setAvailable(container.clientWidth);
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => setAvailable(container.clientWidth));
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [containerRef]);
+
+  useIsomorphicLayoutEffect(() => {
+    if (!enabled || !tableRef.current) return;
+    const measured = measureColumnNaturalWidths(tableRef.current, columns.length);
+    if (!measured) return;
+    setNaturals((prev) => {
+      if (!prev || prev.key !== key) return { key, ...measured };
+      const natural = measured.natural.map((n, i) => Math.max(n, prev.natural[i] ?? 0));
+      const header = measured.header.map((n, i) => Math.max(n, prev.header[i] ?? 0));
+      if (sameNumbers(natural, prev.natural) && sameNumbers(header, prev.header)) {
+        return prev;
+      }
+      return { key, header, natural };
+    });
+  }, [enabled, key, contentKey, columns.length, tableRef]);
+
+  return useMemo(() => {
+    if (!naturals || naturals.key !== key || available <= 0) return null;
+    const inputs: ColumnSizingInput[] = columns.map((col, i) => {
+      const mode = resolveColumnSizingMode(col);
+      const header = naturals.header[i] ?? 0;
+      const measured = naturals.natural[i] ?? header;
+      if (mode === "fixed") {
+        const px = cssLengthToPx(col.width) ?? cssLengthToPx(col.maxW) ?? measured;
+        return { natural: px, header: px, mode };
+      }
+      const cap = cssLengthToPx(col.maxW);
+      return {
+        natural: Math.max(header, cap == null ? measured : Math.min(measured, cap)),
+        header,
+        mode,
+        minPx: cssLengthToPx(col.minWidth),
+      };
+    });
+    if (trailingFixedPx) {
+      inputs.push({ natural: trailingFixedPx, header: trailingFixedPx, mode: "fixed" });
+    }
+    return distributeColumnWidths(inputs, available);
+  }, [naturals, key, available, columns, trailingFixedPx]);
+}
+
 /** @deprecated Prefer resolveAdminColumnLayouts. */
 export function resolveAdminColumnLayout(
   col: AdminColumnInput,
@@ -409,21 +707,37 @@ function treeOverflows(root: HTMLElement): boolean {
 }
 
 /**
- * Clip overflowing cell content; native `title` tooltip when truncated.
+ * Clip overflowing cell content; native `title` tooltip with the full value
+ * when anything inside is cut off. `ellipsis={false}` keeps the content's own
+ * layout (badge rows, stacked lines) and only adds the hover title.
  */
-export function TruncatingCellContent({ children }: { children: React.ReactNode }) {
+export function TruncatingCellContent({
+  children,
+  ellipsis = true,
+}: {
+  children: React.ReactNode;
+  ellipsis?: boolean;
+}) {
   const ref = useRef<HTMLDivElement>(null);
 
   const onMouseEnter = useCallback(() => {
     const el = ref.current;
     if (!el) return;
-    const text = (el.textContent ?? "").trim();
+    const text = (el.innerText ?? el.textContent ?? "").replace(/\s+/g, " ").trim();
     if (text && treeOverflows(el)) {
       el.setAttribute("title", text);
       return;
     }
     el.removeAttribute("title");
   }, []);
+
+  if (!ellipsis) {
+    return (
+      <Box ref={ref} minW={0} w="100%" maxW="100%" onMouseEnter={onMouseEnter}>
+        {children}
+      </Box>
+    );
+  }
 
   return (
     <Box

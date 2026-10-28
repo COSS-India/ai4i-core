@@ -76,9 +76,11 @@ import {
   DATA_TABLE_CELL_MAX_W,
   TruncatingCellContent,
   getTruncateCellProps,
+  cssLengthToPx,
   resolveAdminColumnLayouts,
   shouldAutoTruncateColumn,
   shrinkToContentWidth,
+  useContentColumnWidths,
   type AdminColumnLayout,
 } from "./dataTableUtils";
 
@@ -1584,13 +1586,7 @@ function renderAdminDataCell<T>(
       {...(col.tdProps ?? {})}
       overflow="hidden"
     >
-      {truncate ? (
-        <TruncatingCellContent>{content}</TruncatingCellContent>
-      ) : (
-        <Box minW={0} w="100%" maxW="100%">
-          {content}
-        </Box>
-      )}
+      <TruncatingCellContent ellipsis={truncate}>{content}</TruncatingCellContent>
     </Td>
   );
 }
@@ -2047,10 +2043,12 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
 
   const { cardBg } = useAdminTableSurface();
   const rowChevron = showRowChevron ?? Boolean(onRowClick);
-  const columnLayouts = useMemo(
+  const fallbackColumnLayouts = useMemo(
     () => resolveAdminColumnLayouts(columns),
     [columns],
   );
+  const tableRef = useRef<HTMLTableElement>(null);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
 
   const clientTable = useAdminDataTable(paginate === "client" ? items : [], {
     initialPageSize,
@@ -2070,6 +2068,24 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
 
   const displayItems =
     paginate === "client" ? clientTable.paginatedItems : items;
+
+  const measuredWidths = useContentColumnWidths({
+    tableRef,
+    containerRef: tableContainerRef,
+    columns,
+    trailingFixedPx: rowChevron ? cssLengthToPx(ADMIN_CHEVRON_COLUMN_WIDTH) : undefined,
+    enabled: !isLoading,
+    contentKey: displayItems,
+  });
+  /** Once measured, `<colgroup>` owns widths; cells keep only wrapping rules. */
+  const columnLayouts = useMemo(() => {
+    if (!measuredWidths) return fallbackColumnLayouts;
+    const stripped = new Map<string, AdminColumnLayout>();
+    fallbackColumnLayouts.forEach((layout, id) => {
+      stripped.set(id, { minW: 0, whiteSpace: layout.whiteSpace });
+    });
+    return stripped;
+  }, [measuredWidths, fallbackColumnLayouts]);
   const pagination = resolveAdminPagination(
     paginate,
     clientTable,
@@ -2119,14 +2135,16 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
 
   const tableBody = (
     <TableContainer
+      ref={tableContainerRef}
       maxH={containerMaxH ?? maxHeight}
       overflowY="auto"
-      overflowX="hidden"
+      overflowX="auto"
       bg="white"
       sx={{ scrollbarGutter: "stable" }}
       {...restTableContainerProps}
     >
       <Table
+        ref={tableRef}
         variant="simple"
         bg="white"
         size={size}
@@ -2139,6 +2157,13 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
           "th, td": { verticalAlign: "middle" },
         }}
       >
+        {measuredWidths ? (
+          <colgroup>
+            {measuredWidths.map((width, i) => (
+              <col key={i} style={{ width: `${width}px` }} />
+            ))}
+          </colgroup>
+        ) : null}
         <AdminTableHead
           columns={columns}
           columnLayouts={columnLayouts}

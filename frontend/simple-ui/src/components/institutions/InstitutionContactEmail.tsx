@@ -20,15 +20,20 @@ export default function InstitutionContactEmail({
 
   if (pending && compact) {
     return (
-      <VStack align="start" spacing={0.5} maxW="280px">
-        <Text fontSize="sm" isTruncated maxW="280px">
+      <VStack align="start" spacing={0.5} maxW="22rem" minW={0}>
+        <Text fontSize="sm" isTruncated maxW="22rem">
           {dash(email)}
         </Text>
-        <HStack spacing={1} maxW="280px">
-          <Text fontSize="xs" color="ink.500" isTruncated>
+        <HStack spacing={1} maxW="22rem" minW={0}>
+          <Text fontSize="xs" color="ink.500" isTruncated minW={0}>
             {pending}
           </Text>
-          <Badge colorScheme="orange" fontSize="0.65rem" flexShrink={0}>
+          <Badge
+            colorScheme="orange"
+            fontSize="0.65rem"
+            flexShrink={0}
+            whiteSpace="nowrap"
+          >
             {FIELD_HINTS.tenant.emailVerificationPending}
           </Badge>
         </HStack>
@@ -55,7 +60,7 @@ export default function InstitutionContactEmail({
   }
 
   return (
-    <Text fontSize="sm" isTruncated={compact} maxW={compact ? "260px" : undefined}>
+    <Text fontSize="sm" isTruncated={compact} maxW={compact ? "22rem" : undefined}>
       {dash(email)}
     </Text>
   );
