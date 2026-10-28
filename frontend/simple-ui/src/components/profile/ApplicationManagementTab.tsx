@@ -145,7 +145,7 @@ function buildApplicationColumns(options: {
           <Text fontSize="md" fontWeight="700" color="ink.800" letterSpacing="-0.02em">
             {formatPct(app.allocated_percentage)}
           </Text>
-          {app.allocated_budget != null ? (
+          {typeof app.allocated_budget === "number" ? (
             <Text fontSize="xs" color="ink.500">
               {rupees(app.allocated_budget, options.currency)}
             </Text>

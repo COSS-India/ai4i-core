@@ -145,6 +145,49 @@ function formatPermissionCount(count: number): string {
   return `${count} permissions`;
 }
 
+function ApiKeyPermissionsCell({ count }: Readonly<{ count: number }>) {
+  return (
+    <Text fontSize="sm" color="ink.600">
+      {formatPermissionCount(count)}
+    </Text>
+  );
+}
+
+function ApiKeyAllocationCell({
+  keyRow,
+  pctLabel,
+}: Readonly<{
+  keyRow: ApiKeyTableRow;
+  pctLabel: string;
+}>) {
+  if (keyRow.subRow) {
+    return (
+      <Text fontSize="sm" color="ink.600">
+        Shared
+      </Text>
+    );
+  }
+  if (pctLabel === "—") {
+    return (
+      <Text fontSize="sm" color="ink.500">
+        —
+      </Text>
+    );
+  }
+  return (
+    <Box>
+      <Text fontSize="sm" fontWeight="700" color="ink.800">
+        {pctLabel}
+      </Text>
+      {typeof keyRow.allocated_budget === "number" ? (
+        <Text fontSize="xs" color="ink.500">
+          {formatSpendMoney(keyRow.allocated_budget, "INR")}
+        </Text>
+      ) : null}
+    </Box>
+  );
+}
+
 function ApiKeyStatusCell({
   status,
   reason,
@@ -538,9 +581,9 @@ export default function ApiKeyManagementTab({
         thProps: { display: { base: "none", xl: "table-cell" } },
         tdProps: { display: { base: "none", xl: "table-cell" } },
         cell: (key) => (
-          <Text fontSize="sm" color="ink.600">
-            {formatPermissionCount(mgmt.visiblePermissionsForKey(key).length)}
-          </Text>
+          <ApiKeyPermissionsCell
+            count={mgmt.visiblePermissionsForKey(key).length}
+          />
         ),
       },
       {
@@ -550,27 +593,12 @@ export default function ApiKeyManagementTab({
         sortable: true,
         sortAccessor: (key) =>
           key.allocated_percentage ?? key.allocated_budget ?? -1,
-        cell: (key) => {
-          if (key.subRow) {
-            return <Text fontSize="sm" color="ink.600">Shared</Text>;
-          }
-          const pctLabel = mgmt.formatBudgetPct(key);
-          if (pctLabel === "—") {
-            return <Text fontSize="sm" color="ink.500">—</Text>;
-          }
-          return (
-            <Box>
-              <Text fontSize="sm" fontWeight="700" color="ink.800">
-                {pctLabel}
-              </Text>
-              {key.allocated_budget != null && (
-                <Text fontSize="xs" color="ink.500">
-                  {formatSpendMoney(key.allocated_budget, "INR")}
-                </Text>
-              )}
-            </Box>
-          );
-        },
+        cell: (key) => (
+          <ApiKeyAllocationCell
+            keyRow={key}
+            pctLabel={mgmt.formatBudgetPct(key)}
+          />
+        ),
       },
       {
         id: "status",
@@ -579,7 +607,9 @@ export default function ApiKeyManagementTab({
         cell: (key) => (
           <ApiKeyStatusCell
             status={mgmt.resolveKeyDisplayStatus(key)}
-            reason={mgmt.getKeyInactiveReason(key) ?? mgmt.getKeyRevokedReason(key)}
+            reason={
+              mgmt.getKeyInactiveReason(key) ?? mgmt.getKeyRevokedReason(key)
+            }
           />
         ),
       },

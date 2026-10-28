@@ -315,7 +315,7 @@ function PolicyFormFields({
           <Switch isChecked={isGlobal} onChange={(e) => setIsGlobal(e.target.checked)} />
         </FormControl>
       )}
-      {!isGlobal ? (
+      {isGlobal ? null : (
         <PolicyInstitutionsField
           readOnly={readOnly}
           tenantIds={tenantIds}
@@ -328,7 +328,7 @@ function PolicyFormFields({
           tenantById={tenantById}
           optionListScroll={optionListScroll}
         />
-      ) : null}
+      )}
       {readOnly ? (
         <ReadOnlyField label="Supported languages">{langs.join(", ") || "—"}</ReadOnlyField>
       ) : (

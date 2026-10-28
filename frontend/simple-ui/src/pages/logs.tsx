@@ -72,6 +72,7 @@ import { useTenantsList } from "../hooks/useTenantsList";
 import DataTable, {
   useAdminTableSurface,
   type DataTableColumn,
+  type DataTableFilterDef,
   type DataTableSortState,
 } from "../components/common/table";
 import TelemetryTraceDetailModal from "@/components/observability/TelemetryTraceDetailModal";
@@ -139,7 +140,7 @@ function selectedSearchFields(scope: string): Set<LogSearchField> {
 
 /** Empty or inverted ranges must not hit the API. */
 function dateRangeError(startTime: string, endTime: string): string | undefined {
-  if (!startTime.trim() || !endTime.trim()) {
+  if (startTime.trim() === "" || endTime.trim() === "") {
     return "Start and end time are required.";
   }
   const start = new Date(startTime);
@@ -191,47 +192,49 @@ function logsAccessDenialMessage(options: {
   if (options.isUser || options.isGuest) {
     return "You do not have permission to view logs.";
   }
-  if (options.isTenantAdmin && !options.authTenantId) {
+  if (options.isTenantAdmin) {
+    if (options.authTenantId) {
+      return null;
+    }
     return `Your account is not linked to ${INSTITUTION_ARTICLE} ${INSTITUTION.toLowerCase()}. Contact an administrator.`;
   }
-  if (!options.authTenantId && !options.isAdmin) {
-    return `You need to be assigned to ${INSTITUTION_ARTICLE} ${INSTITUTION.toLowerCase()} to view logs.`;
+  if (options.authTenantId || options.isAdmin) {
+    return null;
   }
-  return null;
+  return `You need to be assigned to ${INSTITUTION_ARTICLE} ${INSTITUTION.toLowerCase()} to view logs.`;
 }
 
 function withSearchText(draft: DraftFilters, value: string): DraftFilters {
   return { ...draft, q: value };
 }
 
+const SEARCH_FIELD_COPY: Record<
+  LogSearchField,
+  { placeholder: string; hint: string }
+> = {
+  service: {
+    placeholder: FIELD_HINTS.logs.service.placeholder,
+    hint: FIELD_HINTS.logs.service.tip,
+  },
+  statusCode: {
+    placeholder: FIELD_HINTS.logs.statusCode.placeholder,
+    hint: FIELD_HINTS.logs.statusCode.tip,
+  },
+  endUser: {
+    placeholder: FIELD_HINTS.logs.endUser.placeholder,
+    hint: FIELD_HINTS.logs.endUser.tip,
+  },
+  metadata: {
+    placeholder: FIELD_HINTS.logs.metadata.placeholder,
+    hint: FIELD_HINTS.logs.metadata.tip,
+  },
+};
+
 function searchFieldCopy(field: LogSearchField | undefined): {
   placeholder: string;
   hint: string;
 } {
-  if (field === "service") {
-    return {
-      placeholder: FIELD_HINTS.logs.service.placeholder,
-      hint: FIELD_HINTS.logs.service.tip,
-    };
-  }
-  if (field === "statusCode") {
-    return {
-      placeholder: FIELD_HINTS.logs.statusCode.placeholder,
-      hint: FIELD_HINTS.logs.statusCode.tip,
-    };
-  }
-  if (field === "endUser") {
-    return {
-      placeholder: FIELD_HINTS.logs.endUser.placeholder,
-      hint: FIELD_HINTS.logs.endUser.tip,
-    };
-  }
-  if (field === "metadata") {
-    return {
-      placeholder: FIELD_HINTS.logs.metadata.placeholder,
-      hint: FIELD_HINTS.logs.metadata.tip,
-    };
-  }
+  if (field) return SEARCH_FIELD_COPY[field];
   return {
     placeholder: FIELD_HINTS.logs.search.placeholder,
     hint: FIELD_HINTS.logs.search.tip,
@@ -362,12 +365,13 @@ function plainTraceCell(
   value: React.ReactNode,
   opts?: { mono?: boolean; weight?: string; color?: string },
 ): React.ReactNode {
+  const fontFamily = opts?.mono ? "mono" : undefined;
   return (
     <Text
       fontSize="sm"
       color={opts?.color ?? "ink.700"}
       fontWeight={opts?.weight}
-      fontFamily={opts?.mono ? "mono" : undefined}
+      fontFamily={fontFamily}
     >
       {value || "—"}
     </Text>
@@ -465,6 +469,187 @@ function renderTraceDataCell(
       —
     </Text>
   );
+}
+
+function tenantFilterOptions(
+  tenantsLoading: boolean,
+  tenantsError: boolean,
+  activeTenants: { tenant_id: string; organisation?: string }[],
+): { label: string; value: string }[] {
+  const all = { label: `All ${INSTITUTIONS}`, value: "" };
+  if (tenantsLoading || tenantsError) return [all];
+  return [
+    all,
+    ...activeTenants.map((tenant) => ({
+      label: tenant.organisation || tenant.tenant_id,
+      value: tenant.tenant_id,
+    })),
+  ];
+}
+
+function buildLogsFilterDefs(options: {
+  draft: DraftFilters;
+  replaceDraft: (next: DraftFilters, commit?: boolean) => void;
+  commitFilters: (next: DraftFilters) => void;
+  canPickTenant: boolean;
+  tenantsLoading: boolean;
+  tenantsError: boolean;
+  activeTenants: { tenant_id: string; organisation?: string }[];
+  taskTypeNames: string[];
+  timeRangeError: string | undefined;
+  setFollowsPresent: (value: boolean) => void;
+  draftRef: React.MutableRefObject<DraftFilters>;
+}): DataTableFilterDef[] {
+  const {
+    draft,
+    replaceDraft,
+    commitFilters,
+    canPickTenant,
+    tenantsLoading,
+    tenantsError,
+    activeTenants,
+    taskTypeNames,
+    timeRangeError,
+    setFollowsPresent,
+    draftRef,
+  } = options;
+
+  const defs: DataTableFilterDef[] = [
+    {
+      id: "searchScope",
+      label: "Search in",
+      type: "select",
+      value: draft.searchScope,
+      onChange: (v) => replaceDraft({ ...draftRef.current, searchScope: v }),
+      width: { base: "full", sm: "168px" },
+      options: [
+        { label: "All fields", value: "" },
+        { label: "Service", value: "service" },
+        { label: "Status code", value: "statusCode" },
+        { label: "End user", value: "endUser" },
+        { label: "Metadata", value: "metadata" },
+      ],
+    },
+  ];
+
+  if (canPickTenant) {
+    defs.push({
+      id: "tenant",
+      label: INSTITUTION,
+      type: "select",
+      param: "tenant_id",
+      value: draft.selectedTenantId,
+      onChange: (v) =>
+        replaceDraft({ ...draftRef.current, selectedTenantId: v }),
+      hint: FIELD_HINTS.logs.tenant.tip,
+      width: { base: "full", sm: "180px" },
+      options: tenantFilterOptions(
+        tenantsLoading,
+        tenantsError,
+        activeTenants,
+      ),
+    });
+  }
+
+  defs.push(
+    {
+      id: "taskType",
+      label: "Task Type",
+      type: "select",
+      param: "task_types",
+      value: draft.taskType,
+      onChange: (v) => replaceDraft({ ...draftRef.current, taskType: v }),
+      width: { base: "full", sm: "150px" },
+      options: [
+        { label: "All", value: "" },
+        ...taskTypeNames.map((tt) => ({
+          label: formatModelTaskTypeLabel(tt),
+          value: tt,
+        })),
+      ],
+    },
+    {
+      id: "status",
+      label: "Status",
+      type: "select",
+      param: "level",
+      value: draft.level,
+      onChange: (v) => replaceDraft({ ...draftRef.current, level: v }),
+      width: { base: "full", sm: "132px" },
+      options: [
+        { label: "All Statuses", value: "" },
+        { label: "Success", value: "success" },
+        { label: "Failure", value: "failure" },
+      ],
+    },
+    {
+      id: "timePreset",
+      label: "Time range",
+      type: "select",
+      value: draft.timePreset,
+      onChange: (v) => {
+        if (v === "custom") {
+          replaceDraft({ ...draftRef.current, timePreset: "custom" }, false);
+          return;
+        }
+        const preset = v as Exclude<LogTimePreset, "custom">;
+        setFollowsPresent(true);
+        replaceDraft({
+          ...draftRef.current,
+          timePreset: preset,
+          ...rangeForTimePreset(preset),
+        });
+      },
+      width: { base: "full", sm: "156px" },
+      options: [
+        { label: "Custom", value: "custom" },
+        ...LOG_TIME_PRESETS.map((preset) => ({
+          label: preset.label,
+          value: preset.id,
+        })),
+      ],
+    },
+    {
+      id: "startTime",
+      label: "Start Time",
+      type: "date",
+      param: "start_time",
+      value: draft.startTime,
+      onChange: (v) =>
+        replaceDraft(
+          { ...draftRef.current, timePreset: "custom", startTime: v },
+          false,
+        ),
+      onBlur: () => commitFilters(draftRef.current),
+      error: timeRangeError,
+      inputType: "datetime-local",
+      hint: FIELD_HINTS.logs.startTime.tip,
+      width: { base: "full", sm: "196px" },
+      cluster: "log-time",
+    },
+    {
+      id: "endTime",
+      label: "End Time",
+      type: "date",
+      param: "end_time",
+      value: draft.endTime,
+      onChange: (v) => {
+        setFollowsPresent(false);
+        replaceDraft(
+          { ...draftRef.current, timePreset: "custom", endTime: v },
+          false,
+        );
+      },
+      onBlur: () => commitFilters(draftRef.current),
+      error: timeRangeError,
+      inputType: "datetime-local",
+      hint: FIELD_HINTS.logs.endTime.tip,
+      width: { base: "full", sm: "196px" },
+      cluster: "log-time",
+    },
+  );
+
+  return defs;
 }
 
 const LogsPage: React.FC = () => {
@@ -973,6 +1158,34 @@ const LogsPage: React.FC = () => {
       ? (tracesError as Error).message
       : null;
 
+  const logsFilterDefs = useMemo(
+    () =>
+      buildLogsFilterDefs({
+        draft,
+        replaceDraft,
+        commitFilters,
+        canPickTenant,
+        tenantsLoading,
+        tenantsError: Boolean(tenantsError),
+        activeTenants,
+        taskTypeNames,
+        timeRangeError,
+        setFollowsPresent,
+        draftRef,
+      }),
+    [
+      draft,
+      replaceDraft,
+      commitFilters,
+      canPickTenant,
+      tenantsLoading,
+      tenantsError,
+      activeTenants,
+      taskTypeNames,
+      timeRangeError,
+    ],
+  );
+
   return (
     <>
       <Head>
@@ -1180,165 +1393,7 @@ const LogsPage: React.FC = () => {
                   error: searchError,
                   width: { base: "full", sm: "240px" },
                 }}
-                filterDefs={[
-                  {
-                    id: "searchScope",
-                    label: "Search in",
-                    type: "select",
-                    value: draft.searchScope,
-                    onChange: (v) =>
-                      replaceDraft({ ...draftRef.current, searchScope: v }),
-                    width: { base: "full", sm: "168px" },
-                    options: [
-                      { label: "All fields", value: "" },
-                      { label: "Service", value: "service" },
-                      { label: "Status code", value: "statusCode" },
-                      { label: "End user", value: "endUser" },
-                      { label: "Metadata", value: "metadata" },
-                    ],
-                  },
-                  ...(canPickTenant
-                    ? [
-                        {
-                          id: "tenant",
-                          label: INSTITUTION,
-                          type: "select" as const,
-                          param: "tenant_id",
-                          value: draft.selectedTenantId,
-                          onChange: (v: string) =>
-                            replaceDraft({
-                              ...draftRef.current,
-                              selectedTenantId: v,
-                            }),
-                          hint: FIELD_HINTS.logs.tenant.tip,
-                          width: { base: "full", sm: "180px" },
-                          options: [
-                            { label: `All ${INSTITUTIONS}`, value: "" },
-                            ...(tenantsLoading || tenantsError
-                              ? []
-                              : activeTenants.map(
-                                  (tenant: {
-                                    tenant_id: string;
-                                    organisation?: string;
-                                  }) => ({
-                                    label:
-                                      tenant.organisation || tenant.tenant_id,
-                                    value: tenant.tenant_id,
-                                  }),
-                                )),
-                          ],
-                        },
-                      ]
-                    : []),
-                  {
-                    id: "taskType",
-                    label: "Task Type",
-                    type: "select",
-                    param: "task_types",
-                    value: draft.taskType,
-                    onChange: (v) =>
-                      replaceDraft({ ...draftRef.current, taskType: v }),
-                    width: { base: "full", sm: "150px" },
-                    options: [
-                      { label: "All", value: "" },
-                      ...taskTypeNames.map((tt) => ({
-                        label: formatModelTaskTypeLabel(tt),
-                        value: tt,
-                      })),
-                    ],
-                  },
-                  {
-                    id: "status",
-                    label: "Status",
-                    type: "select",
-                    param: "level",
-                    value: draft.level,
-                    onChange: (v) =>
-                      replaceDraft({ ...draftRef.current, level: v }),
-                    width: { base: "full", sm: "132px" },
-                    options: [
-                      { label: "All Statuses", value: "" },
-                      { label: "Success", value: "success" },
-                      { label: "Failure", value: "failure" },
-                    ],
-                  },
-                  {
-                    id: "timePreset",
-                    label: "Time range",
-                    type: "select",
-                    value: draft.timePreset,
-                    onChange: (v) => {
-                      if (v === "custom") {
-                        replaceDraft(
-                          { ...draftRef.current, timePreset: "custom" },
-                          false,
-                        );
-                        return;
-                      }
-                      const preset = v as Exclude<LogTimePreset, "custom">;
-                      setFollowsPresent(true);
-                      replaceDraft({
-                        ...draftRef.current,
-                        timePreset: preset,
-                        ...rangeForTimePreset(preset),
-                      });
-                    },
-                    width: { base: "full", sm: "156px" },
-                    options: [
-                      { label: "Custom", value: "custom" },
-                      ...LOG_TIME_PRESETS.map((preset) => ({
-                        label: preset.label,
-                        value: preset.id,
-                      })),
-                    ],
-                  },
-                  {
-                    id: "startTime",
-                    label: "Start Time",
-                    type: "date",
-                    param: "start_time",
-                    value: draft.startTime,
-                    onChange: (v) =>
-                      replaceDraft(
-                        {
-                          ...draftRef.current,
-                          timePreset: "custom",
-                          startTime: v,
-                        },
-                        false,
-                      ),
-                    onBlur: () => commitFilters(draftRef.current),
-                    error: timeRangeError,
-                    inputType: "datetime-local",
-                    hint: FIELD_HINTS.logs.startTime.tip,
-                    width: { base: "full", sm: "196px" },
-                    cluster: "log-time",
-                  },
-                  {
-                    id: "endTime",
-                    label: "End Time",
-                    type: "date",
-                    param: "end_time",
-                    value: draft.endTime,
-                    onChange: (v) => {
-                      setFollowsPresent(false);
-                      replaceDraft(
-                        {
-                          ...draftRef.current,
-                          timePreset: "custom",
-                          endTime: v,
-                        },
-                        false,
-                      );
-                    },
-                    onBlur: () => commitFilters(draftRef.current),
-                    error: timeRangeError,
-                    inputType: "datetime-local",
-                    hint: FIELD_HINTS.logs.endTime.tip,
-                    width: { base: "full", sm: "196px" },
-                    cluster: "log-time",
-                  },
-                ]}
+                filterDefs={logsFilterDefs}
                 filterToolbarRightContent={
                   <HStack spacing={3} flexWrap="wrap" align="center">
                     <Menu closeOnSelect={false}>
