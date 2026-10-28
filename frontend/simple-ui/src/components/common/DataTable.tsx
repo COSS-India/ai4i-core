@@ -76,9 +76,11 @@ import {
   DATA_TABLE_CELL_MAX_W,
   TruncatingCellContent,
   getTruncateCellProps,
+  cssLengthToPx,
   resolveAdminColumnLayouts,
   shouldAutoTruncateColumn,
   shrinkToContentWidth,
+  useContentColumnWidths,
   type AdminColumnLayout,
 } from "./dataTableUtils";
 
@@ -756,7 +758,7 @@ const CLUSTER_CHILD_PROPS: FormControlProps = {
   w: "full",
 };
 
-const CLUSTER_GAP_PX = 8;
+const CLUSTER_GAP_PX = 16;
 
 function clusterStackProps(
   defs: DataTableFilterDef[],
@@ -766,7 +768,7 @@ function clusterStackProps(
     return { spacing: 3, align: "flex-start", flexShrink: 0 };
   }
   return {
-    spacing: 2,
+    spacing: 4,
     align: "flex-start",
     minW: sumClusterSize(defs, "minWidth"),
     maxW: sumClusterSize(defs, "maxWidth"),
@@ -1584,13 +1586,7 @@ function renderAdminDataCell<T>(
       {...(col.tdProps ?? {})}
       overflow="hidden"
     >
-      {truncate ? (
-        <TruncatingCellContent>{content}</TruncatingCellContent>
-      ) : (
-        <Box minW={0} w="100%" maxW="100%">
-          {content}
-        </Box>
-      )}
+      <TruncatingCellContent ellipsis={truncate}>{content}</TruncatingCellContent>
     </Td>
   );
 }
@@ -1902,7 +1898,7 @@ function AdminFilterToolbarSection({
           align={filterToolbarAlign}
           alignActionsToInputs={toolbarLabelsVisible}
           rightContent={filterToolbarRightContent}
-          spacing={filterToolbarSingleRow ? 2 : 3}
+          spacing={filterToolbarSingleRow ? 4 : 3}
           flexWrap={filterToolbarSingleRow ? { base: "wrap", md: "nowrap" } : "wrap"}
         >
           <ConfigDrivenFilters search={search} filterDefs={filterDefs} />
@@ -2047,10 +2043,12 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
 
   const { cardBg } = useAdminTableSurface();
   const rowChevron = showRowChevron ?? Boolean(onRowClick);
-  const columnLayouts = useMemo(
+  const fallbackColumnLayouts = useMemo(
     () => resolveAdminColumnLayouts(columns),
     [columns],
   );
+  const tableRef = useRef<HTMLTableElement>(null);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
 
   const clientTable = useAdminDataTable(paginate === "client" ? items : [], {
     initialPageSize,
@@ -2070,6 +2068,25 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
 
   const displayItems =
     paginate === "client" ? clientTable.paginatedItems : items;
+
+  const measuredWidths = useContentColumnWidths({
+    tableRef,
+    containerRef: tableContainerRef,
+    columns,
+    trailingFixedPx: rowChevron ? cssLengthToPx(ADMIN_CHEVRON_COLUMN_WIDTH) : undefined,
+    trailingColumnId: "row-chevron",
+    enabled: !isLoading,
+    contentKey: displayItems,
+  });
+  /** Once measured, `<colgroup>` owns widths; cells keep only wrapping rules. */
+  const columnLayouts = useMemo(() => {
+    if (!measuredWidths) return fallbackColumnLayouts;
+    const stripped = new Map<string, AdminColumnLayout>();
+    fallbackColumnLayouts.forEach((layout, id) => {
+      stripped.set(id, { minW: 0, whiteSpace: layout.whiteSpace });
+    });
+    return stripped;
+  }, [measuredWidths, fallbackColumnLayouts]);
   const pagination = resolveAdminPagination(
     paginate,
     clientTable,
@@ -2119,14 +2136,16 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
 
   const tableBody = (
     <TableContainer
+      ref={tableContainerRef}
       maxH={containerMaxH ?? maxHeight}
       overflowY="auto"
-      overflowX="hidden"
+      overflowX="auto"
       bg="white"
       sx={{ scrollbarGutter: "stable" }}
       {...restTableContainerProps}
     >
       <Table
+        ref={tableRef}
         variant="simple"
         bg="white"
         size={size}
@@ -2139,6 +2158,13 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
           "th, td": { verticalAlign: "middle" },
         }}
       >
+        {measuredWidths ? (
+          <colgroup>
+            {measuredWidths.map(({ id, width }) => (
+              <col key={id} style={{ width: `${width}px` }} />
+            ))}
+          </colgroup>
+        ) : null}
         <AdminTableHead
           columns={columns}
           columnLayouts={columnLayouts}

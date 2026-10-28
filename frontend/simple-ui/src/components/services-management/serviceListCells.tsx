@@ -35,6 +35,8 @@ export function renderServiceTaskTypeCell(service: Service): React.ReactNode {
   );
 }
 
+const SERVICE_TIERS_VISIBLE_COUNT = 3;
+
 export function renderServiceTierCell(service: Service): React.ReactNode {
   const names = service.tierNames;
   if (!names?.length) {
@@ -45,6 +47,8 @@ export function renderServiceTierCell(service: Service): React.ReactNode {
     );
   }
   const fullLabel = names.join(", ");
+  const visible = names.slice(0, SERVICE_TIERS_VISIBLE_COUNT);
+  const hiddenCount = names.length - visible.length;
   return (
     <HStack
       spacing={1}
@@ -53,7 +57,7 @@ export function renderServiceTierCell(service: Service): React.ReactNode {
       minW={0}
       title={fullLabel}
     >
-      {names.map((name) => (
+      {visible.map((name) => (
         <Badge
           key={name}
           colorScheme="gray"
@@ -65,6 +69,11 @@ export function renderServiceTierCell(service: Service): React.ReactNode {
           {name}
         </Badge>
       ))}
+      {hiddenCount > 0 ? (
+        <Badge colorScheme="gray" fontSize="xs" px={2} py={0.5} flexShrink={0}>
+          +{hiddenCount}
+        </Badge>
+      ) : null}
     </HStack>
   );
 }

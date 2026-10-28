@@ -339,6 +339,7 @@ export function TableFilterToolbar({
   justify = "flex-start",
   alignActionsToInputs = true,
   flexWrap = "wrap",
+  pinRightContent = true,
 }: Readonly<{
   children: React.ReactNode;
   hasActiveFilters?: boolean;
@@ -351,24 +352,13 @@ export function TableFilterToolbar({
   /** Offset actions by a form-label height. Turn off when every control hides its label. */
   alignActionsToInputs?: boolean;
   flexWrap?: React.ComponentProps<typeof HStack>["flexWrap"];
+  /**
+   * Push `rightContent` to the end of the row.
+   * Reset stays beside the filters either way.
+   */
+  pinRightContent?: boolean;
 }>) {
-  const actions =
-    (hasActiveFilters && onClear) || rightContent ? (
-      <HStack
-        spacing={2}
-        pt={alignActionsToInputs ? FORM_LABEL_TO_INPUT_PT : 0}
-        align="center"
-        flexShrink={0}
-        ml={rightContent ? "auto" : undefined}
-      >
-        {hasActiveFilters && onClear ? (
-          <Button size="sm" variant="outline" onClick={onClear}>
-            {clearLabel}
-          </Button>
-        ) : null}
-        {rightContent}
-      </HStack>
-    ) : null;
+  const labelOffset = alignActionsToInputs ? FORM_LABEL_TO_INPUT_PT : 0;
 
   return (
     <HStack
@@ -380,7 +370,24 @@ export function TableFilterToolbar({
       w="100%"
     >
       {children}
-      {actions}
+      {hasActiveFilters && onClear ? (
+        <Box pt={labelOffset} flexShrink={0}>
+          <Button size="sm" variant="outline" onClick={onClear}>
+            {clearLabel}
+          </Button>
+        </Box>
+      ) : null}
+      {rightContent ? (
+        <HStack
+          spacing={2}
+          pt={labelOffset}
+          align="center"
+          flexShrink={0}
+          ml={pinRightContent ? "auto" : undefined}
+        >
+          {rightContent}
+        </HStack>
+      ) : null}
     </HStack>
   );
 }

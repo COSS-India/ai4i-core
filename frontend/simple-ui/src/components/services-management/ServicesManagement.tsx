@@ -517,6 +517,7 @@ const ServicesManagement: React.FC = () => {
         header: "Tier",
         hint: FIELD_HINTS.service.col.tier,
         sortable: true,
+        truncate: false,
         cell: renderServiceTierCell,
       },
       {
