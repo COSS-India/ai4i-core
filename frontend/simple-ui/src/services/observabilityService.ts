@@ -275,73 +275,93 @@ export const getTelemetryTraceColumns = async (): Promise<TelemetryTraceColumnsR
   }
 };
 
+type TelemetryTraceSearchParams = {
+  taskType?: string;
+  level?: string;
+  startDate?: string;
+  endDate?: string;
+  page?: number;
+  pageSize?: number;
+  tenant_id?: string;
+  /** Exact end-user ID the caller sent as OpenAI `user`. */
+  user?: string;
+  /** Caller metadata pair; sent only when both are set. */
+  metadataKey?: string;
+  metadataValue?: string;
+  /** Keyword across all spans of a log (1–256 chars). */
+  q?: string;
+  /** Exact service id on the request span. */
+  serviceId?: string;
+  /** Comma-separated status codes (100–599, max 10). */
+  statusCode?: string;
+  /** Per-column "contains" searches; sent only for columns the catalogue marks filterable. */
+  url?: string;
+  model?: string;
+  application?: string;
+  apiKey?: string;
+  error?: string;
+  /** Exact HTTP method. */
+  method?: string;
+  sortBy?: TelemetryTraceSortBy;
+  sortOrder?: 'asc' | 'desc';
+  /** Comma-separated column keys; omit for default columns. */
+  columns?: string;
+};
+
+function appendIfPresent(
+  queryParams: URLSearchParams,
+  key: string,
+  value: string | undefined,
+): void {
+  if (value) queryParams.append(key, value);
+}
+
+/** Build query string for GET /telemetry/traces/search. */
+function buildTraceSearchQueryParams(
+  params: TelemetryTraceSearchParams,
+): URLSearchParams {
+  const queryParams = new URLSearchParams();
+  appendIfPresent(
+    queryParams,
+    'task_types',
+    params.taskType ? params.taskType.toUpperCase() : undefined,
+  );
+  // Prefer `status` (AI4IDS-3526); `status_filter` remains a BE legacy alias.
+  appendIfPresent(queryParams, 'status', mapStatusFilter(params.level));
+  appendIfPresent(queryParams, 'start_date', params.startDate);
+  appendIfPresent(queryParams, 'end_date', params.endDate);
+  appendIfPresent(queryParams, 'tenant_id', params.tenant_id);
+  appendIfPresent(queryParams, 'user', params.user);
+  if (params.metadataKey && params.metadataValue) {
+    queryParams.append('metadata_key', params.metadataKey);
+    queryParams.append('metadata_value', params.metadataValue);
+  }
+  appendIfPresent(queryParams, 'q', params.q);
+  appendIfPresent(queryParams, 'service_id', params.serviceId);
+  appendIfPresent(queryParams, 'status_code', params.statusCode);
+  appendIfPresent(queryParams, 'url', params.url);
+  appendIfPresent(queryParams, 'model', params.model);
+  appendIfPresent(queryParams, 'application', params.application);
+  appendIfPresent(queryParams, 'api_key', params.apiKey);
+  appendIfPresent(queryParams, 'error', params.error);
+  appendIfPresent(queryParams, 'method', params.method);
+  appendIfPresent(queryParams, 'sort_by', params.sortBy);
+  appendIfPresent(queryParams, 'sort_order', params.sortOrder);
+  appendIfPresent(queryParams, 'columns', params.columns);
+  queryParams.append('page', String(params.page ?? 1));
+  queryParams.append('page_size', String(params.pageSize ?? 15));
+  return queryParams;
+}
+
 /**
  * Search telemetry traces (unified list + aggregations).
  * GET /api/v1/telemetry/traces/search
  */
 export const searchTelemetryTraces = async (
-  params: {
-    taskType?: string;
-    level?: string;
-    startDate?: string;
-    endDate?: string;
-    page?: number;
-    pageSize?: number;
-    tenant_id?: string;
-    /** Exact end-user ID the caller sent as OpenAI `user`. */
-    user?: string;
-    /** Caller metadata pair; sent only when both are set. */
-    metadataKey?: string;
-    metadataValue?: string;
-    /** Keyword across all spans of a log (1–256 chars). */
-    q?: string;
-    /** Exact service id on the request span. */
-    serviceId?: string;
-    /** Comma-separated status codes (100–599, max 10). */
-    statusCode?: string;
-    /** Per-column "contains" searches; sent only for columns the catalogue marks filterable. */
-    url?: string;
-    model?: string;
-    application?: string;
-    apiKey?: string;
-    error?: string;
-    /** Exact HTTP method. */
-    method?: string;
-    sortBy?: TelemetryTraceSortBy;
-    sortOrder?: 'asc' | 'desc';
-    /** Comma-separated column keys; omit for default columns. */
-    columns?: string;
-  }
+  params: TelemetryTraceSearchParams,
 ): Promise<TelemetryTraceSearchResponse> => {
   try {
-    const queryParams = new URLSearchParams();
-    if (params.taskType) queryParams.append('task_types', params.taskType.toUpperCase());
-    const statusFilter = mapStatusFilter(params.level);
-    // Prefer `status` (AI4IDS-3526); `status_filter` remains a BE legacy alias.
-    if (statusFilter) queryParams.append('status', statusFilter);
-    if (params.startDate) queryParams.append('start_date', params.startDate);
-    if (params.endDate) queryParams.append('end_date', params.endDate);
-    if (params.tenant_id) queryParams.append('tenant_id', params.tenant_id);
-    if (params.user) queryParams.append('user', params.user);
-    if (params.metadataKey && params.metadataValue) {
-      queryParams.append('metadata_key', params.metadataKey);
-      queryParams.append('metadata_value', params.metadataValue);
-    }
-    if (params.q) queryParams.append('q', params.q);
-    if (params.serviceId) queryParams.append('service_id', params.serviceId);
-    if (params.statusCode) queryParams.append('status_code', params.statusCode);
-    if (params.url) queryParams.append('url', params.url);
-    if (params.model) queryParams.append('model', params.model);
-    if (params.application) queryParams.append('application', params.application);
-    if (params.apiKey) queryParams.append('api_key', params.apiKey);
-    if (params.error) queryParams.append('error', params.error);
-    if (params.method) queryParams.append('method', params.method);
-    if (params.sortBy) queryParams.append('sort_by', params.sortBy);
-    if (params.sortOrder) queryParams.append('sort_order', params.sortOrder);
-    if (params.columns) queryParams.append('columns', params.columns);
-    queryParams.append('page', String(params.page ?? 1));
-    queryParams.append('page_size', String(params.pageSize ?? 15));
-
+    const queryParams = buildTraceSearchQueryParams(params);
     const response = await apiService.get(
       telemetryUrl(`${apiEndpoints.telemetry.tracesSearch}?${queryParams.toString()}`),
       { timeout: 30000, responseSchema: telemetryTraceSearchResponseSchema }

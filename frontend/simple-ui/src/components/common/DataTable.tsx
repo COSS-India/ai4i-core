@@ -2134,11 +2134,10 @@ function useAdminColumnFilteredItems<T>(options: Readonly<{
   const columnFilterCount = activeColumnFilterCount(columnFilters);
   const hasActiveFilters = hasToolbarFilters || columnFilterCount > 0;
   const searchColumns = useMemo(() => {
+    const pageOnlyHelper =
+      paginate === "server" ? PAGE_ONLY_SEARCH_HELPER : undefined;
     const withFilters = columnSearch
-      ? withAutoColumnFilters<T, DataTableColumn<T>>(
-          columns,
-          paginate === "server" ? PAGE_ONLY_SEARCH_HELPER : undefined,
-        )
+      ? withAutoColumnFilters<T, DataTableColumn<T>>(columns, pageOnlyHelper)
       : columns;
     return withAutoColumnSort<T, DataTableColumn<T>>(withFilters, filterDefs);
   }, [columnSearch, paginate, columns, filterDefs]);

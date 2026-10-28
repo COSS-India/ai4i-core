@@ -475,6 +475,63 @@ function shrinkFloor(col: ColumnSizingInput): number {
   );
 }
 
+function shrinkableIndexes(cols: readonly ColumnSizingInput[]): number[] {
+  return cols
+    .map((c, i) => (c.mode === "shrink" ? i : -1))
+    .filter((i) => i >= 0);
+}
+
+/** Give leftover viewport space to shrink columns, proportional to natural width. */
+function growShrinkColumns(
+  widths: number[],
+  cols: readonly ColumnSizingInput[],
+  shrinkable: readonly number[],
+  available: number,
+  total: number,
+): number[] {
+  const weight = shrinkable.reduce((sum, i) => sum + cols[i].natural, 0);
+  if (weight > 0) {
+    const extra = available - total;
+    for (const i of shrinkable) {
+      widths[i] += (extra * cols[i].natural) / weight;
+    }
+  }
+  return widths.map((w) => Math.floor(w));
+}
+
+/** Binary-search a shared max width so shrink columns fit the leftover budget. */
+function shrinkLevelForBudget(
+  cols: readonly ColumnSizingInput[],
+  shrinkable: readonly number[],
+  floors: readonly number[],
+  budget: number,
+): number {
+  const widthAt = (level: number) =>
+    shrinkable.reduce(
+      (sum, i) => sum + Math.max(floors[i], Math.min(cols[i].natural, level)),
+      0,
+    );
+  if (budget <= 0 || widthAt(0) >= budget) return 0;
+
+  let lo = 0;
+  let hi = Math.max(...shrinkable.map((i) => cols[i].natural), 0);
+  for (let step = 0; step < 24; step++) {
+    const mid = (lo + hi) / 2;
+    if (widthAt(mid) <= budget) lo = mid;
+    else hi = mid;
+  }
+  return lo;
+}
+
+function fitWidthsToAvailable(widths: number[], available: number): number[] {
+  const assigned = widths.reduce((sum, w) => sum + w, 0);
+  if (assigned > available) {
+    const scale = available / assigned;
+    return widths.map((w) => Math.max(40, Math.floor(w * scale)));
+  }
+  return widths.map((w) => Math.round(w));
+}
+
 /**
  * Viewport-fit widths with no horizontal scrollbar:
  * - room to spare: only `shrink` columns grow; fixed/content stay tight
@@ -487,55 +544,27 @@ export function distributeColumnWidths(
   const widths = cols.map((c) => c.natural);
   if (available <= 0) return widths;
   const total = widths.reduce((sum, w) => sum + w, 0);
-
-  const shrinkable = cols
-    .map((c, i) => (c.mode === "shrink" ? i : -1))
-    .filter((i) => i >= 0);
+  const shrinkable = shrinkableIndexes(cols);
 
   if (total <= available) {
-    const weight = shrinkable.reduce((sum, i) => sum + cols[i].natural, 0);
-    if (weight > 0) {
-      const extra = available - total;
-      for (const i of shrinkable) {
-        widths[i] += (extra * cols[i].natural) / weight;
-      }
-    }
-    return widths.map((w) => Math.floor(w));
+    return growShrinkColumns(widths, cols, shrinkable, available, total);
   }
 
   const locked = cols.reduce(
     (sum, c) => (c.mode === "shrink" ? sum : sum + c.natural),
     0,
   );
-  const budget = available - locked;
   const floors = cols.map(shrinkFloor);
-  const widthAt = (level: number) =>
-    shrinkable.reduce(
-      (sum, i) => sum + Math.max(floors[i], Math.min(cols[i].natural, level)),
-      0,
-    );
-
-  let level = 0;
-  if (budget > 0 && widthAt(0) < budget) {
-    let lo = 0;
-    let hi = Math.max(...shrinkable.map((i) => cols[i].natural), 0);
-    for (let step = 0; step < 24; step++) {
-      const mid = (lo + hi) / 2;
-      if (widthAt(mid) <= budget) lo = mid;
-      else hi = mid;
-    }
-    level = lo;
-  }
+  const level = shrinkLevelForBudget(
+    cols,
+    shrinkable,
+    floors,
+    available - locked,
+  );
   for (const i of shrinkable) {
     widths[i] = Math.max(floors[i], Math.min(cols[i].natural, level));
   }
-
-  let assigned = widths.reduce((sum, w) => sum + w, 0);
-  if (assigned > available) {
-    const scale = available / assigned;
-    return widths.map((w) => Math.max(40, Math.floor(w * scale)));
-  }
-  return widths.map((w) => Math.round(w));
+  return fitWidthsToAvailable(widths, available);
 }
 
 /**

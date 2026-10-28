@@ -62,13 +62,33 @@ function traceRowField(row: TelemetryTraceRecord, key: string): unknown {
   return Reflect.get(row, key);
 }
 
+/** Stable text for client-side sort; avoids `[object Object]` from String(obj). */
+function comparableText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  if (value == null) return "";
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value) || typeof value === "object") {
+    try {
+      return JSON.stringify(value) ?? "";
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
 function compareTraceRowValues(a: unknown, b: unknown, dir: 1 | -1): number {
   if (a == null && b == null) return 0;
   if (a == null) return 1;
   if (b == null) return -1;
   if (typeof a === "number" && typeof b === "number") return (a - b) * dir;
   return (
-    String(a).localeCompare(String(b), undefined, { sensitivity: "base" }) * dir
+    comparableText(a).localeCompare(comparableText(b), undefined, {
+      sensitivity: "base",
+    }) * dir
   );
 }
 
