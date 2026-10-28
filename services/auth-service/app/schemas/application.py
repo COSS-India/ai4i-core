@@ -50,6 +50,9 @@ _APPLICATION_CREATE_EXAMPLE = {
     "description": "Public-facing translation widget for the customer portal",
     "domain": "portal.example.com",
     "allocated_percentage": 50.00,
+    "service_fallbacks": {
+        "llm-11": ["llm-01-aug"],
+    },
 }
 
 
@@ -113,6 +116,9 @@ _APPLICATION_UPDATE_EXAMPLE = {
     "domain": "portal.example.com",
     "status": "ACTIVE",
     "policy_id": [1, 2],
+    "service_fallbacks": {
+        "llm-11": ["llm-01-aug"],
+    },
 }
 
 
