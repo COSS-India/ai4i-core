@@ -42,7 +42,8 @@
      space under them, and ignores fixed flex widths. Table cells share one
      height (the cards line up) and keep their widths. The 3.5mm border-spacing
      is the gutter; the -3.5mm margins take it back off the outer edges
-     (186mm is the A4 content width). */
+     (186mm is the A4 content width). These are layout tables, not data:
+     role="presentation", no <th>. */
   table.cols { width: 193mm; margin: 0 -3.5mm; border-collapse: separate; border-spacing: 3.5mm 0; table-layout: fixed; }
   table.cols + table.cols { margin-top: 3.5mm; }
   table.cols > tbody > tr > td, table.cols > tr > td { vertical-align: top; }
@@ -121,7 +122,7 @@
   {# ── Model Portfolio ── #}
   <div class="gap"></div>
   <h2>Model Portfolio</h2>
-  <table class="cols"><tr>
+  <table role="presentation" class="cols"><tr>
     <td class="card" style="width: 36mm">
       <div class="label">Total models</div><div class="value">{{ models.total }}</div>
       <div class="note">Registered on the platform</div>
@@ -148,7 +149,7 @@
   </tr></table>
   {% if models.by_task %}
   <div class="caption">Models by task type</div>
-  <table class="grid">
+  <table role="presentation" class="grid">
     {% for row in models.by_task | batch(4) %}
     <tr>{% for t in row %}<td><div class="item"><span class="n clip">{{ t.name }}</span><span class="c">{{ t.count }}</span></div></td>{% endfor %}
       {% for _ in range(4 - row | length) %}<td></td>{% endfor %}</tr>
@@ -159,7 +160,7 @@
   {# ── Adoption Ratio ── #}
   <div class="gap"></div>
   <h2>Adoption Ratio</h2>
-  <table class="cols"><tr>
+  <table role="presentation" class="cols"><tr>
     <td class="panel">
       <div class="head"><span class="title">Institutions · {{ adoption.institutions_total }} total</span>
         <span class="note">{% if adoption.institutions_new %}<span class="new">+{{ adoption.institutions_new }} new</span> · {% endif %}{{ adoption.institutions_active_pct }}</span></div>
@@ -174,9 +175,9 @@
       <div class="note">Active: at least one request in the period</div>
     </td>
   </tr></table>
-  <table class="cols"><tr>
+  <table role="presentation" class="cols"><tr>
     <td class="panel">
-      <table class="pair"><tr>
+      <table role="presentation" class="pair"><tr>
         <td><div class="label">Total inferences</div>
           <div class="value">{{ adoption.requests }}</div>
           <div class="note">{% if adoption.requests_change %}<span class="{{ 'up' if adoption.requests_change_up else 'down' }}">{{ adoption.requests_change }}</span> {{ adoption.vs_phrase }}{% else %}In this period{% endif %}</div></td>
@@ -185,7 +186,7 @@
       </tr></table>
       {% if adoption.tasks %}
       <div class="note tasks-head">By task type</div>
-      <table class="grid">
+      <table role="presentation" class="grid">
         {% for row in adoption.tasks | batch(2) %}
         <tr>{% for t in row %}<td><div class="task"><span class="n clip">{{ t.name }}</span><div class="track"><div class="fill" style="width: {{ t.width }}%"></div></div><span class="c">{{ t.count }}</span></div></td>{% endfor %}
           {% if row | length < 2 %}<td></td>{% endif %}</tr>
@@ -205,7 +206,7 @@
   {# ── Budget Utilisation ── #}
   <div class="gap"></div>
   <h2>Budget Utilisation</h2>
-  <table class="cols budget"><tr>
+  <table role="presentation" class="cols budget"><tr>
     {% for c in budget.cards %}
     <td class="card">
       <div class="label">{{ c.label }}</div>

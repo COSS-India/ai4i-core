@@ -42,6 +42,7 @@ NO_MODEL_TRAFFIC = "No model traffic in this period"
 NO_INSTITUTION_TRAFFIC = "No institution traffic in this period"
 NO_SPEND = "No spend in this period"
 NOT_PER_DAY = "Not calculated for periods under a day"
+BURN_RATE = "Burn rate"
 # A stacked-bar segment narrower than this (% of the bar) has no room for its
 # count; the legend still gives it.
 MIN_LABELLED_SEGMENT = 8.0
@@ -189,12 +190,12 @@ def _spend_cards(d: ReportData) -> tuple[dict, dict]:
     ps = d.period_spend
     if ps is None:
         note = "" if "period_spend" in d.failed else "Usage not recorded for this period"
-        return _card("Spent", fmt.NA, note), _card("Burn rate", fmt.NA, note)
+        return _card("Spent", fmt.NA, note), _card(BURN_RATE, fmt.NA, note)
     since = f" (recorded since {ps.since.astimezone(IST):%d %b})" if ps.since else ""
     spent_card = _card("Spent", fmt.inr(ps.amount), f"In this period{since}")
     if ps.burn_rate is None:  # a period under a day
-        return spent_card, _card("Burn rate", fmt.NO_RATE, NOT_PER_DAY)
-    return spent_card, _card("Burn rate", fmt.inr(ps.burn_rate), f"Average spend per day in this period{since}",
+        return spent_card, _card(BURN_RATE, fmt.NO_RATE, NOT_PER_DAY)
+    return spent_card, _card(BURN_RATE, fmt.inr(ps.burn_rate), f"Average spend per day in this period{since}",
                              unit="/day")
 
 
