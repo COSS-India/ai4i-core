@@ -6,7 +6,7 @@ ApplicationService via authorize_institution_scope, a DB-verified role lookup, m
 TenantService.enforce_scope / _deny_moderator / _assert_can_reveal_pii do it.
 """
 
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,7 +52,7 @@ async def create_application(
     body: ApplicationCreate,
     current_user: User = Depends(get_current_user),
     svc: ApplicationService = Depends(get_application_service),
-    platform_core_db: Optional[AsyncSession] = Depends(get_platform_core_db),
+    platform_core_db: Annotated[Optional[AsyncSession], Depends(get_platform_core_db)] = None,
 ):
     """Onboard an Application under a tenant as an independent entity.
 
