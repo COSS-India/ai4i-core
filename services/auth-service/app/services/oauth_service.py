@@ -216,10 +216,10 @@ class OAuthService:
             username=username,
             full_name=full_name,
             avatar_url=avatar_url,
-            is_active=True,  # OAuth identity = email already verified by provider
             creation_type=creation_type,
             tenant_id=tenant_id,
         )
+        user.mark_activated()  # OAuth identity = email already verified by provider
         await self._users.create(user)
 
         try:

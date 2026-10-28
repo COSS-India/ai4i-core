@@ -57,6 +57,7 @@ from app.services.email_helpers import (
     issue_session,
     persist_token_verification,
     reissue_setup_token,
+    reissue_verify_token,
     resolve_tenant_id,
     setup_token_expires_at,
 )
@@ -290,9 +291,13 @@ class AuthService:
             return await self.confirm_tenant_email_change(token, background_tasks)
 
         token_obj, user = await self._resolve_verified_token(token, TokenType.VERIFY, "verification link")
+        # Verification only ever activates a never-activated account; an
+        # admin-suspended user must not re-activate themselves with a link.
+        if user.is_activated():
+            raise TokenInvalidError("Verification link has already been used.")
         await self._assert_user_tenant_onboarding(user)
 
-        user.is_active = True
+        user.mark_activated()
         await self._verifications.deactivate(token_obj)
         await self._users.commit()
         logger.info("Email verified for user id=%s", user.id)
@@ -406,29 +411,21 @@ class AuthService:
         Anti-enumeration: this method ALWAYS returns successfully (consistent
         with /auth/forgot-password and /auth/resend-setup-link). Unknown emails
         are a silent no-op. Only sends email to users who registered via
-        /auth/register (have credentials, inactive). Tenant contact admins must
+        /auth/register (have credentials, never activated). Tenant contact admins must
         use /auth/resend-setup-link instead.
         """
         user = await self._users.get_by_email(email)
         if not user:
             return  # silent no-op (anti-enumeration)
-        if user.is_active:
-            return  # already verified: silent no-op
 
-        existing_creds = await self._credentials.get_by_user_id(user.id)
-        if not existing_creds:
-            return  # passwordless onboarding — use /auth/resend-setup-link
-
-        user_id_str = str(user.id)
-        await self._verifications.deactivate_all_for_user(user_id_str, token_type=TokenType.VERIFY)
-
-        verify_token = self._tokens.create_verify_token(user_id=user_id_str, email=email)
-        await persist_token_verification(
-            self._verifications,
-            verify_token,
-            user.id,
-            setup_token_expires_at(),
+        verify_token = await reissue_verify_token(
+            user,
+            credentials_repo=self._credentials,
+            verifications_repo=self._verifications,
+            token_service=self._tokens,
         )
+        if verify_token is None:
+            return  # already verified, suspended or passwordless: silent no-op
         await self._users.commit()
 
         logger.info("Verification link resent for user id=%s", user.id)
@@ -711,7 +708,7 @@ class AuthService:
         await self._credentials.create(creds)
 
         was_inactive = not user.is_active
-        user.is_active = True
+        user.mark_activated()
         await self._verifications.deactivate(token_obj)
         await self._activate_pending_tenant_for_contact_admin(user)
         await self._users.commit()

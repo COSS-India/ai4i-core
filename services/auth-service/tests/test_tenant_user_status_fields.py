@@ -8,9 +8,11 @@ The tenant lifecycle never touches a user's own ``is_active``; it only toggles
   * Suspended (lock)  → is_tenant_active=False (tenant SUSPENDED/DEACTIVATED)
   * Suspended (admin) → is_active=False, is_activated=True
   * Pending Activation→ is_active=False, is_activated=False
-So both flags must survive into the API payload.
+So both flags must survive into the API payload. ``is_activated`` comes from
+``users.activated_at``, not from a credentials row.
 """
 
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -32,7 +34,10 @@ def _make_service() -> TenantService:
     )
 
 
-def _user(*, is_active: bool = True, is_tenant_active=None) -> User:
+_ACTIVATED_AT = datetime(2026, 10, 1, tzinfo=timezone.utc)
+
+
+def _user(*, is_active: bool = True, is_tenant_active=None, activated: bool = True) -> User:
     return User(
         id=uuid4(),
         email="tenant-user@example.com",
@@ -40,6 +45,7 @@ def _user(*, is_active: bool = True, is_tenant_active=None) -> User:
         tenant_id=1,
         is_active=is_active,
         is_tenant_active=is_tenant_active,
+        activated_at=_ACTIVATED_AT if activated else None,
     )
 
 
@@ -49,9 +55,6 @@ class TestBuildTenantUserResponse:
         svc = _make_service()
         user = _user(is_active=True, is_tenant_active=False)
         svc._roles.get_roles_for_users = AsyncMock(return_value={user.id: ["USER"]})
-        svc._credentials.user_ids_with_credentials = AsyncMock(
-            return_value={user.id}
-        )
 
         out = await svc.build_tenant_user_response(user)
 
@@ -62,9 +65,8 @@ class TestBuildTenantUserResponse:
     @pytest.mark.asyncio
     async def test_pending_activation_user_not_activated(self) -> None:
         svc = _make_service()
-        user = _user(is_active=False, is_tenant_active=True)
+        user = _user(is_active=False, is_tenant_active=True, activated=False)
         svc._roles.get_roles_for_users = AsyncMock(return_value={user.id: ["USER"]})
-        svc._credentials.user_ids_with_credentials = AsyncMock(return_value=set())
 
         out = await svc.build_tenant_user_response(user)
 
@@ -78,14 +80,10 @@ class TestBuildTenantUserResponses:
     async def test_list_carries_flags_per_user(self) -> None:
         svc = _make_service()
         activated = _user(is_active=True, is_tenant_active=False)
-        pending = _user(is_active=False, is_tenant_active=False)
+        pending = _user(is_active=False, is_tenant_active=False, activated=False)
 
         svc._roles.get_roles_for_users = AsyncMock(
             return_value={activated.id: ["USER"], pending.id: ["USER"]}
-        )
-        # Only the first user has completed setup.
-        svc._credentials.user_ids_with_credentials = AsyncMock(
-            return_value={activated.id}
         )
 
         out = await svc.build_tenant_user_responses([activated, pending])
@@ -99,7 +97,7 @@ class TestBuildTenantUserResponses:
     @pytest.mark.asyncio
     async def test_empty_list_short_circuits(self) -> None:
         svc = _make_service()
-        svc._credentials.user_ids_with_credentials = AsyncMock()
+        svc._roles.get_roles_for_users = AsyncMock()
 
         assert await svc.build_tenant_user_responses([]) == []
-        svc._credentials.user_ids_with_credentials.assert_not_awaited()
+        svc._roles.get_roles_for_users.assert_not_awaited()

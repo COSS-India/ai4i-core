@@ -69,7 +69,8 @@ export interface TenantUserView {
   full_name?: string | null;
   is_active: boolean;
   is_tenant_active?: boolean | null;
-  /** True once the user completed setup (set a password). Distinguishes a
+  /** True once the account has been active (verified email / set password /
+   * OAuth signup). Distinguishes a
    * suspended user (is_active=false, activated) from one pending activation. */
   is_activated?: boolean;
   creation_type?: CreationType | null;

@@ -7,7 +7,6 @@ from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from collections.abc import Iterable
 
 from app.models.credentials import UserCredentials
 from app.repositories.base import BaseRepository
@@ -26,24 +25,6 @@ class CredentialsRepository(BaseRepository):
     async def delete(self, creds: UserCredentials) -> None:
         await self._db.delete(creds)
         await self._db.flush()
-
-    async def user_ids_with_credentials(
-        self, user_ids: Iterable[UUID]
-    ) -> set[UUID]:
-        """Return the subset of ``user_ids`` that have a credentials row.
-
-        One query for the whole page (used by tenant-user list responses to
-        derive ``is_activated`` without an N+1 per-user lookup).
-        """
-        ids = list(user_ids)
-        if not ids:
-            return set()
-        result = await self._db.execute(
-            select(UserCredentials.user_id).where(
-                UserCredentials.user_id.in_(ids)
-            )
-        )
-        return set(result.scalars().all())
 
     async def update_password(
         self, creds: UserCredentials, password_hash: str, password_salt: str
