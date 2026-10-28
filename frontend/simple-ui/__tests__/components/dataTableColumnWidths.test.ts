@@ -15,11 +15,17 @@ describe("distributeColumnWidths", () => {
     { natural: 120, header: 70, mode: "fixed" },
   ];
 
-  it("grows non-fixed columns in proportion to content when there is room", () => {
+  it("gives leftover space only to shrink columns", () => {
     const widths = distributeColumnWidths(cols, 720);
     expect(widths[2]).toBe(120);
-    expect(widths[0]).toBe(400);
-    expect(widths[1]).toBe(200);
+    expect(widths[1]).toBe(100);
+    expect(widths[0]).toBe(500);
+    expect(sum(widths)).toBeLessThanOrEqual(720);
+  });
+
+  it("treats price columns as shrinkable, not content-locked", () => {
+    expect(resolveColumnSizingMode({ id: "inputPrice" })).toBe("shrink");
+    expect(resolveColumnSizingMode({ id: "cached_input_price" })).toBe("shrink");
   });
 
   it("shrinks only text columns when space is tight, keeping content columns whole", () => {
@@ -42,24 +48,37 @@ describe("distributeColumnWidths", () => {
     expect(widths[0]).toBe(350);
   });
 
-  it("never shrinks a text column below its header or the readable minimum", () => {
-    const widths = distributeColumnWidths(
+  it("scales to fit the viewport when floors would otherwise overflow", () => {
+    const roomy = distributeColumnWidths(
+      [
+        { natural: 400, header: 150, mode: "shrink" },
+        { natural: 400, header: 40, mode: "shrink" },
+      ],
+      300,
+    );
+    expect(roomy[0]).toBeGreaterThanOrEqual(150);
+    expect(roomy[1]).toBeGreaterThanOrEqual(128);
+    expect(sum(roomy)).toBeLessThanOrEqual(300);
+
+    const tight = distributeColumnWidths(
       [
         { natural: 400, header: 150, mode: "shrink" },
         { natural: 400, header: 40, mode: "shrink" },
       ],
       100,
     );
-    expect(widths).toEqual([150, 128]);
+    expect(sum(tight)).toBeLessThanOrEqual(100);
+    expect(tight.every((w) => w >= 40)).toBe(true);
   });
 });
 
 describe("resolveColumnSizingMode", () => {
-  it("classifies control, short-value and text columns", () => {
+  it("classifies control, compact badge, and text columns", () => {
     expect(resolveColumnSizingMode({ id: "actions" })).toBe("fixed");
     expect(resolveColumnSizingMode({ id: "x", width: "120px" })).toBe("fixed");
-    expect(resolveColumnSizingMode({ id: "createdAt" })).toBe("content");
-    expect(resolveColumnSizingMode({ id: "version" })).toBe("content");
+    expect(resolveColumnSizingMode({ id: "task" })).toBe("fixed");
+    expect(resolveColumnSizingMode({ id: "status" })).toBe("fixed");
+    expect(resolveColumnSizingMode({ id: "createdAt" })).toBe("fixed");
     expect(resolveColumnSizingMode({ id: "name" })).toBe("shrink");
     expect(resolveColumnSizingMode({ id: "email" })).toBe("shrink");
   });

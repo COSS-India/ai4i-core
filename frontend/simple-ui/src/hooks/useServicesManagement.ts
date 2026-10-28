@@ -14,7 +14,7 @@ import {
   type ServiceListColumnDef,
 } from "../components/services-management/serviceListColumns";
 import {
-  serviceMatchesRegistryFilters,
+  serviceMatchesSearch,
   serviceSelectOptions,
 } from "../components/services-management/serviceRegistryFilters";
 import {
@@ -146,14 +146,6 @@ const buildTierFilterOptions = (
   return Array.from(byId, ([id, name]) => ({ id, name })).sort((a, b) =>
     a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
   );
-};
-
-/** Client-side tier filter: a service carries many tiers, so this is membership. */
-const serviceMatchesTier = (service: Service, filterTierId: string): boolean => {
-  if (filterTierId === SERVICE_TIER.FILTER.ALL) return true;
-  const ids = (service.tierIds ?? []).filter(Boolean).map(String);
-  if (filterTierId === SERVICE_TIER.FILTER.NONE) return ids.length === 0;
-  return ids.includes(String(filterTierId));
 };
 
 const formatModelSubmissionDate = (value?: string | number | null): string => {
@@ -728,28 +720,15 @@ export function useServicesManagement() {
   // Offline catalogue: name + tier filter, then sort, over the full fetched list.
   // When GET /services/columns is available, filters and sort are query params
   // and the rows are already one server page.
+  // Toolbar search filters by name. Status/task type are in the fetch query.
+  // Tier / model / service id are column searches on the table.
   const registryTableItems = useMemo(() => {
     if (serviceListUsesServer) return services;
-    let filtered = services.filter((service) =>
-      serviceMatchesRegistryFilters(service, {
-        query: searchQuery,
-        modelName: filterModelName,
-        serviceId: filterServiceId,
-      }),
+    const filtered = services.filter((service) =>
+      serviceMatchesSearch(service, searchQuery),
     );
-    if (filterTier !== SERVICE_TIER.FILTER.ALL) {
-      filtered = filtered.filter((s) => serviceMatchesTier(s, filterTier));
-    }
     return registrySort.apply(filtered);
-  }, [
-    services,
-    searchQuery,
-    filterModelName,
-    filterServiceId,
-    filterTier,
-    registrySort,
-    serviceListUsesServer,
-  ]);
+  }, [services, searchQuery, registrySort, serviceListUsesServer]);
 
   const tiersQuery = useQuery({
     queryKey: ACTIVE_TIERS_QUERY_KEY,
@@ -807,12 +786,8 @@ export function useServicesManagement() {
       : hasActiveClientServiceFilters({
         filterStatus,
         filterTaskType,
-        filterTier,
-        filterModelName,
-        filterServiceId,
         searchQuery,
         showTaskTypeAllOption,
-        allTierValue: SERVICE_TIER.FILTER.ALL,
       });
   const clearAllFilters = () => {
     setSearchQuery("");

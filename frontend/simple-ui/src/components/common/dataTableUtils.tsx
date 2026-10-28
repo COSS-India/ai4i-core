@@ -1,4 +1,9 @@
-import { Box, type TableCellProps } from "@chakra-ui/react";
+import {
+  Badge,
+  Box,
+  type BadgeProps,
+  type TableCellProps,
+} from "@chakra-ui/react";
 import React, {
   useCallback,
   useEffect,
@@ -98,10 +103,10 @@ const COMPACT_COLUMN_WIDTHS: Record<string, string> = {
   created: "7.5rem",
   // Short version tokens ("v6") — header still needs a little room for sort.
   version: "5.5rem",
-  // "MODEL TASK TYPE" header + sort carets (Services).
-  task: "10rem",
-  modeltasktype: "10rem",
-  // Shorter "TASK TYPE" header on Logs.
+  // Badge column (LLM / NMT) — keep tight; full header is available via title.
+  task: "5.75rem",
+  modeltasktype: "5.75rem",
+  // "TASK TYPE" header on Logs.
   tasktype: "7.75rem",
   task_type: "7.75rem",
   method: "5.25rem",
@@ -198,9 +203,6 @@ const CONTENT_WIDTH_IDS = new Set([
   "publishedat",
   "publishedon",
   "published_on",
-  "inputprice",
-  "outputprice",
-  "cachedinputprice",
 ]);
 
 function isContentWidthColumn(col: { id: string }): boolean {
@@ -436,9 +438,21 @@ const MIN_SHRINK_COLUMN_PX = 128;
 
 export function resolveColumnSizingMode(col: AdminColumnInput): ColumnSizingMode {
   if (isShrinkWrapColumn(col)) return "fixed";
+  // Badge / status / task-type rails: fixed rem width so a long label like
+  // LANGUAGE-DIARIZATION cannot inflate the column past its pin.
+  if (isCompactColumn(col)) return "fixed";
   if (col.width != null && !isFluidWidthHint(col.width)) return "fixed";
   if (isContentWidthColumn(col)) return "content";
   return "shrink";
+}
+
+/** Pinned rem width for compact columns; used when mode is fixed. */
+export function resolveFixedColumnWidthPx(col: AdminColumnInput): number | undefined {
+  return (
+    cssLengthToPx(col.width) ??
+    cssLengthToPx(compactColumnWidth(col)) ??
+    cssLengthToPx(col.maxW)
+  );
 }
 
 /** px for `"12px"` / `"9rem"` / numbers; undefined for %, auto and responsive objects. */
@@ -462,10 +476,9 @@ function shrinkFloor(col: ColumnSizingInput): number {
 }
 
 /**
- * Content-first widths that fill `available`:
- * - room to spare: every non-fixed column grows in proportion to its content
- * - too tight: the widest `shrink` columns are levelled down first, never
- *   below their header or a readable minimum
+ * Viewport-fit widths with no horizontal scrollbar:
+ * - room to spare: only `shrink` columns grow; fixed/content stay tight
+ * - too tight: level down `shrink` columns, then scale everything to fit
  */
 export function distributeColumnWidths(
   cols: readonly ColumnSizingInput[],
@@ -475,21 +488,21 @@ export function distributeColumnWidths(
   if (available <= 0) return widths;
   const total = widths.reduce((sum, w) => sum + w, 0);
 
+  const shrinkable = cols
+    .map((c, i) => (c.mode === "shrink" ? i : -1))
+    .filter((i) => i >= 0);
+
   if (total <= available) {
-    const growable = cols
-      .map((c, i) => (c.mode === "fixed" ? -1 : i))
-      .filter((i) => i >= 0);
-    const weight = growable.reduce((sum, i) => sum + cols[i].natural, 0);
+    const weight = shrinkable.reduce((sum, i) => sum + cols[i].natural, 0);
     if (weight > 0) {
       const extra = available - total;
-      for (const i of growable) widths[i] += (extra * cols[i].natural) / weight;
+      for (const i of shrinkable) {
+        widths[i] += (extra * cols[i].natural) / weight;
+      }
     }
     return widths.map((w) => Math.floor(w));
   }
 
-  const shrinkable = cols
-    .map((c, i) => (c.mode === "shrink" ? i : -1))
-    .filter((i) => i >= 0);
   const locked = cols.reduce(
     (sum, c) => (c.mode === "shrink" ? sum : sum + c.natural),
     0,
@@ -503,9 +516,9 @@ export function distributeColumnWidths(
     );
 
   let level = 0;
-  if (widthAt(0) < budget) {
+  if (budget > 0 && widthAt(0) < budget) {
     let lo = 0;
-    let hi = Math.max(...shrinkable.map((i) => cols[i].natural));
+    let hi = Math.max(...shrinkable.map((i) => cols[i].natural), 0);
     for (let step = 0; step < 24; step++) {
       const mid = (lo + hi) / 2;
       if (widthAt(mid) <= budget) lo = mid;
@@ -515,6 +528,12 @@ export function distributeColumnWidths(
   }
   for (const i of shrinkable) {
     widths[i] = Math.max(floors[i], Math.min(cols[i].natural, level));
+  }
+
+  let assigned = widths.reduce((sum, w) => sum + w, 0);
+  if (assigned > available) {
+    const scale = available / assigned;
+    return widths.map((w) => Math.max(40, Math.floor(w * scale)));
   }
   return widths.map((w) => Math.round(w));
 }
@@ -622,6 +641,8 @@ export function useContentColumnWidths(options: Readonly<{
   trailingColumnId?: string;
   enabled: boolean;
   contentKey: unknown;
+  /** Keep the current widths (e.g. while the user is searching); first measure still runs. */
+  freeze?: boolean;
 }>): MeasuredColumnWidth[] | null {
   const {
     tableRef,
@@ -631,6 +652,7 @@ export function useContentColumnWidths(options: Readonly<{
     trailingColumnId = "__trailing",
     enabled,
     contentKey,
+    freeze = false,
   } = options;
   const [naturals, setNaturals] = useState<MeasuredNaturals | null>(null);
   const [available, setAvailable] = useState(0);
@@ -664,6 +686,7 @@ export function useContentColumnWidths(options: Readonly<{
     const measuredKey = `${key}#${visibilitySignature(measured.visible)}`;
     setNaturals((prev) => {
       if (prev?.key !== measuredKey) return { key: measuredKey, ...measured };
+      if (freeze) return prev;
       const natural = measured.natural.map((n, i) => Math.max(n, prev.natural[i] ?? 0));
       const header = measured.header.map((n, i) => Math.max(n, prev.header[i] ?? 0));
       if (sameNumbers(natural, prev.natural) && sameNumbers(header, prev.header)) {
@@ -672,7 +695,7 @@ export function useContentColumnWidths(options: Readonly<{
       return { ...prev, header, natural };
     });
     // `available` re-measures when a resize crosses a breakpoint that hides columns.
-  }, [enabled, key, contentKey, columns.length, tableRef, available]);
+  }, [enabled, key, contentKey, columns.length, tableRef, available, freeze]);
 
   return useMemo(() => {
     if (!naturals?.key.startsWith(`${key}#`) || available <= 0) return null;
@@ -686,13 +709,14 @@ export function useContentColumnWidths(options: Readonly<{
       const header = naturals.header[i] ?? 0;
       const measured = naturals.natural[i] ?? header;
       if (mode === "fixed") {
-        const px = cssLengthToPx(col.width) ?? cssLengthToPx(col.maxW) ?? measured;
+        const px = resolveFixedColumnWidthPx(col) ?? measured;
         return { natural: px, header: px, mode };
       }
       const cap = cssLengthToPx(col.maxW);
+      const uncapped = Math.max(header, measured);
       return {
-        natural: Math.max(header, cap == null ? measured : Math.min(measured, cap)),
-        header,
+        natural: cap == null ? uncapped : Math.min(uncapped, cap),
+        header: cap == null ? header : Math.min(header, cap),
         mode,
         minPx: cssLengthToPx(col.minWidth),
       };
@@ -748,10 +772,43 @@ function treeOverflows(root: HTMLElement): boolean {
   return false;
 }
 
+/** Forces badges / stacks / text inside a fixed-layout cell to ellipsis. */
+const TRUNCATING_CELL_SX = {
+  "& > *": {
+    maxWidth: "100%",
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  // Chakra Badge is inline-flex; switch to block so ellipsis applies.
+  "& .chakra-badge": {
+    display: "inline-block",
+    maxWidth: "100%",
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    verticalAlign: "middle",
+  },
+  "& .chakra-stack, & .chakra-wrap": {
+    maxWidth: "100%",
+    minWidth: 0,
+    overflow: "hidden",
+  },
+  "& .chakra-stack > *:first-of-type, & .chakra-wrap > *:first-of-type": {
+    minWidth: 0,
+    maxWidth: "100%",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+} as const;
+
 /**
- * Clip overflowing cell content; native `title` tooltip with the full value
- * when anything inside is cut off. `ellipsis={false}` keeps the content's own
- * layout (badge rows, stacked lines) and only adds the hover title.
+ * Clip overflowing cell content across every DataTable. Native `title` shows
+ * the full value when anything inside is cut off. Used by admin and card
+ * layouts so badge/text columns behave the same on every page.
  */
 export function TruncatingCellContent({
   children,
@@ -775,33 +832,51 @@ export function TruncatingCellContent({
     el.removeAttribute("title");
   }, []);
 
-  if (!ellipsis) {
-    return (
-      <Box ref={ref} minW={0} w="100%" maxW="100%" onMouseEnter={onMouseEnter}>
-        {children}
-      </Box>
-    );
-  }
-
   return (
     <Box
       ref={ref}
       minW={0}
+      w="100%"
       maxW="100%"
       overflow="hidden"
-      textOverflow="ellipsis"
-      whiteSpace="nowrap"
-      sx={{
-        "& > *": {
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
-          maxWidth: "100%",
-        },
-      }}
+      textOverflow={ellipsis ? "ellipsis" : undefined}
+      whiteSpace={ellipsis ? "nowrap" : undefined}
+      sx={TRUNCATING_CELL_SX}
       onMouseEnter={onMouseEnter}
     >
       {children}
     </Box>
+  );
+}
+
+/**
+ * Badge that truncates inside fixed-layout columns. Prefer this (or plain
+ * Badge inside TruncatingCellContent) so long labels like LANGUAGE-DIARIZATION
+ * never blow out column widths.
+ */
+export function TruncatingBadge({
+  children,
+  title,
+  ...props
+}: Readonly<BadgeProps & { title?: string }>) {
+  const label =
+    title ??
+    (typeof children === "string" || typeof children === "number"
+      ? String(children)
+      : undefined);
+  return (
+    <Badge
+      maxW="100%"
+      minW={0}
+      title={label}
+      whiteSpace="nowrap"
+      overflow="hidden"
+      textOverflow="ellipsis"
+      display="inline-block"
+      verticalAlign="middle"
+      {...props}
+    >
+      {children}
+    </Badge>
   );
 }

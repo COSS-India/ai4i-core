@@ -1,19 +1,22 @@
 // Service Registry tab: filterable/searchable table of all registered services
-import React from "react";
+import React, { useCallback } from "react";
 import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
   type DataTableColumn,
+  type DataTableColumnFilters,
   type DataTableSortState,
 } from "../common/table";
 import type { ServiceTierFilterOption } from "../../hooks/useServicesManagement";
 import type { Service } from "../../services/servicesManagementService";
 import {
+  serviceListCellKey,
   type ServiceListColumnDef,
 } from "./serviceListColumns";
 import {
   buildClientServiceFilterDefs,
   buildServerServiceFilterDefs,
   buildServiceRegistrySearch,
+  SERVICE_COLUMN_SEARCH_KEYS,
 } from "./serviceRegistryFilters";
 
 interface ServiceRegistryTabProps {
@@ -32,15 +35,7 @@ interface ServiceRegistryTabProps {
   filterTaskType: string;
   onFilterTaskTypeChange: (value: string) => void;
   taskTypeNames: string[];
-  filterTier: string;
-  onFilterTierChange: (value: string) => void;
   tierFilterOptions: ServiceTierFilterOption[];
-  filterModelName: string;
-  onFilterModelNameChange: (value: string) => void;
-  modelNameOptions: { label: string; value: string }[];
-  filterServiceId: string;
-  onFilterServiceIdChange: (value: string) => void;
-  serviceIdOptions: { label: string; value: string }[];
   hasActiveFilters: boolean;
   onClearFilters: () => void;
   /** Column picker, rendered at the end of the filter toolbar. */
@@ -66,8 +61,6 @@ function resolveServerFilterDefs(options: {
   serverFilterValues?: Record<string, string>;
   taskTypeNames: string[];
   tierFilterOptions: ServiceTierFilterOption[];
-  modelNameOptions: { label: string; value: string }[];
-  serviceIdOptions: { label: string; value: string }[];
   onServerFilterChange?: (columnId: string, value: string) => void;
 }) {
   if (!options.serverMode || !options.onServerFilterChange) return [];
@@ -76,8 +69,6 @@ function resolveServerFilterDefs(options: {
     serverFilterValues: options.serverFilterValues,
     taskTypeNames: options.taskTypeNames,
     tierFilterOptions: options.tierFilterOptions,
-    modelNameOptions: options.modelNameOptions,
-    serviceIdOptions: options.serviceIdOptions,
     onChange: options.onServerFilterChange,
   });
 }
@@ -122,15 +113,7 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
   filterTaskType,
   onFilterTaskTypeChange,
   taskTypeNames,
-  filterTier,
-  onFilterTierChange,
   tierFilterOptions,
-  filterModelName,
-  onFilterModelNameChange,
-  modelNameOptions,
-  filterServiceId,
-  onFilterServiceIdChange,
-  serviceIdOptions,
   hasActiveFilters,
   onClearFilters,
   columnPicker,
@@ -152,8 +135,6 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
     serverFilterValues,
     taskTypeNames,
     tierFilterOptions,
-    modelNameOptions,
-    serviceIdOptions,
     onServerFilterChange,
   });
   const clientFilterDefs = buildClientServiceFilterDefs({
@@ -162,15 +143,6 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
     filterTaskType,
     onFilterTaskTypeChange,
     taskTypeNames,
-    filterTier,
-    onFilterTierChange,
-    tierFilterOptions,
-    filterModelName,
-    onFilterModelNameChange,
-    modelNameOptions,
-    filterServiceId,
-    onFilterServiceIdChange,
-    serviceIdOptions,
   });
   const search = buildServiceRegistrySearch({
     serverMode,
@@ -185,6 +157,19 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
     onServerPageChange,
     onServerPageSizeChange,
   });
+
+  const handleColumnFiltersChange = useCallback(
+    (next: DataTableColumnFilters) => {
+      if (!serverMode || !serverColumns || !onServerFilterChange) return;
+      for (const column of serverColumns) {
+        if (!SERVICE_COLUMN_SEARCH_KEYS.has(serviceListCellKey(column.id))) {
+          continue;
+        }
+        onServerFilterChange(column.id, next[column.id] ?? "");
+      }
+    },
+    [serverMode, serverColumns, onServerFilterChange],
+  );
 
   return (
     <DataTable
@@ -211,6 +196,8 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
       filterToolbarRightContent={columnPicker}
       search={search}
       filterDefs={serverMode ? serverFilterDefs : clientFilterDefs}
+      columnSearch
+      onColumnFiltersChange={serverMode ? handleColumnFiltersChange : undefined}
     />
   );
 };

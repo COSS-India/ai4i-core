@@ -96,6 +96,28 @@ export type DataTableFilterDef = {
   cluster?: string;
 };
 
+/**
+ * Per-column search shown as a search icon in the column header.
+ * - `text`: free text; client tables match case-insensitive "contains"
+ * - `select`: one value from `options`; client tables match exactly
+ */
+export type DataTableColumnFilterConfig =
+  | {
+      type: "text";
+      placeholder?: string;
+      /** Short guidance under the input (e.g. accepted format). */
+      helper?: string;
+      /** Return a message to block Apply while the value is invalid. */
+      validate?: (value: string) => string | undefined;
+    }
+  | {
+      type: "select";
+      options: DataTableFilterOption[];
+    };
+
+/** Active per-column search values keyed by column id. Empty values are dropped. */
+export type DataTableColumnFilters = Record<string, string>;
+
 export type DataTableActionClickPayload<T = unknown> = {
   actionId: string;
   row: T;

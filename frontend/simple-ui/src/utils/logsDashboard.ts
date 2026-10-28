@@ -5,6 +5,10 @@
 
 import { INSTITUTION } from "../config/constants";
 import type {
+  DataTableColumnFilterConfig,
+  DataTableColumnFilters,
+} from "../components/common/dataTableTypes";
+import type {
   TelemetryTraceColumnDef,
   TelemetryTraceSortBy,
 } from "../types/observability";
@@ -50,6 +54,125 @@ export const SORTABLE_API_KEYS: Record<string, TelemetryTraceSortBy> = {
   url: "url",
   latency: "latency",
   status_code: "status_code",
+};
+
+/** Toolbar owns these — no per-column box (same field only once). */
+/** No column search — toolbar (or time range) already owns these. */
+const TOOLBAR_FILTERED_COLUMN_KEYS = new Set([
+  "timestamp",
+  "task_type",
+  "institution",
+  "status",
+  "method",
+]);
+
+const MAX_STATUS_CODES = 10;
+
+export const validateStatusCodes = (value: string): string | undefined => {
+  const codes = value.split(",").map((c) => c.trim()).filter(Boolean);
+  if (codes.length > MAX_STATUS_CODES) {
+    return `Up to ${MAX_STATUS_CODES} codes.`;
+  }
+  const valid = codes.every((c) => /^\d{3}$/.test(c) && Number(c) >= 100 && Number(c) <= 599);
+  return valid ? undefined : "Use codes between 100 and 599, comma-separated.";
+};
+
+export const parseMetadataPair = (
+  value: string,
+): { key: string; value: string } | null => {
+  const at = value.indexOf("=");
+  if (at <= 0) return null;
+  const key = value.slice(0, at).trim();
+  const val = value.slice(at + 1).trim();
+  return key && val ? { key, value: val } : null;
+};
+
+const validateMetadataPair = (value: string): string | undefined =>
+  parseMetadataPair(value) ? undefined : "Use key=value.";
+
+const containsFilter = (label: string): DataTableColumnFilterConfig => ({
+  type: "text",
+  placeholder: "Search",
+  helper: `${label} contains…`,
+});
+
+/**
+ * Per-column controls for Logs. Every non-toolbar column gets a search box.
+ * Toolbar owns status, method, time, task type, and institution.
+ */
+const LOGS_COLUMN_FILTERS: Record<string, DataTableColumnFilterConfig> = {
+  end_user: { type: "text", placeholder: "Search", helper: "Exact match on end-user ID" },
+  service: { type: "text", placeholder: "Search", helper: "Exact match on service ID" },
+  status_code: {
+    type: "text",
+    placeholder: "Search",
+    helper: `Up to ${MAX_STATUS_CODES} codes, comma-separated`,
+    validate: validateStatusCodes,
+  },
+  metadata: {
+    type: "text",
+    placeholder: "Search",
+    helper: "Exact key=value",
+    validate: validateMetadataPair,
+  },
+  url: containsFilter("URL"),
+  model: containsFilter("Model"),
+  application: containsFilter("Application"),
+  api_key: containsFilter("API key"),
+  error: containsFilter("Error"),
+  latency: {
+    type: "text",
+    placeholder: "Search",
+    helper: "Searches the rows on this page only",
+  },
+};
+
+/**
+ * `false` opts the column out of column search (toolbar already filters it).
+ * Any other known column gets its config; unknown keys get a plain text search.
+ */
+export const logsColumnFilterConfig = (
+  def: TelemetryTraceColumnDef,
+): DataTableColumnFilterConfig | false => {
+  if (TOOLBAR_FILTERED_COLUMN_KEYS.has(def.key)) return false;
+  return LOGS_COLUMN_FILTERS[def.key] ?? { type: "text", placeholder: "Search" };
+};
+
+/** traces/search params for per-column searches; keys follow the column catalogue. */
+export type LogsColumnFilterParams = {
+  user?: string;
+  serviceId?: string;
+  statusCode?: string;
+  metadataKey?: string;
+  metadataValue?: string;
+  url?: string;
+  model?: string;
+  application?: string;
+  apiKey?: string;
+  error?: string;
+};
+
+export const columnFiltersToTraceParams = (
+  filters: DataTableColumnFilters,
+): LogsColumnFilterParams => {
+  const metadata = filters.metadata ? parseMetadataPair(filters.metadata) : null;
+  const statusCode = filters.status_code
+    ?.split(",")
+    .map((c) => c.trim())
+    .filter(Boolean)
+    .join(",");
+  return {
+    user: filters.end_user,
+    serviceId: filters.service,
+    statusCode: statusCode || undefined,
+    metadataKey: metadata?.key,
+    metadataValue: metadata?.value,
+    url: filters.url,
+    model: filters.model,
+    application: filters.application,
+    apiKey: filters.api_key,
+    error: filters.error,
+  };
 };
 
 /** Error column is admin-only on the screen (parent AC-6 / design). */

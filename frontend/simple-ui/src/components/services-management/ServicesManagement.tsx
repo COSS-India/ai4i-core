@@ -316,16 +316,18 @@ function buildVisibleServiceColumns(
     if (!visibleColumnIds.includes(definition.id)) continue;
     const cellKey = serviceListCellKey(definition.id);
     const template = byCell.get(cellKey);
+    const header =
+      cellKey === "task" ? "Task Type" : definition.label;
     const column: DataTableColumn<Service> = template
       ? {
           ...template,
           id: definition.id,
-          header: definition.label,
+          header,
           sortable: definition.sortable !== false && Boolean(template.sortable),
         }
       : {
           id: definition.id,
-          header: definition.label,
+          header,
           sortable: false,
           cell: renderEmptyServiceCell,
         };
@@ -350,19 +352,11 @@ const ServicesManagement: React.FC = () => {
     tableKey,
     searchQuery,
     setSearchQuery,
-    filterModelName,
-    setFilterModelName,
-    modelNameFilterOptions,
-    filterServiceId,
-    setFilterServiceId,
-    serviceIdFilterOptions,
     filterStatus,
     setFilterStatus,
     filterTaskType,
     setFilterTaskType,
     taskTypeNames,
-    filterTier,
-    setFilterTier,
     tierFilterOptions,
     hasActiveFilters,
     clearAllFilters,
@@ -503,13 +497,15 @@ const ServicesManagement: React.FC = () => {
         id: "name",
         header: "Name",
         sortable: true,
+        minWidth: "9rem",
         sortAccessor: (service) => service.name ?? "",
         cell: renderServiceNameCell,
       },
       {
         id: "task",
-        header: "Model Task Type",
+        header: "Task Type",
         sortable: true,
+        filter: false,
         cell: renderServiceTaskTypeCell,
       },
       {
@@ -517,7 +513,7 @@ const ServicesManagement: React.FC = () => {
         header: "Tier",
         hint: FIELD_HINTS.service.col.tier,
         sortable: true,
-        truncate: false,
+        minWidth: "7rem",
         cell: renderServiceTierCell,
       },
       {
@@ -525,6 +521,7 @@ const ServicesManagement: React.FC = () => {
         header: "Status",
         hint: FIELD_HINTS.service.col.status,
         sortable: true,
+        filter: false,
         cell: renderServiceStatusCell,
       },
       {
@@ -537,12 +534,14 @@ const ServicesManagement: React.FC = () => {
         id: "modelName",
         header: "Model Name",
         sortable: true,
+        minWidth: "7rem",
         cell: renderServiceModelNameCell,
       },
       {
         id: "serviceId",
         header: "Service ID",
         sortable: true,
+        minWidth: "7rem",
         cell: renderServiceIdCell,
       },
       {
@@ -551,6 +550,7 @@ const ServicesManagement: React.FC = () => {
         hint: FIELD_HINTS.service.col.inputPrice,
         sortable: true,
         isNumeric: true,
+        maxW: "6rem",
         cell: renderServiceInputPriceCell,
       },
       {
@@ -559,6 +559,7 @@ const ServicesManagement: React.FC = () => {
         hint: FIELD_HINTS.service.col.outputPrice,
         sortable: true,
         isNumeric: true,
+        maxW: "6rem",
         cell: renderServiceOutputPriceCell,
       },
       {
@@ -567,6 +568,7 @@ const ServicesManagement: React.FC = () => {
         hint: FIELD_HINTS.service.col.cachedInputPrice,
         sortable: true,
         isNumeric: true,
+        maxW: "7rem",
         cell: renderServiceCachedInputPriceCell,
       },
       {
@@ -702,19 +704,11 @@ const ServicesManagement: React.FC = () => {
         tableKey={tableKey}
         searchQuery={searchQuery}
         onSearchQueryChange={setSearchQuery}
-        filterModelName={filterModelName}
-        onFilterModelNameChange={setFilterModelName}
-        modelNameOptions={modelNameFilterOptions}
-        filterServiceId={filterServiceId}
-        onFilterServiceIdChange={setFilterServiceId}
-        serviceIdOptions={serviceIdFilterOptions}
         filterStatus={filterStatus}
         onFilterStatusChange={setFilterStatus}
         filterTaskType={filterTaskType}
         onFilterTaskTypeChange={setFilterTaskType}
         taskTypeNames={taskTypeNames}
-        filterTier={filterTier}
-        onFilterTierChange={setFilterTier}
         tierFilterOptions={tierFilterOptions}
         hasActiveFilters={hasActiveFilters}
         onClearFilters={clearAllFilters}

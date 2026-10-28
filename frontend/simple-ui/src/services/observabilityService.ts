@@ -299,6 +299,14 @@ export const searchTelemetryTraces = async (
     serviceId?: string;
     /** Comma-separated status codes (100–599, max 10). */
     statusCode?: string;
+    /** Per-column "contains" searches; sent only for columns the catalogue marks filterable. */
+    url?: string;
+    model?: string;
+    application?: string;
+    apiKey?: string;
+    error?: string;
+    /** Exact HTTP method. */
+    method?: string;
     sortBy?: TelemetryTraceSortBy;
     sortOrder?: 'asc' | 'desc';
     /** Comma-separated column keys; omit for default columns. */
@@ -322,6 +330,12 @@ export const searchTelemetryTraces = async (
     if (params.q) queryParams.append('q', params.q);
     if (params.serviceId) queryParams.append('service_id', params.serviceId);
     if (params.statusCode) queryParams.append('status_code', params.statusCode);
+    if (params.url) queryParams.append('url', params.url);
+    if (params.model) queryParams.append('model', params.model);
+    if (params.application) queryParams.append('application', params.application);
+    if (params.apiKey) queryParams.append('api_key', params.apiKey);
+    if (params.error) queryParams.append('error', params.error);
+    if (params.method) queryParams.append('method', params.method);
     if (params.sortBy) queryParams.append('sort_by', params.sortBy);
     if (params.sortOrder) queryParams.append('sort_order', params.sortOrder);
     if (params.columns) queryParams.append('columns', params.columns);

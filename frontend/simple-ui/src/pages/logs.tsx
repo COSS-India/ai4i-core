@@ -73,6 +73,7 @@ import { useTenantsList } from "../hooks/useTenantsList";
 import DataTable, {
   useAdminTableSurface,
   type DataTableColumn,
+  type DataTableColumnFilters,
   type DataTableFilterDef,
   type DataTableSortState,
 } from "../components/common/table";
@@ -91,6 +92,8 @@ import {
   FALLBACK_COLUMN_DEFS,
   SORTABLE_API_KEYS,
   buildColumnsQueryParam,
+  columnFiltersToTraceParams,
+  logsColumnFilterConfig,
   convertToISOFormat,
   defaultTimeRange,
   formatDateTimeLocal,
@@ -112,6 +115,7 @@ type DraftFilters = {
   timePreset: LogTimePreset;
   taskType: string;
   level: string;
+  method: string;
   startTime: string;
   endTime: string;
   selectedTenantId: string;
@@ -230,6 +234,7 @@ function appliedFromDraft(next: DraftFilters): AppliedFilters | null {
     q,
     taskType: next.taskType,
     level: next.level,
+    method: next.method,
     startTime: next.startTime,
     endTime: next.endTime,
     selectedTenantId: next.selectedTenantId,
@@ -246,6 +251,7 @@ type AppliedFilters = {
   q: string;
   taskType: string;
   level: string;
+  method: string;
   startTime: string;
   endTime: string;
   selectedTenantId: string;
@@ -434,7 +440,7 @@ function tenantFilterOptions(
   tenantsError: boolean,
   activeTenants: { tenant_id: string; organisation?: string }[],
 ): { label: string; value: string }[] {
-  const all = { label: `All ${INSTITUTIONS}`, value: "" };
+  const all = { label: "All", value: "" };
   if (tenantsLoading || tenantsError) return [all];
   return [
     all,
@@ -453,13 +459,13 @@ type LogsControlLayout = {
 };
 
 /**
- * Shrink-to-fit on one toolbar row. Grow stays 0 so short filters stay
- * compact and the gaps between them stay even.
+ * Toolbar controls wrap instead of scrolling. They may shrink slightly so the
+ * full filter row stays on screen.
  */
 function logsControlLayout(minPx: number, maxPx: number): LogsControlLayout {
   return {
     width: { base: "full", md: "auto" },
-    minWidth: { md: `${minPx}px` },
+    minWidth: { md: `${Math.min(minPx, 96)}px` },
     maxWidth: { md: `${maxPx}px` },
     flex: { base: "1 1 100%", md: `0 1 ${minPx}px` },
   };
@@ -504,7 +510,7 @@ function buildLogsFilterDefs(options: {
       onChange: (v) =>
         replaceDraft({ ...draftRef.current, selectedTenantId: v }),
       hint: FIELD_HINTS.logs.tenant.tip,
-      ...logsControlLayout(136, 180),
+      ...logsControlLayout(148, 200),
       options: tenantFilterOptions(
         tenantsLoading,
         tenantsError,
@@ -521,7 +527,7 @@ function buildLogsFilterDefs(options: {
       param: "task_types",
       value: draft.taskType,
       onChange: (v) => replaceDraft({ ...draftRef.current, taskType: v }),
-      ...logsControlLayout(88, 140),
+      ...logsControlLayout(96, 140),
       options: [
         { label: "All", value: "" },
         ...taskTypeNames.map((tt) => ({
@@ -537,11 +543,27 @@ function buildLogsFilterDefs(options: {
       param: "level",
       value: draft.level,
       onChange: (v) => replaceDraft({ ...draftRef.current, level: v }),
-      ...logsControlLayout(112, 140),
+      ...logsControlLayout(104, 132),
       options: [
-        { label: "All Statuses", value: "" },
+        { label: "All", value: "" },
         { label: "Success", value: "success" },
         { label: "Failure", value: "failure" },
+      ],
+    },
+    {
+      id: "method",
+      label: "Method",
+      type: "select",
+      param: "method",
+      value: draft.method,
+      onChange: (v) => replaceDraft({ ...draftRef.current, method: v }),
+      ...logsControlLayout(100, 120),
+      options: [
+        { label: "All", value: "" },
+        ...["GET", "POST", "PUT", "PATCH", "DELETE"].map((m) => ({
+          label: m,
+          value: m,
+        })),
       ],
     },
     {
@@ -562,7 +584,7 @@ function buildLogsFilterDefs(options: {
           ...rangeForTimePreset(preset),
         });
       },
-      ...logsControlLayout(118, 156),
+      ...logsControlLayout(136, 160),
       options: [
         { label: "Custom", value: "custom" },
         ...LOG_TIME_PRESETS.map((preset) => ({
@@ -588,7 +610,7 @@ function buildLogsFilterDefs(options: {
       error: timeRangeError,
       inputType: "datetime-local",
       hint: FIELD_HINTS.logs.startTime.tip,
-      ...logsControlLayout(164, 200),
+      ...logsControlLayout(198, 220),
       cluster: "log-time",
     },
     {
@@ -608,7 +630,7 @@ function buildLogsFilterDefs(options: {
       error: timeRangeError,
       inputType: "datetime-local",
       hint: FIELD_HINTS.logs.endTime.tip,
-      ...logsControlLayout(164, 200),
+      ...logsControlLayout(198, 220),
       cluster: "log-time",
     },
   );
@@ -649,6 +671,7 @@ function hasLogsAppliedFilters(
   },
 ): boolean {
   if (applied.level !== "") return true;
+  if (applied.method !== "") return true;
   if (options.canPickTenant && applied.selectedTenantId !== "") return true;
   if (applied.q !== "") return true;
   if (applied.taskType !== "") return true;
@@ -889,6 +912,8 @@ type LogsDashboardMainProps = Readonly<{
   tracesLoading: boolean;
   hasAppliedFilters: boolean;
   onClearFilters: () => void;
+  columnFilters: DataTableColumnFilters;
+  onColumnFiltersChange: (next: DataTableColumnFilters) => void;
   searchValue: string;
   onSearchChange: (value: string) => void;
   onSearchSubmit: () => void;
@@ -962,6 +987,7 @@ function LogsDashboardMain(props: LogsDashboardMainProps) {
 
       <DataTable
         layout="admin"
+        columnSearch
         items={props.traceRows}
         columns={props.traceColumns}
         getRowKey={(row) =>
@@ -990,6 +1016,8 @@ function LogsDashboardMain(props: LogsDashboardMainProps) {
         noResultsMessage={noResultsMessage}
         hasActiveFilters={props.hasAppliedFilters}
         onClearFilters={props.onClearFilters}
+        columnFilters={props.columnFilters}
+        onColumnFiltersChange={props.onColumnFiltersChange}
         search={{
           label: "Search",
           value: props.searchValue,
@@ -999,7 +1027,7 @@ function LogsDashboardMain(props: LogsDashboardMainProps) {
           placeholder: props.searchPlaceholder,
           hint: props.searchHint,
           error: props.searchError,
-          ...logsControlLayout(128, 210),
+          ...logsControlLayout(148, 200),
         }}
         filterDefs={props.filterDefs}
         filterToolbarSingleRow
@@ -1073,6 +1101,7 @@ const LogsPage: React.FC = () => {
     timePreset: "custom",
     taskType: "",
     level: "",
+    method: "",
     startTime: initialRange.startTime,
     endTime: initialRange.endTime,
     selectedTenantId: "",
@@ -1082,6 +1111,7 @@ const LogsPage: React.FC = () => {
     q: "",
     taskType: "",
     level: "",
+    method: "",
     startTime: initialRange.startTime,
     endTime: initialRange.endTime,
     selectedTenantId: "",
@@ -1111,6 +1141,7 @@ const LogsPage: React.FC = () => {
   });
   const [selectedColumns, setSelectedColumns] =
     useState<string[]>(DEFAULT_COLUMN_KEYS);
+  const [columnFilters, setColumnFilters] = useState<DataTableColumnFilters>({});
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
   const [isTraceModalOpen, setIsTraceModalOpen] = useState(false);
 
@@ -1251,6 +1282,7 @@ const LogsPage: React.FC = () => {
       timePreset: "custom",
       taskType: "",
       level: "",
+      method: "",
       startTime: range.startTime,
       endTime: range.endTime,
       selectedTenantId: "",
@@ -1261,11 +1293,13 @@ const LogsPage: React.FC = () => {
       q: "",
       taskType: "",
       level: "",
+      method: "",
       startTime: range.startTime,
       endTime: range.endTime,
       selectedTenantId: "",
     });
     setSort({ key: "timestamp", direction: "desc" });
+    setColumnFilters({});
     setFollowsPresent(true);
     setPage(1);
   }, []);
@@ -1285,6 +1319,19 @@ const LogsPage: React.FC = () => {
     [selectedColumns, isAdmin, columnDefs],
   );
 
+  // Hidden columns must not keep narrowing the results.
+  const activeColumnFilters = useMemo(() => {
+    const next: DataTableColumnFilters = {};
+    for (const def of columnDefs) {
+      const value = columnFilters[def.key];
+      const config = logsColumnFilterConfig(def);
+      if (value && selectedColumns.includes(def.key) && config) {
+        next[def.key] = value;
+      }
+    }
+    return next;
+  }, [columnFilters, columnDefs, selectedColumns]);
+
   const {
     data: tracesData,
     isLoading: tracesLoading,
@@ -1301,6 +1348,7 @@ const LogsPage: React.FC = () => {
       sortBy,
       sortOrder,
       columnsParam,
+      activeColumnFilters,
     ],
     queryFn: () => {
       const apiStartDate =
@@ -1321,12 +1369,17 @@ const LogsPage: React.FC = () => {
           applied.level && applied.level.trim() !== ""
             ? applied.level
             : undefined,
+        method:
+          applied.method && applied.method.trim() !== ""
+            ? applied.method
+            : undefined,
         startDate: apiStartDate,
         endDate: apiEndDate,
         page,
         pageSize,
         tenant_id: apiTenantId,
         q: applied.q || undefined,
+        ...columnFiltersToTraceParams(activeColumnFilters),
         sortBy,
         sortOrder,
         columns: columnsParam || undefined,
@@ -1462,8 +1515,6 @@ const LogsPage: React.FC = () => {
   }, [columnDefs, applyColumnSelection]);
 
   const handleSortChange = useCallback((next: DataTableSortState) => {
-    // Only API-supported sorts; ignore non-sortable clicks.
-    if (!SORTABLE_API_KEYS[next.key]) return;
     setSort(next);
     setPage(1);
   }, []);
@@ -1479,10 +1530,25 @@ const LogsPage: React.FC = () => {
     return visible.map((def) => ({
       id: def.key,
       header: def.label,
-      sortable: Boolean(def.sortable && SORTABLE_API_KEYS[def.key]),
+      filter: logsColumnFilterConfig(def),
       cell: (row) => cellForColumn(def.key, row),
     }));
   }, [columnDefs, selectedColumns, cellForColumn]);
+
+  // API sorts the full result set; other columns sort the loaded page only.
+  const displayTraceRows = useMemo(() => {
+    if (SORTABLE_API_KEYS[sort.key]) return traceRows;
+    const dir = sort.direction === "asc" ? 1 : -1;
+    return [...traceRows].sort((left, right) => {
+      const a = (left as unknown as Record<string, unknown>)[sort.key];
+      const b = (right as unknown as Record<string, unknown>)[sort.key];
+      if (a == null && b == null) return 0;
+      if (a == null) return 1;
+      if (b == null) return -1;
+      if (typeof a === "number" && typeof b === "number") return (a - b) * dir;
+      return String(a).localeCompare(String(b), undefined, { sensitivity: "base" }) * dir;
+    });
+  }, [traceRows, sort]);
 
   const hasAppliedFilters = hasLogsAppliedFilters(applied, {
     canPickTenant,
@@ -1541,7 +1607,7 @@ const LogsPage: React.FC = () => {
         borderColor={borderColor}
         successCount={successCount}
         failureCount={failureCount}
-        traceRows={traceRows}
+        traceRows={displayTraceRows}
         traceColumns={traceColumns}
         sort={sort}
         onSortChange={handleSortChange}
@@ -1557,6 +1623,8 @@ const LogsPage: React.FC = () => {
         tracesLoading={tracesLoading}
         hasAppliedFilters={hasAppliedFilters}
         onClearFilters={clearAllFilters}
+        columnFilters={columnFilters}
+        onColumnFiltersChange={setColumnFilters}
         searchValue={draft.q}
         onSearchChange={(v) => replaceDraft(withSearchText(draftRef.current, v))}
         onSearchSubmit={() => commitFilters(draftRef.current)}
