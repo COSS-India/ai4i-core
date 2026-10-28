@@ -248,6 +248,11 @@ class ApplicationService:
             tenant_id, search=search, domain=domain, offset=offset, limit=limit
         )
 
+    async def _assert_name_available(self, tenant_id: int, application_id: int, name: str) -> None:
+        existing = await self._applications.get_by_name(tenant_id, name)
+        if existing and existing.id != application_id:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=dict(_NAME_CONFLICT_DETAIL))
+
     async def update_application(
         self,
         tenant_id: int,
@@ -261,9 +266,7 @@ class ApplicationService:
 
         data = body.model_dump(exclude_unset=True)
         if "name" in data and data["name"].strip().casefold() != app.name.strip().casefold():
-            existing = await self._applications.get_by_name(tenant_id, data["name"])
-            if existing and existing.id != application_id:
-                raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=dict(_NAME_CONFLICT_DETAIL))
+            await self._assert_name_available(tenant_id, application_id, data["name"])
 
         if "service_fallbacks" in data:
             tenant = await self._load_tenant_or_404(tenant_id)

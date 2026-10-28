@@ -29,6 +29,15 @@ def _reject(code: str, message: str, service_id: Optional[str] = None) -> HTTPEx
     return HTTPException(status_code=422, detail=detail)
 
 
+def _check_service(sid: str, row, tier_id: str) -> None:
+    if row is None:
+        raise _reject("SERVICE_NOT_FOUND", f"Service '{sid}' does not exist.", sid)
+    if row["deleted_at"] is not None or not row["is_published"]:
+        raise _reject("SERVICE_NOT_PUBLISHED", f"Service '{sid}' is not published.", sid)
+    if str(tier_id) not in [str(t) for t in (row["tier_ids"] or [])]:
+        raise _reject("SERVICE_NOT_IN_TIER", f"Service '{sid}' is not available in the Institution's Tier.", sid)
+
+
 async def validate_service_fallbacks(
     service_fallbacks: Dict[str, List[str]],
     tier_id: Optional[str],
@@ -49,13 +58,7 @@ async def validate_service_fallbacks(
     rows = (await platform_core_db.execute(_SERVICES_SQL, {"service_ids": ids})).mappings().all()
     by_id = {row["service_id"]: row for row in rows}
     for sid in ids:
-        row = by_id.get(sid)
-        if row is None:
-            raise _reject("SERVICE_NOT_FOUND", f"Service '{sid}' does not exist.", sid)
-        if row["deleted_at"] is not None or not row["is_published"]:
-            raise _reject("SERVICE_NOT_PUBLISHED", f"Service '{sid}' is not published.", sid)
-        if str(tier_id) not in [str(t) for t in (row["tier_ids"] or [])]:
-            raise _reject("SERVICE_NOT_IN_TIER", f"Service '{sid}' is not available in the Institution's Tier.", sid)
+        _check_service(sid, by_id.get(sid), tier_id)
     for primary, fallbacks in service_fallbacks.items():
         for fb in fallbacks:
             if by_id[fb]["task_type"] != by_id[primary]["task_type"]:

@@ -121,10 +121,7 @@ class Orchestrator:
                 payload, service_info, request
             )
             if served_info is not service_info:
-                attrs["service_id"] = served_info.get("serviceId") or ""
-                if request is not None:
-                    request.state.service_id = attrs["service_id"]
-                    set_metric_labels(request, model_id=served_info.get("model_id") or "")
+                self._apply_fallback_state(attrs, served_info, request)
             if isinstance(task_response, dict) and isinstance(task_response.get("model"), dict):
                 task_response["model"]["serviceId"] = served_info.get("serviceId", "")
 
@@ -146,6 +143,17 @@ class Orchestrator:
                 )
 
             return task_response.dict() if hasattr(task_response, 'dict') else task_response
+
+    @staticmethod
+    def _apply_fallback_state(
+        attrs: dict,
+        served_info: Dict[str, Any],
+        request: Optional[Request],
+    ) -> None:
+        attrs["service_id"] = served_info.get("serviceId") or ""
+        if request is not None:
+            request.state.service_id = attrs["service_id"]
+            set_metric_labels(request, model_id=served_info.get("model_id") or "")
 
     @staticmethod
     def _enforce_tier_gate(service_info: Dict[str, Any], request: Optional[Request]) -> None:
@@ -195,16 +203,31 @@ class Orchestrator:
                 log_fallback_skipped(requested_id, fallback_id, type(exc).__name__)
                 continue
             fb_service = self._get_task_service(fb_info)
-            try:
-                return fb_info, fb_service, await fb_service.process(fb_payload, fb_info)
-            except UpstreamUnavailableError as exc:
-                reason = type(exc.__cause__ or exc).__name__
-                if getattr(fb_service, "completed_groups", 0):
-                    # This fallback already answered (and billed) part of the
-                    # payload; the next one must not bill those groups again.
-                    break
+            response, reason, stop = await self._run_fallback_service(fb_service, fb_payload, fb_info)
+            if response is not None:
+                return fb_info, fb_service, response
+            if stop:
+                # This fallback already answered (and billed) part of the
+                # payload; the next one must not bill those groups again.
+                break
         log_all_failed(requested_id, tried)
         raise AllServicesUnavailableError(requested_id, tried)
+
+    async def _run_fallback_service(
+        self,
+        fb_service: BaseTaskService,
+        fb_payload: Dict[str, Any],
+        fb_info: Dict[str, Any],
+    ) -> Tuple[Optional[Any], Optional[str], bool]:
+        """Try running a fallback service. Returns (response, reason, stop).
+        response is non-None on success; reason and stop are set on UpstreamUnavailableError.
+        stop=True means the fallback was partly billed — no further fallbacks should run.
+        """
+        try:
+            return await fb_service.process(fb_payload, fb_info), None, False
+        except UpstreamUnavailableError as exc:
+            reason = type(exc.__cause__ or exc).__name__
+            return None, reason, bool(getattr(fb_service, "completed_groups", 0))
 
     def _validate_task_type(self, task_type: str) -> None:
         """Raise ValueError if task_type is not a known task."""

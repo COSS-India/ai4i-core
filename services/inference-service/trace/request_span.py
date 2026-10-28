@@ -84,6 +84,13 @@ def compute_total_time_ms(start_time: float) -> float:
     return round((time.time() - start_time) * 1000, 2)
 
 
+def _failure_status_code(exc: Exception, status_for) -> int:
+    """Map an exception to an HTTP status code for classify_status spans."""
+    if status_for is not None:
+        return status_for(exc)
+    return 400 if isinstance(exc, ValueError) else 500
+
+
 @contextmanager
 def traced_span(
     span_name: str,
@@ -133,10 +140,7 @@ def traced_span(
             attrs["total_time_ms"] = compute_total_time_ms(start_time)
             if classify_status:
                 attrs["status"] = "failure"
-                attrs["status_code"] = (
-                    status_for(e) if status_for is not None
-                    else 400 if isinstance(e, ValueError) else 500
-                )
+                attrs["status_code"] = _failure_status_code(e, status_for)
             finalize_span(span, attrs, error=e)
             raise
         else:
