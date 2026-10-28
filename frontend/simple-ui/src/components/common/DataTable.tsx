@@ -469,7 +469,7 @@ export function TableDateField({
   inputType = "date",
   formControlProps,
   inputProps,
-}: {
+}: Readonly<{
   label: string;
   value: string;
   onChange: (value: string) => void;
@@ -481,7 +481,7 @@ export function TableDateField({
   inputType?: "date" | "datetime-local";
   formControlProps?: FormControlProps;
   inputProps?: Omit<InputProps, "value" | "onChange" | "type" | "onBlur">;
-}) {
+}>) {
   const { resetPage, inputBg, deferApply } = useDataTableFilterContext();
   const commitOnChange = !onBlur;
 

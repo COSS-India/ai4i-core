@@ -146,15 +146,17 @@ export default function InstitutionDetailsPanel({
     budgetLabel = formatSpendMoney(budgetLimit, currency);
   }
 
-  const tierExtrasContent =
-    tierName && !tierBudgetErrorMessage ? (
-      <TierUsageLimits tierLimits={tierLimits} />
-    ) : tierBudgetErrorMessage ? (
+  let tierExtrasContent: React.ReactNode = null;
+  if (tierName && !tierBudgetErrorMessage) {
+    tierExtrasContent = <TierUsageLimits tierLimits={tierLimits} />;
+  } else if (tierBudgetErrorMessage) {
+    tierExtrasContent = (
       <Alert status="warning" borderRadius="md">
         <AlertIcon />
         <Text fontSize="sm">{tierBudgetErrorMessage}</Text>
       </Alert>
-    ) : null;
+    );
+  }
 
   return (
     <VStack align="stretch" spacing={4} w="full">

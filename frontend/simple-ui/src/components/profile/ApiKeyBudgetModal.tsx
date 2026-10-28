@@ -70,6 +70,75 @@ type BudgetBodyProps = Readonly<{
   onPctBoundHit: (apiKeyId: number, bound: PercentageBound) => void;
 }>;
 
+function ApiKeyBudgetEditableSection({
+  isLoading,
+  row,
+  applicationRemaining,
+  rangeLabel,
+  fieldError,
+  draftPct,
+  currency,
+  onPctChange,
+  onPctBoundHit,
+}: Readonly<{
+  isLoading: boolean;
+  row: KeyBudgetDraft | undefined;
+  applicationRemaining: number | null;
+  rangeLabel: string;
+  fieldError: string | null;
+  draftPct: number | undefined;
+  currency: string;
+  onPctChange: (apiKeyId: number, value: string) => void;
+  onPctBoundHit: (apiKeyId: number, bound: PercentageBound) => void;
+}>) {
+  const remainingColor =
+    applicationRemaining != null && applicationRemaining >= 0 ? "green.700" : "ink.800";
+  const fillPct = draftPct != null && Number.isFinite(draftPct) ? draftPct : 0;
+
+  return (
+    <>
+      <Box>
+        <Text fontSize="sm" fontWeight="600" color="ink.800" mb={2}>
+          {BUDGET_COPY.currentBudget}
+        </Text>
+        <ApplicationBudgetFacts
+          allocatedPct={isLoading ? undefined : row?.originalPct}
+          allocatedAmount={isLoading ? undefined : row?.originalAmount}
+          allocatedLabel={isLoading ? BUDGET_COPY.loading : undefined}
+          consumedLabel={
+            isLoading ? BUDGET_COPY.loading : formatBudgetPct(row?.consumed_percentage)
+          }
+          consumedSub={
+            isLoading ? undefined : formatBudgetMoney(row?.consumed_budget, currency)
+          }
+          remainingValue={
+            isLoading ? BUDGET_COPY.loading : formatBudgetMoney(applicationRemaining, currency)
+          }
+          remainingSub={isLoading ? undefined : BUDGET_COPY.leftOnThisApplication}
+          remainingColor={remainingColor}
+          rangeLabel={rangeLabel}
+          currency={currency}
+        />
+      </Box>
+      <BudgetAllocationField
+        value={row?.pctInput ?? ""}
+        onChange={(next) => {
+          if (row) onPctChange(row.api_key_id, next);
+        }}
+        onBoundHit={(bound) => {
+          if (row) onPctBoundHit(row.api_key_id, bound);
+        }}
+        isDisabled={!row || isLoading}
+        amountText={formatBudgetMoney(row?.resolvedAmount, currency)}
+        fillPct={fillPct}
+        error={fieldError}
+        notice={row?.inputNotice}
+        hint={FIELD_HINTS.apiKey.budget.tip}
+      />
+    </>
+  );
+}
+
 function ApiKeyBudgetModalBody({
   isLoading,
   banner,
@@ -87,15 +156,38 @@ function ApiKeyBudgetModalBody({
 }: BudgetBodyProps) {
   const showInactive = !isLoading && focusedKeyId != null && row == null;
   const showUnsetBudget = applicationBudgetUnset && !isLoading;
-  const remainingColor =
-    applicationRemaining != null && applicationRemaining >= 0 ? "green.700" : "ink.800";
+  const applicationLabel = isLoading ? BUDGET_COPY.loading : applicationName || "—";
+
+  let mainContent: React.ReactNode;
+  if (showInactive) {
+    mainContent = (
+      <Alert status="info" borderRadius="md">
+        <AlertIcon />
+        {BUDGET_COPY.inactiveKeyNotEditable}
+      </Alert>
+    );
+  } else {
+    mainContent = (
+      <ApiKeyBudgetEditableSection
+        isLoading={isLoading}
+        row={row}
+        applicationRemaining={applicationRemaining}
+        rangeLabel={rangeLabel}
+        fieldError={fieldError}
+        draftPct={draftPct}
+        currency={currency}
+        onPctChange={onPctChange}
+        onPctBoundHit={onPctBoundHit}
+      />
+    );
+  }
 
   return (
     <VStack align="stretch" spacing={4}>
       <Text fontSize="sm" color="ink.600" noOfLines={2} wordBreak="break-word">
         {BUDGET_COPY.applicationPrefix}{" "}
         <Text as="span" fontWeight="600" color="ink.800">
-          {isLoading ? BUDGET_COPY.loading : applicationName || "—"}
+          {applicationLabel}
         </Text>
       </Text>
       {showUnsetBudget ? (
@@ -110,53 +202,7 @@ function ApiKeyBudgetModalBody({
           {banner}
         </Alert>
       ) : null}
-      {showInactive ? (
-        <Alert status="info" borderRadius="md">
-          <AlertIcon />
-          {BUDGET_COPY.inactiveKeyNotEditable}
-        </Alert>
-      ) : (
-        <>
-          <Box>
-            <Text fontSize="sm" fontWeight="600" color="ink.800" mb={2}>
-              {BUDGET_COPY.currentBudget}
-            </Text>
-            <ApplicationBudgetFacts
-              allocatedPct={isLoading ? undefined : row?.originalPct}
-              allocatedAmount={isLoading ? undefined : row?.originalAmount}
-              allocatedLabel={isLoading ? BUDGET_COPY.loading : undefined}
-              consumedLabel={
-                isLoading ? BUDGET_COPY.loading : formatBudgetPct(row?.consumed_percentage)
-              }
-              consumedSub={
-                isLoading ? undefined : formatBudgetMoney(row?.consumed_budget, currency)
-              }
-              remainingValue={
-                isLoading ? BUDGET_COPY.loading : formatBudgetMoney(applicationRemaining, currency)
-              }
-              remainingSub={isLoading ? undefined : BUDGET_COPY.leftOnThisApplication}
-              remainingColor={remainingColor}
-              rangeLabel={rangeLabel}
-              currency={currency}
-            />
-          </Box>
-          <BudgetAllocationField
-            value={row?.pctInput ?? ""}
-            onChange={(next) => {
-              if (row) onPctChange(row.api_key_id, next);
-            }}
-            onBoundHit={(bound) => {
-              if (row) onPctBoundHit(row.api_key_id, bound);
-            }}
-            isDisabled={!row || isLoading}
-            amountText={formatBudgetMoney(row?.resolvedAmount, currency)}
-            fillPct={draftPct != null && Number.isFinite(draftPct) ? draftPct : 0}
-            error={fieldError}
-            notice={row?.inputNotice}
-            hint={FIELD_HINTS.apiKey.budget.tip}
-          />
-        </>
-      )}
+      {mainContent}
     </VStack>
   );
 }
@@ -187,7 +233,10 @@ export default function ApiKeyBudgetModal({
   const figures = row ? keyBudgetFigures(row, rows, applicationBudget) : null;
   const applicationRemaining = applicationRemainingAmount(applicationBudget, liveTotalPct);
   const draftPct = row?.resolvedPct;
-  const fieldError = row?.rowError || (totalOver ? totalApiKeysExceeds100(liveTotalPct) : null);
+  let fieldError: string | null = row?.rowError ?? null;
+  if (!fieldError && totalOver) {
+    fieldError = totalApiKeysExceeds100(liveTotalPct);
+  }
   const rangeLabel = budgetRangeLabel(isLoading, figures, currency);
 
   return (

@@ -139,6 +139,12 @@ function formatApiKeyTableDateTime(value?: string): string {
   return value ? new Date(value).toLocaleString() : "—";
 }
 
+function formatPermissionCount(count: number): string {
+  if (count === 0) return "—";
+  if (count === 1) return "1 permission";
+  return `${count} permissions`;
+}
+
 function ApiKeyStatusCell({
   status,
   reason,
@@ -531,14 +537,11 @@ export default function ApiKeyManagementTab({
         hint: FIELD_HINTS.apiKey.col.permissions,
         thProps: { display: { base: "none", xl: "table-cell" } },
         tdProps: { display: { base: "none", xl: "table-cell" } },
-        cell: (key) => {
-          const count = mgmt.visiblePermissionsForKey(key).length;
-          return (
-            <Text fontSize="sm" color="ink.600">
-              {count === 0 ? "—" : `${count} ${count === 1 ? "permission" : "permissions"}`}
-            </Text>
-          );
-        },
+        cell: (key) => (
+          <Text fontSize="sm" color="ink.600">
+            {formatPermissionCount(mgmt.visiblePermissionsForKey(key).length)}
+          </Text>
+        ),
       },
       {
         id: "budget",

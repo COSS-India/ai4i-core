@@ -7,7 +7,6 @@ import type {
 } from "../common/dataTableTypes";
 import {
   serviceListCellKey,
-  serviceListRangeFilterKeys,
   type ServiceListColumnDef,
 } from "./serviceListColumns";
 
@@ -117,40 +116,6 @@ export function serviceMatchesSearch(service: Service, query: string, fields: st
 
 const TOOLBAR_FILTER_ORDER = ["status", "task", "tier"] as const;
 
-function buildDateRangeFilterDefs(
-  column: ServiceListColumnDef,
-  serverFilterValues: Record<string, string> | undefined,
-  onChange: (columnId: string, value: string) => void,
-): DataTableFilterDef[] {
-  const params = column.filter?.params ?? [];
-  if (params.length < 2) return [];
-  const keys = serviceListRangeFilterKeys(column.id);
-  return [
-    {
-      id: keys.from,
-      label: `${column.label} from`,
-      type: "date",
-      param: params[0],
-      inputType: "date",
-      value: serverFilterValues?.[keys.from] ?? "",
-      onChange: (next) => onChange(keys.from, next),
-      width: { base: "full", sm: "160px" },
-      cluster: `service-date-${column.id}`,
-    },
-    {
-      id: keys.to,
-      label: `${column.label} to`,
-      type: "date",
-      param: params[1],
-      inputType: "date",
-      value: serverFilterValues?.[keys.to] ?? "",
-      onChange: (next) => onChange(keys.to, next),
-      width: { base: "full", sm: "160px" },
-      cluster: `service-date-${column.id}`,
-    },
-  ];
-}
-
 export function buildServerServiceFilterDefs(options: {
   columns: readonly ServiceListColumnDef[];
   serverFilterValues?: Record<string, string>;
@@ -158,45 +123,38 @@ export function buildServerServiceFilterDefs(options: {
   tierFilterOptions: ServiceTierFilterOption[];
   onChange: (columnId: string, value: string) => void;
 }): DataTableFilterDef[] {
-  const selectDefs: DataTableFilterDef[] = [];
-  const dateDefs: DataTableFilterDef[] = [];
+  // Intentional: omit date_range columns (Created At / Published On). Toolbar is
+  // Search + Search in + Status + Task Type + Tier only.
+  const defs: DataTableFilterDef[] = [];
   for (const column of options.columns) {
     if (!column.filterable || !column.filter) continue;
     const cellKey = serviceListCellKey(column.id);
-    const kind = column.filter.type;
-
-    if (kind === "single_select" || kind === "multi_select") {
-      if (
-        !TOOLBAR_FILTER_ORDER.includes(
-          cellKey as (typeof TOOLBAR_FILTER_ORDER)[number],
-        )
-      ) {
-        continue;
-      }
-      const value = options.serverFilterValues?.[column.id] ?? "";
-      const def = buildSelectFilterDef(
-        column,
-        value,
-        options.taskTypeNames,
-        options.tierFilterOptions,
-        options.onChange,
-      );
-      if (cellKey === "task") def.label = "Task Type";
-      selectDefs.push(def);
+    if (
+      !TOOLBAR_FILTER_ORDER.includes(
+        cellKey as (typeof TOOLBAR_FILTER_ORDER)[number],
+      )
+    ) {
+      continue;
+    }
+    if (
+      column.filter.type !== "single_select" &&
+      column.filter.type !== "multi_select"
+    ) {
       continue;
     }
 
-    if (kind === "date_range") {
-      dateDefs.push(
-        ...buildDateRangeFilterDefs(
-          column,
-          options.serverFilterValues,
-          options.onChange,
-        ),
-      );
-    }
+    const value = options.serverFilterValues?.[column.id] ?? "";
+    const def = buildSelectFilterDef(
+      column,
+      value,
+      options.taskTypeNames,
+      options.tierFilterOptions,
+      options.onChange,
+    );
+    if (cellKey === "task") def.label = "Task Type";
+    defs.push(def);
   }
-  selectDefs.sort(
+  defs.sort(
     (left, right) =>
       TOOLBAR_FILTER_ORDER.indexOf(
         serviceListCellKey(left.id) as (typeof TOOLBAR_FILTER_ORDER)[number],
@@ -205,7 +163,7 @@ export function buildServerServiceFilterDefs(options: {
         serviceListCellKey(right.id) as (typeof TOOLBAR_FILTER_ORDER)[number],
       ),
   );
-  return [...selectDefs, ...dateDefs];
+  return defs;
 }
 
 export function buildClientServiceFilterDefs(options: {

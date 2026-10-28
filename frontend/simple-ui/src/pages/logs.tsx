@@ -153,6 +153,53 @@ function dateRangeError(startTime: string, endTime: string): string | undefined 
   return undefined;
 }
 
+function resolveLogsSearchError(options: {
+  searchingAllFields: boolean;
+  q: string;
+  searchFields: Set<LogSearchField>;
+  metadataFilter: ReturnType<typeof parseMetadataFilter>;
+  statusCodeFilter: ReturnType<typeof parseStatusCodeFilter>;
+}): string | undefined {
+  const trimmed = options.q.trim();
+  if (options.searchingAllFields) {
+    return trimmed.length > KEYWORD_MAX_LENGTH
+      ? FIELD_HINTS.logs.search.tooLong
+      : undefined;
+  }
+  if (
+    options.searchFields.has("endUser") &&
+    trimmed.length > END_USER_MAX_LENGTH
+  ) {
+    return FIELD_HINTS.logs.endUser.tooLong;
+  }
+  if (options.metadataFilter && "error" in options.metadataFilter) {
+    return options.metadataFilter.error;
+  }
+  if (options.statusCodeFilter && "error" in options.statusCodeFilter) {
+    return options.statusCodeFilter.error;
+  }
+  return undefined;
+}
+
+function logsAccessDenialMessage(options: {
+  isUser: boolean;
+  isGuest: boolean;
+  isAdmin: boolean;
+  isTenantAdmin: boolean;
+  authTenantId: string | null;
+}): string | null {
+  if (options.isUser || options.isGuest) {
+    return "You do not have permission to view logs.";
+  }
+  if (options.isTenantAdmin && !options.authTenantId) {
+    return `Your account is not linked to ${INSTITUTION_ARTICLE} ${INSTITUTION.toLowerCase()}. Contact an administrator.`;
+  }
+  if (!options.authTenantId && !options.isAdmin) {
+    return `You need to be assigned to ${INSTITUTION_ARTICLE} ${INSTITUTION.toLowerCase()} to view logs.`;
+  }
+  return null;
+}
+
 function withSearchText(draft: DraftFilters, value: string): DraftFilters {
   return { ...draft, q: value };
 }
@@ -327,76 +374,92 @@ function plainTraceCell(
   );
 }
 
+type TraceCellOptions = {
+  isAdmin: boolean;
+  resolveTenantName: (tenantId?: string | null) => string;
+};
+
+function renderTimestampCell(row: TelemetryTraceRecord): React.ReactNode {
+  return (
+    <Text fontSize="sm" color="ink.600">
+      {row.timestamp ? formatTimestamp(row.timestamp) : "—"}
+    </Text>
+  );
+}
+
+function renderUrlCell(row: TelemetryTraceRecord): React.ReactNode {
+  return (
+    <Text
+      fontSize="sm"
+      color="ink.700"
+      fontFamily="mono"
+      noOfLines={1}
+      title={row.url || undefined}
+    >
+      {row.url || "—"}
+    </Text>
+  );
+}
+
+function renderErrorCell(row: TelemetryTraceRecord): React.ReactNode {
+  return (
+    <Text
+      fontSize="sm"
+      color={row.error ? "red.600" : "ink.500"}
+      noOfLines={1}
+      title={row.error || undefined}
+    >
+      {row.error || "—"}
+    </Text>
+  );
+}
+
+function renderMetadataCell(row: TelemetryTraceRecord): React.ReactNode {
+  const metadataText = formatMetadataCell(row.metadata);
+  return (
+    <Text
+      fontSize="sm"
+      color="ink.700"
+      noOfLines={1}
+      title={metadataText === "—" ? undefined : metadataText}
+    >
+      {metadataText}
+    </Text>
+  );
+}
+
+const TRACE_CELL_BY_KEY: Record<
+  string,
+  (row: TelemetryTraceRecord, options: TraceCellOptions) => React.ReactNode
+> = {
+  timestamp: (row) => renderTimestampCell(row),
+  status: (row, options) => renderTraceStatusCell(row, options.isAdmin),
+  task_type: (row) => plainTraceCell(row.task_type, { weight: "medium" }),
+  url: (row) => renderUrlCell(row),
+  institution: (row, options) => (
+    <Text fontSize="sm" color="ink.600">
+      {options.resolveTenantName(row.tenant_id)}
+    </Text>
+  ),
+  status_code: (row) => plainTraceCell(row.status_code ?? "—"),
+  error: (row) => renderErrorCell(row),
+  service: (row) => plainTraceCell(row.service),
+  model: (row) => plainTraceCell(row.model),
+  latency: (row) => plainTraceCell(row.latency ?? "—"),
+  application: (row) => plainTraceCell(row.application, { mono: true }),
+  api_key: (row) => plainTraceCell(row.api_key, { mono: true }),
+  end_user: (row) => plainTraceCell(row.end_user),
+  metadata: (row) => renderMetadataCell(row),
+  method: (row) => plainTraceCell(row.method),
+};
+
 function renderTraceDataCell(
   key: string,
   row: TelemetryTraceRecord,
-  options: {
-    isAdmin: boolean;
-    resolveTenantName: (tenantId?: string | null) => string;
-  },
+  options: TraceCellOptions,
 ): React.ReactNode {
-  if (key === "timestamp") {
-    return (
-      <Text fontSize="sm" color="ink.600">
-        {row.timestamp ? formatTimestamp(row.timestamp) : "—"}
-      </Text>
-    );
-  }
-  if (key === "status") return renderTraceStatusCell(row, options.isAdmin);
-  if (key === "task_type") return plainTraceCell(row.task_type, { weight: "medium" });
-  if (key === "url") {
-    return (
-      <Text
-        fontSize="sm"
-        color="ink.700"
-        fontFamily="mono"
-        noOfLines={1}
-        title={row.url || undefined}
-      >
-        {row.url || "—"}
-      </Text>
-    );
-  }
-  if (key === "institution") {
-    return (
-      <Text fontSize="sm" color="ink.600">
-        {options.resolveTenantName(row.tenant_id)}
-      </Text>
-    );
-  }
-  if (key === "status_code") return plainTraceCell(row.status_code ?? "—");
-  if (key === "error") {
-    return (
-      <Text
-        fontSize="sm"
-        color={row.error ? "red.600" : "ink.500"}
-        noOfLines={1}
-        title={row.error || undefined}
-      >
-        {row.error || "—"}
-      </Text>
-    );
-  }
-  if (key === "service") return plainTraceCell(row.service);
-  if (key === "model") return plainTraceCell(row.model);
-  if (key === "latency") return plainTraceCell(row.latency ?? "—");
-  if (key === "application") return plainTraceCell(row.application, { mono: true });
-  if (key === "api_key") return plainTraceCell(row.api_key, { mono: true });
-  if (key === "end_user") return plainTraceCell(row.end_user);
-  if (key === "metadata") {
-    const metadataText = formatMetadataCell(row.metadata);
-    return (
-      <Text
-        fontSize="sm"
-        color="ink.700"
-        noOfLines={1}
-        title={metadataText === "—" ? undefined : metadataText}
-      >
-        {metadataText}
-      </Text>
-    );
-  }
-  if (key === "method") return plainTraceCell(row.method);
+  const render = TRACE_CELL_BY_KEY[key];
+  if (render) return render(row, options);
   return (
     <Text fontSize="sm" color="ink.500">
       —
@@ -488,82 +551,52 @@ const LogsPage: React.FC = () => {
 
   const searchFields = selectedSearchFields(draft.searchScope);
   const searchingAllFields = searchFields.size === 0;
-  const keywordError =
-    searchingAllFields && draft.q.trim().length > KEYWORD_MAX_LENGTH
-      ? FIELD_HINTS.logs.search.tooLong
-      : undefined;
-
-  const trimmedSearch = draft.q.trim();
-  const endUserError =
-    searchFields.has("endUser") && trimmedSearch.length > END_USER_MAX_LENGTH
-      ? FIELD_HINTS.logs.endUser.tooLong
-      : undefined;
   const metadataFilter = useMemo(
     () => (searchFields.has("metadata") ? parseMetadataFilter(draft.q) : null),
     [draft.q, draft.searchScope],
   );
-  const metadataError =
-    metadataFilter && "error" in metadataFilter
-      ? metadataFilter.error
-      : undefined;
   const statusCodeFilter = useMemo(
     () =>
       searchFields.has("statusCode") ? parseStatusCodeFilter(draft.q) : null,
     [draft.q, draft.searchScope],
   );
-  const statusCodeError =
-    statusCodeFilter && "error" in statusCodeFilter
-      ? statusCodeFilter.error
-      : undefined;
-  const searchError = searchingAllFields
-    ? keywordError
-    : endUserError || metadataError || statusCodeError;
+  const searchError = resolveLogsSearchError({
+    searchingAllFields,
+    q: draft.q,
+    searchFields,
+    metadataFilter,
+    statusCodeFilter,
+  });
   const timeRangeError = dateRangeError(draft.startTime, draft.endTime);
   const onlySearchField =
     searchFields.size === 1 ? Array.from(searchFields)[0] : undefined;
 
   useEffect(() => {
-    if (!followsPresent && autoRefresh) {
-      setAutoRefresh(false);
-    }
+    if (followsPresent || !autoRefresh) return;
+    setAutoRefresh(false);
   }, [followsPresent, autoRefresh]);
 
   useEffect(() => {
-    if (!authLoading && !isAuthenticated) {
-      showToast({
-        type: "warning",
-        message: "Please log in to view logs.",
-      });
-      router.push("/auth");
-    }
+    if (authLoading || isAuthenticated) return;
+    showToast({
+      type: "warning",
+      message: "Please log in to view logs.",
+    });
+    router.push("/auth");
   }, [isAuthenticated, authLoading, router]);
 
   useEffect(() => {
-    if (!authLoading && isAuthenticated) {
-      if (isUser || isGuest) {
-        showToast({
-          type: "error",
-          message: "You do not have permission to view logs.",
-        });
-        router.push("/");
-        return;
-      }
-      if (isTenantAdmin && !authTenantId) {
-        showToast({
-          type: "error",
-          message: `Your account is not linked to ${INSTITUTION_ARTICLE} ${INSTITUTION.toLowerCase()}. Contact an administrator.`,
-        });
-        router.push("/");
-        return;
-      }
-      if (!authTenantId && !isAdmin) {
-        showToast({
-          type: "error",
-          message: `You need to be assigned to ${INSTITUTION_ARTICLE} ${INSTITUTION.toLowerCase()} to view logs.`,
-        });
-        router.push("/");
-      }
-    }
+    if (authLoading || !isAuthenticated) return;
+    const denial = logsAccessDenialMessage({
+      isUser,
+      isGuest,
+      isAdmin,
+      isTenantAdmin,
+      authTenantId,
+    });
+    if (!denial) return;
+    showToast({ type: "error", message: denial });
+    router.push("/");
   }, [
     isAuthenticated,
     authLoading,

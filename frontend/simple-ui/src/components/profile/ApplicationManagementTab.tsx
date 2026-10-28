@@ -88,40 +88,29 @@ function applicationDrawerDescription(options: {
   return "Application details.";
 }
 
-export default function ApplicationManagementTab({
-  tenantId,
-  institutionBudget,
-  currency = "INR",
+function ApplicationTableEmpty({
+  hasSearch,
+  onClearSearch,
+  onCreate,
 }: Readonly<{
-  tenantId: string;
-  institutionBudget: number | null;
-  currency?: string;
+  hasSearch: boolean;
+  onClearSearch: () => void;
+  onCreate: () => void;
 }>) {
-  const mgr = useApplicationManagement(tenantId, institutionBudget, currency);
-  const [boundHint, setBoundHint] = useState<string | null>(null);
+  if (hasSearch) {
+    return <ApplicationNoResults onClear={onClearSearch} />;
+  }
+  return <ApplicationEmptyState onCreate={onCreate} />;
+}
 
-  useEffect(() => {
-    if (!mgr.createOpen) setBoundHint(null);
-  }, [mgr.createOpen]);
+const HIDE_KEYS_COL = { display: { base: "none", lg: "table-cell" } } as const;
 
-  const appSortAccessors = useMemo(
-    () => ({
-      name: (app: Application) => app.name ?? "",
-      domain: (app: Application) => app.domain ?? "",
-      budget: (app: Application) => app.allocated_percentage ?? -1,
-      keys: (app: Application) => app.api_key_count ?? -1,
-      status: (app: Application) => app.status ?? "",
-    }),
-    [],
-  );
-  const appSort = useDeferredColumnSort("name", appSortAccessors);
-  const sortedApplications = useMemo(
-    () => appSort.apply(mgr.applications),
-    [mgr.applications, appSort],
-  );
-
-  const hideKeys = { display: { base: "none", lg: "table-cell" } } as const;
-  const columns: DataTableColumn<Application>[] = [
+function buildApplicationColumns(options: {
+  currency: string;
+  onEdit: (app: Application) => void;
+  onBudget: (app: Application) => void;
+}): DataTableColumn<Application>[] {
+  return [
     {
       id: "name",
       header: "Application",
@@ -158,7 +147,7 @@ export default function ApplicationManagementTab({
           </Text>
           {app.allocated_budget != null ? (
             <Text fontSize="xs" color="ink.500">
-              {rupees(app.allocated_budget, currency)}
+              {rupees(app.allocated_budget, options.currency)}
             </Text>
           ) : null}
         </Box>
@@ -170,8 +159,8 @@ export default function ApplicationManagementTab({
       hint: FIELD_HINTS.application.col.keys,
       sortable: true,
       sortAccessor: (app) => app.api_key_count ?? -1,
-      thProps: hideKeys,
-      tdProps: hideKeys,
+      thProps: HIDE_KEYS_COL,
+      tdProps: HIDE_KEYS_COL,
       cell: (app) => (
         <Text fontSize="sm" color="ink.700">
           {app.api_key_count == null ? "—" : String(app.api_key_count)}
@@ -198,7 +187,7 @@ export default function ApplicationManagementTab({
             label: "Edit",
             icon: <EditIcon />,
             "aria-label": `Edit ${app.name}`,
-            onClick: () => mgr.openEdit(app),
+            onClick: () => options.onEdit(app),
           },
           {
             id: "budget",
@@ -211,12 +200,55 @@ export default function ApplicationManagementTab({
               ? FIELD_HINTS.application.inactiveBudgetNotEditable
               : budgetActionLabel,
             disabled: budgetDisabled,
-            onClick: () => mgr.openBudget(app),
+            onClick: () => options.onBudget(app),
           },
         ];
       },
     }),
   ];
+}
+
+export default function ApplicationManagementTab({
+  tenantId,
+  institutionBudget,
+  currency = "INR",
+}: Readonly<{
+  tenantId: string;
+  institutionBudget: number | null;
+  currency?: string;
+}>) {
+  const mgr = useApplicationManagement(tenantId, institutionBudget, currency);
+  const [boundHint, setBoundHint] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!mgr.createOpen) setBoundHint(null);
+  }, [mgr.createOpen]);
+
+  const appSortAccessors = useMemo(
+    () => ({
+      name: (app: Application) => app.name ?? "",
+      domain: (app: Application) => app.domain ?? "",
+      budget: (app: Application) => app.allocated_percentage ?? -1,
+      keys: (app: Application) => app.api_key_count ?? -1,
+      status: (app: Application) => app.status ?? "",
+    }),
+    [],
+  );
+  const appSort = useDeferredColumnSort("name", appSortAccessors);
+  const sortedApplications = useMemo(
+    () => appSort.apply(mgr.applications),
+    [mgr.applications, appSort],
+  );
+
+  const columns = useMemo(
+    () =>
+      buildApplicationColumns({
+        currency,
+        onEdit: mgr.openEdit,
+        onBudget: mgr.openBudget,
+      }),
+    [currency, mgr.openEdit, mgr.openBudget],
+  );
 
   if (!tenantId) {
     return (
@@ -240,15 +272,9 @@ export default function ApplicationManagementTab({
   const viewApp = mgr.viewOpen ? mgr.selected : null;
   const closeDrawer = () => {
     if ((isEditing || isCreating) && mgr.isSaving) return;
-    if (isEditing) {
-      mgr.setEditOpen(false);
-      return;
-    }
-    if (isCreating) {
-      mgr.setCreateOpen(false);
-      return;
-    }
-    mgr.setViewOpen(false);
+    if (isEditing) mgr.setEditOpen(false);
+    else if (isCreating) mgr.setCreateOpen(false);
+    else mgr.setViewOpen(false);
   };
 
   return (
@@ -460,11 +486,11 @@ export default function ApplicationManagementTab({
         }}
         isLoading={mgr.isLoading && mgr.applications.length === 0 && !mgr.loadError}
         emptyContent={
-          mgr.searchInput.trim() ? (
-            <ApplicationNoResults onClear={() => mgr.setSearchInput("")} />
-          ) : (
-            <ApplicationEmptyState onCreate={mgr.openCreate} />
-          )
+          <ApplicationTableEmpty
+            hasSearch={mgr.searchInput.trim() !== ""}
+            onClearSearch={() => mgr.setSearchInput("")}
+            onCreate={mgr.openCreate}
+          />
         }
         emptyMessage="No applications yet."
         noResultsMessage="No applications match this search."

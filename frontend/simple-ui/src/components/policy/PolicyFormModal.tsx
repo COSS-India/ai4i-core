@@ -43,6 +43,350 @@ function policyFormFromList(policy: PolicyOut): boolean {
 
 const LANGUAGE_OPTIONS = ["en", "hi"] as const;
 
+type PolicyFormMode = "create" | "edit" | "view";
+
+function resolvePolicyFormMode(
+  mode: PolicyFormMode | undefined,
+  policyId: string | null,
+): PolicyFormMode {
+  return mode ?? (policyId ? "edit" : "create");
+}
+
+function policyDrawerCopy(
+  resolvedMode: PolicyFormMode,
+  name: string,
+): { title: string; description: string } {
+  if (resolvedMode === "create") {
+    return {
+      title: "Create Policy",
+      description: "Define a policy and choose which PII types it covers.",
+    };
+  }
+  if (resolvedMode === "view") {
+    return {
+      title: name || "Policy",
+      description: "View this policy's scope and PII coverage.",
+    };
+  }
+  return {
+    title: name || "Policy",
+    description:
+      "Update who this policy applies to and which PII types it covers.",
+  };
+}
+
+function resetPolicyFormState(setters: {
+  setName: (v: string) => void;
+  setDescription: (v: string) => void;
+  setIsGlobal: (v: boolean) => void;
+  setTenantIds: (v: string[]) => void;
+  setTenantInput: (v: string) => void;
+  setLangs: (v: string[]) => void;
+  setSelectedPii: (v: string[]) => void;
+  setLoadedPolicy: (v: PolicyOut | null) => void;
+}) {
+  setters.setName("");
+  setters.setDescription("");
+  setters.setIsGlobal(true);
+  setters.setTenantIds([]);
+  setters.setTenantInput("");
+  setters.setLangs(["en"]);
+  setters.setSelectedPii([]);
+  setters.setLoadedPolicy(null);
+}
+
+function applyPolicyToForm(
+  p: PolicyOut,
+  setters: {
+    setName: (v: string) => void;
+    setDescription: (v: string) => void;
+    setIsGlobal: (v: boolean) => void;
+    setTenantIds: (v: string[]) => void;
+    setTenantInput: (v: string) => void;
+    setLangs: (v: string[]) => void;
+    setSelectedPii: (v: string[]) => void;
+    setLoadedPolicy: (v: PolicyOut | null) => void;
+  },
+) {
+  setters.setName(p.name);
+  setters.setDescription(p.description || "");
+  setters.setIsGlobal(p.is_global);
+  const tids = p.tenant_ids ?? [];
+  setters.setTenantIds(tids);
+  setters.setTenantInput(tids.join(", "));
+  setters.setLangs(p.supported_languages?.length ? p.supported_languages : ["en"]);
+  setters.setSelectedPii((p.pii_types || []).map((x: { pii_type_id: string }) => x.pii_type_id));
+  setters.setLoadedPolicy(p);
+}
+
+type PolicyFormFieldsProps = Readonly<{
+  readOnly: boolean;
+  name: string;
+  setName: (v: string) => void;
+  description: string;
+  setDescription: (v: string) => void;
+  isGlobal: boolean;
+  setIsGlobal: (v: boolean) => void;
+  tenantIds: string[];
+  setTenantIds: (v: string[]) => void;
+  tenantInput: string;
+  setTenantInput: (v: string) => void;
+  langs: string[];
+  setLangs: (v: string[]) => void;
+  selectedPii: string[];
+  setSelectedPii: (v: string[]) => void;
+  tenantsLoading: boolean;
+  tenantsError: string | null;
+  tenants: { tenant_id: string; organisation?: string }[];
+  tenantById: Map<string, { tenant_id: string; organisation?: string }>;
+  piiOptions: PiiTypeOut[];
+  piiById: Map<string, PiiTypeOut>;
+  optionListScroll: { maxH: "220px"; overflowY: "auto" };
+}>;
+
+function PolicyInstitutionsField({
+  readOnly,
+  tenantIds,
+  setTenantIds,
+  tenantInput,
+  setTenantInput,
+  tenantsLoading,
+  tenantsError,
+  tenants,
+  tenantById,
+  optionListScroll,
+}: Readonly<
+  Pick<
+    PolicyFormFieldsProps,
+    | "readOnly"
+    | "tenantIds"
+    | "setTenantIds"
+    | "tenantInput"
+    | "setTenantInput"
+    | "tenantsLoading"
+    | "tenantsError"
+    | "tenants"
+    | "tenantById"
+    | "optionListScroll"
+  >
+>) {
+  if (readOnly) {
+    const ids =
+      tenantsError || tenants.length === 0
+        ? parseDelimitedValues(tenantInput)
+        : tenantIds;
+    return (
+      <ReadOnlyField label={INSTITUTIONS}>
+        {ids.map((id) => tenantById.get(id)?.organisation || id).join(", ") ||
+          "—"}
+      </ReadOnlyField>
+    );
+  }
+
+  if (tenantsLoading) {
+    return (
+      <FormControl isRequired>
+        <FieldLabel hint={FIELD_HINTS.policy.institutions.tip}>{INSTITUTIONS}</FieldLabel>
+        <HStack spacing={2} py={2}>
+          <Spinner size="sm" />
+          <Text fontSize="sm" color="gray.600">
+            Loading {INSTITUTIONS.toLowerCase()}…
+          </Text>
+        </HStack>
+      </FormControl>
+    );
+  }
+
+  if (tenantsError || tenants.length === 0) {
+    return (
+      <FormControl isRequired>
+        <FieldLabel hint={FIELD_HINTS.policy.institutions.tip}>{INSTITUTIONS}</FieldLabel>
+        {tenantsError ? (
+          <Text fontSize="sm" color="red.500" mb={2}>
+            {tenantsError}
+          </Text>
+        ) : (
+          <Text fontSize="sm" color="gray.600" mb={2}>
+            No {INSTITUTIONS.toLowerCase()} found. Enter {INSTITUTION.toLowerCase()} IDs
+            manually.
+          </Text>
+        )}
+        <Textarea
+          placeholder={`${INSTITUTION} IDs separated by comma or newline`}
+          value={tenantInput}
+          onChange={(e) => setTenantInput(e.target.value)}
+          fontFamily="mono"
+          fontSize="sm"
+          rows={2}
+        />
+        <FieldHint>{FIELD_HINTS.policy.tenantIdsManual}</FieldHint>
+      </FormControl>
+    );
+  }
+
+  return (
+    <FormControl isRequired>
+      <FieldLabel hint={FIELD_HINTS.policy.institutions.tip}>{INSTITUTIONS}</FieldLabel>
+      <Box borderWidth="1px" borderRadius="md" p={3} {...optionListScroll}>
+        <CheckboxGroup value={tenantIds} onChange={(v) => setTenantIds(v as string[])}>
+          <Stack spacing={2}>
+            {tenantIds
+              .filter((id) => !tenantById.has(id))
+              .map((id) => (
+                <Checkbox key={id} value={id} isRequired={false}>
+                  Current assignment - {id}
+                </Checkbox>
+              ))}
+            {tenants.map((t) => (
+              <Checkbox key={t.tenant_id} value={t.tenant_id} isRequired={false}>
+                {t.organisation || "(Unnamed)"}{" "}
+                <Text as="span" color="gray.500" fontSize="sm">
+                  ({t.tenant_id})
+                </Text>
+              </Checkbox>
+            ))}
+          </Stack>
+        </CheckboxGroup>
+      </Box>
+      <FieldHint>{FIELD_HINTS.policy.tenantIdsSelect}</FieldHint>
+    </FormControl>
+  );
+}
+
+function PolicyFormFields({
+  readOnly,
+  name,
+  setName,
+  description,
+  setDescription,
+  isGlobal,
+  setIsGlobal,
+  tenantIds,
+  setTenantIds,
+  tenantInput,
+  setTenantInput,
+  langs,
+  setLangs,
+  selectedPii,
+  setSelectedPii,
+  tenantsLoading,
+  tenantsError,
+  tenants,
+  tenantById,
+  piiOptions,
+  piiById,
+  optionListScroll,
+}: PolicyFormFieldsProps) {
+  const selectedIncludesMissing = selectedPii.some((id) => !piiById.has(id));
+  let piiSelectedLabel = `${selectedPii.length} selected`;
+  if (selectedIncludesMissing) {
+    piiSelectedLabel += " (includes types not in current list)";
+  }
+
+  return (
+    <Stack spacing={4}>
+      {readOnly ? (
+        <ReadOnlyField label="Name">{name || "—"}</ReadOnlyField>
+      ) : (
+        <FormControl isRequired>
+          <FieldLabel hint={FIELD_HINTS.policy.name.tip}>Name</FieldLabel>
+          <Input value={name} onChange={(e) => setName(e.target.value)} />
+        </FormControl>
+      )}
+      {readOnly ? (
+        <ReadOnlyField label="Description">{description || "No description"}</ReadOnlyField>
+      ) : (
+        <FormControl>
+          <FieldLabel hint={FIELD_HINTS.policy.description.tip}>Description</FieldLabel>
+          <Textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={2}
+          />
+        </FormControl>
+      )}
+      {readOnly ? (
+        <ReadOnlyField label="Global policy">{isGlobal ? "Yes" : "No"}</ReadOnlyField>
+      ) : (
+        <FormControl display="flex" alignItems="center">
+          <FieldLabel hint={FIELD_HINTS.policy.global.tip} formLabelProps={{ mb: 0 }}>
+            Global policy
+          </FieldLabel>
+          <Switch isChecked={isGlobal} onChange={(e) => setIsGlobal(e.target.checked)} />
+        </FormControl>
+      )}
+      {!isGlobal ? (
+        <PolicyInstitutionsField
+          readOnly={readOnly}
+          tenantIds={tenantIds}
+          setTenantIds={setTenantIds}
+          tenantInput={tenantInput}
+          setTenantInput={setTenantInput}
+          tenantsLoading={tenantsLoading}
+          tenantsError={tenantsError}
+          tenants={tenants}
+          tenantById={tenantById}
+          optionListScroll={optionListScroll}
+        />
+      ) : null}
+      {readOnly ? (
+        <ReadOnlyField label="Supported languages">{langs.join(", ") || "—"}</ReadOnlyField>
+      ) : (
+        <FormControl>
+          <FieldLabel hint={FIELD_HINTS.policy.languages.tip}>Supported languages</FieldLabel>
+          <CheckboxGroup value={langs} onChange={(v) => setLangs(v as string[])}>
+            <HStack spacing={4}>
+              {LANGUAGE_OPTIONS.map((code) => (
+                <Checkbox key={code} value={code} isRequired={false}>
+                  {code}
+                </Checkbox>
+              ))}
+            </HStack>
+          </CheckboxGroup>
+        </FormControl>
+      )}
+      {readOnly ? (
+        <ReadOnlyField label="PII types (policy configuration)">
+          {selectedPii.length === 0
+            ? "—"
+            : selectedPii.map((id) => piiById.get(id)?.pii_type_label || id).join(", ")}
+        </ReadOnlyField>
+      ) : (
+        <FormControl isRequired>
+          <FieldLabel hint={FIELD_HINTS.policy.piiTypes.tip}>
+            PII types (policy configuration)
+          </FieldLabel>
+          <Box borderWidth="1px" borderRadius="md" p={3} {...optionListScroll}>
+            <CheckboxGroup
+              value={selectedPii}
+              onChange={(v) => setSelectedPii(v as string[])}
+            >
+              <Stack spacing={2}>
+                {piiOptions.map((p) => (
+                  <Checkbox key={p.pii_type_id} value={p.pii_type_id} isRequired={false}>
+                    {p.pii_type_label}{" "}
+                    <Text as="span" color="gray.500" fontSize="sm">
+                      ({p.mask_format})
+                    </Text>
+                  </Checkbox>
+                ))}
+              </Stack>
+            </CheckboxGroup>
+            {piiOptions.length === 0 ? (
+              <Text fontSize="sm" color="gray.500">
+                No PII types yet. Add some under &quot;PII type library&quot;.
+              </Text>
+            ) : null}
+          </Box>
+          <Text fontSize="xs" color="gray.500" mt={1}>
+            {piiSelectedLabel}
+          </Text>
+        </FormControl>
+      )}
+    </Stack>
+  );
+}
+
 export function PolicyFormModal({
   isOpen,
   onClose,
@@ -55,7 +399,7 @@ export function PolicyFormModal({
   mode,
   onViewEdit,
   onViewDelete,
-}: {
+}: Readonly<{
   isOpen: boolean;
   onClose: () => void;
   policyId: string | null;
@@ -65,10 +409,10 @@ export function PolicyFormModal({
   cachedPolicy?: PolicyOut | null;
   onSaved: () => void;
   onError: (msg: string) => void;
-  mode?: "create" | "edit" | "view";
+  mode?: PolicyFormMode;
   onViewEdit?: (id: string) => void;
   onViewDelete?: (policy: PolicyOut) => void;
-}) {
+}>) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [isGlobal, setIsGlobal] = useState(true);
@@ -79,11 +423,18 @@ export function PolicyFormModal({
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loadedPolicy, setLoadedPolicy] = useState<PolicyOut | null>(null);
-  let resolvedMode = mode;
-  if (resolvedMode == null) {
-    resolvedMode = policyId ? "edit" : "create";
-  }
+  const resolvedMode = resolvePolicyFormMode(mode, policyId);
   const readOnly = resolvedMode === "view";
+  const formSetters = {
+    setName,
+    setDescription,
+    setIsGlobal,
+    setTenantIds,
+    setTenantInput,
+    setLangs,
+    setSelectedPii,
+    setLoadedPolicy,
+  };
   const tenantsQuery = useTenantsList({ enabled: isOpen });
   const tenantsError = tenantsQuery.isError
     ? `Could not load ${INSTITUTIONS.toLowerCase()}. You can enter ${INSTITUTION_ARTICLE} ${INSTITUTION.toLowerCase()} ID below.`
@@ -110,33 +461,15 @@ export function PolicyFormModal({
   useEffect(() => {
     if (!isOpen) return;
     if (!policyId) {
-      setName("");
-      setDescription("");
-      setIsGlobal(true);
-      setTenantIds([]);
-      setTenantInput("");
-      setLangs(["en"]);
-      setSelectedPii([]);
-      setLoadedPolicy(null);
+      resetPolicyFormState(formSetters);
       return;
     }
-    const applyPolicy = (p: PolicyOut) => {
-      setName(p.name);
-      setDescription(p.description || "");
-      setIsGlobal(p.is_global);
-      const tids = p.tenant_ids ?? [];
-      setTenantIds(tids);
-      setTenantInput(tids.join(", "));
-      setLangs(p.supported_languages?.length ? p.supported_languages : ["en"]);
-      setSelectedPii((p.pii_types || []).map((x: { pii_type_id: string }) => x.pii_type_id));
-      setLoadedPolicy(p);
-    };
     if (
       cachedPolicy &&
       cachedPolicy.policy_id === policyId &&
       policyFormFromList(cachedPolicy)
     ) {
-      applyPolicy(cachedPolicy);
+      applyPolicyToForm(cachedPolicy, formSetters);
       setLoadingDetail(false);
       return;
     }
@@ -146,7 +479,7 @@ export function PolicyFormModal({
       try {
         const res = await policyService.getPolicy(policyId);
         if (cancelled) return;
-        applyPolicy(res.data);
+        applyPolicyToForm(res.data, formSetters);
       } catch (e: unknown) {
         if (!cancelled) onError(getPolicyApiErrorMessage(e, "Failed to load policy"));
       } finally {
@@ -157,6 +490,8 @@ export function PolicyFormModal({
     return () => {
       cancelled = true;
     };
+    // formSetters are stable React setters
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, policyId, onError, cachedPolicy]);
 
   const handleSubmit = async () => {
@@ -221,186 +556,42 @@ export function PolicyFormModal({
   const optionListScroll = { maxH: "220px" as const, overflowY: "auto" as const };
 
   const formBody = loadingDetail ? (
-        <Flex justify="center" py={8}>
-          <Spinner />
-        </Flex>
-      ) : (
-        <Stack spacing={4}>
-          {readOnly ? (
-            <ReadOnlyField label="Name">{name || "—"}</ReadOnlyField>
-          ) : (
-            <FormControl isRequired>
-              <FieldLabel hint={FIELD_HINTS.policy.name.tip}>Name</FieldLabel>
-              <Input value={name} onChange={(e) => setName(e.target.value)} />
-            </FormControl>
-          )}
-          {readOnly ? (
-            <ReadOnlyField label="Description">{description || "No description"}</ReadOnlyField>
-          ) : (
-            <FormControl>
-              <FieldLabel hint={FIELD_HINTS.policy.description.tip}>Description</FieldLabel>
-              <Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} />
-            </FormControl>
-          )}
-          {readOnly ? (
-            <ReadOnlyField label="Global policy">{isGlobal ? "Yes" : "No"}</ReadOnlyField>
-          ) : (
-            <FormControl display="flex" alignItems="center">
-              <FieldLabel hint={FIELD_HINTS.policy.global.tip} formLabelProps={{ mb: 0 }}>
-                Global policy
-              </FieldLabel>
-              <Switch isChecked={isGlobal} onChange={(e) => setIsGlobal(e.target.checked)} />
-            </FormControl>
-          )}
-          {!isGlobal && readOnly ? (
-            <ReadOnlyField label={INSTITUTIONS}>
-              {(tenantsError || tenants.length === 0
-                ? parseDelimitedValues(tenantInput)
-                : tenantIds
-              )
-                .map((id) => tenantById.get(id)?.organisation || id)
-                .join(", ") || "—"}
-            </ReadOnlyField>
-          ) : null}
-          {!isGlobal && !readOnly && (
-            <FormControl isRequired>
-              <FieldLabel hint={FIELD_HINTS.policy.institutions.tip}>{INSTITUTIONS}</FieldLabel>
-              {tenantsLoading ? (
-                <HStack spacing={2} py={2}>
-                  <Spinner size="sm" />
-                  <Text fontSize="sm" color="gray.600">
-                    Loading {INSTITUTIONS.toLowerCase()}…
-                  </Text>
-                </HStack>
-              ) : tenantsError || tenants.length === 0 ? (
-                <>
-                  {tenantsError ? (
-                    <Text fontSize="sm" color="red.500" mb={2}>
-                      {tenantsError}
-                    </Text>
-                  ) : (
-                    <Text fontSize="sm" color="gray.600" mb={2}>
-                      No {INSTITUTIONS.toLowerCase()} found. Enter {INSTITUTION.toLowerCase()} IDs manually.
-                    </Text>
-                  )}
-                  <Textarea
-                    placeholder={`${INSTITUTION} IDs separated by comma or newline`}
-                    value={tenantInput}
-                    onChange={(e) => setTenantInput(e.target.value)}
-                    isReadOnly={readOnly}
-                    fontFamily="mono"
-                    fontSize="sm"
-                    rows={2}
-                  />
-                  <FieldHint>{FIELD_HINTS.policy.tenantIdsManual}</FieldHint>
-                </>
-              ) : (
-                <>
-                  <Box
-                    borderWidth="1px"
-                    borderRadius="md"
-                    p={3}
-                    {...optionListScroll}
-                  >
-                    <CheckboxGroup value={tenantIds} onChange={(v) => setTenantIds(v as string[])}>
-                      <Stack spacing={2}>
-                        {tenantIds
-                          .filter((id) => !tenantById.has(id))
-                          .map((id) => (
-                            <Checkbox key={id} value={id} isRequired={false} isDisabled={readOnly}>
-                              Current assignment - {id}
-                            </Checkbox>
-                          ))}
-                        {tenants.map((t) => (
-                          <Checkbox key={t.tenant_id} value={t.tenant_id} isRequired={false} isDisabled={readOnly}>
-                            {t.organisation || "(Unnamed)"}{" "}
-                            <Text as="span" color="gray.500" fontSize="sm">
-                              ({t.tenant_id})
-                            </Text>
-                          </Checkbox>
-                        ))}
-                      </Stack>
-                    </CheckboxGroup>
-                  </Box>
-                  <FieldHint>{FIELD_HINTS.policy.tenantIdsSelect}</FieldHint>
-                </>
-              )}
-            </FormControl>
-          )}
-          {readOnly ? (
-            <ReadOnlyField label="Supported languages">{langs.join(", ") || "—"}</ReadOnlyField>
-          ) : (
-          <FormControl>
-            <FieldLabel hint={FIELD_HINTS.policy.languages.tip}>Supported languages</FieldLabel>
-            <CheckboxGroup value={langs} onChange={(v) => setLangs(v as string[])}>
-              <HStack spacing={4}>
-                {LANGUAGE_OPTIONS.map((code) => (
-                  <Checkbox key={code} value={code} isRequired={false} isDisabled={readOnly}>
-                    {code}
-                  </Checkbox>
-                ))}
-              </HStack>
-            </CheckboxGroup>
-          </FormControl>
-          )}
-          {readOnly ? (
-            <ReadOnlyField label="PII types (policy configuration)">
-              {selectedPii.length === 0
-                ? "—"
-                : selectedPii
-                    .map((id) => piiById.get(id)?.pii_type_label || id)
-                    .join(", ")}
-            </ReadOnlyField>
-          ) : (
-          <FormControl isRequired>
-            <FieldLabel hint={FIELD_HINTS.policy.piiTypes.tip}>
-              PII types (policy configuration)
-            </FieldLabel>
-            <Box
-              borderWidth="1px"
-              borderRadius="md"
-              p={3}
-              {...optionListScroll}
-            >
-              <CheckboxGroup
-                value={selectedPii}
-                onChange={(v) => setSelectedPii(v as string[])}
-              >
-                <Stack spacing={2}>
-                  {piiOptions.map((p) => (
-                    <Checkbox key={p.pii_type_id} value={p.pii_type_id} isRequired={false} isDisabled={readOnly}>
-                      {p.pii_type_label}{" "}
-                      <Text as="span" color="gray.500" fontSize="sm">
-                        ({p.mask_format})
-                      </Text>
-                    </Checkbox>
-                  ))}
-                </Stack>
-              </CheckboxGroup>
-              {!piiOptions.length && (
-                <Text fontSize="sm" color="gray.500">
-                  No PII types yet. Add some under &quot;PII type library&quot;.
-                </Text>
-              )}
-            </Box>
-            <Text fontSize="xs" color="gray.500" mt={1}>
-              {selectedPii.length} selected
-              {selectedPii.some((id) => !piiById.has(id)) ? " (includes types not in current list)" : ""}
-            </Text>
-          </FormControl>
-          )}
-        </Stack>
-      );
+    <Flex justify="center" py={8}>
+      <Spinner />
+    </Flex>
+  ) : (
+    <PolicyFormFields
+      readOnly={readOnly}
+      name={name}
+      setName={setName}
+      description={description}
+      setDescription={setDescription}
+      isGlobal={isGlobal}
+      setIsGlobal={setIsGlobal}
+      tenantIds={tenantIds}
+      setTenantIds={setTenantIds}
+      tenantInput={tenantInput}
+      setTenantInput={setTenantInput}
+      langs={langs}
+      setLangs={setLangs}
+      selectedPii={selectedPii}
+      setSelectedPii={setSelectedPii}
+      tenantsLoading={tenantsLoading}
+      tenantsError={tenantsError}
+      tenants={tenants}
+      tenantById={tenantById}
+      piiOptions={piiOptions}
+      piiById={piiById}
+      optionListScroll={optionListScroll}
+    />
+  );
 
   if (!isOpen) return null;
 
-  const pageTitle = resolvedMode === "create" ? "Create Policy" : name || "Policy";
-  const pageDescription =
-    resolvedMode === "create"
-      ? "Define a policy and choose which PII types it covers."
-      : resolvedMode === "view"
-        ? "View this policy's scope and PII coverage."
-        : "Update who this policy applies to and which PII types it covers.";
+  const { title: pageTitle, description: pageDescription } = policyDrawerCopy(
+    resolvedMode,
+    name,
+  );
 
   return (
     <FormDrawer
