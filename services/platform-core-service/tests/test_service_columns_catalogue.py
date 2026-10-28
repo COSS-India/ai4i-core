@@ -54,6 +54,8 @@ def test_non_admin_keeps_a_non_mandatory_default():
 
 
 def test_admin_only_filter_params():
+    # tier_ids belongs to an admin-only column but is open to every caller
+    # (FILTER_PARAMS_OPEN_TO_ALL): the Application fallback picker uses it.
     assert ADMIN_ONLY_FILTER_PARAMS == {
-        "tier_ids", "created_from", "created_to", "published_from", "published_to",
+        "created_from", "created_to", "published_from", "published_to",
     }

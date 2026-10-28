@@ -84,6 +84,13 @@ def compute_total_time_ms(start_time: float) -> float:
     return round((time.time() - start_time) * 1000, 2)
 
 
+def _failure_status_code(exc: Exception, status_for) -> int:
+    """Map an exception to an HTTP status code for classify_status spans."""
+    if status_for is not None:
+        return status_for(exc)
+    return 400 if isinstance(exc, ValueError) else 500
+
+
 @contextmanager
 def traced_span(
     span_name: str,
@@ -93,6 +100,7 @@ def traced_span(
     mark_ok: bool = True,
     error_attrs=None,
     status_for=None,
+    start_time: "float | None" = None,
 ):
     """
     THE span-lifecycle primitive: opens a span, captures start_time, yields a
@@ -114,10 +122,15 @@ def traced_span(
             (with classify_status) instead of 400 for ValueError, else 500 —
             the Triton "request" span passes http_status_for so it records
             the HTTP status the client got
+        start_time: an earlier time.time() to measure from, for a span that
+            can only be opened after the work it covers began (the LLM
+            streaming spans open once the stream's first line is in)
     """
-    start_time = time.time()
+    start_time = time.time() if start_time is None else start_time
     context = otel_context.Context() if root else None
-    with tracer.start_as_current_span(span_name, context=context) as span:
+    with tracer.start_as_current_span(
+        span_name, context=context, start_time=int(start_time * 1_000_000_000)
+    ) as span:
         attrs: dict = {}
         try:
             yield attrs
@@ -127,10 +140,7 @@ def traced_span(
             attrs["total_time_ms"] = compute_total_time_ms(start_time)
             if classify_status:
                 attrs["status"] = "failure"
-                attrs["status_code"] = (
-                    status_for(e) if status_for is not None
-                    else 400 if isinstance(e, ValueError) else 500
-                )
+                attrs["status_code"] = _failure_status_code(e, status_for)
             finalize_span(span, attrs, error=e)
             raise
         else:
@@ -170,7 +180,9 @@ def record_rejected_request(request, status_code: int) -> None:
 
 
 @asynccontextmanager
-async def traced_inference(payload: dict, task_name: str, logger_: logging.Logger):
+async def traced_inference(
+    payload: dict, task_name: str, logger_: logging.Logger, start_time: "float | None" = None
+):
     """
     The 'ai-inference' span around an inference call, built on traced_span.
 
@@ -192,7 +204,8 @@ async def traced_inference(payload: dict, task_name: str, logger_: logging.Logge
         return attrs
 
     with traced_span(
-        "ai-inference", classify_status=True, mark_ok=False, error_attrs=_zero_tokens
+        "ai-inference", classify_status=True, mark_ok=False, error_attrs=_zero_tokens,
+        start_time=start_time,
     ) as attrs:
         # Seed correlation_id (and tenantId/authType) so KafkaSpanExporter uses
         # the same context.trace_id as the sibling request/model spans.  Without

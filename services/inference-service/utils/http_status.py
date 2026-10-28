@@ -8,6 +8,8 @@ its status_code.
 """
 from typing import Optional
 
+from utils.failover import AllServicesUnavailableError
+
 
 def _cause_chain(exc: BaseException) -> list[BaseException]:
     chain = []
@@ -25,12 +27,15 @@ def http_status_for(exc: BaseException) -> int:
       ValueError          → 400 (validation)
       NotImplementedError → 501 (unimplemented task, e.g. PII)
       LookupError         → 404 (unknown serviceId; exact type only)
+      AllServicesUnavailableError → 503 (requested service and every fallback failed)
       ConnectionError     → 502 (MMS / Triton unreachable)
       RuntimeError        → 502 (server-side config / backend mismatch)
       anything else       → 500
     """
     chain = _cause_chain(exc)
     for e in chain:
+        if isinstance(e, AllServicesUnavailableError):
+            return 503
         if isinstance(e, PermissionError):
             return 403
         if isinstance(e, ValueError):

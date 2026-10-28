@@ -161,7 +161,6 @@ class TestRoute:
     @pytest.mark.parametrize("over", [
         {"sort_by": "input_price"},
         {"sort_by": "tier"},
-        {"tier_ids": "abc"},
         {"created_from": date(2026, 1, 1)},
         {"published_to": date(2026, 1, 1)},
     ])
@@ -169,6 +168,14 @@ class TestRoute:
         with pytest.raises(_route.ValidationError) as e:
             await _call("50", **over)
         assert type(e.value).__name__ == "_ValidationError"  # conftest stub; real class is 422
+
+    @pytest.mark.asyncio
+    async def test_non_admin_tier_ids_returns_published_only(self):
+        # The Application fallback picker: never a service the validator rejects.
+        svc = await _call("50", tier_ids="t1", is_published=False)
+        assert svc.list_services.call_args.kwargs["is_published"] is True
+        svc = await _call("1", tier_ids="t1", is_published=False)
+        assert svc.list_services.call_args.kwargs["is_published"] is False
 
     @pytest.mark.asyncio
     async def test_admin_can_use_admin_only(self):
@@ -215,6 +222,11 @@ class TestRouteHelpers:
             _route._reject_admin_only_filters(ServiceListFilterParams(name="asr"), is_admin=False)
         _route._reject_admin_only_filters(ServiceListFilterParams(name="asr"), is_admin=True)
         _route._reject_admin_only_filters(ServiceListFilterParams(model_name="m"), is_admin=False)
+
+    def test_tier_ids_is_open_to_non_admins(self):
+        # The Application fallback picker filters by the Institution's Tier.
+        assert "tier_ids" not in _route.ADMIN_ONLY_FILTER_PARAMS  # FILTER_PARAMS_OPEN_TO_ALL
+        _route._reject_admin_only_filters(ServiceListFilterParams(tier_ids="t1"), is_admin=False)
 
     def test_split_csv(self):
         assert _route._split_csv(" A1 ,, b2,") == ["a1", "b2"]
