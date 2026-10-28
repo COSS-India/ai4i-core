@@ -586,7 +586,7 @@ export function measureColumnNaturalWidths(
 }
 
 const useIsomorphicLayoutEffect =
-  typeof globalThis.window === "undefined" ? useEffect : useLayoutEffect;
+  globalThis.window === undefined ? useEffect : useLayoutEffect;
 
 type MeasuredNaturals = {
   key: string;
@@ -651,7 +651,7 @@ export function useContentColumnWidths(options: Readonly<{
     const container = containerRef.current;
     if (!container) return;
     setAvailable(container.clientWidth);
-    if (typeof globalThis.ResizeObserver === "undefined") return;
+    if (globalThis.ResizeObserver === undefined) return;
     const observer = new ResizeObserver(() => setAvailable(container.clientWidth));
     observer.observe(container);
     return () => observer.disconnect();
