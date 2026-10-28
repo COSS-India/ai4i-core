@@ -50,6 +50,7 @@ const WEAK_PRIMARY_IDS = new Set([
   "task",
   "tasktype",
   "task_type",
+  "modeltasktype",
   "version",
   "method",
   "latency",
@@ -73,6 +74,26 @@ const WEAK_PRIMARY_IDS = new Set([
   "channel",
   "application",
 ]);
+
+/**
+ * Badge / icon / code columns under `table-layout: fixed`.
+ * Pin rem widths so they do not share leftover space equally with URL/name/error.
+ * Keys are normalizeColumnId / compactColumnId forms.
+ */
+const COMPACT_COLUMN_WIDTHS: Record<string, string> = {
+  // Fits "Unpublished" badge + hint/sort on Services; icon + STATUS on Logs.
+  status: "8.5rem",
+  level: "6.5rem",
+  // "MODEL TASK TYPE" header + sort carets (Services).
+  task: "10rem",
+  modeltasktype: "10rem",
+  // Shorter "TASK TYPE" header on Logs.
+  tasktype: "7.75rem",
+  task_type: "7.75rem",
+  method: "5.25rem",
+  statuscode: "6.75rem",
+  status_code: "6.75rem",
+};
 
 function normalizeColumnId(id: string): string {
   return id.trim().toLowerCase();
@@ -131,6 +152,15 @@ export function isShrinkWrapColumn(col: { id: string; truncate?: boolean }): boo
 function isWeakPrimaryColumn(col: { id: string }): boolean {
   const id = normalizeColumnId(col.id);
   return WEAK_PRIMARY_IDS.has(id) || WEAK_PRIMARY_IDS.has(compactColumnId(col.id));
+}
+
+function compactColumnWidth(col: { id: string }): string | undefined {
+  const id = normalizeColumnId(col.id);
+  return COMPACT_COLUMN_WIDTHS[id] ?? COMPACT_COLUMN_WIDTHS[compactColumnId(col.id)];
+}
+
+function isCompactColumn(col: { id: string }): boolean {
+  return compactColumnWidth(col) != null;
 }
 
 const PRIMARY_FLEX_IDS = [
@@ -204,6 +234,17 @@ type AdminColumnInput = {
   maxW?: TableCellProps["maxW"];
 };
 
+/** Fixed rem rail for status / task-type / method-style columns. */
+function pinnedCompactColumnLayout(col: AdminColumnInput): AdminColumnLayout {
+  const width = compactColumnWidth(col) ?? "7.5rem";
+  return {
+    w: width,
+    minW: width,
+    maxW: width,
+    whiteSpace: "nowrap",
+  };
+}
+
 function primaryFlexPercent(otherCount: number): number {
   return Math.min(36, Math.max(22, 55 - otherCount * 6));
 }
@@ -270,6 +311,11 @@ function partitionAdminColumns(columns: readonly AdminColumnInput[]): {
     }
     if (hasExplicitColumnWidth(col)) {
       layouts.set(col.id, explicitColumnLayout(col));
+      continue;
+    }
+    // Status / task type / method: pin rem width (do not flex with URL/name).
+    if (isCompactColumn(col)) {
+      layouts.set(col.id, pinnedCompactColumnLayout(col));
       continue;
     }
     flexColumns.push(col);

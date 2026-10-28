@@ -244,29 +244,6 @@ export const FIELD_HINTS = {
     startTime: { tip: "Earliest time included in results." },
     endTime: { tip: "Latest time included in results." },
     tenant: { tip: `${INSTITUTION} whose requests to include.` },
-    service: {
-      placeholder: "e.g. openai-service",
-      tip: "Service id recorded on each request.",
-    },
-    statusCode: {
-      placeholder: "e.g. 500,503",
-      tip: "HTTP status codes to include (max 10).",
-      invalid: "Use up to 10 comma-separated integers between 100 and 599",
-    },
-    endUser: {
-      placeholder: "e.g. customer-8812",
-      tip: "Caller id sent as user on the request.",
-      tooLong: "End user must be at most 256 characters",
-    },
-    metadata: {
-      placeholder: "e.g. session_id=s-77",
-      tip: "Filter by one request metadata key=value.",
-      missingSeparator: "Use key=value",
-      missingKey: "Enter a key before =",
-      missingValue: "Enter a value after =",
-      keyTooLong: "Key must be at most 64 characters",
-      valueTooLong: "Value must be at most 512 characters",
-    },
     autoRefresh: {
       tip: "Keep loading new traces while End Time is now.",
     },

@@ -14,9 +14,7 @@ import {
   buildClientServiceFilterDefs,
   buildServerServiceFilterDefs,
   buildServiceRegistrySearch,
-  SERVICE_SEARCH_FIELD_OPTIONS,
 } from "./serviceRegistryFilters";
-import type { DataTableFilterDef } from "../common/dataTableTypes";
 
 interface ServiceRegistryTabProps {
   items: Service[];
@@ -29,10 +27,6 @@ interface ServiceRegistryTabProps {
   tableKey: string;
   searchQuery: string;
   onSearchQueryChange: (value: string) => void;
-  /** Comma-separated search fields. Empty means all fields. */
-  searchFields: string;
-  onSearchFieldsChange: (value: string) => void;
-  searchFieldOptions?: { label: string; value: string }[];
   filterStatus: string;
   onFilterStatusChange: (value: string) => void;
   filterTaskType: string;
@@ -41,6 +35,12 @@ interface ServiceRegistryTabProps {
   filterTier: string;
   onFilterTierChange: (value: string) => void;
   tierFilterOptions: ServiceTierFilterOption[];
+  filterModelName: string;
+  onFilterModelNameChange: (value: string) => void;
+  modelNameOptions: { label: string; value: string }[];
+  filterServiceId: string;
+  onFilterServiceIdChange: (value: string) => void;
+  serviceIdOptions: { label: string; value: string }[];
   hasActiveFilters: boolean;
   onClearFilters: () => void;
   /** Column picker, rendered at the end of the filter toolbar. */
@@ -66,6 +66,8 @@ function resolveServerFilterDefs(options: {
   serverFilterValues?: Record<string, string>;
   taskTypeNames: string[];
   tierFilterOptions: ServiceTierFilterOption[];
+  modelNameOptions: { label: string; value: string }[];
+  serviceIdOptions: { label: string; value: string }[];
   onServerFilterChange?: (columnId: string, value: string) => void;
 }) {
   if (!options.serverMode || !options.onServerFilterChange) return [];
@@ -74,6 +76,8 @@ function resolveServerFilterDefs(options: {
     serverFilterValues: options.serverFilterValues,
     taskTypeNames: options.taskTypeNames,
     tierFilterOptions: options.tierFilterOptions,
+    modelNameOptions: options.modelNameOptions,
+    serviceIdOptions: options.serviceIdOptions,
     onChange: options.onServerFilterChange,
   });
 }
@@ -113,9 +117,6 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
   tableKey,
   searchQuery,
   onSearchQueryChange,
-  searchFields,
-  onSearchFieldsChange,
-  searchFieldOptions = SERVICE_SEARCH_FIELD_OPTIONS,
   filterStatus,
   onFilterStatusChange,
   filterTaskType,
@@ -124,6 +125,12 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
   filterTier,
   onFilterTierChange,
   tierFilterOptions,
+  filterModelName,
+  onFilterModelNameChange,
+  modelNameOptions,
+  filterServiceId,
+  onFilterServiceIdChange,
+  serviceIdOptions,
   hasActiveFilters,
   onClearFilters,
   columnPicker,
@@ -145,6 +152,8 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
     serverFilterValues,
     taskTypeNames,
     tierFilterOptions,
+    modelNameOptions,
+    serviceIdOptions,
     onServerFilterChange,
   });
   const clientFilterDefs = buildClientServiceFilterDefs({
@@ -156,41 +165,18 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
     filterTier,
     onFilterTierChange,
     tierFilterOptions,
+    filterModelName,
+    onFilterModelNameChange,
+    modelNameOptions,
+    filterServiceId,
+    onFilterServiceIdChange,
+    serviceIdOptions,
   });
   const search = buildServiceRegistrySearch({
     serverMode,
     searchQuery,
     onSearchQueryChange,
   });
-  // Server list ANDs text filters and empty selection only sends name — label that
-  // default as "Name" and keep Search in single-select so fields are not ANDed.
-  const searchInFilter: DataTableFilterDef = serverMode
-    ? {
-        id: "searchIn",
-        label: "Search in",
-        type: "select",
-        value: searchFields,
-        onChange: onSearchFieldsChange,
-        width: { base: "full", sm: "168px" },
-        options: [
-          { label: "Name", value: "" },
-          ...searchFieldOptions.filter(
-            (option) => option.value.replaceAll("_", "").toLowerCase() !== "name",
-          ),
-        ],
-      }
-    : {
-        id: "searchIn",
-        label: "Search in",
-        type: "multiselect",
-        value: searchFields,
-        onChange: onSearchFieldsChange,
-        width: { base: "full", sm: "168px" },
-        options: [
-          { label: "All fields", value: "" },
-          ...searchFieldOptions,
-        ],
-      };
   const serverPagination = resolveServerPagination({
     serverMode,
     serverPage,
@@ -224,10 +210,7 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
       onClearFilters={onClearFilters}
       filterToolbarRightContent={columnPicker}
       search={search}
-      filterDefs={[
-        searchInFilter,
-        ...(serverMode ? serverFilterDefs : clientFilterDefs),
-      ]}
+      filterDefs={serverMode ? serverFilterDefs : clientFilterDefs}
     />
   );
 };

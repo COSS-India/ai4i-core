@@ -7,6 +7,8 @@ import type {
 } from "../common/dataTableTypes";
 import {
   serviceListCellKey,
+  serviceListServiceId,
+  serviceModelName,
   type ServiceListColumnDef,
 } from "./serviceListColumns";
 
@@ -81,50 +83,69 @@ function selectFilterWidth(cellKey: string): string {
   if (cellKey === "task") return "168px";
   if (cellKey === "status") return "132px";
   if (cellKey === "tier") return "140px";
+  if (cellKey === "modelName") return "180px";
+  if (cellKey === "serviceId") return "200px";
   return "160px";
 }
 
-/** Offline catalogue search targets. Server mode uses the column catalogue instead. */
-export const SERVICE_SEARCH_FIELD_OPTIONS = [
-  { label: "Name", value: "name" },
-  { label: "Model name", value: "modelName" },
-  { label: "Service ID", value: "serviceId" },
-];
-
-function compactFieldId(id: string): string {
-  return id.replaceAll("_", "").toLowerCase();
-}
-
-function serviceSearchValue(service: Service, fieldId: string): string {
-  const key = compactFieldId(fieldId);
-  if (key === "name") return service.name ?? "";
-  if (key === "serviceid") return service.serviceId || service.service_id || "";
-  if (key === "modelname") return service.model?.name || service.modelName || "";
-  return "";
-}
-
-/** Empty `fields` matches any of the search targets. A selection matches any chosen field. */
-export function serviceMatchesSearch(service: Service, query: string, fields: string): boolean {
+/** Name search only. Model name and service id are their own filters. */
+export function serviceMatchesSearch(service: Service, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
-  const selected = fields.split(",").map((part) => part.trim()).filter(Boolean);
-  const active = selected.length > 0
-    ? selected
-    : SERVICE_SEARCH_FIELD_OPTIONS.map((option) => option.value);
-  return active.some((id) => serviceSearchValue(service, id).toLowerCase().includes(q));
+  return (service.name ?? "").toLowerCase().includes(q);
 }
 
-const TOOLBAR_FILTER_ORDER = ["status", "task", "tier"] as const;
+export function serviceMatchesRegistryFilters(
+  service: Service,
+  filters: { query: string; modelName: string; serviceId: string },
+): boolean {
+  if (!serviceMatchesSearch(service, filters.query)) return false;
+  if (filters.modelName && serviceModelName(service) !== filters.modelName) return false;
+  if (filters.serviceId && serviceListServiceId(service) !== filters.serviceId) return false;
+  return true;
+}
+
+export function serviceSelectOptions(values: readonly string[]): SelectOption[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)))
+    .sort((left, right) => left.localeCompare(right))
+    .map((value) => ({ label: value, value }));
+}
+
+const TOOLBAR_FILTER_ORDER = ["status", "task", "tier", "modelName", "serviceId"] as const;
+
+function withSelectedOption(
+  options: readonly SelectOption[],
+  selected: string,
+): SelectOption[] {
+  if (!selected || options.some((option) => option.value === selected)) {
+    return [...options];
+  }
+  return [{ label: selected, value: selected }, ...options];
+}
+
+function identityFilterOptions(
+  cellKey: string,
+  modelNameOptions: readonly SelectOption[],
+  serviceIdOptions: readonly SelectOption[],
+): readonly SelectOption[] | null {
+  if (cellKey === "modelName") return modelNameOptions;
+  if (cellKey === "serviceId") return serviceIdOptions;
+  return null;
+}
 
 export function buildServerServiceFilterDefs(options: {
   columns: readonly ServiceListColumnDef[];
   serverFilterValues?: Record<string, string>;
   taskTypeNames: string[];
   tierFilterOptions: ServiceTierFilterOption[];
+  modelNameOptions: readonly SelectOption[];
+  serviceIdOptions: readonly SelectOption[];
   onChange: (columnId: string, value: string) => void;
 }): DataTableFilterDef[] {
-  // Intentional: omit date_range columns (Created At / Published On). Toolbar is
-  // Search + Search in + Status + Task Type + Tier only.
+  // Intentional: omit date_range columns (Created At / Published On) and the
+  // name text filter (that is the search box). Model name and service id stay
+  // text params on the API; the toolbar shows them as selects filled from the
+  // loaded services.
   const defs: DataTableFilterDef[] = [];
   for (const column of options.columns) {
     if (!column.filterable || !column.filter) continue;
@@ -136,6 +157,28 @@ export function buildServerServiceFilterDefs(options: {
     ) {
       continue;
     }
+    const dynamicOptions = identityFilterOptions(
+      cellKey,
+      options.modelNameOptions,
+      options.serviceIdOptions,
+    );
+    const value = options.serverFilterValues?.[column.id] ?? "";
+    if (dynamicOptions) {
+      defs.push({
+        id: column.id,
+        label: column.label,
+        type: "select",
+        param: column.filter.params[0],
+        value,
+        onChange: (next) => options.onChange(column.id, next),
+        width: { base: "full", sm: selectFilterWidth(cellKey) },
+        options: [
+          { label: "All", value: "" },
+          ...withSelectedOption(dynamicOptions, value),
+        ],
+      });
+      continue;
+    }
     if (
       column.filter.type !== "single_select" &&
       column.filter.type !== "multi_select"
@@ -143,7 +186,6 @@ export function buildServerServiceFilterDefs(options: {
       continue;
     }
 
-    const value = options.serverFilterValues?.[column.id] ?? "";
     const def = buildSelectFilterDef(
       column,
       value,
@@ -175,6 +217,12 @@ export function buildClientServiceFilterDefs(options: {
   filterTier: string;
   onFilterTierChange: (value: string) => void;
   tierFilterOptions: ServiceTierFilterOption[];
+  filterModelName: string;
+  onFilterModelNameChange: (value: string) => void;
+  modelNameOptions: SelectOption[];
+  filterServiceId: string;
+  onFilterServiceIdChange: (value: string) => void;
+  serviceIdOptions: SelectOption[];
 }): DataTableFilterDef[] {
   const taskOptions: SelectOption[] = options.taskTypeNames.map((taskType) => ({
     label: formatModelTaskTypeLabel(taskType),
@@ -225,6 +273,26 @@ export function buildClientServiceFilterDefs(options: {
       width: { base: "full", sm: "140px" },
       options: tierOptions,
     },
+    {
+      id: "modelName",
+      label: "Model Name",
+      type: "select",
+      param: "model_name",
+      value: options.filterModelName,
+      onChange: options.onFilterModelNameChange,
+      width: { base: "full", sm: "180px" },
+      options: [{ label: "All", value: "" }, ...options.modelNameOptions],
+    },
+    {
+      id: "serviceId",
+      label: "Service ID",
+      type: "select",
+      param: "service_id",
+      value: options.filterServiceId,
+      onChange: options.onFilterServiceIdChange,
+      width: { base: "full", sm: "200px" },
+      options: [{ label: "All", value: "" }, ...options.serviceIdOptions],
+    },
   ];
 }
 
@@ -237,10 +305,10 @@ export function buildServiceRegistrySearch(options: {
     label: "Search",
     value: options.searchQuery,
     onChange: options.onSearchQueryChange,
-    placeholder: "Search services...",
+    placeholder: "Search by name",
     width: { base: "full", sm: "240px" },
     debounceMs: options.serverMode ? 400 : undefined,
-    fields: ["name", "model_name", "service_id"],
+    fields: ["name"],
   };
 }
 

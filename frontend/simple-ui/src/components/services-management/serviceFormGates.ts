@@ -215,6 +215,8 @@ export function hasActiveClientServiceFilters(options: {
   filterStatus: string;
   filterTaskType: string;
   filterTier: string;
+  filterModelName: string;
+  filterServiceId: string;
   searchQuery: string;
   showTaskTypeAllOption: boolean;
   allTierValue: string;
@@ -224,6 +226,8 @@ export function hasActiveClientServiceFilters(options: {
     return true;
   }
   if (options.filterTier !== options.allTierValue) return true;
+  if (options.filterModelName !== "") return true;
+  if (options.filterServiceId !== "") return true;
   return options.searchQuery.trim() !== "";
 }
 

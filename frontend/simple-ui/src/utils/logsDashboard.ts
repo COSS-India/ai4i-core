@@ -4,7 +4,6 @@
  */
 
 import { INSTITUTION } from "../config/constants";
-import { FIELD_HINTS } from "../config/fieldHints";
 import type {
   TelemetryTraceColumnDef,
   TelemetryTraceSortBy,
@@ -15,11 +14,7 @@ export const DEFAULT_RANGE_MS = 30 * 60 * 1000;
 /** datetime-local is minute precision — treat end as "now" within this window. */
 export const LIVE_RANGE_TOLERANCE_MS = 2 * 60 * 1000;
 
-export const END_USER_MAX_LENGTH = 256;
 export const KEYWORD_MAX_LENGTH = 256;
-export const METADATA_KEY_MAX_LENGTH = 64;
-export const METADATA_VALUE_MAX_LENGTH = 512;
-export const STATUS_CODE_MAX_COUNT = 10;
 
 export const COLUMN_STORAGE_KEY = "logs-dashboard-columns";
 
@@ -152,45 +147,6 @@ export const formatMetadataCell = (
     return metadata.length ? metadata.join(", ") : "—";
   }
   return String(metadata);
-};
-
-export const parseMetadataFilter = (
-  raw: string
-): { key: string; value: string } | { error: string } | null => {
-  const text = raw.trim();
-  if (!text) return null;
-  const hints = FIELD_HINTS.logs.metadata;
-  const separator = text.indexOf("=");
-  if (separator === -1) return { error: hints.missingSeparator };
-  const key = text.slice(0, separator).trim();
-  const value = text.slice(separator + 1).trim();
-  if (!key) return { error: hints.missingKey };
-  if (!value) return { error: hints.missingValue };
-  if (key.length > METADATA_KEY_MAX_LENGTH) return { error: hints.keyTooLong };
-  if (value.length > METADATA_VALUE_MAX_LENGTH) return { error: hints.valueTooLong };
-  return { key, value };
-};
-
-export const parseStatusCodeFilter = (
-  raw: string
-): { value: string } | { error: string } | null => {
-  const text = raw.trim();
-  if (!text) return null;
-  const parts = text.split(",").map((p) => p.trim()).filter(Boolean);
-  if (parts.length === 0) return null;
-  if (parts.length > STATUS_CODE_MAX_COUNT) {
-    return { error: FIELD_HINTS.logs.statusCode.invalid };
-  }
-  for (const part of parts) {
-    if (!/^\d{3}$/.test(part)) {
-      return { error: FIELD_HINTS.logs.statusCode.invalid };
-    }
-    const code = Number(part);
-    if (code < 100 || code > 599) {
-      return { error: FIELD_HINTS.logs.statusCode.invalid };
-    }
-  }
-  return { value: parts.join(",") };
 };
 
 /** Earlier FE scaffold used app_id; BE column key is application. */

@@ -36,6 +36,10 @@ export type DataTableSearchConfig = {
   debounceMs?: number;
   /** Control width. Defaults to a fixed search width. */
   width?: string | Record<string, string>;
+  /** Lets the field shrink on a single-row toolbar. */
+  minWidth?: string | Record<string, string>;
+  maxWidth?: string | Record<string, string>;
+  flex?: string | Record<string, string>;
 };
 
 export type DataTableFilterOption = {
@@ -81,6 +85,10 @@ export type DataTableFilterDef = {
   error?: string;
   /** Width hint for the control. */
   width?: string | Record<string, string>;
+  /** Lets the field shrink on a single-row toolbar. */
+  minWidth?: string | Record<string, string>;
+  maxWidth?: string | Record<string, string>;
+  flex?: string | Record<string, string>;
   /**
    * Consecutive filters with the same cluster stay on one row and wrap
    * together, so a pair such as start and end time is not split.

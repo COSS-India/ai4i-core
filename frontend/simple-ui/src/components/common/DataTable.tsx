@@ -213,6 +213,12 @@ export interface DataTableAdminProps<T> extends DataTableSharedProps<T> {
   filterToolbarAlign?: "flex-start" | "center";
   filterToolbarRightContent?: React.ReactNode;
   /**
+   * Keep search, filters, and right-side actions on one row from the `md`
+   * breakpoint up. Fields shrink to fit; the toolbar scrolls sideways only
+   * when they cannot.
+   */
+  filterToolbarSingleRow?: boolean;
+  /**
    * Draw the toolbar as the top of the table surface.
    * Default leaves the toolbar above a separate table card.
    */
@@ -366,11 +372,12 @@ export function TableSearchField({
       >
         {label}
       </FieldLabel>
-      <InputGroup size="sm" {...inputGroupProps}>
+      <InputGroup size="sm" w="full" minW={0} {...inputGroupProps}>
         <InputLeftElement pointerEvents="none">
           <SearchIcon color="gray.400" />
         </InputLeftElement>
         <Input
+          minW={0}
           value={localValue}
           onChange={(e) => handleChange(e.target.value)}
           placeholder={placeholder}
@@ -497,6 +504,8 @@ export function TableDateField({
       <Input
         type={inputType}
         size="sm"
+        w="full"
+        minW={0}
         value={value}
         onChange={(e) => {
           onChange(e.target.value);
@@ -508,6 +517,13 @@ export function TableDateField({
         }}
         bg={inputBg}
         aria-label={label}
+        fontSize={inputType === "datetime-local" ? "xs" : undefined}
+        px={inputType === "datetime-local" ? 2 : undefined}
+        sx={{
+          minWidth: 0,
+          "&::-webkit-datetime-edit": { padding: 0, minWidth: 0 },
+          "&::-webkit-calendar-picker-indicator": { margin: 0, padding: 0 },
+        }}
         {...inputProps}
       />
       {error ? <FormErrorMessage>{error}</FormErrorMessage> : <FieldHint>{helper}</FieldHint>}
@@ -548,6 +564,8 @@ export function TableSelectField({
       </FieldLabel>
       <Select
         size="sm"
+        w="full"
+        minW={0}
         value={value}
         onChange={(e) => {
           onChange(e.target.value);
@@ -688,6 +706,12 @@ export function TableMultiSelectField({
   );
 }
 
+function searchControlProps(
+  search: DataTableSearchConfig,
+): FormControlProps | undefined {
+  return sizeControlProps(search);
+}
+
 function ConfigDrivenFilters({
   search,
   filterDefs,
@@ -709,24 +733,46 @@ function ConfigDrivenFilters({
           error={search.error}
           hideLabel={search.hideLabel}
           debounceMs={search.debounceMs}
-          formControlProps={
-            search.width
-              ? { w: search.width as FormControlProps["w"] }
-              : undefined
-          }
+          formControlProps={searchControlProps(search)}
         />
       ) : null}
       {clusteredFilterDefs(filterDefs).map((group) => {
-        const fields = group.defs.map((def) => renderFilterDef(def));
-        if (group.defs.length === 1) return fields[0];
+        if (group.defs.length === 1) return renderFilterDef(group.defs[0]);
         return (
-          <HStack key={group.key} spacing={3} align="flex-start" flexShrink={0}>
-            {fields}
+          <HStack key={group.key} {...clusterStackProps(group.defs)}>
+            {group.defs.map((def) => renderFilterDef(def, CLUSTER_CHILD_PROPS))}
           </HStack>
         );
       })}
     </>
   );
+}
+
+/** Start/end pairs split the cluster width instead of keeping their own. */
+const CLUSTER_CHILD_PROPS: FormControlProps = {
+  flex: "1 1 0",
+  minW: 0,
+  maxW: "none",
+  w: "full",
+};
+
+const CLUSTER_GAP_PX = 8;
+
+function clusterStackProps(
+  defs: DataTableFilterDef[],
+): React.ComponentProps<typeof HStack> {
+  const flex = sumClusterFlex(defs);
+  if (!flex) {
+    return { spacing: 3, align: "flex-start", flexShrink: 0 };
+  }
+  return {
+    spacing: 2,
+    align: "flex-start",
+    minW: sumClusterSize(defs, "minWidth"),
+    maxW: sumClusterSize(defs, "maxWidth"),
+    w: { base: "full", md: "auto" },
+    flex,
+  };
 }
 
 function clusteredFilterDefs(
@@ -744,13 +790,115 @@ function clusteredFilterDefs(
   return groups;
 }
 
+function sizeControlProps(source: {
+  width?: string | Record<string, string>;
+  minWidth?: string | Record<string, string>;
+  maxWidth?: string | Record<string, string>;
+  flex?: string | Record<string, string>;
+}): FormControlProps | undefined {
+  const props: FormControlProps = {};
+  if (source.width) props.w = source.width as FormControlProps["w"];
+  if (source.minWidth) props.minW = source.minWidth as FormControlProps["minW"];
+  if (source.maxWidth) props.maxW = source.maxWidth as FormControlProps["maxW"];
+  if (source.flex) props.flex = source.flex as FormControlProps["flex"];
+  return Object.keys(props).length > 0 ? props : undefined;
+}
+
 function filterWidthProps(
   def: DataTableFilterDef,
 ): FormControlProps | undefined {
-  return def.width ? { w: def.width as FormControlProps["w"] } : undefined;
+  return sizeControlProps(def);
 }
 
-function renderSelectFilterDef(def: DataTableFilterDef): React.ReactNode {
+function parseFlexParts(value: string): { grow: number; basis: number; percent: boolean } {
+  const parts = value.trim().split(/\s+/);
+  const basis = parts[2] ?? "0";
+  return {
+    grow: Number(parts[0]) || 0,
+    basis: Number.parseFloat(basis) || 0,
+    percent: basis.includes("%"),
+  };
+}
+
+function sumClusterFlex(
+  defs: DataTableFilterDef[],
+): FormControlProps["flex"] | undefined {
+  const values = defs
+    .map((def) => def.flex)
+    .filter((value): value is NonNullable<DataTableFilterDef["flex"]> => value != null);
+  if (values.length === 0) return undefined;
+
+  const breakpoints = new Set<string>();
+  for (const value of values) {
+    if (typeof value === "object") Object.keys(value).forEach((key) => breakpoints.add(key));
+  }
+  if (breakpoints.size === 0) {
+    const parsed = values.map((value) => parseFlexParts(String(value)));
+    if (parsed.some((part) => part.percent)) return "1 1 100%";
+    const grow = parsed.reduce((sum, part) => sum + part.grow, 0);
+    const basis = parsed.reduce((sum, part) => sum + part.basis, 0) + CLUSTER_GAP_PX;
+    return `${grow} 1 ${basis}px`;
+  }
+
+  const result: Record<string, string> = {};
+  for (const breakpoint of Array.from(breakpoints)) {
+    const parsed = values
+      .map((value) => {
+        const raw = typeof value === "string" ? value : value[breakpoint];
+        return raw ? parseFlexParts(raw) : null;
+      })
+      .filter((part): part is NonNullable<typeof part> => part != null);
+    if (parsed.some((part) => part.percent)) {
+      result[breakpoint] = "1 1 100%";
+      continue;
+    }
+    const grow = parsed.reduce((sum, part) => sum + part.grow, 0);
+    const basis = parsed.reduce((sum, part) => sum + part.basis, 0) + CLUSTER_GAP_PX;
+    result[breakpoint] = `${grow} 1 ${basis}px`;
+  }
+  return result;
+}
+
+function sumClusterSize(
+  defs: DataTableFilterDef[],
+  key: "minWidth" | "maxWidth",
+): FormControlProps["minW"] | undefined {
+  const values = defs
+    .map((def) => def[key])
+    .filter((value): value is NonNullable<DataTableFilterDef["minWidth"]> => value != null);
+  if (values.length === 0) return undefined;
+
+  const breakpoints = new Set<string>();
+  for (const value of values) {
+    if (typeof value === "object") Object.keys(value).forEach((bp) => breakpoints.add(bp));
+  }
+  const addGap = (px: number) => `${px + (defs.length - 1) * CLUSTER_GAP_PX}px`;
+  if (breakpoints.size === 0) {
+    const px = values.reduce((sum, value) => sum + (Number.parseFloat(String(value)) || 0), 0);
+    return addGap(px);
+  }
+
+  const result: Record<string, string> = {};
+  for (const breakpoint of Array.from(breakpoints)) {
+    let px = 0;
+    let numeric = true;
+    for (const value of values) {
+      const raw = typeof value === "string" ? value : value[breakpoint];
+      if (!raw || Number.isNaN(Number.parseFloat(raw))) {
+        numeric = false;
+        break;
+      }
+      px += Number.parseFloat(raw);
+    }
+    if (numeric) result[breakpoint] = addGap(px);
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function renderSelectFilterDef(
+  def: DataTableFilterDef,
+  formControlProps?: FormControlProps,
+): React.ReactNode {
   return (
     <TableSelectField
       key={def.id}
@@ -760,7 +908,7 @@ function renderSelectFilterDef(def: DataTableFilterDef): React.ReactNode {
       helper={def.helper}
       hint={def.hint}
       hideLabel={def.hideLabel}
-      formControlProps={filterWidthProps(def)}
+      formControlProps={formControlProps ?? filterWidthProps(def)}
     >
       {(def.options ?? []).map((opt) => (
         <option key={opt.value} value={opt.value}>
@@ -771,7 +919,10 @@ function renderSelectFilterDef(def: DataTableFilterDef): React.ReactNode {
   );
 }
 
-function renderMultiSelectFilterDef(def: DataTableFilterDef): React.ReactNode {
+function renderMultiSelectFilterDef(
+  def: DataTableFilterDef,
+  formControlProps?: FormControlProps,
+): React.ReactNode {
   return (
     <TableMultiSelectField
       key={def.id}
@@ -782,12 +933,15 @@ function renderMultiSelectFilterDef(def: DataTableFilterDef): React.ReactNode {
       helper={def.helper}
       hint={def.hint}
       hideLabel={def.hideLabel}
-      formControlProps={filterWidthProps(def)}
+      formControlProps={formControlProps ?? filterWidthProps(def)}
     />
   );
 }
 
-function renderTextFilterDef(def: DataTableFilterDef): React.ReactNode {
+function renderTextFilterDef(
+  def: DataTableFilterDef,
+  formControlProps?: FormControlProps,
+): React.ReactNode {
   const textType = def.inputType === "number" ? "number" : "text";
   return (
     <TableTextField
@@ -800,13 +954,16 @@ function renderTextFilterDef(def: DataTableFilterDef): React.ReactNode {
       hint={def.hint}
       error={def.error}
       inputType={textType}
-      formControlProps={filterWidthProps(def)}
+      formControlProps={formControlProps ?? filterWidthProps(def)}
       inputProps={textType === "number" ? { min: 0 } : undefined}
     />
   );
 }
 
-function renderDateFilterDef(def: DataTableFilterDef): React.ReactNode {
+function renderDateFilterDef(
+  def: DataTableFilterDef,
+  formControlProps?: FormControlProps,
+): React.ReactNode {
   const dateType =
     def.inputType === "datetime-local" ? "datetime-local" : "date";
   return (
@@ -820,16 +977,19 @@ function renderDateFilterDef(def: DataTableFilterDef): React.ReactNode {
       hint={def.hint}
       error={def.error}
       inputType={dateType}
-      formControlProps={filterWidthProps(def)}
+      formControlProps={formControlProps ?? filterWidthProps(def)}
     />
   );
 }
 
-function renderFilterDef(def: DataTableFilterDef): React.ReactNode {
-  if (def.type === "select") return renderSelectFilterDef(def);
-  if (def.type === "multiselect") return renderMultiSelectFilterDef(def);
-  if (def.type === "text") return renderTextFilterDef(def);
-  if (def.type === "date") return renderDateFilterDef(def);
+function renderFilterDef(
+  def: DataTableFilterDef,
+  formControlProps?: FormControlProps,
+): React.ReactNode {
+  if (def.type === "select") return renderSelectFilterDef(def, formControlProps);
+  if (def.type === "multiselect") return renderMultiSelectFilterDef(def, formControlProps);
+  if (def.type === "text") return renderTextFilterDef(def, formControlProps);
+  if (def.type === "date") return renderDateFilterDef(def, formControlProps);
 
   if (process.env.NODE_ENV !== "production") {
     // eslint-disable-next-line no-console
@@ -1666,6 +1826,7 @@ function AdminFilterToolbarSection({
   onClear,
   filterToolbarAlign,
   filterToolbarRightContent,
+  filterToolbarSingleRow = false,
   toolbarAttached,
   showFiltersHeading,
   filtersHeading,
@@ -1677,6 +1838,7 @@ function AdminFilterToolbarSection({
   onClear?: () => void;
   filterToolbarAlign: "flex-start" | "center";
   filterToolbarRightContent?: React.ReactNode;
+  filterToolbarSingleRow: boolean;
   toolbarAttached: boolean;
   showFiltersHeading: boolean;
   filtersHeading: string;
@@ -1691,6 +1853,9 @@ function AdminFilterToolbarSection({
       py={toolbarAttached ? 3 : 0}
       borderBottomWidth={toolbarAttached ? "1px" : 0}
       borderColor="ink.100"
+      minW={0}
+      w="full"
+      overflowX={filterToolbarSingleRow ? "auto" : undefined}
     >
       <VStack spacing={4} align="stretch">
         {showFiltersHeading ? (
@@ -1709,6 +1874,8 @@ function AdminFilterToolbarSection({
           align={filterToolbarAlign}
           alignActionsToInputs={toolbarLabelsVisible}
           rightContent={filterToolbarRightContent}
+          spacing={filterToolbarSingleRow ? 2 : 3}
+          flexWrap={filterToolbarSingleRow ? { base: "wrap", md: "nowrap" } : "wrap"}
         >
           <ConfigDrivenFilters search={search} filterDefs={filterDefs} />
         </TableFilterToolbar>
@@ -1765,7 +1932,7 @@ function AdminTableFrame({
   };
 }>): React.ReactElement {
   const stack = (
-    <VStack spacing={toolbarAttached ? 0 : 4} align="stretch" w="full" minW={0}>
+    <VStack spacing={toolbarAttached ? 0 : 6} align="stretch" w="full" minW={0}>
       {toolbar}
       {tableSurface}
     </VStack>
@@ -1823,6 +1990,7 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
     onClearFilters,
     filterToolbarAlign = "flex-start",
     filterToolbarRightContent,
+    filterToolbarSingleRow = false,
     toolbarAttached = false,
     showFiltersHeading = false,
     filtersHeading = "Filters",
@@ -1980,6 +2148,7 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
       onClear={onClearFilters ? handleClearFilters : undefined}
       filterToolbarAlign={filterToolbarAlign}
       filterToolbarRightContent={filterToolbarRightContent}
+      filterToolbarSingleRow={filterToolbarSingleRow}
       toolbarAttached={toolbarAttached}
       showFiltersHeading={showFiltersHeading}
       filtersHeading={filtersHeading}
