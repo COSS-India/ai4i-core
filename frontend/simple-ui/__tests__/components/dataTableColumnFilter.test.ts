@@ -144,13 +144,18 @@ describe("logs column filters", () => {
     keyword_searchable: true,
   });
 
-  it("leaves toolbar selects without a column box and searches latency", () => {
+  it("leaves toolbar selects without a column box; Method and latency get search", () => {
     expect(logsColumnFilterConfig(def("status", true))).toBe(false);
-    expect(logsColumnFilterConfig(def("method", true))).toBe(false);
     expect(logsColumnFilterConfig(def("task_type", true))).toBe(false);
     expect(logsColumnFilterConfig(def("institution", true))).toBe(false);
     expect(logsColumnFilterConfig(def("timestamp", true))).toBe(false);
+    expect(logsColumnFilterConfig(def("method", true))).toMatchObject({
+      type: "text",
+    });
     expect(logsColumnFilterConfig(def("latency", true))).toMatchObject({
+      type: "text",
+    });
+    expect(logsColumnFilterConfig(def("url", true))).toMatchObject({
       type: "text",
     });
     expect(logsColumnFilterConfig(def("end_user", true))).toBeDefined();

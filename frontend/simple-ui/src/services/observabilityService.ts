@@ -294,6 +294,13 @@ type TelemetryTraceSearchParams = {
   serviceId?: string;
   /** Comma-separated status codes (100–599, max 10). */
   statusCode?: string;
+  /** Per-column contains searches when the backend accepts them. */
+  url?: string;
+  method?: string;
+  model?: string;
+  application?: string;
+  apiKey?: string;
+  error?: string;
   sortBy?: TelemetryTraceSortBy;
   sortOrder?: 'asc' | 'desc';
   /** Comma-separated column keys; omit for default columns. */
@@ -331,6 +338,12 @@ function buildTraceSearchQueryParams(
   appendIfPresent(queryParams, 'q', params.q);
   appendIfPresent(queryParams, 'service_id', params.serviceId);
   appendIfPresent(queryParams, 'status_code', params.statusCode);
+  appendIfPresent(queryParams, 'url', params.url);
+  appendIfPresent(queryParams, 'method', params.method);
+  appendIfPresent(queryParams, 'model', params.model);
+  appendIfPresent(queryParams, 'application', params.application);
+  appendIfPresent(queryParams, 'api_key', params.apiKey);
+  appendIfPresent(queryParams, 'error', params.error);
   appendIfPresent(queryParams, 'sort_by', params.sortBy);
   appendIfPresent(queryParams, 'sort_order', params.sortOrder);
   appendIfPresent(queryParams, 'columns', params.columns);

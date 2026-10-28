@@ -111,23 +111,15 @@ export function sortTraceRowsClientSide(
   );
 }
 
-/** Toolbar owns these — no per-column box (same field only once). */
+/**
+ * Toolbar owns these — no per-column search (same field only once).
+ * Method is a column search; Status / Task Type / Institution / time stay on the toolbar.
+ */
 const TOOLBAR_FILTERED_COLUMN_KEYS = new Set([
   "timestamp",
   "task_type",
   "institution",
   "status",
-]);
-
-/**
- * Columns with a traces/search query param. Only these get a header search —
- * release-2.10 does not accept url/model/application/api_key/error/method.
- */
-const API_COLUMN_FILTER_KEYS = new Set([
-  "end_user",
-  "service",
-  "status_code",
-  "metadata",
 ]);
 
 const MAX_STATUS_CODES = 10;
@@ -154,9 +146,15 @@ export const parseMetadataPair = (
 const validateMetadataPair = (value: string): string | undefined =>
   parseMetadataPair(value) ? undefined : "Use key=value.";
 
+const containsFilter = (label: string): DataTableColumnFilterConfig => ({
+  type: "text",
+  placeholder: "Search",
+  helper: `${label} contains…`,
+});
+
 /**
- * Per-column controls for Logs — only params that exist on
- * GET /telemetry/traces/search. Toolbar owns status, time, task type, institution.
+ * Per-column controls for Logs. Every non-toolbar column gets a search box.
+ * Toolbar owns status, time, task type, and institution.
  */
 const LOGS_COLUMN_FILTERS: Record<string, DataTableColumnFilterConfig> = {
   end_user: { type: "text", placeholder: "Search", helper: "Exact match on end-user ID" },
@@ -173,27 +171,43 @@ const LOGS_COLUMN_FILTERS: Record<string, DataTableColumnFilterConfig> = {
     helper: "Exact key=value",
     validate: validateMetadataPair,
   },
+  url: containsFilter("URL"),
+  method: containsFilter("Method"),
+  model: containsFilter("Model"),
+  application: containsFilter("Application"),
+  api_key: containsFilter("API key"),
+  error: containsFilter("Error"),
+  latency: {
+    type: "text",
+    placeholder: "Search",
+    helper: "Searches the rows on this page only",
+  },
 };
 
 /**
- * `false` opts the column out. Only the four API-backed columns get a box;
- * everything else (url, model, method, …) stays toolbar/page display only.
+ * `false` opts the column out of column search (toolbar already filters it).
+ * Any other known column gets its config; unknown keys get a plain text search.
  */
 export const logsColumnFilterConfig = (
   def: TelemetryTraceColumnDef,
 ): DataTableColumnFilterConfig | false => {
   if (TOOLBAR_FILTERED_COLUMN_KEYS.has(def.key)) return false;
-  if (!API_COLUMN_FILTER_KEYS.has(def.key)) return false;
-  return LOGS_COLUMN_FILTERS[def.key] ?? false;
+  return LOGS_COLUMN_FILTERS[def.key] ?? { type: "text", placeholder: "Search" };
 };
 
-/** traces/search params for the four supported per-column searches. */
+/** traces/search params for per-column searches; keys follow the column catalogue. */
 export type LogsColumnFilterParams = {
   user?: string;
   serviceId?: string;
   statusCode?: string;
   metadataKey?: string;
   metadataValue?: string;
+  url?: string;
+  method?: string;
+  model?: string;
+  application?: string;
+  apiKey?: string;
+  error?: string;
 };
 
 export const columnFiltersToTraceParams = (
@@ -211,6 +225,12 @@ export const columnFiltersToTraceParams = (
     statusCode: statusCode || undefined,
     metadataKey: metadata?.key,
     metadataValue: metadata?.value,
+    url: filters.url,
+    method: filters.method,
+    model: filters.model,
+    application: filters.application,
+    apiKey: filters.api_key,
+    error: filters.error,
   };
 };
 

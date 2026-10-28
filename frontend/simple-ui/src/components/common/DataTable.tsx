@@ -2149,19 +2149,32 @@ function useAdminColumnFilteredItems<T>(options: Readonly<{
     if (!autoColumnSort) return withFilters;
     return withAutoColumnSort<T, DataTableColumn<T>>(withFilters, filterDefs);
   }, [columnSearch, autoColumnSort, paginate, columns, filterDefs]);
-  // When the parent owns server filtering (`onColumnFiltersChange` + server
-  // paginate), do not re-match the loaded page — API inputs like
-  // `500, 503` / `env = prod` would empty the table. Client tables still filter
-  // in memory.
+  // Server + parent-owned filters: keep exact API inputs off the client matcher
+  // (`500, 503` / `env = prod` would empty the table). Page-only columns still
+  // filter the loaded rows.
   const apiOwnsColumnFilters =
     paginate === "server" && Boolean(onColumnFiltersChange);
-  const visibleItems = useMemo(
-    () =>
-      apiOwnsColumnFilters
-        ? [...items]
-        : applyColumnFilters(items, searchColumns, columnFilters),
-    [apiOwnsColumnFilters, items, searchColumns, columnFilters],
-  );
+  const visibleItems = useMemo(() => {
+    if (!apiOwnsColumnFilters) {
+      return applyColumnFilters(items, searchColumns, columnFilters);
+    }
+    const pageOnlyFilters: DataTableColumnFilters = {};
+    for (const col of searchColumns) {
+      const value = columnFilters[col.id];
+      const config = col.filter;
+      if (
+        !value ||
+        !config ||
+        typeof config === "boolean" ||
+        config.type !== "text" ||
+        !config.helper?.toLowerCase().includes("page only")
+      ) {
+        continue;
+      }
+      pageOnlyFilters[col.id] = value;
+    }
+    return applyColumnFilters(items, searchColumns, pageOnlyFilters);
+  }, [apiOwnsColumnFilters, items, searchColumns, columnFilters]);
 
   return {
     columnFilters,

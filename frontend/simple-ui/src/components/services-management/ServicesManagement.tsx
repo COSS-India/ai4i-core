@@ -502,7 +502,7 @@ const ServicesManagement: React.FC = () => {
       {
         id: "task",
         header: "Task Type",
-        sortable: true,
+        // Toolbar select owns this field — no column search; sort via autoColumnSort.
         filter: false,
         cell: renderServiceTaskTypeCell,
       },
@@ -521,14 +521,14 @@ const ServicesManagement: React.FC = () => {
           })),
         },
         filterAccessor: (service) =>
-          (service.tierIds ?? []).map((id) => String(id)),
+          (service.tierIds ?? []).map(String),
         cell: renderServiceTierCell,
       },
       {
         id: "status",
         header: "Status",
         hint: FIELD_HINTS.service.col.status,
-        sortable: true,
+        // Toolbar select owns this field — no column search; sort via autoColumnSort.
         filter: false,
         cell: renderServiceStatusCell,
       },

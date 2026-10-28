@@ -196,3 +196,8 @@ export interface ApplicationApiKeyRow {
 export async function listAllApplicationsForBudget(tenantId: string): Promise<ApplicationListResult> {
   return listApplications(tenantId, { page: 1, size: 500 });
 }
+
+/** Shared RQ cache for the unfiltered applications list (table + allocation summary). */
+export const applicationsAllQueryKey = (tenantId: string) =>
+  ["applications-all", tenantId] as const;
+export const APPLICATIONS_ALL_STALE_MS = 60 * 1000;
