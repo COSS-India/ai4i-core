@@ -16,11 +16,11 @@ export default function ApplicationCreatedDialog({
   application,
   onSkip,
   onConfigure,
-}: {
+}: Readonly<{
   application: Application | null;
   onSkip: () => void;
   onConfigure: (application: Application) => void;
-}) {
+}>) {
   return (
     <StandardModal
       isOpen={Boolean(application)}

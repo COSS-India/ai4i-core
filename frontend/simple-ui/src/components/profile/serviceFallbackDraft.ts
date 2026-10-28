@@ -58,6 +58,10 @@ export function toFallbackServiceOption(service: Service): FallbackServiceOption
   };
 }
 
+function byName(a: FallbackServiceOption, b: FallbackServiceOption): number {
+  return a.name.localeCompare(b.name);
+}
+
 export function buildFallbackCatalogue(services: Service[]): FallbackCatalogue {
   const byId = new Map<string, FallbackServiceOption>();
   for (const service of services) {
@@ -70,7 +74,9 @@ export function buildFallbackCatalogue(services: Service[]): FallbackCatalogue {
     list.push(option);
     byTask.set(option.taskType, list);
   }
-  byTask.forEach((list) => list.sort((a, b) => a.name.localeCompare(b.name)));
+  byTask.forEach((list) => {
+    list.sort(byName);
+  });
   return { byId, byTask };
 }
 
@@ -194,11 +200,12 @@ export function primaryOptionsFor(
   catalogue: FallbackCatalogue,
 ): FallbackServiceOption[] {
   const used = primariesUsedElsewhere(rows, row.key);
-  return Array.from(catalogue.byTask.values())
+  const options = Array.from(catalogue.byTask.values())
     .filter((list) => list.length >= 2)
     .flat()
-    .filter((o) => !used.has(o.serviceId))
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .filter((o) => !used.has(o.serviceId));
+  options.sort(byName);
+  return options;
 }
 
 /** Same task type as the primary, never the primary itself. */

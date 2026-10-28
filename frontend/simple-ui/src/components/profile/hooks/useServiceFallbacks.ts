@@ -62,8 +62,8 @@ export function useFallbackCatalogue(tenantId: string, enabled: boolean): Fallba
   const { refetch: refetchServices } = servicesQuery;
   const tenantFailed = tenantQuery.isError;
   const retry = useCallback(() => {
-    if (tenantFailed) void refetchTenant();
-    else void refetchServices();
+    if (tenantFailed) refetchTenant();
+    else refetchServices();
   }, [tenantFailed, refetchTenant, refetchServices]);
 
   return {

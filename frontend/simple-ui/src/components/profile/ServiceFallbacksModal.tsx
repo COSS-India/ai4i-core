@@ -45,10 +45,10 @@ const COPY = SERVICE_FALLBACK_COPY.editor;
 function ServiceOptions({
   options,
   value,
-}: {
+}: Readonly<{
   options: FallbackServiceOption[];
   value: string;
-}) {
+}>) {
   const missing = value && !options.some((o) => o.serviceId === value);
   return (
     <>
@@ -72,13 +72,13 @@ function FallbackRowCard({
   rows,
   catalogue,
   editor,
-}: {
+}: Readonly<{
   index: number;
   row: FallbackRow;
   rows: FallbackRow[];
   catalogue: FallbackCatalogue;
   editor: ServiceFallbackEditor;
-}) {
+}>) {
   const match = modelMatchFor(row, catalogue);
   const stale = isRowStale(row, catalogue);
   const title = COPY.rowTitle(index);
@@ -149,7 +149,7 @@ function FallbackRowCard({
   );
 }
 
-function EmptyState({ canAdd, onAdd }: { canAdd: boolean; onAdd: () => void }) {
+function EmptyState({ canAdd, onAdd }: Readonly<{ canAdd: boolean; onAdd: () => void }>) {
   return (
     <VStack
       spacing={3}
@@ -186,7 +186,7 @@ function EmptyState({ canAdd, onAdd }: { canAdd: boolean; onAdd: () => void }) {
   );
 }
 
-function CatalogueNotice({ state }: { state: FallbackCatalogueState }) {
+function CatalogueNotice({ state }: Readonly<{ state: FallbackCatalogueState }>) {
   if (state.status === "loading" || state.status === "idle") {
     return (
       <HStack spacing={3} py={6} justify="center" color="ink.500">
@@ -217,10 +217,10 @@ function CatalogueNotice({ state }: { state: FallbackCatalogueState }) {
 export default function ServiceFallbacksModal({
   editor,
   catalogueState,
-}: {
+}: Readonly<{
   editor: ServiceFallbackEditor;
   catalogueState: FallbackCatalogueState;
-}) {
+}>) {
   const { catalogue } = catalogueState;
   const ready = catalogueState.status === "ready" && editor.seeded;
   const canAdd = ready && canAddFallbackRow(editor.rows, catalogue) && !editor.isSaving;
@@ -243,7 +243,9 @@ export default function ServiceFallbacksModal({
             cancelLabel={editor.isDirty ? COPY.cancel : COPY.close}
             submitLabel={COPY.save}
             onCancel={editor.close}
-            onSubmit={() => void editor.save()}
+            onSubmit={() => {
+              editor.save();
+            }}
             isLoading={editor.isSaving}
             loadingText={COPY.saving}
             isDisabled={!editor.canSave}
@@ -277,9 +279,7 @@ export default function ServiceFallbacksModal({
           </Alert>
         ) : null}
 
-        {!ready ? (
-          <CatalogueNotice state={catalogueState} />
-        ) : (
+        {ready ? (
           <>
             {editor.hasStale ? (
               <Alert status="warning" borderRadius="md" alignItems="flex-start">
@@ -335,6 +335,8 @@ export default function ServiceFallbacksModal({
               </>
             )}
           </>
+        ) : (
+          <CatalogueNotice state={catalogueState} />
         )}
       </VStack>
     </CreateModal>

@@ -65,7 +65,7 @@ function rupees(amount: number | null | undefined, currency: string): string {
 
 const FALLBACK_ACTION = SERVICE_FALLBACK_COPY.action;
 
-function FallbackActionTooltip({ count }: { count: number }) {
+function FallbackActionTooltip({ count }: Readonly<{ count: number }>) {
   return (
     <Box py={0.5}>
       <Text fontSize="xs" fontWeight="700" color="inherit">
@@ -682,7 +682,9 @@ export default function ApplicationManagementTab({
     tenantId,
     catalogue: fallbackCatalogue.catalogue,
     catalogueReady: fallbackCatalogue.status === "ready",
-    onSaved: () => void mgr.reload(),
+    onSaved: () => {
+      mgr.reload();
+    },
     onClose: (app) => {
       setFallbacksOpen(false);
       if (fallbacksFromView) mgr.openView(app);
