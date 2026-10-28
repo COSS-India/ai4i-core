@@ -330,7 +330,8 @@ function buildVisibleServiceColumns(
           cell: renderEmptyServiceCell,
         };
     if (cellKey === "actions") {
-      actionsColumn = column;
+      // Skip empty Actions column when no template (e.g. read-only registry).
+      if (template) actionsColumn = column;
     } else {
       built.push(column);
     }
@@ -571,11 +572,15 @@ const ServicesManagement: React.FC = () => {
         sortable: true,
         cell: renderServicePublishedOnCell,
       },
-      createActionsColumn<Service>({
-        actionCount: actionsContext.isRegistryReadOnly ? 0 : 3,
-        getActions: (service) => buildServiceActions(service, actionsContext),
-      }),
     ];
+    if (!actionsContext.isRegistryReadOnly) {
+      columns.push(
+        createActionsColumn<Service>({
+          actionCount: 3,
+          getActions: (service) => buildServiceActions(service, actionsContext),
+        }),
+      );
+    }
     return columns;
   }, [actionsContext]);
 

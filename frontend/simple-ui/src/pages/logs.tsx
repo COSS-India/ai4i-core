@@ -673,11 +673,13 @@ function buildLogsFilterDefs(options: {
       type: "date",
       param: "start_time",
       value: draft.startTime,
-      onChange: (v) =>
+      onChange: (v) => {
+        setFollowsPresent(false);
         replaceDraft(
           { ...draftRef.current, timePreset: "custom", startTime: v },
           false,
-        ),
+        );
+      },
       onBlur: () => commitFilters(draftRef.current),
       error: timeRangeError,
       inputType: "datetime-local",

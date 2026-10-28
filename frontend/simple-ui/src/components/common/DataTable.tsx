@@ -195,6 +195,8 @@ export interface DataTableAdminProps<T> extends DataTableSharedProps<T> {
   layout: "admin";
   items: T[];
   getRowKey: (row: T) => string;
+  /** Accessible name for clickable rows; omit when not provided. */
+  rowAriaLabel?: (row: T) => string;
   /**
    * Config-driven search input owned by DataTable.
    * Parent performs filtering / API requests via `search.onChange`.
@@ -1365,6 +1367,7 @@ type AdminTableDataBodyProps<T> = Readonly<{
   getRowKey: (row: T) => string;
   getSubRows?: (row: T) => readonly T[];
   onRowClick?: (row: T) => void;
+  rowAriaLabel?: (row: T) => string;
   rowChevron: boolean;
 }>;
 
@@ -1447,6 +1450,7 @@ function AdminTableDataRow<T>({
   columnLayouts,
   getRowKey,
   onRowClick,
+  rowAriaLabel,
   rowChevron,
 }: Readonly<{
   row: T;
@@ -1456,6 +1460,7 @@ function AdminTableDataRow<T>({
   columnLayouts: ReturnType<typeof resolveAdminColumnLayouts>;
   getRowKey: (row: T) => string;
   onRowClick?: (row: T) => void;
+  rowAriaLabel?: (row: T) => string;
   rowChevron: boolean;
 }>): React.ReactElement {
   const clickable = Boolean(onRowClick);
@@ -1463,7 +1468,7 @@ function AdminTableDataRow<T>({
     <Tr
       key={getRowKey(row)}
       tabIndex={clickable ? 0 : undefined}
-      aria-label={clickable ? "Open row" : undefined}
+      aria-label={clickable ? rowAriaLabel?.(row) : undefined}
       onClick={clickable ? () => onRowClick?.(row) : undefined}
       onKeyDown={adminRowKeyDownHandler(onRowClick, row)}
       cursor={clickable ? "pointer" : undefined}
@@ -1494,6 +1499,7 @@ function AdminTableDataBody<T>({
   getRowKey,
   getSubRows,
   onRowClick,
+  rowAriaLabel,
   rowChevron,
 }: AdminTableDataBodyProps<T>): React.ReactElement {
   return (
@@ -1509,6 +1515,7 @@ function AdminTableDataBody<T>({
             columnLayouts={columnLayouts}
             getRowKey={getRowKey}
             onRowClick={onRowClick}
+            rowAriaLabel={rowAriaLabel}
             rowChevron={rowChevron}
           />
         )),
@@ -1530,6 +1537,7 @@ function renderAdminTableBody<T>(options: {
   getRowKey: (row: T) => string;
   getSubRows?: (row: T) => readonly T[];
   onRowClick?: (row: T) => void;
+  rowAriaLabel?: (row: T) => string;
   rowChevron: boolean;
 }): React.ReactNode {
   if (options.isLoading) {
@@ -1559,6 +1567,7 @@ function renderAdminTableBody<T>(options: {
       getRowKey={options.getRowKey}
       getSubRows={options.getSubRows}
       onRowClick={options.onRowClick}
+      rowAriaLabel={options.rowAriaLabel}
       rowChevron={options.rowChevron}
     />
   );
@@ -1831,6 +1840,7 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
     noResultsMessage = "No items match the current filters.",
     unfilteredCount,
     onRowClick,
+    rowAriaLabel,
     maxHeight = "60vh",
     tableContainerProps,
     size = "sm",
@@ -1954,6 +1964,7 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
             getRowKey,
             getSubRows,
             onRowClick,
+            rowAriaLabel,
             rowChevron,
           })}
         </Tbody>
