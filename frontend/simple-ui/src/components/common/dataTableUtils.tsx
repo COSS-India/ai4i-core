@@ -522,15 +522,23 @@ export function distributeColumnWidths(
 /**
  * Natural (unconstrained, single-line) width of each column, measured from
  * offscreen clones of the rendered header and body cells.
+ *
+ * `visible[i]` is false for columns hidden at the current breakpoint
+ * (`display: none`); those drop out of the table's column structure, so
+ * callers must not emit a `<col>` for them.
  */
 export function measureColumnNaturalWidths(
   table: HTMLTableElement,
   columnCount: number,
-): { header: number[]; natural: number[] } | null {
+): { header: number[]; natural: number[]; visible: boolean[] } | null {
   const headRow = table.tHead?.rows[0];
   if (headRow?.cells.length == null || headRow.cells.length < columnCount) {
     return null;
   }
+  const visible = Array.from(
+    { length: columnCount },
+    (_, i) => getComputedStyle(headRow.cells[i]).display !== "none",
+  );
   const bodyRows = Array.from(table.tBodies[0]?.rows ?? []).filter(
     (row) =>
       row.cells.length >= columnCount &&
@@ -571,7 +579,7 @@ export function measureColumnNaturalWidths(
         natural[i] = Math.max(natural[i], widthOf(clone));
       });
     }
-    return { header, natural };
+    return { header, natural, visible };
   } finally {
     sandbox.remove();
   }
@@ -580,29 +588,50 @@ export function measureColumnNaturalWidths(
 const useIsomorphicLayoutEffect =
   globalThis.window === undefined ? useEffect : useLayoutEffect;
 
-type MeasuredNaturals = { key: string; header: number[]; natural: number[] };
+type MeasuredNaturals = {
+  key: string;
+  header: number[];
+  natural: number[];
+  visible: boolean[];
+};
+
+/** One `<col>` per visible column; `id` is the column id or `trailingColumnId`. */
+export type MeasuredColumnWidth = { id: string; width: number };
 
 function sameNumbers(a: readonly number[], b: readonly number[]): boolean {
   return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
+function visibilitySignature(visible: readonly boolean[]): string {
+  return visible.map((v) => (v ? "1" : "0")).join("");
 }
 
 /**
  * Pixel widths for a fixed-layout table's `<colgroup>`, derived from the data
  * actually on screen. Returns null until the first measurement.
  *
- * Widths only ratchet up while the column set is unchanged, so paging or
- * filtering does not make columns jump around.
+ * Columns hidden at the current breakpoint are left out, so each width lands
+ * on the column it was measured for. Widths only ratchet up while the visible
+ * column set is unchanged, so paging or filtering does not make columns jump.
  */
 export function useContentColumnWidths(options: Readonly<{
   tableRef: React.RefObject<HTMLTableElement>;
   containerRef: React.RefObject<HTMLElement>;
   columns: readonly AdminColumnInput[];
   trailingFixedPx?: number;
+  trailingColumnId?: string;
   enabled: boolean;
   contentKey: unknown;
-}>): number[] | null {
-  const { tableRef, containerRef, columns, trailingFixedPx, enabled, contentKey } =
-    options;
+}>): MeasuredColumnWidth[] | null {
+  const {
+    tableRef,
+    containerRef,
+    columns,
+    trailingFixedPx,
+    trailingColumnId = "__trailing",
+    enabled,
+    contentKey,
+  } = options;
   const [naturals, setNaturals] = useState<MeasuredNaturals | null>(null);
   const [available, setAvailable] = useState(0);
   const [fontsVersion, setFontsVersion] = useState(0);
@@ -632,20 +661,27 @@ export function useContentColumnWidths(options: Readonly<{
     if (!enabled || !tableRef.current) return;
     const measured = measureColumnNaturalWidths(tableRef.current, columns.length);
     if (!measured) return;
+    const measuredKey = `${key}#${visibilitySignature(measured.visible)}`;
     setNaturals((prev) => {
-      if (prev?.key !== key) return { key, ...measured };
+      if (prev?.key !== measuredKey) return { key: measuredKey, ...measured };
       const natural = measured.natural.map((n, i) => Math.max(n, prev.natural[i] ?? 0));
       const header = measured.header.map((n, i) => Math.max(n, prev.header[i] ?? 0));
       if (sameNumbers(natural, prev.natural) && sameNumbers(header, prev.header)) {
         return prev;
       }
-      return { key, header, natural };
+      return { ...prev, header, natural };
     });
-  }, [enabled, key, contentKey, columns.length, tableRef]);
+    // `available` re-measures when a resize crosses a breakpoint that hides columns.
+  }, [enabled, key, contentKey, columns.length, tableRef, available]);
 
   return useMemo(() => {
-    if (naturals?.key !== key || available <= 0) return null;
-    const inputs: ColumnSizingInput[] = columns.map((col, i) => {
+    if (!naturals?.key.startsWith(`${key}#`) || available <= 0) return null;
+    const visibleIndexes = columns
+      .map((_, i) => i)
+      .filter((i) => naturals.visible[i]);
+    const ids = visibleIndexes.map((i) => columns[i].id);
+    const inputs: ColumnSizingInput[] = visibleIndexes.map((i) => {
+      const col = columns[i];
       const mode = resolveColumnSizingMode(col);
       const header = naturals.header[i] ?? 0;
       const measured = naturals.natural[i] ?? header;
@@ -663,9 +699,13 @@ export function useContentColumnWidths(options: Readonly<{
     });
     if (trailingFixedPx) {
       inputs.push({ natural: trailingFixedPx, header: trailingFixedPx, mode: "fixed" });
+      ids.push(trailingColumnId);
     }
-    return distributeColumnWidths(inputs, available);
-  }, [naturals, key, available, columns, trailingFixedPx]);
+    return distributeColumnWidths(inputs, available).map((width, i) => ({
+      id: ids[i],
+      width,
+    }));
+  }, [naturals, key, available, columns, trailingFixedPx, trailingColumnId]);
 }
 
 /** @deprecated Prefer resolveAdminColumnLayouts. */

@@ -2074,6 +2074,7 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
     containerRef: tableContainerRef,
     columns,
     trailingFixedPx: rowChevron ? cssLengthToPx(ADMIN_CHEVRON_COLUMN_WIDTH) : undefined,
+    trailingColumnId: "row-chevron",
     enabled: !isLoading,
     contentKey: displayItems,
   });
@@ -2159,13 +2160,9 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
       >
         {measuredWidths ? (
           <colgroup>
-            {measuredWidths.map((width, i) => {
-              const colKey =
-                i < columns.length ? columns[i].id : "row-chevron";
-              return (
-                <col key={colKey} style={{ width: `${width}px` }} />
-              );
-            })}
+            {measuredWidths.map(({ id, width }) => (
+              <col key={id} style={{ width: `${width}px` }} />
+            ))}
           </colgroup>
         ) : null}
         <AdminTableHead

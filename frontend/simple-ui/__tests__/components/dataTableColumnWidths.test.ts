@@ -1,6 +1,7 @@
 import {
   cssLengthToPx,
   distributeColumnWidths,
+  measureColumnNaturalWidths,
   resolveColumnSizingMode,
   type ColumnSizingInput,
 } from "../../src/components/common/dataTableUtils";
@@ -61,6 +62,23 @@ describe("resolveColumnSizingMode", () => {
     expect(resolveColumnSizingMode({ id: "version" })).toBe("content");
     expect(resolveColumnSizingMode({ id: "name" })).toBe("shrink");
     expect(resolveColumnSizingMode({ id: "email" })).toBe("shrink");
+  });
+});
+
+describe("measureColumnNaturalWidths", () => {
+  afterEach(() => {
+    document.body.innerHTML = "";
+  });
+
+  it("flags columns hidden at the current breakpoint", () => {
+    document.body.innerHTML = `
+      <table>
+        <thead><tr><th>Key</th><th style="display:none">Permissions</th><th>Actions</th></tr></thead>
+        <tbody><tr><td>abc</td><td style="display:none">read</td><td>edit</td></tr></tbody>
+      </table>`;
+    const table = document.querySelector("table") as HTMLTableElement;
+    const measured = measureColumnNaturalWidths(table, 3);
+    expect(measured?.visible).toEqual([true, false, true]);
   });
 });
 
