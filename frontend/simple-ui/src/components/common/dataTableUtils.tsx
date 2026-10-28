@@ -71,6 +71,7 @@ const WEAK_PRIMARY_IDS = new Set([
   "recipient",
   "delivery",
   "channel",
+  "application",
 ]);
 
 function normalizeColumnId(id: string): string {
@@ -86,6 +87,21 @@ export function shouldAutoTruncateColumn(col: { id: string; truncate?: boolean }
   if (col.truncate === true) return true;
   const id = normalizeColumnId(col.id);
   return !(NO_AUTO_TRUNCATE_IDS.has(id) || NO_AUTO_TRUNCATE_IDS.has(compactColumnId(col.id)));
+}
+
+/**
+ * Non-truncating columns (actions, toggles) without an explicit width should
+ * shrink to their content in `table-layout: fixed` tables. `1%` is the usual
+ * hint; content + nowrap then sets the real width from the action count.
+ */
+export function shrinkToContentWidth(col: {
+  id: string;
+  truncate?: boolean;
+  width?: string;
+}): string | undefined {
+  if (col.width != null) return col.width;
+  if (!shouldAutoTruncateColumn(col)) return "1%";
+  return undefined;
 }
 
 export function getTruncateCellProps(truncate: boolean, maxW?: TableCellProps["maxW"]): TableCellProps {
@@ -129,7 +145,6 @@ const PRIMARY_FLEX_IDS = [
     "alert",
     "notification",
     "policy",
-    "application",
     "tiername",
     "tier_name",
     "pii",
@@ -197,6 +212,14 @@ function hasExplicitColumnWidth(col: AdminColumnInput): boolean {
   return col.width != null || col.minWidth != null || col.maxW != null;
 }
 
+/** `1%` / auto widths are shrink-wrap hints, not real pins under `table-layout: fixed`. */
+function isFluidWidthHint(value: TableCellProps["w"] | TableCellProps["minW"]): boolean {
+  if (value == null) return true;
+  if (typeof value !== "string") return false;
+  const v = value.trim().toLowerCase();
+  return v === "1%" || v === "auto" || v === "min-content" || v === "max-content";
+}
+
 function explicitColumnLayout(col: AdminColumnInput): AdminColumnLayout {
   return {
     w: col.width,
@@ -215,6 +238,24 @@ function actionsColumnLayout(): AdminColumnLayout {
   };
 }
 
+/**
+ * Actions / control columns must stay a pinned content-width rail.
+ * Never absorb leftover table space; never crush to `1%` (truncates "Actions" → "A").
+ */
+function pinnedControlColumnLayout(col: AdminColumnInput): AdminColumnLayout {
+  const candidate = col.width ?? col.minWidth ?? col.maxW;
+  if (candidate != null && !isFluidWidthHint(candidate)) {
+    const pinned = col.maxW ?? col.width ?? col.minWidth ?? candidate;
+    return {
+      w: col.width ?? pinned,
+      minW: col.minWidth ?? pinned,
+      maxW: pinned,
+      whiteSpace: "nowrap",
+    };
+  }
+  return actionsColumnLayout();
+}
+
 function partitionAdminColumns(columns: readonly AdminColumnInput[]): {
   layouts: Map<string, AdminColumnLayout>;
   flexColumns: AdminColumnInput[];
@@ -222,12 +263,13 @@ function partitionAdminColumns(columns: readonly AdminColumnInput[]): {
   const layouts = new Map<string, AdminColumnLayout>();
   const flexColumns: AdminColumnInput[] = [];
   for (const col of columns) {
-    if (hasExplicitColumnWidth(col)) {
-      layouts.set(col.id, explicitColumnLayout(col));
+    // Control columns win over generic explicit widths (incl. legacy `width: "1%"`).
+    if (isShrinkWrapColumn(col)) {
+      layouts.set(col.id, pinnedControlColumnLayout(col));
       continue;
     }
-    if (isShrinkWrapColumn(col)) {
-      layouts.set(col.id, actionsColumnLayout());
+    if (hasExplicitColumnWidth(col)) {
+      layouts.set(col.id, explicitColumnLayout(col));
       continue;
     }
     flexColumns.push(col);

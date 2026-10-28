@@ -56,7 +56,7 @@ import {
   type ConfirmState,
   type PiiTab,
 } from "./PiiPoliciesProvider";
-import { FlaskIcon, POLICY_COL_ACTIONS, POLICY_COL_STATUS, StatusToggle } from "./ui";
+import { FlaskIcon, POLICY_COL_STATUS, StatusToggle } from "./ui";
 
 const ADOPTER_TABS: { id: PiiTab; label: string }[] = [
   { id: "policies", label: "Policies" },
@@ -315,9 +315,7 @@ function SubcategoryTable({
           ),
       },
       createActionsColumn<PolicySubcategory>({
-        ...POLICY_COL_ACTIONS,
-        width: "188px",
-        minWidth: "188px",
+        actionCount: canManage ? 3 : 1,
         getActions: (sub) => [
           ...(canManage
             ? [
@@ -375,7 +373,6 @@ function SubcategoryTable({
       asyncStateHeight="64px"
       onRowClick={onView}
       rowAriaLabel={(sub) => `View ${sub.name}`}
-      showRowChevron={false}
       renderAfterRow={(sub) =>
         expanded.has(sub.id) ? (
           <Tr>

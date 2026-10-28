@@ -663,14 +663,17 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     recheckKey: isUserModalOpen ? knownEmailRecheckKey : undefined,
   });
 
-  /** Contact email editable for PENDING/ACTIVE non-default orgs (AI4IDS-3401). */
-  const isEditTenantEmailEditable = isTenantContactEmailEditable(
-    editTenantRow?.status,
-    {
+  /**
+   * Contact email editable for PENDING/ACTIVE non-default orgs (AI4IDS-3401).
+   * Demo feedback (AI4IDS-3590): keep locked on edit until product re-enables it.
+   */
+  const allowEditTenantContactEmail = false;
+  const isEditTenantEmailEditable =
+    allowEditTenantContactEmail &&
+    isTenantContactEmailEditable(editTenantRow?.status, {
       isDefaultOrganisation:
         editTenantRow != null && isDefaultTenant(editTenantRow),
-    },
-  );
+    });
 
   const editTenantEmailRecheckKey = isEditTenantModalOpen
     ? knownEmailRecheckKey

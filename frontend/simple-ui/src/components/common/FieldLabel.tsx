@@ -17,6 +17,10 @@ export type FieldLabelProps = {
    * - `header` — uppercase table-header weight (no FormLabel)
    */
   variant?: FieldLabelVariant;
+  /**
+   * Horizontal alignment for `header` / `metric` stacks (e.g. Actions rail → `right`).
+   */
+  align?: "left" | "center" | "right";
   required?: boolean;
   spacing?: StackProps["spacing"];
   formLabelProps?: Omit<FormLabelProps, "children">;
@@ -29,18 +33,28 @@ export type FieldLabelProps = {
  * Use for form labels, table headers, metric cards, and dashboard labels.
  * When `hint` is omitted, no icon is rendered.
  */
+function stackJustify(
+  align: FieldLabelProps["align"],
+): NonNullable<StackProps["justify"]> {
+  if (align === "right") return "flex-end";
+  if (align === "center") return "center";
+  return "flex-start";
+}
+
 export default function FieldLabel({
   children,
   hint,
   tip,
   variant = "form",
+  align = "left",
   required = false,
   spacing = 1.5,
   formLabelProps,
   textProps,
-}: FieldLabelProps) {
+}: Readonly<FieldLabelProps>) {
   const message = hint ?? tip;
   const tipNode = message ? <InfoTip message={message} /> : null;
+  const justify = stackJustify(align);
 
   if (variant === "form") {
     return (
@@ -62,7 +76,7 @@ export default function FieldLabel({
 
   if (variant === "metric") {
     return (
-      <HStack spacing={spacing} align="center">
+      <HStack spacing={spacing} align="center" justify={justify} w="100%">
         <Text
           fontSize="11.5px"
           fontWeight="700"
@@ -79,9 +93,19 @@ export default function FieldLabel({
   }
 
   if (variant === "header") {
+    // Right-aligned control columns (e.g. Actions) stay on one line; other
+    // headers may wrap so long labels are not clipped in narrow columns.
+    const nowrap = align === "right";
     return (
-      <HStack spacing={1} align="center" justify="flex-start">
-        <Text as="span" color="inherit" {...textProps}>
+      <HStack spacing={1} align="center" justify={justify} w="100%" minW={0}>
+        <Text
+          as="span"
+          color="inherit"
+          whiteSpace={nowrap ? "nowrap" : "normal"}
+          noOfLines={nowrap ? undefined : 2}
+          title={typeof children === "string" ? children : undefined}
+          {...textProps}
+        >
           {children}
         </Text>
         {tipNode}

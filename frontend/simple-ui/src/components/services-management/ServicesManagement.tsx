@@ -39,6 +39,7 @@ import {
   renderServiceTaskTypeCell,
   renderServiceTierCell,
 } from "./serviceListCells";
+import { FIELD_HINTS } from "../../config/fieldHints";
 
 const READ_ONLY_PAGE_DESCRIPTION =
   "Browse services in the registry. You can open a service to view its configuration.";
@@ -329,7 +330,8 @@ function buildVisibleServiceColumns(
           cell: renderEmptyServiceCell,
         };
     if (cellKey === "actions") {
-      actionsColumn = column;
+      // Skip empty Actions column when no template (e.g. read-only registry).
+      if (template) actionsColumn = column;
     } else {
       built.push(column);
     }
@@ -348,6 +350,9 @@ const ServicesManagement: React.FC = () => {
     tableKey,
     searchQuery,
     setSearchQuery,
+    searchFields,
+    onSearchFieldsChange,
+    searchFieldOptions,
     filterStatus,
     setFilterStatus,
     filterTaskType,
@@ -507,12 +512,14 @@ const ServicesManagement: React.FC = () => {
       {
         id: "tier",
         header: "Tier",
+        hint: FIELD_HINTS.service.col.tier,
         sortable: true,
         cell: renderServiceTierCell,
       },
       {
         id: "status",
         header: "Status",
+        hint: FIELD_HINTS.service.col.status,
         sortable: true,
         cell: renderServiceStatusCell,
       },
@@ -537,6 +544,7 @@ const ServicesManagement: React.FC = () => {
       {
         id: "inputPrice",
         header: "Input Price",
+        hint: FIELD_HINTS.service.col.inputPrice,
         sortable: true,
         isNumeric: true,
         cell: renderServiceInputPriceCell,
@@ -544,6 +552,7 @@ const ServicesManagement: React.FC = () => {
       {
         id: "outputPrice",
         header: "Output Price",
+        hint: FIELD_HINTS.service.col.outputPrice,
         sortable: true,
         isNumeric: true,
         cell: renderServiceOutputPriceCell,
@@ -551,6 +560,7 @@ const ServicesManagement: React.FC = () => {
       {
         id: "cachedInputPrice",
         header: "Cached Input Price",
+        hint: FIELD_HINTS.service.col.cachedInputPrice,
         sortable: true,
         isNumeric: true,
         cell: renderServiceCachedInputPriceCell,
@@ -558,13 +568,19 @@ const ServicesManagement: React.FC = () => {
       {
         id: "publishedOn",
         header: "Published On",
+        hint: FIELD_HINTS.service.col.publishedOn,
         sortable: true,
         cell: renderServicePublishedOnCell,
       },
-      createActionsColumn<Service>({
-        getActions: (service) => buildServiceActions(service, actionsContext),
-      }),
     ];
+    if (!actionsContext.isRegistryReadOnly) {
+      columns.push(
+        createActionsColumn<Service>({
+          actionCount: 3,
+          getActions: (service) => buildServiceActions(service, actionsContext),
+        }),
+      );
+    }
     return columns;
   }, [actionsContext]);
 
@@ -682,6 +698,9 @@ const ServicesManagement: React.FC = () => {
         tableKey={tableKey}
         searchQuery={searchQuery}
         onSearchQueryChange={setSearchQuery}
+        searchFields={searchFields}
+        onSearchFieldsChange={onSearchFieldsChange}
+        searchFieldOptions={searchFieldOptions}
         filterStatus={filterStatus}
         onFilterStatusChange={setFilterStatus}
         filterTaskType={filterTaskType}

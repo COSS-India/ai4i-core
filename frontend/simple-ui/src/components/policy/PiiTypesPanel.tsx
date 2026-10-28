@@ -18,12 +18,14 @@ import {
 } from "@chakra-ui/react";
 import { showToast } from "../../utils/toast";
 import StandardModal, { CreateModal } from "../common/StandardModal";
-import DataTableActions from "../common/DataTableActions";
 import ConfirmDialog from "../common/ConfirmDialog";
 import CreateButton from "../common/CreateButton";
 import FormActions from "../common/FormActions";
 import FieldLabel from "../common/FieldLabel";
+import { FIELD_HINTS } from "../../config/fieldHints";
 import DataTable, {
+  DataTableActions,
+  actionsColumnSize,
   DEFAULT_PAGE_SIZE_OPTIONS,
   type DataTableColumn,
 } from "../common/table";
@@ -291,11 +293,13 @@ export function PiiTypesPanel() {
     {
       id: "mask",
       header: "Mask",
+      hint: FIELD_HINTS.piiType.col.mask,
       cell: (row) => <Badge>{row.mask_format}</Badge>,
     },
     {
       id: "regex",
       header: "Regex",
+      hint: FIELD_HINTS.piiType.col.regex,
       tdProps: { maxW: "280px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
       sortable: true,
       sortAccessor: (row) => row.regex_pattern ?? "",
@@ -317,7 +321,16 @@ export function PiiTypesPanel() {
     {
       id: "actions",
       header: "Actions",
-      tdProps: { onClick: (e) => e.stopPropagation() },
+      align: "right" as const,
+      truncate: false,
+      ...actionsColumnSize(2),
+      thProps: { textAlign: "right", whiteSpace: "nowrap", px: 2, overflow: "visible" },
+      tdProps: {
+        onClick: (e) => e.stopPropagation(),
+        whiteSpace: "nowrap",
+        textAlign: "right",
+        px: 2,
+      },
       cell: (row) => (
         <DataTableActions
           actions={[
@@ -344,15 +357,15 @@ export function PiiTypesPanel() {
         ) : (
         <Stack spacing={4}>
           <FormControl isRequired>
-            <FieldLabel>Label</FieldLabel>
+            <FieldLabel hint={FIELD_HINTS.piiType.label.tip}>Label</FieldLabel>
             <Input value={label} onChange={(e) => setLabel(e.target.value)} />
           </FormControl>
           <FormControl isRequired>
-            <FieldLabel>Regex pattern</FieldLabel>
+            <FieldLabel hint={FIELD_HINTS.piiType.regex.tip}>Regex pattern</FieldLabel>
             <Textarea value={regex} onChange={(e) => setRegex(e.target.value)} fontFamily="mono" rows={3} />
           </FormControl>
           <FormControl isRequired={!editing}>
-            <FieldLabel>
+            <FieldLabel hint={FIELD_HINTS.piiType.examples.tip}>
               {editing
                 ? "Example values (comma or newline, optional validation)"
                 : "Example values (comma or newline, min 3)"}
@@ -365,7 +378,7 @@ export function PiiTypesPanel() {
             />
           </FormControl>
           <FormControl>
-            <FieldLabel>Mask format</FieldLabel>
+            <FieldLabel hint={FIELD_HINTS.piiType.mask.tip}>Mask format</FieldLabel>
             <Select value={mask} onChange={(e) => setMask(e.target.value as MaskFormat)}>
               {MASK_OPTIONS.map((m) => (
                 <option key={m} value={m}>

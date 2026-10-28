@@ -93,12 +93,12 @@ export function graceExtensionError(
   currentEnd: string | undefined,
   keyExpiresAt: string | undefined,
 ): string | null {
-  if (!newEnd) return "Choose when the previous key should stop working.";
+  if (!newEnd) return "Choose when the old key should stop working.";
   if (currentEnd && newEnd.getTime() <= new Date(currentEnd).getTime()) {
     return "The new end must be later than the current one.";
   }
   if (keyExpiresAt && newEnd.getTime() > new Date(keyExpiresAt).getTime()) {
-    return `The previous key can't outlive the key, which expires ${new Date(keyExpiresAt).toLocaleString()}.`;
+    return `The old key can't outlive the key, which expires ${new Date(keyExpiresAt).toLocaleString()}.`;
   }
   return null;
 }

@@ -12,7 +12,6 @@ import {
   TabPanel,
   TabPanels,
   Tabs,
-  Text,
 } from "@chakra-ui/react";
 import { FiEdit2, FiMail } from "react-icons/fi";
 import type { TenantTierAssignment } from "../../services/tierManagementService";
@@ -24,14 +23,11 @@ import {
   isTenantStatus,
 } from "../../config/constants";
 import { isDefaultTenant } from "../../utils/defaultTenant";
-import { fmtDate } from "../../utils/valueFormatters";
 import type { TenantView } from "../../types/tenant";
 import CreateButton from "../common/CreateButton";
 import FormPage from "../common/FormPage";
-import FormSection from "../common/FormSection";
-import ReadOnlyField from "../common/ReadOnlyField";
 import ApplicationManagementTab from "../profile/ApplicationManagementTab";
-import InstitutionForm from "./InstitutionForm";
+import InstitutionOverview from "./InstitutionOverview";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 import {
   formatRupees,
@@ -169,48 +165,20 @@ export function InstitutionWorkspace({
                     </Box>
                   </Alert>
                 )}
-                <InstitutionForm
-                  mode="view"
-                  showOrganisation={false}
-                  values={{
-                    organisation: t.organisation,
-                    contact_name: t.contact_name ?? "",
-                    email: t.email ?? "",
-                    phone_number: t.phone_number ?? "",
-                  }}
-                  pendingEmail={t.pending_email}
+                <InstitutionOverview
+                  tenant={t}
+                  tierLabel={resolveTierLabel(
+                    t.tier_id ?? tierAssignment?.tier_id,
+                    tierOptions,
+                    t.tier_name ?? tierAssignment?.tier_name,
+                  )}
+                  budgetLabel={formatRupees(
+                    tenantBudgetNumber(t) ??
+                      (tierAssignment
+                        ? Number(tierAssignment.allocated_budget)
+                        : null),
+                  )}
                 />
-                <FormSection title="Record">
-                    <ReadOnlyField label={`${INSTITUTION} ID`}>
-                      <Text fontFamily="mono" fontSize="sm">{t.tenant_id}</Text>
-                    </ReadOnlyField>
-                    <ReadOnlyField label="Status">
-                      <Badge colorScheme={getTenantStatusColorScheme(t.status)}>
-                        {formatTenantStatusLabel(t.status)}
-                      </Badge>
-                    </ReadOnlyField>
-                    <ReadOnlyField label="Created">{fmtDate(t.created_at)}</ReadOnlyField>
-                    <ReadOnlyField label="Tier">
-                      {resolveTierLabel(
-                        t.tier_id ?? tierAssignment?.tier_id,
-                        tierOptions,
-                        t.tier_name ?? tierAssignment?.tier_name,
-                      )}
-                    </ReadOnlyField>
-                    <ReadOnlyField label="Budget">
-                      {formatRupees(
-                        tenantBudgetNumber(t) ??
-                          (tierAssignment
-                            ? Number(tierAssignment.allocated_budget)
-                            : null),
-                      )}
-                    </ReadOnlyField>
-                    {(t.budget_effective_from || t.budget_effective_to) ? (
-                      <ReadOnlyField label="Budget period">
-                        {fmtDate(t.budget_effective_from)} — {fmtDate(t.budget_effective_to)}
-                      </ReadOnlyField>
-                    ) : null}
-                  </FormSection>
               </TabPanel>
               <TabPanel px={6} pt={6} pb={6}>
                 <HStack justify="flex-end" mb={4}>

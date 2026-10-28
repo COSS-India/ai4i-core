@@ -8,14 +8,15 @@ import DataTable, {
 import type { ServiceTierFilterOption } from "../../hooks/useServicesManagement";
 import type { Service } from "../../services/servicesManagementService";
 import {
-  serviceListCellKey,
   type ServiceListColumnDef,
 } from "./serviceListColumns";
 import {
   buildClientServiceFilterDefs,
   buildServerServiceFilterDefs,
   buildServiceRegistrySearch,
+  SERVICE_SEARCH_FIELD_OPTIONS,
 } from "./serviceRegistryFilters";
+import type { DataTableFilterDef } from "../common/dataTableTypes";
 
 interface ServiceRegistryTabProps {
   items: Service[];
@@ -28,6 +29,10 @@ interface ServiceRegistryTabProps {
   tableKey: string;
   searchQuery: string;
   onSearchQueryChange: (value: string) => void;
+  /** Comma-separated search fields. Empty means all fields. */
+  searchFields: string;
+  onSearchFieldsChange: (value: string) => void;
+  searchFieldOptions?: { label: string; value: string }[];
   filterStatus: string;
   onFilterStatusChange: (value: string) => void;
   filterTaskType: string;
@@ -64,12 +69,8 @@ function resolveServerFilterDefs(options: {
   onServerFilterChange?: (columnId: string, value: string) => void;
 }) {
   if (!options.serverMode || !options.onServerFilterChange) return [];
-  const nameColumn = options.serverColumns?.find(
-    (column) => column.filterable && serviceListCellKey(column.id) === "name",
-  );
   return buildServerServiceFilterDefs({
     columns: options.serverColumns ?? [],
-    nameColumnId: nameColumn?.id,
     serverFilterValues: options.serverFilterValues,
     taskTypeNames: options.taskTypeNames,
     tierFilterOptions: options.tierFilterOptions,
@@ -112,6 +113,9 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
   tableKey,
   searchQuery,
   onSearchQueryChange,
+  searchFields,
+  onSearchFieldsChange,
+  searchFieldOptions = SERVICE_SEARCH_FIELD_OPTIONS,
   filterStatus,
   onFilterStatusChange,
   filterTaskType,
@@ -135,9 +139,6 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
   const serverMode = Boolean(
     serverColumns && onServerFilterChange && onServerPageChange,
   );
-  const nameColumn = serverColumns?.find(
-    (column) => column.filterable && serviceListCellKey(column.id) === "name",
-  );
   const serverFilterDefs = resolveServerFilterDefs({
     serverMode,
     serverColumns,
@@ -158,12 +159,38 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
   });
   const search = buildServiceRegistrySearch({
     serverMode,
-    nameColumn,
-    serverFilterValues,
-    onServerFilterChange,
     searchQuery,
     onSearchQueryChange,
   });
+  // Server list ANDs text filters and empty selection only sends name — label that
+  // default as "Name" and keep Search in single-select so fields are not ANDed.
+  const searchInFilter: DataTableFilterDef = serverMode
+    ? {
+        id: "searchIn",
+        label: "Search in",
+        type: "select",
+        value: searchFields,
+        onChange: onSearchFieldsChange,
+        width: { base: "full", sm: "168px" },
+        options: [
+          { label: "Name", value: "" },
+          ...searchFieldOptions.filter(
+            (option) => option.value.replaceAll("_", "").toLowerCase() !== "name",
+          ),
+        ],
+      }
+    : {
+        id: "searchIn",
+        label: "Search in",
+        type: "multiselect",
+        value: searchFields,
+        onChange: onSearchFieldsChange,
+        width: { base: "full", sm: "168px" },
+        options: [
+          { label: "All fields", value: "" },
+          ...searchFieldOptions,
+        ],
+      };
   const serverPagination = resolveServerPagination({
     serverMode,
     serverPage,
@@ -197,7 +224,10 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
       onClearFilters={onClearFilters}
       filterToolbarRightContent={columnPicker}
       search={search}
-      filterDefs={serverMode ? serverFilterDefs : clientFilterDefs}
+      filterDefs={[
+        searchInFilter,
+        ...(serverMode ? serverFilterDefs : clientFilterDefs),
+      ]}
     />
   );
 };

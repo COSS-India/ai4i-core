@@ -62,7 +62,6 @@ import {
 import {
   AddIcon,
   DeleteIcon,
-  ViewIcon,
   EditIcon,
   LockIcon,
 } from "@chakra-ui/icons";
@@ -95,6 +94,8 @@ import DataTable, {
 import { useDeferredColumnSort } from "../../utils/tableSort";
 import type { AlertDefinition, AlertHistoryItem } from "../../types/alerting";
 import StandardModal from "../common/StandardModal";
+import FieldLabel from "../common/FieldLabel";
+import { FIELD_HINTS } from "../../config/fieldHints";
 
 const EVAL_INTERVALS = ["30s", "1m", "5m"] as const;
 const FOR_DURATIONS = ["1m", "2m", "5m", "10m"] as const;
@@ -540,8 +541,8 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       cell: (d) => <Text fontSize="sm">{new Date(d.created_at).toLocaleDateString()}</Text>,
     },
     createActionsColumn<AlertDefinition>({
+      actionCount: 2,
       getActions: (d) => [
-        { id: "view", label: "View", icon: <ViewIcon />, onClick: () => defs.openView(d) },
         { id: "edit", label: "Edit", icon: <EditIcon />, onClick: () => defs.openUpdate(d) },
         { id: "delete", label: "Delete", icon: <DeleteIcon />, onClick: () => defs.openDelete(d) },
       ],
@@ -596,8 +597,8 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       cell: (r) => <Text fontSize="sm">{new Date(r.created_at).toLocaleDateString()}</Text>,
     },
     createActionsColumn<NotificationReceiver>({
+      actionCount: 2,
       getActions: (r) => [
-        { id: "view", label: "View", icon: <ViewIcon />, onClick: () => recvs.openView(r) },
         { id: "edit", label: "Edit", icon: <EditIcon />, onClick: () => recvs.openUpdate(r) },
         { id: "delete", label: "Delete", icon: <DeleteIcon />, onClick: () => recvs.openDelete(r) },
       ],
@@ -650,16 +651,8 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
       ),
     },
     createActionsColumn<NotificationReceiver>({
+      actionCount: 2,
       getActions: (rule) => [
-        {
-          id: "view",
-          label: "View",
-          icon: <ViewIcon />,
-          onClick: () => {
-            defs.fetchDefinitions();
-            rules.openView(rule);
-          },
-        },
         {
           id: "edit",
           label: "Edit",
@@ -727,11 +720,7 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
         </Text>
       ),
     },
-    createActionsColumn<AlertHistoryItem>({
-      getActions: (row) => [
-        { id: "view", label: "View", icon: <ViewIcon />, onClick: () => history.openView(row) },
-      ],
-    }),
+    // Row click + chevron open history detail; no separate View action.
   ];
 
   // ═══════════════════════════════════════════════
@@ -858,16 +847,19 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   value={defs.createForm.description ?? ""}
                   onChange={(e) => defs.setCreateForm({ ...defs.createForm, description: e.target.value || null })}
                   bg="white"
-                  rows={3}
+                  rows={2}
                 />
               </FormControl>
 
               <Divider />
 
               <FormControl isRequired isInvalid={!!defs.createErrors?.category}>
-                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                <FieldLabel
+                  hint={FIELD_HINTS.alerting.category.tip}
+                  formLabelProps={{ fontWeight: "semibold", fontSize: "sm", requiredIndicator: FORM_REQUIRED_ASTERISK }}
+                >
                   Category
-                </FormLabel>
+                </FieldLabel>
                 <OptionSelector
                   options={CATEGORIES}
                   value={defs.createForm.category ?? ""}
@@ -908,9 +900,12 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               </FormControl>
 
               <FormControl isRequired isInvalid={!!defs.createErrors?.signal}>
-                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                <FieldLabel
+                  hint={FIELD_HINTS.alerting.signal.tip}
+                  formLabelProps={{ fontWeight: "semibold", fontSize: "sm", requiredIndicator: FORM_REQUIRED_ASTERISK }}
+                >
                   Signal
-                </FormLabel>
+                </FieldLabel>
                 <Select
                   value={defs.createForm.signal ?? ""}
                   onChange={(e) => {
@@ -1048,9 +1043,12 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               <Divider />
 
               <FormControl isRequired isInvalid={!!defs.createErrors?.condition_operator || !!defs.createErrors?.threshold_value || !!defs.createErrors?.threshold_unit}>
-                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                <FieldLabel
+                  hint={FIELD_HINTS.alerting.threshold.tip}
+                  formLabelProps={{ fontWeight: "semibold", fontSize: "sm", requiredIndicator: FORM_REQUIRED_ASTERISK }}
+                >
                   Condition + Threshold
-                </FormLabel>
+                </FieldLabel>
                 <SimpleGrid columns={3} spacing={3} mb={1}>
                   <Text fontSize="xs" color="ink.500" fontWeight="medium">Condition</Text>
                   <Text fontSize="xs" color="ink.500" fontWeight="medium">Threshold</Text>
@@ -1122,9 +1120,12 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               <Divider />
 
               <FormControl isRequired isInvalid={!!defs.createErrors?.severity}>
-                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                <FieldLabel
+                  hint={FIELD_HINTS.alerting.severity.tip}
+                  formLabelProps={{ fontWeight: "semibold", fontSize: "sm", requiredIndicator: FORM_REQUIRED_ASTERISK }}
+                >
                   Severity
-                </FormLabel>
+                </FieldLabel>
                 <HStack spacing={2}>
                   {SEVERITIES.map((s) => {
                     const isActive = defs.createForm.severity === s;
@@ -1167,9 +1168,12 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
 
               <SimpleGrid columns={2} spacing={4}>
                 <FormControl isRequired isInvalid={!!defs.createErrors?.evaluation_interval}>
-                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  <FieldLabel
+                    hint={FIELD_HINTS.alerting.evalInterval.tip}
+                    formLabelProps={{ fontWeight: "semibold", fontSize: "sm", requiredIndicator: FORM_REQUIRED_ASTERISK }}
+                  >
                     Evaluation Interval
-                  </FormLabel>
+                  </FieldLabel>
                   <Select
                     value={defs.createForm.evaluation_interval ?? "30s"}
                     onChange={(e) => {
@@ -1181,14 +1185,16 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   >
                     {EVAL_INTERVALS.map((v) => (<option key={v} value={v}>{v}</option>))}
                   </Select>
-                  <Text fontSize="xs" color="ink.500" mt={1}>How often to check</Text>
                   <FormErrorMessage>{defs.createErrors?.evaluation_interval}</FormErrorMessage>
                 </FormControl>
 
                 <FormControl isRequired isInvalid={!!defs.createErrors?.for_duration}>
-                  <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                  <FieldLabel
+                    hint={FIELD_HINTS.alerting.forDuration.tip}
+                    formLabelProps={{ fontWeight: "semibold", fontSize: "sm", requiredIndicator: FORM_REQUIRED_ASTERISK }}
+                  >
                     For Duration
-                  </FormLabel>
+                  </FieldLabel>
                   <Select
                     value={defs.createForm.for_duration ?? ""}
                     onChange={(e) => defs.setCreateForm({ ...defs.createForm, for_duration: e.target.value })}
@@ -1202,7 +1208,6 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                       <option key={v} value={v}>{v}</option>
                     ))}
                   </Select>
-                  <Text fontSize="xs" color="ink.500" mt={1}>Alert fires only after the condition is met continuously for this duration.</Text>
                   <FormErrorMessage>{defs.createErrors?.for_duration}</FormErrorMessage>
                 </FormControl>
               </SimpleGrid>
@@ -1332,12 +1337,15 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
               </FormControl>
               <FormControl>
                 <FormLabel fontWeight="semibold" fontSize="sm">Description</FormLabel>
-                <Textarea value={defs.updateForm.description ?? ""} onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, description: e.target.value || null })} bg="white" rows={3} />
+                <Textarea value={defs.updateForm.description ?? ""} onChange={(e) => defs.setUpdateForm({ ...defs.updateForm, description: e.target.value || null })} bg="white" rows={2} />
               </FormControl>
               <FormControl isRequired isInvalid={Boolean(defs.updateErrors.category)}>
-                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                <FieldLabel
+                  hint={FIELD_HINTS.alerting.category.tip}
+                  formLabelProps={{ fontWeight: "semibold", fontSize: "sm", requiredIndicator: FORM_REQUIRED_ASTERISK }}
+                >
                   Category
-                </FormLabel>
+                </FieldLabel>
                 <OptionSelector
                   options={CATEGORIES}
                   value={defs.updateForm.category ?? "application"}
@@ -1379,9 +1387,12 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 <FormErrorMessage>{defs.updateErrors.sub_category}</FormErrorMessage>
               </FormControl>
               <FormControl isRequired isInvalid={Boolean(defs.updateErrors.signal)}>
-                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                <FieldLabel
+                  hint={FIELD_HINTS.alerting.signal.tip}
+                  formLabelProps={{ fontWeight: "semibold", fontSize: "sm", requiredIndicator: FORM_REQUIRED_ASTERISK }}
+                >
                   Signal
-                </FormLabel>
+                </FieldLabel>
                 <Select
                   value={defs.updateForm.signal ?? ""}
                   onChange={(e) => {
@@ -1519,9 +1530,12 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 isRequired
                 isInvalid={Boolean(defs.updateErrors.condition_operator) || Boolean(defs.updateErrors.threshold_value)}
               >
-                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                <FieldLabel
+                  hint={FIELD_HINTS.alerting.threshold.tip}
+                  formLabelProps={{ fontWeight: "semibold", fontSize: "sm", requiredIndicator: FORM_REQUIRED_ASTERISK }}
+                >
                   Condition + Threshold
-                </FormLabel>
+                </FieldLabel>
                 <SimpleGrid columns={3} spacing={3} mb={1}>
                   <Text fontSize="xs" color="ink.500" fontWeight="medium">Condition</Text>
                   <Text fontSize="xs" color="ink.500" fontWeight="medium">Threshold</Text>
@@ -1590,9 +1604,12 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 </FormErrorMessage>
               </FormControl>
               <FormControl isRequired isInvalid={Boolean(defs.updateErrors.severity)}>
-                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                <FieldLabel
+                  hint={FIELD_HINTS.alerting.severity.tip}
+                  formLabelProps={{ fontWeight: "semibold", fontSize: "sm", requiredIndicator: FORM_REQUIRED_ASTERISK }}
+                >
                   Severity
-                </FormLabel>
+                </FieldLabel>
                 <HStack spacing={2}>
                   {SEVERITIES.map((s) => {
                     const isActive = (defs.updateForm.severity ?? "") === s;
@@ -1631,9 +1648,12 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 <FormErrorMessage>{defs.updateErrors.severity}</FormErrorMessage>
               </FormControl>
               <FormControl isRequired isInvalid={Boolean(defs.updateErrors.evaluation_interval)}>
-                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                <FieldLabel
+                  hint={FIELD_HINTS.alerting.evalInterval.tip}
+                  formLabelProps={{ fontWeight: "semibold", fontSize: "sm", requiredIndicator: FORM_REQUIRED_ASTERISK }}
+                >
                   Evaluation Interval
-                </FormLabel>
+                </FieldLabel>
                 <Select
                   value={defs.updateForm.evaluation_interval ?? "30s"}
                   onChange={(e) => {
@@ -1650,9 +1670,12 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                 <FormErrorMessage>{defs.updateErrors.evaluation_interval}</FormErrorMessage>
               </FormControl>
               <FormControl isRequired isInvalid={Boolean(defs.updateErrors.for_duration)}>
-                <FormLabel fontWeight="semibold" fontSize="sm" requiredIndicator={FORM_REQUIRED_ASTERISK}>
+                <FieldLabel
+                  hint={FIELD_HINTS.alerting.forDuration.tip}
+                  formLabelProps={{ fontWeight: "semibold", fontSize: "sm", requiredIndicator: FORM_REQUIRED_ASTERISK }}
+                >
                   For Duration
-                </FormLabel>
+                </FieldLabel>
                 <Select
                   value={(() => {
                     const allowed = getAllowedForDurations(defs.updateForm.evaluation_interval);
@@ -1803,7 +1826,9 @@ export default function AlertingTab({ isActive = false }: AlertingTabProps) {
                   </Select>
                 </FormControl>
                 <FormControl isRequired>
-                  <FormLabel fontWeight="semibold">Severity</FormLabel>
+                  <FieldLabel hint={FIELD_HINTS.alerting.severity.tip} formLabelProps={{ fontWeight: "semibold" }}>
+                    Severity
+                  </FieldLabel>
                   <Select value={recvs.createForm.severity} onChange={(e) => recvs.setCreateForm({ ...recvs.createForm, severity: e.target.value })} bg="white" placeholder="Select severity">
                     {SEVERITIES.map((s) => (<option key={s} value={s}>{s}</option>))}
                   </Select>

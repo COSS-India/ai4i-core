@@ -1,12 +1,12 @@
 import { formatModelTaskTypeLabel, SERVICE_TIER } from "../../config/constants";
 import type { ServiceTierFilterOption } from "../../hooks/useServicesManagement";
+import type { Service } from "../../types/platform";
 import type {
   DataTableFilterDef,
   DataTableSearchConfig,
 } from "../common/dataTableTypes";
 import {
   serviceListCellKey,
-  serviceListRangeFilterKeys,
   type ServiceListColumnDef,
 } from "./serviceListColumns";
 
@@ -73,98 +73,96 @@ function buildSelectFilterDef(
     value: selectedValue,
     onChange: (next) => onChange(column.id, next),
     options,
+    width: { base: "full", sm: selectFilterWidth(cellKey) },
   };
 }
 
-function buildDateRangeFilterDefs(
-  column: ServiceListColumnDef,
-  serverFilterValues: Record<string, string> | undefined,
-  onChange: (columnId: string, value: string) => void,
-): DataTableFilterDef[] {
-  const params = column.filter?.params ?? [];
-  if (params.length < 2) return [];
-  const keys = serviceListRangeFilterKeys(column.id);
-  return [
-    {
-      id: keys.from,
-      label: `${column.label} from`,
-      type: "date",
-      param: params[0],
-      inputType: "date",
-      value: serverFilterValues?.[keys.from] ?? "",
-      onChange: (next) => onChange(keys.from, next),
-    },
-    {
-      id: keys.to,
-      label: `${column.label} to`,
-      type: "date",
-      param: params[1],
-      inputType: "date",
-      value: serverFilterValues?.[keys.to] ?? "",
-      onChange: (next) => onChange(keys.to, next),
-    },
-  ];
+function selectFilterWidth(cellKey: string): string {
+  if (cellKey === "task") return "168px";
+  if (cellKey === "status") return "132px";
+  if (cellKey === "tier") return "140px";
+  return "160px";
 }
 
-function buildTextFilterDef(
-  column: ServiceListColumnDef,
-  value: string,
-  onChange: (columnId: string, value: string) => void,
-): DataTableFilterDef {
-  return {
-    id: column.id,
-    label: column.label,
-    type: "text",
-    param: column.filter?.params[0],
-    value,
-    onChange: (next) => onChange(column.id, next),
-  };
+/** Offline catalogue search targets. Server mode uses the column catalogue instead. */
+export const SERVICE_SEARCH_FIELD_OPTIONS = [
+  { label: "Name", value: "name" },
+  { label: "Model name", value: "modelName" },
+  { label: "Service ID", value: "serviceId" },
+];
+
+function compactFieldId(id: string): string {
+  return id.replaceAll("_", "").toLowerCase();
 }
+
+function serviceSearchValue(service: Service, fieldId: string): string {
+  const key = compactFieldId(fieldId);
+  if (key === "name") return service.name ?? "";
+  if (key === "serviceid") return service.serviceId || service.service_id || "";
+  if (key === "modelname") return service.model?.name || service.modelName || "";
+  return "";
+}
+
+/** Empty `fields` matches any of the search targets. A selection matches any chosen field. */
+export function serviceMatchesSearch(service: Service, query: string, fields: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const selected = fields.split(",").map((part) => part.trim()).filter(Boolean);
+  const active = selected.length > 0
+    ? selected
+    : SERVICE_SEARCH_FIELD_OPTIONS.map((option) => option.value);
+  return active.some((id) => serviceSearchValue(service, id).toLowerCase().includes(q));
+}
+
+const TOOLBAR_FILTER_ORDER = ["status", "task", "tier"] as const;
 
 export function buildServerServiceFilterDefs(options: {
   columns: readonly ServiceListColumnDef[];
-  nameColumnId?: string;
   serverFilterValues?: Record<string, string>;
   taskTypeNames: string[];
   tierFilterOptions: ServiceTierFilterOption[];
   onChange: (columnId: string, value: string) => void;
 }): DataTableFilterDef[] {
+  // Intentional: omit date_range columns (Created At / Published On). Toolbar is
+  // Search + Search in + Status + Task Type + Tier only.
   const defs: DataTableFilterDef[] = [];
   for (const column of options.columns) {
     if (!column.filterable || !column.filter) continue;
-    if (column.id === options.nameColumnId) continue;
+    const cellKey = serviceListCellKey(column.id);
+    if (
+      !TOOLBAR_FILTER_ORDER.includes(
+        cellKey as (typeof TOOLBAR_FILTER_ORDER)[number],
+      )
+    ) {
+      continue;
+    }
+    if (
+      column.filter.type !== "single_select" &&
+      column.filter.type !== "multi_select"
+    ) {
+      continue;
+    }
 
     const value = options.serverFilterValues?.[column.id] ?? "";
-    const kind = column.filter.type;
-
-    if (kind === "single_select" || kind === "multi_select") {
-      defs.push(
-        buildSelectFilterDef(
-          column,
-          value,
-          options.taskTypeNames,
-          options.tierFilterOptions,
-          options.onChange,
-        ),
-      );
-      continue;
-    }
-
-    if (kind === "date_range") {
-      defs.push(
-        ...buildDateRangeFilterDefs(
-          column,
-          options.serverFilterValues,
-          options.onChange,
-        ),
-      );
-      continue;
-    }
-
-    if (kind === "text") {
-      defs.push(buildTextFilterDef(column, value, options.onChange));
-    }
+    const def = buildSelectFilterDef(
+      column,
+      value,
+      options.taskTypeNames,
+      options.tierFilterOptions,
+      options.onChange,
+    );
+    if (cellKey === "task") def.label = "Task Type";
+    defs.push(def);
   }
+  defs.sort(
+    (left, right) =>
+      TOOLBAR_FILTER_ORDER.indexOf(
+        serviceListCellKey(left.id) as (typeof TOOLBAR_FILTER_ORDER)[number],
+      ) -
+      TOOLBAR_FILTER_ORDER.indexOf(
+        serviceListCellKey(right.id) as (typeof TOOLBAR_FILTER_ORDER)[number],
+      ),
+  );
   return defs;
 }
 
@@ -201,6 +199,7 @@ export function buildClientServiceFilterDefs(options: {
       param: "status",
       value: options.filterStatus,
       onChange: options.onFilterStatusChange,
+      width: { base: "full", sm: "132px" },
       options: [
         { label: "All", value: "" },
         { label: "Published", value: "published" },
@@ -214,6 +213,7 @@ export function buildClientServiceFilterDefs(options: {
       param: "model_task_type",
       value: options.filterTaskType,
       onChange: options.onFilterTaskTypeChange,
+      width: { base: "full", sm: "168px" },
       options: taskOptions,
     },
     {
@@ -222,6 +222,7 @@ export function buildClientServiceFilterDefs(options: {
       type: "select",
       value: options.filterTier,
       onChange: options.onFilterTierChange,
+      width: { base: "full", sm: "140px" },
       options: tierOptions,
     },
   ];
@@ -229,32 +230,17 @@ export function buildClientServiceFilterDefs(options: {
 
 export function buildServiceRegistrySearch(options: {
   serverMode: boolean;
-  nameColumn?: ServiceListColumnDef;
-  serverFilterValues?: Record<string, string>;
-  onServerFilterChange?: (columnId: string, value: string) => void;
   searchQuery: string;
   onSearchQueryChange: (value: string) => void;
-}): DataTableSearchConfig | undefined {
-  if (!options.serverMode) {
-    return {
-      label: "Search",
-      value: options.searchQuery,
-      onChange: options.onSearchQueryChange,
-      placeholder: "Search by service name...",
-      fields: ["service_name", "name"],
-    };
-  }
-
-  const nameColumn = options.nameColumn;
-  if (!nameColumn || !options.onServerFilterChange) return undefined;
-
+}): DataTableSearchConfig {
   return {
-    label: nameColumn.label,
-    value: options.serverFilterValues?.[nameColumn.id] ?? "",
-    onChange: (value) => options.onServerFilterChange?.(nameColumn.id, value),
-    placeholder: "Search by service name...",
-    debounceMs: 400,
-    fields: ["name"],
+    label: "Search",
+    value: options.searchQuery,
+    onChange: options.onSearchQueryChange,
+    placeholder: "Search services...",
+    width: { base: "full", sm: "240px" },
+    debounceMs: options.serverMode ? 400 : undefined,
+    fields: ["name", "model_name", "service_id"],
   };
 }
 

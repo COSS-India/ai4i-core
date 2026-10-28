@@ -2,6 +2,7 @@ import {
   Box,
   Button,
   ButtonGroup,
+  FormControl,
   HStack,
   Select,
   Text,
@@ -13,8 +14,11 @@ import {
   METERING,
   type MeteringSubTab,
 } from "../../config/meteringConstants";
+import { INSTITUTION } from "../../config/constants";
 import type { MeteringPeriod, MeteringTopN } from "../../types/metering";
+import { istRangeEndingToday } from "../../utils/meteringDateRange";
 import { formatMeteringRefreshTime } from "../../utils/meteringFormatters";
+import FieldLabel from "../common/FieldLabel";
 import CustomRangePicker from "./CustomRangePicker";
 import SegmentedTabBar from "./SegmentedTabBar";
 
@@ -68,6 +72,11 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
   const lastRefreshed = lastGeneratedAt
     ? formatMeteringRefreshTime(lastGeneratedAt, nowMs)
     : null;
+  const last30Days = istRangeEndingToday(30, nowMs);
+  const isLast30Days =
+    period.key === "custom" &&
+    period.range.from === last30Days.from &&
+    period.range.to === last30Days.to;
 
   return (
   <VStack align="stretch" spacing={3}>
@@ -88,9 +97,18 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
             </Button>
           );
         })}
+        <Button
+          onClick={() => onPeriodChange({ key: "custom", range: last30Days })}
+          colorScheme={isLast30Days ? "orange" : "gray"}
+          variant={isLast30Days ? "solid" : "outline"}
+          fontWeight={isLast30Days ? "semibold" : "normal"}
+          borderRadius="full"
+        >
+          Last 30 days
+        </Button>
       </ButtonGroup>
       <CustomRangePicker
-        appliedRange={period.key === "custom" ? period.range : null}
+        appliedRange={period.key === "custom" && !isLast30Days ? period.range : null}
         onApply={(range) => onPeriodChange({ key: "custom", range })}
         onClear={() => onPeriodChange(METERING.DEFAULTS.PERIOD)}
       />
@@ -99,20 +117,23 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
     <HStack spacing={3} flexWrap="wrap" justify="space-between" align="flex-end">
       <HStack spacing={3} flexWrap="wrap" align="flex-end">
         {showTenantFilter ? (
-          <Select
-            size="sm"
-            w="200px"
-            value={selectedTenantId}
-            onChange={(e) => onTenantChange?.(e.target.value)}
-            bg="white"
-          >
-            <option value="">{METERING.CONTROLS.ALL_TENANTS}</option>
-            {tenantOptions.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.label}
-              </option>
-            ))}
-          </Select>
+          <FormControl w="200px">
+            <FieldLabel>{INSTITUTION}</FieldLabel>
+            <Select
+              size="sm"
+              value={selectedTenantId}
+              onChange={(e) => onTenantChange?.(e.target.value)}
+              bg="white"
+              aria-label={INSTITUTION}
+            >
+              <option value="">{METERING.CONTROLS.ALL_TENANTS}</option>
+              {tenantOptions.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.label}
+                </option>
+              ))}
+            </Select>
+          </FormControl>
         ) : null}
 
         {showSubTabs && subTab && onSubTabChange ? (

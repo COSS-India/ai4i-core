@@ -95,7 +95,9 @@ export default function UserDetailsTab() {
             isRequired={ud.isEditingUser}
             isInvalid={ud.isEditingUser && !!ud.errors.full_name}
           >
-            <FieldLabel>Full Name</FieldLabel>
+            <FieldLabel hint={ud.isEditingUser ? FIELD_HINTS.profile.fullName.tip : undefined}>
+              Full Name
+            </FieldLabel>
             <Input
               value={ud.isEditingUser ? (ud.userFormData.full_name || "") : (user.full_name || user.username || "N/A")}
               isReadOnly={!ud.isEditingUser}
@@ -126,7 +128,9 @@ export default function UserDetailsTab() {
           </FormControl>
 
           <FormControl isInvalid={!!ud.errors.phone_number}>
-            <FieldLabel>Phone Number</FieldLabel>
+            <FieldLabel hint={ud.isEditingUser ? FIELD_HINTS.profile.phone.tip : undefined}>
+              Phone Number
+            </FieldLabel>
             <Input
               value={
                 ud.isEditingUser
@@ -147,7 +151,7 @@ export default function UserDetailsTab() {
 
           <HStack spacing={4}>
             <FormControl flex={1}>
-              <FieldLabel>Timezone</FieldLabel>
+              <FieldLabel hint={FIELD_HINTS.profile.timezone.tip}>Timezone</FieldLabel>
               {ud.isEditingUser ? (
                 <Select
                   value={ud.userFormData.timezone || "UTC"}
@@ -163,7 +167,6 @@ export default function UserDetailsTab() {
               ) : (
                 <Input value={user.timezone || "N/A"} isReadOnly bg={inputReadOnlyBg} />
               )}
-              <FieldHint>{FIELD_HINTS.profile.timezone.helper}</FieldHint>
             </FormControl>
           </HStack>
             </VStack>

@@ -36,7 +36,7 @@ const ServiceListColumnPicker: React.FC<
   onChange,
   onReset,
 }) => {
-  const helper = FIELD_HINTS.service.columns.helper;
+  const helper = FIELD_HINTS.service.columns.tip;
 
   return (
     <Menu closeOnSelect={false}>

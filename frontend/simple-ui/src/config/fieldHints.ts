@@ -1,4 +1,4 @@
-import { INSTITUTION } from "./constants";
+import { INSTITUTION, INSTITUTIONS } from "./constants";
 import { EMAIL_AVAILABLE_MSG } from "../utils/tenantEmailValidation";
 import { PRICE_PER_UNIT_MAX_LABEL } from "../components/services-management/serviceFormValidation";
 import { QUOTA_LIMIT_MAX_LABEL } from "../components/tier-management/tierFormValidation";
@@ -6,75 +6,100 @@ import { SELF_REGISTERED_ROLE_LOCKED_MESSAGE } from "../utils/registrationMethod
 
 const org = INSTITUTION.toLowerCase();
 
+/**
+ * Form copy (PM):
+ * - `placeholder` — example value only
+ * - `tip` — info-icon: what this field is for (purpose). One short sentence.
+ * - `helper` — under field: only hard constraints (length, uniqueness, counters)
+ * - Never restates the label. Never “optional” as the only copy.
+ * - Validation errors own invalid input; tips/helpers do not.
+ */
 const NAME_CHARS_HELPER =
-  "Letters, spaces, hyphens, and apostrophes only, 2–80 characters";
+  "2–80 characters · letters, spaces, hyphens, apostrophes";
 
-/** Placeholder + always-visible helper/tooltip copy for field-level guidance. */
+/** Placeholder + tip / helper copy for field-level guidance. */
 export const FIELD_HINTS = {
   tenant: {
     organisation: {
-      placeholder: "Enter organisation name",
-      helper: "2–100 characters, must be unique",
+      placeholder: "e.g. Acme Public Sector",
+      tip: `Official name of this ${org}.`,
+      helper: "2–100 characters · unique",
     },
     contactName: {
-      placeholder: "Enter contact's full name",
+      placeholder: "e.g. Priya Sharma",
+      tip: "Person who receives notices and verification mail.",
       helper: NAME_CHARS_HELPER,
     },
     email: {
-      placeholder: "Enter official email address",
-      helper: "Format: name@domain.com; must be unique",
+      placeholder: "name@domain.com",
+      tip: "Address for login invites and institution notices.",
+      helper: "Must be unique",
     },
     phone: {
-      placeholder: "Enter phone number",
-      helper: "+[country code] [phone number]",
+      placeholder: "+91 98765 43210",
+      tip: "Number for the primary contact.",
     },
     emailChecking: "Checking if email exists…",
     emailAvailable: EMAIL_AVAILABLE_MSG,
     emailVerifyOnChange:
-      "Changing to a new address takes effect only after verification. An existing Institution Admin email for this organisation applies immediately.",
-    /** Shown when contact email cannot be edited (Suspended / Deactivated / Default Org). */
-    emailPendingOnly: `The contact email can only be changed while the ${org} is Pending or Active, and cannot be changed for the Default Organisation.`,
+      "New address applies after verification. An existing Institution Admin email applies immediately.",
+    emailPendingOnly: `Editable only while Pending or Active — not for the Default Organisation.`,
     emailVerificationPending: "Verification pending",
-    planAppliesImmediately: "Tier and Budget changes apply immediately.",
+    planAppliesImmediately: "Tier and budget apply immediately.",
   },
   tenantUser: {
-    tenant: { helper: `Auto-filled from selected ${org}` },
+    tenant: { tip: `${INSTITUTION} this user belongs to.` },
     fullName: {
-      placeholder: "Enter user's full name",
+      placeholder: "e.g. Priya Sharma",
+      tip: "Name shown for this user in the portal.",
       helper: NAME_CHARS_HELPER,
     },
     email: {
-      placeholder: "Enter official email address",
-      helper: "Format: name@domain.com, must be unique",
+      placeholder: "name@domain.com",
+      tip: "Login and invite address for this user.",
+      helper: "Must be unique",
     },
     phone: {
-      placeholder: "Enter phone number",
-      helper: "+[country code] [phone number]",
+      placeholder: "+91 98765 43210",
+      tip: "Contact number for this user.",
     },
-    role: { helper: `Sets this user's permission level within the ${org}` },
-    username: { helper: "3–100 characters" },
+    role: {
+      tip: `Access level inside this ${org}.`,
+    },
+    username: {
+      tip: "Login ID for this user.",
+      helper: "3–100 characters",
+    },
     emailLocked:
-      "Email cannot be changed. Suspend or delete the account if the user has left the organisation.",
+      "Email cannot be changed. Suspend or delete the account if the user has left.",
     rolesLoadFailed: "Roles could not be loaded; role changes are disabled.",
     onlyAdminLocked:
       "You are the only Admin in the default organisation and cannot change your role.",
     selfRegisteredRoleLocked: SELF_REGISTERED_ROLE_LOCKED_MESSAGE,
   },
   assignTier: {
-    budget: {
-      placeholder: "Enter budget amount",
-      helper: "Total budget for this window; must be greater than 0",
+    tier: {
+      tip: "Usage plan for this institution’s services and quotas.",
     },
-    effectiveFrom: { helper: "Defaults to today; cannot be backdated" },
+    budget: {
+      placeholder: "e.g. 500000",
+      tip: "Spend ceiling for this institution on the selected tier.",
+      helper: "Greater than 0",
+    },
+    effectiveFrom: {
+      tip: "First day this budget is active.",
+    },
     effectiveTo: {
-      helper:
-        "Must be at least one day after Effective From",
+      tip: "Last day this budget is active.",
+    },
+    currentBudget: {
+      tip: "Active spend ceiling for the current window.",
     },
   },
   model: {
     jsonUpload: {
-      helper: "JSON only · validated before creation.",
-      /** Body of the collapsible "Field requirements" panel under the file picker. */
+      tip: "Model definition file used to register this model.",
+      helper: "JSON only · validated on create",
       requirements: {
         required:
           "name (5–100 chars, no spaces), version, description (25–1000 chars), task.type, license, domain, trainingDataset.description, submitter.name",
@@ -89,11 +114,6 @@ export const FIELD_HINTS = {
           },
         ],
       },
-      /**
-       * Shown beside the sample, never inside it, so the downloaded JSON stays spec-only.
-       * hrefs come from getModelSpecUrls() (ULCA_MODEL_SPEC_URL / OPENAI_SPEC_URL).
-       * sampleKind picks the card's download from MODEL_SAMPLES (utils/sampleModelJson).
-       */
       specReferences: [
         {
           id: "ulca",
@@ -115,105 +135,132 @@ export const FIELD_HINTS = {
         },
       ],
     },
+    col: {
+      status: "Active models can back new services; deprecated cannot.",
+      services: "Published services using this model.",
+      task: "Capability family of this model.",
+    },
   },
   service: {
-    taskType: { placeholder: "Select a task type" },
+    taskType: {
+      placeholder: "Select a task type",
+      tip: "Capability this service exposes (ASR, NMT, LLM, …).",
+    },
     modelName: {
       placeholder: "Select model",
       loading: "Loading models...",
       needTaskType: "Select a task type first",
+      tip: "Registered model this service runs.",
     },
     modelId: { empty: "Select a model above" },
     name: {
-      placeholder: "Enter service name",
-      helper:
-        "5–100 characters. Letters, numbers, hyphens, and slashes only. e.g: [model-name]/[GPU]",
+      placeholder: "e.g. indic-nmt-v1/T4",
+      tip: "Display name in the service registry.",
+      helper: "5–100 characters · letters, numbers, - /",
     },
     serviceId: {
-      placeholder: "Enter service ID",
-      helper:
-        "Format: model-name/service-name (e.g., model-name/service-01). Pre-filled with the model prefix. Use 5–255 characters: letters, numbers, hyphens (-), underscores (_), and slashes (/) only.",
-      llmHelper:
-        "Format: model-name/service-name (e.g., model-name/service-01). Pre-filled with the model prefix. Use 5–255 characters: letters, numbers, hyphens (-), and slashes (/) only.",
+      placeholder: "model-name/service-01",
+      tip: "Stable ID used in APIs and logs. 5–255 characters; prefilled from the model.",
+      helper: "5–255 characters · prefilled from model",
+      llmHelper: "5–255 characters · prefilled from model",
+      llmTip:
+        "Stable ID used in APIs and logs (no underscores). 5–255 characters; prefilled from the model.",
     },
     description: {
-      placeholder: "Provide a brief description of what this service does",
+      placeholder: "What this service does for callers",
+      tip: "Short summary shown on the service details view.",
       helper: (entered: number, min: number, max: number) =>
-        `Optional. ${min}–${max} characters — ${entered}/${max} entered.`,
+        `${min}–${max} characters · ${entered}/${max}`,
     },
     endpoint: {
-      placeholder: "Enter full endpoint URL",
-      helper: "e.g. http://localhost:8088/v1/completions. Must include http:// or https://",
-      llmHelper: "Enter the model host URL (host:port only).",
-      llmPlaceholder: "e.g. http://host:port",
+      placeholder: "https://host.example/v1/completions",
+      tip: "URL the platform calls for this service.",
+      llmHelper: "Host:port only",
+      llmTip: "Host where the model server listens.",
+      llmPlaceholder: "host:port",
     },
     authToken: {
-      placeholder: "Enter authentication token",
-      helper:
-        "Optional. Sent as Authorization: Bearer when the vLLM endpoint requires authentication.",
-      editHelper:
-        "A token is already saved. Leave blank to keep it, or enter a new token to replace it.",
-      editEmptyHelper:
-        "Optional. Leave blank if the endpoint does not require authentication.",
+      placeholder: "Bearer token",
+      tip: "Credential sent to the endpoint when it requires auth.",
+      editHelper: "Leave blank to keep the saved token",
+      editTip: "Replace the stored token, or leave blank to keep it.",
+      editEmptyTip: "Leave blank if the endpoint needs no auth.",
     },
     hardware: {
-      placeholder: "e.g. Auto-scalable deployment, using T4 GPUs",
-      helper: (min: number, max: number) =>
-        `Optional. ${min}–${max} characters. Describes the infrastructure this service runs on.`,
+      placeholder: "e.g. Auto-scalable T4 GPUs",
+      tip: "Where this service runs (GPU, region, scale).",
+      helper: (min: number, max: number) => `${min}–${max} characters`,
     },
-    unitType: { helper: "Auto-set based on the task type", needTaskType: "Select a task type first" },
+    unitType: {
+      tip: "Metering unit from the selected task type.",
+      needTaskType: "Select a task type first",
+    },
     unitSize: {
       placeholder: "Select unit size",
-      helper: "Defines the unit size for pricing",
-      llmHelper:
-        "Input, cached input, and output token prices are all charged per this many tokens.",
+      tip: "How many units one price covers.",
+      llmTip: "Token count each listed price applies to.",
     },
     price: {
-      placeholder: "Enter price",
-      helper: `e.g., 600. Must be between 0 and ${PRICE_PER_UNIT_MAX_LABEL}`,
+      placeholder: "e.g. 600",
+      tip: `Charge per unit size for this service (0–${PRICE_PER_UNIT_MAX_LABEL}).`,
+      helper: `0–${PRICE_PER_UNIT_MAX_LABEL}`,
     },
     llmInputPrice: {
-      placeholder: "Enter input token price",
-      helper: `Price of input tokens that were not cached, per the selected unit size. Between 0 and ${PRICE_PER_UNIT_MAX_LABEL}. Zero is allowed.`,
+      placeholder: "e.g. 600",
+      tip: `Price for uncached input tokens per unit size (0–${PRICE_PER_UNIT_MAX_LABEL}).`,
+      helper: `0–${PRICE_PER_UNIT_MAX_LABEL}`,
     },
     llmCachedInputPrice: {
-      placeholder: "Enter cached input token price",
-      helper: `Price of input tokens served from the prefix cache, per the selected unit size. Between 0 and ${PRICE_PER_UNIT_MAX_LABEL}. Zero is allowed.`,
+      placeholder: "e.g. 150",
+      tip: `Price for prefix-cache input tokens per unit size (0–${PRICE_PER_UNIT_MAX_LABEL}).`,
+      helper: `0–${PRICE_PER_UNIT_MAX_LABEL}`,
     },
     llmOutputPrice: {
-      placeholder: "Enter output token price",
-      helper: `Price of generated output tokens, per the selected unit size. Between 0 and ${PRICE_PER_UNIT_MAX_LABEL}. Zero is allowed.`,
+      placeholder: "e.g. 900",
+      tip: `Price for generated output tokens per unit size (0–${PRICE_PER_UNIT_MAX_LABEL}).`,
+      helper: `0–${PRICE_PER_UNIT_MAX_LABEL}`,
     },
-    tier: { placeholder: "Select applicable tier(s)", helper: "Select at least one" },
+    tier: {
+      placeholder: "Select applicable tier(s)",
+      tip: "Usage plans that may call this service.",
+    },
     tierSearch: { placeholder: "Search tiers..." },
-    columns: { helper: "Choose which columns appear in the list" },
+    columns: { tip: "Columns shown in the service list." },
+    col: {
+      status: "Published if live for callers; otherwise draft.",
+      tier: "Usage plans linked to this service.",
+      inputPrice: "Charge per unit for input.",
+      outputPrice: "Charge per unit for output.",
+      cachedInputPrice: "Charge per unit for cached input (LLM).",
+      publishedOn: "When this service was last published.",
+    },
   },
   logs: {
     search: {
-      placeholder: "Search keyword across log fields",
-      helper: "Applies with filters when you click Search or press Enter",
+      placeholder: "Keyword across log fields",
+      tip: "Find traces by text in log fields.",
       tooLong: "Keyword must be at most 256 characters",
     },
-    startTime: { helper: "Filter logs from this date & time" },
-    endTime: { helper: "Filter logs up to this date & time; must be after Start Time" },
-    tenant: { helper: `Filter logs by ${org}.` },
+    startTime: { tip: "Earliest time included in results." },
+    endTime: { tip: "Latest time included in results." },
+    tenant: { tip: `${INSTITUTION} whose requests to include.` },
     service: {
       placeholder: "e.g. openai-service",
-      helper: "Exact service id on the request",
+      tip: "Service id recorded on each request.",
     },
     statusCode: {
       placeholder: "e.g. 500,503",
-      helper: "Comma-separated codes (100–599), up to 10",
+      tip: "HTTP status codes to include (max 10).",
       invalid: "Use up to 10 comma-separated integers between 100 and 599",
     },
     endUser: {
       placeholder: "e.g. customer-8812",
-      helper: "end-user ID sent as user",
+      tip: "Caller id sent as user on the request.",
       tooLong: "End user must be at most 256 characters",
     },
     metadata: {
       placeholder: "e.g. session_id=s-77",
-      helper: "key=value pair sent in metadata",
+      tip: "Filter by one request metadata key=value.",
       missingSeparator: "Use key=value",
       missingKey: "Enter a key before =",
       missingValue: "Enter a value after =",
@@ -221,77 +268,103 @@ export const FIELD_HINTS = {
       valueTooLong: "Value must be at most 512 characters",
     },
     autoRefresh: {
-      helper: "Refresh while the end time is the present. Disabled for past ranges.",
+      tip: "Keep loading new traces while End Time is now.",
     },
     narrowDateRange:
-      "Too many results. Please narrow your date range or refine your search.",
-    columns: { helper: "Choose which fields appear as columns" },
+      "Too many results. Narrow the date range or refine your search.",
+    columns: { tip: "Columns shown in the logs table." },
   },
   profile: {
     fullName: {
-      placeholder: "Enter your full name",
+      placeholder: "e.g. Priya Sharma",
+      tip: "Your display name in the portal.",
       helper: NAME_CHARS_HELPER,
     },
-    timezone: { helper: "Used to display dates and times across the portal" },
-    currentPassword: { placeholder: "Enter current password", helper: "Required" },
-    newPassword: { placeholder: "Enter new password" },
+    timezone: {
+      tip: "Time zone for dates and times in the portal.",
+    },
+    currentPassword: { placeholder: "Current password" },
+    newPassword: { placeholder: "New password" },
     confirmPassword: {
       placeholder: "Re-enter new password",
-      helper: "Must match New Password",
+      tip: "Repeat the new password to confirm.",
+      helper: "Must match new password",
     },
-    roleUser: { helper: "Choose a user to change their current role" },
+    roleUser: {
+      tip: "User whose role you will change.",
+    },
     usernameLocked: "Username cannot be changed",
     emailLocked: "Email cannot be changed",
     phone: {
       placeholder: "+91XXXXXXXXXX or XXXXXXXXXX",
-      helper: "Enter a valid Indian mobile number (10 digits starting with 6-9)",
+      tip: "Your contact mobile number.",
+      helper: "10 digits starting 6–9 · +91 allowed",
     },
   },
   tier: {
-    name: { placeholder: "Enter tier name", helper: "2–100 characters. e.g. Enterprise, Standard, Basic" },
-    description: {
-      placeholder: "Enter tier description",
-      helper: "e.g. Enterprise tier for high usage.",
+    name: {
+      placeholder: "e.g. Enterprise",
+      tip: "Label for this usage plan.",
+      helper: "2–100 characters",
     },
-    quotaUnit: { helper: "Auto-filled based on Task Type (e.g., tokens for LLM)" },
+    description: {
+      placeholder: "Who this tier is for",
+      tip: "Short summary of this tier’s audience.",
+    },
+    quotaUnit: {
+      tip: "Unit for quotas (from task type).",
+    },
     rateLimit: {
-      placeholder: "Enter rate limit",
-      helper: "Requests per minute across all inference APIs. Leave empty to use the platform default.",
+      placeholder: "e.g. 60",
+      tip: "Max inference requests per minute. Blank = platform default.",
     },
     quotaLimit: {
-      placeholder: "Enter quota limit",
-      helper: `e.g. 10000. Whole number between 1 and ${QUOTA_LIMIT_MAX_LABEL}`,
+      placeholder: "e.g. 10000",
+      tip: "Max usage for this task type in the quota unit.",
+      helper: `Whole number · 1–${QUOTA_LIMIT_MAX_LABEL}`,
     },
   },
   apiKey: {
     keyName: {
-      placeholder: "Enter a name for this API key",
+      placeholder: "e.g. Production mobile app",
+      tip: "Label to identify this key.",
       helper: "Up to 100 characters",
     },
     expiry: {
-      placeholder: "Enter number of days",
-      helper: "e.g. 30. Must be between 1 and 365",
+      placeholder: "e.g. 30",
+      tip: "Days until this key stops working.",
+      helper: "1–365 days",
     },
-    permissions: { helper: "Select at least one permission" },
+    permissions: {
+      tip: "API actions this key is allowed to call.",
+    },
     application: {
-      helper: "Required. Keys are scoped to one Application.",
+      tip: "Application this key can call APIs for.",
     },
     budget: {
       placeholder: "e.g. 25",
-      helper:
-        "Required. Percentage of the parent Application's Budget, greater than 0 and within what the Application still has unallocated.",
+      tip: "% of the Application budget reserved for this key.",
+      helper: "Greater than 0%",
+    },
+    gracePeriod: {
+      tip: "Days the old key still works after rotation.",
     },
     search: {
       placeholder: "Search by key name",
-      helper: "Matches API key name.",
     },
     tooltips: {
       budgetAllocation:
-        "Share of the parent Application's Budget reserved for this key. Active keys cannot exceed 100% combined per Application.",
+        "% of the Application budget for this key. Active keys under one Application cannot exceed 100% combined.",
+    },
+    col: {
+      allocation: "% of Application budget reserved for this key.",
+      status: "Whether this key can call APIs right now.",
+      permissions: "API actions this key is allowed to call.",
+      expiry: "When this key stops working.",
     },
     bulkBudgetEdit: {
       intro:
-        "Rebalance Budget % across active API keys under one Application. Only the key(s) you edit are saved — every other key keeps its current budget untouched. Totals below 100% are allowed within this Application's Budget.",
+        "Change Budget % for active keys under one Application. Only edited rows are saved.",
       selectApplicationPlaceholder: "Select Application",
       selectApplicationPrompt: "Select an Application to edit key budgets.",
       loading: "Loading API keys…",
@@ -299,75 +372,122 @@ export const FIELD_HINTS = {
       modalTitle: "Edit Key Budget",
       allocatedToKeysLabel: "Application budget allocated to keys",
       applicationBudgetUnset:
-        "This Application does not have a Budget (₹) assigned yet. Assign one from Application Management before editing key amounts.",
+        "This Application has no Budget (₹) yet. Assign one in Application Management first.",
       applicationAllocationPrefix: "Application allocation:",
     },
   },
   application: {
     name: {
       placeholder: "e.g. Citizen Services Portal",
-      helper:
-        "Required. Must be unique within this Institution (case-insensitive).",
+      tip: "Name shown for this application in the portal.",
+      helper: "Unique within this Institution",
     },
     description: {
-      placeholder: "What this Application is used for",
-      helper: "Optional plain text. Shown on the Application details view.",
+      placeholder: "What this application is used for",
+      tip: "Short summary of this application’s purpose.",
     },
     domain: {
       placeholder: "e.g. citizen-services.gov.in",
-      helper: "Optional. Used to search and filter this Application later.",
+      tip: "Domain used to find this application.",
     },
     budget: {
       placeholder: "0",
-      helper:
-        "Optional. Percentage of the Institution's Budget. Leave blank for no ceiling.",
+      tip: "% of Institution budget for this app. Blank = no limit.",
     },
     budgetEdit: {
-      helper: "Cannot be reduced below the amount allocated to its API Keys.",
+      helper: "Cannot go below budget already given to API keys",
       belowConsumed:
-        "Percentage of this Institution's total Budget. Cannot be reduced below already-consumed usage.",
+        "% of Institution budget. Cannot go below already-consumed usage.",
     },
     institutionBudgetNotSet:
-      "This Institution does not have a Budget (₹) assigned yet. Assign a Tier and Budget from Institution Management before saving Application budget allocations.",
+      "This Institution has no Budget (₹) yet. Assign a Tier and Budget in Institution Management first.",
     inactiveBudgetNotEditable:
-      "Inactive applications cannot have their budget allocation changed. Reactivate the application to edit its budget.",
+      "Inactive applications cannot change budget. Reactivate to edit.",
     bulkBudgetEdit: {
       intro:
-        "Rebalance Budget % across all Applications. Only changed rows are submitted. Unallocated % can remain at the Institution level. Inactive applications are shown for reference but cannot be edited.",
+        "Change Budget % across Applications. Only edited rows are saved. Inactive rows are view-only.",
       institutionBudgetAllocatedLabel: "Institution Budget allocated",
       institutionTotalPrefix: "Institution total:",
     },
     search: {
       placeholder: "Search by name or domain",
-      helper: "Matches Application name or domain.",
     },
     domainFilter: {
-      helper: "Exact-match filter on Application domain.",
+      tip: "Exact domain match.",
     },
     status: {
-      activate: "Turn on to activate this Application.",
-      deactivate: "Turn off to deactivate this Application.",
+      activate: "Activate this Application",
+      deactivate: "Deactivate this Application",
+    },
+    col: {
+      budget: "% of Institution budget assigned to this app.",
+      keys: "Active API keys under this application.",
+      status: "Whether this app can use the platform.",
+      domain: "Domain used to find this application.",
     },
     tooltips: {
-      totalApplications:
-        "Count of Applications onboarded under this Institution.",
-      allocatedBudget:
-        "Sum of Budget % assigned across all Applications, as a share of the Institution's total Budget.",
-      availableToAllocate:
-        "Institution Budget % not yet assigned to any Application. This share may stay unallocated.",
-      institutionBudgetAllocated:
-        "Total Budget % assigned across all Applications after this change.",
-      minimumAllowed:
-        "Lowest % allowed for this Application — already-consumed usage cannot be reduced.",
-      availableAtInstitution:
-        "Maximum % you can assign without exceeding 100% across all Applications.",
+      totalApplications: "Applications under this Institution.",
+      allocatedBudget: "Budget % assigned to Applications vs Institution total.",
+      availableToAllocate: "Institution budget % not yet assigned to any Application.",
+      institutionBudgetAllocated: "Budget % assigned to Applications after this change.",
+      minimumAllowed: "Floor for this app — cannot go below consumed usage.",
+      availableAtInstitution: "Max % you can set without exceeding 100% across apps.",
     },
   },
   register: {
     emailChecking: "Checking if email exists…",
   },
   policy: {
-    tenantIdsManual: `Enter one or more ${org} IDs.`,
-    tenantIdsSelect: `Select one or more active ${org} assignments for this policy.`,
+    name: { tip: "Label for this PII detection policy." },
+    description: { tip: "Short summary of what this policy covers." },
+    global: {
+      tip: `On = all ${INSTITUTIONS.toLowerCase()}; off = only selected ones.`,
+    },
+    institutions: {
+      tip: `${INSTITUTIONS} this policy applies to.`,
+    },
+    languages: {
+      tip: "Languages this policy scans for PII.",
+    },
+    piiTypes: {
+      tip: "Entity types this policy detects.",
+    },
+    tenantIdsManual: `${INSTITUTION} IDs this policy applies to (comma or newline).`,
+    tenantIdsSelect: `${INSTITUTIONS} this policy applies to.`,
+    playground: {
+      policy: { tip: "Policy used to scan the sample text." },
+      input: { tip: "Sample text to run detection against." },
+      scope: { tip: "Whether the run used a global or scoped policy." },
+      entities: { tip: "PII entities found in the sample." },
+    },
+    col: {
+      scope: `Global vs selected ${INSTITUTIONS.toLowerCase()}.`,
+      status: "Whether this policy is active for detection.",
+      piiTypes: "Entity types configured on this policy.",
+      languages: "Languages this policy covers.",
+    },
+  },
+  piiType: {
+    label: { tip: "Display name for this PII entity type." },
+    regex: { tip: "Pattern used to detect this entity." },
+    examples: { tip: "Sample values used to validate the pattern." },
+    mask: { tip: "How matched values are redacted in output." },
+    col: {
+      mask: "How matches are redacted.",
+      regex: "Detection pattern for this type.",
+    },
+  },
+  tenantCol: {
+    status: `Lifecycle state of this ${org}.`,
+    tier: "Usage plan and budget linked to this institution.",
+    onboarded: "When this institution was created.",
+  },
+  alerting: {
+    severity: { tip: "How urgent this alert is when it fires." },
+    category: { tip: "Area of the platform this alert watches." },
+    signal: { tip: "Metric that can trigger this alert." },
+    threshold: { tip: "Value that must be crossed to fire." },
+    evalInterval: { tip: "How often the condition is checked." },
+    forDuration: { tip: "How long the condition must stay true." },
   },
 } as const;

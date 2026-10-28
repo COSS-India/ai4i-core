@@ -4,38 +4,30 @@ import React from "react";
 import {
   Alert,
   AlertIcon,
-  Badge,
   Box,
   Card,
   CardBody,
-  CardFooter,
-  CardHeader,
   Center,
   HStack,
-  Heading,
-  SimpleGrid,
   Spinner,
   Text,
-  Tooltip,
+  VStack,
 } from "@chakra-ui/react";
 import { FiEye, FiInfo } from "react-icons/fi";
 import {
   INSTITUTION,
   TIER_RATE_LIMIT_PLATFORM_DEFAULT,
   formatModelTaskTypeLabel,
-  formatTenantStatusLabel,
-  getTenantStatusColorScheme,
 } from "../../config/constants";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
 import {
   EMPTY_VALUE,
   dash,
-  fmtDate,
   formatMonthlyQuota,
 } from "../../utils/valueFormatters";
 import type { TenantView, TierLimits, TierQuotaLimit } from "../../types/tenant";
 import DataTable, { DATA_TABLE_HEADER_SX, type DataTableColumn } from "../common/table";
-import InstitutionForm from "./InstitutionForm";
+import InstitutionOverview from "./InstitutionOverview";
 
 /** Shown for Tier/Budget when the call behind them failed — not the same as unassigned. */
 const UNAVAILABLE = "Unavailable";
@@ -54,60 +46,39 @@ const QUOTA_COLUMNS: DataTableColumn<TierQuotaLimit>[] = [
   },
 ];
 
-function DetailField({
-  label,
-  children,
-}: Readonly<{
-  label: string;
-  children: React.ReactNode;
-}>) {
-  return (
-    <Box>
-      <Text fontWeight="semibold">{label}</Text>
-      {children}
-    </Box>
-  );
-}
-
 /** Rate limit and per-task-type monthly quotas of the assigned tier — view only. */
 function TierUsageLimits({
   tierLimits,
 }: Readonly<{ tierLimits: TierLimits | null }>) {
   const rateLimit = tierLimits?.rate_limit;
+  if (!tierLimits) {
+    return <Text color="ink.500">{UNAVAILABLE}</Text>;
+  }
   return (
-    <Box borderTopWidth="1px" borderColor="ink.100" mt={4} pt={4}>
-      <Heading size="sm" mb={3}>
-        Tier and usage limits
-      </Heading>
-      {tierLimits ? (
-        <>
-          <Box>
-            <Text fontWeight="semibold" color={DATA_TABLE_HEADER_SX.color}>
-              Rate Limit
-            </Text>
-            <Text>
-              {rateLimit == null
-                ? TIER_RATE_LIMIT_PLATFORM_DEFAULT
-                : `${rateLimit.toLocaleString("en-US")} requests/min`}
-            </Text>
-          </Box>
-          <Box mt={4}>
-            <DataTable
-              variant="compact"
-              columns={QUOTA_COLUMNS}
-              rows={tierLimits.quotas}
-              rowKey={(row) => row.task_type}
-              sortable={false}
-              isEmpty={tierLimits.quotas.length === 0}
-              emptyMessage="No task types are configured for this tier."
-              asyncStateHeight="48px"
-            />
-          </Box>
-        </>
-      ) : (
-        <Text color="ink.500">{UNAVAILABLE}</Text>
-      )}
-    </Box>
+    <VStack align="stretch" spacing={4}>
+      <Box>
+        <Text fontWeight="semibold" color={DATA_TABLE_HEADER_SX.color} mb={1}>
+          Rate Limit
+        </Text>
+        <Text>
+          {rateLimit == null
+            ? TIER_RATE_LIMIT_PLATFORM_DEFAULT
+            : `${rateLimit.toLocaleString("en-US")} requests/min`}
+        </Text>
+      </Box>
+      <Box>
+        <DataTable
+          variant="compact"
+          columns={QUOTA_COLUMNS}
+          rows={tierLimits.quotas}
+          rowKey={(row) => row.task_type}
+          sortable={false}
+          isEmpty={tierLimits.quotas.length === 0}
+          emptyMessage="No task types are configured for this tier."
+          asyncStateHeight="48px"
+        />
+      </Box>
+    </VStack>
   );
 }
 
@@ -126,7 +97,7 @@ export type InstitutionDetailsPanelProps = Readonly<{
   tierBudgetErrorMessage?: string | null;
 }>;
 
-/** View-only card of the Institution Admin's own institution — no edit or delete. */
+/** View-only overview of the Institution Admin's own institution — no edit or delete. */
 export default function InstitutionDetailsPanel({
   institution,
   tierName = null,
@@ -167,93 +138,57 @@ export default function InstitutionDetailsPanel({
     );
   }
 
+  const tierLabel = tierBudgetErrorMessage ? UNAVAILABLE : dash(tierName);
+  let budgetLabel = EMPTY_VALUE;
+  if (tierBudgetErrorMessage) {
+    budgetLabel = UNAVAILABLE;
+  } else if (budgetLimit != null) {
+    budgetLabel = formatSpendMoney(budgetLimit, currency);
+  }
+
+  let tierExtrasContent: React.ReactNode = null;
+  if (tierName && !tierBudgetErrorMessage) {
+    tierExtrasContent = <TierUsageLimits tierLimits={tierLimits} />;
+  } else if (tierBudgetErrorMessage) {
+    tierExtrasContent = (
+      <Alert status="warning" borderRadius="md">
+        <AlertIcon />
+        <Text fontSize="sm">{tierBudgetErrorMessage}</Text>
+      </Alert>
+    );
+  }
+
   return (
-    <Card>
-      <CardHeader>
-        <HStack justify="space-between" align="center" flexWrap="wrap" gap={2}>
-          <HStack flex="1" minW={0} spacing={3}>
-            <Tooltip
-              label={institution.organisation}
-              placement="top"
-              hasArrow
-              openDelay={300}
-            >
-              <Heading size="md" isTruncated minW={0}>
-                {institution.organisation}
-              </Heading>
-            </Tooltip>
-            <Badge
-              colorScheme={getTenantStatusColorScheme(institution.status)}
-              flexShrink={0}
-            >
-              {formatTenantStatusLabel(institution.status)}
-            </Badge>
-          </HStack>
-          <HStack spacing={2} color="ink.500" flexShrink={0}>
-            <FiEye aria-hidden />
-            <Text fontSize="sm">View only</Text>
-          </HStack>
+    <VStack align="stretch" spacing={4} w="full">
+      <HStack justify="space-between" align="center" flexWrap="wrap" gap={2}>
+        <Text as="h2" fontSize="lg" fontWeight="semibold" color="ink.800" minW={0}>
+          {institution.organisation}
+        </Text>
+        <HStack color="ink.500" spacing={2} flexShrink={0}>
+          <FiEye aria-hidden />
+          <Text fontSize="sm">View only</Text>
         </HStack>
-      </CardHeader>
-
-      <CardBody borderTopWidth="1px" borderColor="ink.100">
-        <InstitutionForm
-          mode="view"
-          showOrganisation={false}
-          values={{
-            organisation: institution.organisation,
-            contact_name: institution.contact_name ?? "",
-            email: institution.email ?? "",
-            phone_number: institution.phone_number ?? "",
-          }}
-          pendingEmail={institution.pending_email}
-        />
-        <SimpleGrid columns={{ base: 1, md: 2 }} spacing={3} mt={4}>
-          <DetailField label={`${INSTITUTION} ID`}>
-            <Text fontFamily="mono">{institution.tenant_id}</Text>
-          </DetailField>
-          <DetailField label="Status">
-            <Badge colorScheme={getTenantStatusColorScheme(institution.status)}>
-              {formatTenantStatusLabel(institution.status)}
-            </Badge>
-          </DetailField>
-          <DetailField label="Created">
-            <Text>{fmtDate(institution.created_at)}</Text>
-          </DetailField>
-          <DetailField label="Tier Assigned">
-            <Text>{tierBudgetErrorMessage ? UNAVAILABLE : dash(tierName)}</Text>
-          </DetailField>
-          <DetailField label="Budget Assigned">
-            <Text>
-              {tierBudgetErrorMessage
-                ? UNAVAILABLE
-                : budgetLimit != null
-                  ? formatSpendMoney(budgetLimit, currency)
-                  : EMPTY_VALUE}
+      </HStack>
+      <InstitutionOverview
+        tenant={institution}
+        tierLabel={tierLabel}
+        budgetLabel={budgetLabel}
+        tierExtras={tierExtrasContent}
+        footer={
+          <HStack
+            spacing={2}
+            color="ink.500"
+            pt={2}
+            borderTopWidth="1px"
+            borderColor="ink.100"
+          >
+            <FiInfo aria-hidden />
+            <Text fontSize="sm">
+              Contact your adopter admin to request changes to these details.
             </Text>
-          </DetailField>
-        </SimpleGrid>
-
-        {tierName && !tierBudgetErrorMessage && (
-          <TierUsageLimits tierLimits={tierLimits} />
-        )}
-
-        {tierBudgetErrorMessage && (
-          <Alert status="warning" borderRadius="md" mt={4}>
-            <AlertIcon />
-            <Text fontSize="sm">{tierBudgetErrorMessage}</Text>
-          </Alert>
-        )}
-      </CardBody>
-
-      <CardFooter borderTopWidth="1px" borderColor="ink.100" pt={4}>
-        <HStack spacing={2} color="ink.500">
-          <FiInfo aria-hidden />
-          <Text fontSize="sm">
-            Contact your adopter admin to request changes to these details.
-          </Text>
-        </HStack>
-      </CardFooter>
-    </Card>
+          </HStack>
+        }
+      />
+    </VStack>
   );
 }

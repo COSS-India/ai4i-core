@@ -13,14 +13,16 @@ import {
 } from "@chakra-ui/react";
 import { showToast } from "../../utils/toast";
 import ConfirmDialog from "../common/ConfirmDialog";
-import DataTableActions from "../common/DataTableActions";
 import DataTable, {
+  DataTableActions,
+  actionsColumnSize,
   DEFAULT_PAGE_SIZE_OPTIONS,
   type DataTableColumn,
 } from "../common/table";
 import { useDeferredColumnSort } from "../../utils/tableSort";
 import { policyService, type PolicyOut } from "../../services/policyService";
 import { INSTITUTION, INSTITUTIONS } from "../../config/constants";
+import { FIELD_HINTS } from "../../config/fieldHints";
 import { PolicyFormModal } from "./PolicyFormModal";
 import {
   EMPTY_PII_TYPES,
@@ -252,6 +254,7 @@ export function PoliciesPanel({
     {
       id: "piiTypes",
       header: "PII types",
+      hint: FIELD_HINTS.policy.col.piiTypes,
       sortable: true,
       sortAccessor: (row) => row.pii_types?.length ?? 0,
       cell: (row) => row.pii_types?.length ?? 0,
@@ -259,6 +262,7 @@ export function PoliciesPanel({
     {
       id: "languages",
       header: "Languages",
+      hint: FIELD_HINTS.policy.col.languages,
       sortable: true,
       sortAccessor: (row) => (row.supported_languages ?? []).join(", "),
       cell: (row) => row.supported_languages?.join(", ") || "—",
@@ -266,6 +270,7 @@ export function PoliciesPanel({
     {
       id: "status",
       header: "Status",
+      hint: FIELD_HINTS.policy.col.status,
       cell: (row) => (
         <Badge colorScheme={row.is_active ? "green" : "gray"}>
           {row.is_active ? "Active" : "Inactive"}
@@ -275,6 +280,7 @@ export function PoliciesPanel({
     {
       id: "scope",
       header: "Scope",
+      hint: FIELD_HINTS.policy.col.scope,
       cell: (row) => (row.is_global ? "Global" : `${INSTITUTION}-scoped`),
     },
     {
@@ -311,9 +317,19 @@ export function PoliciesPanel({
     {
       id: "actions",
       header: "Actions",
-      tdProps: { onClick: (e) => e.stopPropagation() },
+      align: "right" as const,
+      truncate: false,
+      // 2 icon buttons + status switch
+      ...actionsColumnSize(3),
+      thProps: { textAlign: "right", whiteSpace: "nowrap", px: 2, overflow: "visible" },
+      tdProps: {
+        onClick: (e) => e.stopPropagation(),
+        whiteSpace: "nowrap",
+        textAlign: "right",
+        px: 2,
+      },
       cell: (row) => (
-        <HStack spacing={3} align="center">
+        <HStack spacing={2} align="center" justify="flex-end" w="full">
           <DataTableActions
             actions={[
               {
@@ -344,6 +360,7 @@ export function PoliciesPanel({
               <Switch
                 size="md"
                 colorScheme="green"
+                cursor="pointer"
                 isChecked={row.is_active}
                 isDisabled={policyStatusBusyId === row.policy_id}
                 aria-label={

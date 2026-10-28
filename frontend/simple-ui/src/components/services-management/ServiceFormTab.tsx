@@ -28,7 +28,6 @@ import { ChevronDownIcon, SearchIcon, ViewIcon, ViewOffIcon } from "@chakra-ui/i
 import React, { useMemo, useState } from "react";
 import { formatModelTaskTypeLabel, getTaskColorScheme } from "../../config/constants";
 import { FIELD_HINTS } from "../../config/fieldHints";
-import FieldHint from "../common/FieldHint";
 import FieldLabel from "../common/FieldLabel";
 import ReadOnlyField from "../common/ReadOnlyField";
 import type { Service } from "../../services/servicesManagementService";
@@ -133,13 +132,20 @@ function modelNamePlaceholder(options: {
   return FIELD_HINTS.service.modelName.placeholder;
 }
 
-function authTokenFieldHint(options: {
+function authTokenFieldCopy(options: {
   isEditing: boolean;
   hasAuthToken: boolean;
-}): string {
-  if (!options.isEditing) return FIELD_HINTS.service.authToken.helper;
-  if (options.hasAuthToken) return FIELD_HINTS.service.authToken.editHelper;
-  return FIELD_HINTS.service.authToken.editEmptyHelper;
+}): { tip: string; helper?: string } {
+  if (!options.isEditing) {
+    return { tip: FIELD_HINTS.service.authToken.tip };
+  }
+  if (options.hasAuthToken) {
+    return {
+      tip: FIELD_HINTS.service.authToken.editTip,
+      helper: FIELD_HINTS.service.authToken.editHelper,
+    };
+  }
+  return { tip: FIELD_HINTS.service.authToken.editEmptyTip };
 }
 
 const ServiceFormTab: React.FC<Readonly<ServiceFormTabProps>> = ({
@@ -211,22 +217,32 @@ const ServiceFormTab: React.FC<Readonly<ServiceFormTabProps>> = ({
     return afterBlur(field, error);
   };
 
-  const renderPriceField = (
-    field: string,
-    label: string,
-    value: string,
-    error: string | null | undefined,
-    onChange: (value: string) => void,
-    helper: string,
-    placeholder: string = FIELD_HINTS.service.price.placeholder,
-  ) => {
+  const renderPriceField = (options: {
+    field: string;
+    label: string;
+    value: string;
+    error: string | null | undefined;
+    onChange: (value: string) => void;
+    helper: string;
+    placeholder?: string;
+    tip?: string;
+  }) => {
+    const {
+      field,
+      label,
+      value,
+      error,
+      onChange,
+      placeholder = FIELD_HINTS.service.price.placeholder,
+      tip,
+    } = options;
     if (isView) {
       return <ReadOnlyField label={label}>{value || "—"}</ReadOnlyField>;
     }
     const shownError = priceFieldError(field, value, error);
     return (
       <FormControl isRequired isInvalid={!!shownError}>
-        <FieldLabel>{label}</FieldLabel>
+        <FieldLabel hint={tip}>{label}</FieldLabel>
         <Input
           value={value}
           onChange={(e) => onChange(e.target.value)}
@@ -237,11 +253,7 @@ const ServiceFormTab: React.FC<Readonly<ServiceFormTabProps>> = ({
           max={PRICE_PER_UNIT_MAX}
           bg="white"
         />
-        {shownError ? (
-          <FormErrorMessage>{shownError}</FormErrorMessage>
-        ) : (
-          <FieldHint>{helper}</FieldHint>
-        )}
+        {shownError ? <FormErrorMessage>{shownError}</FormErrorMessage> : null}
       </FormControl>
     );
   };
@@ -377,7 +389,7 @@ const ServiceFormTab: React.FC<Readonly<ServiceFormTabProps>> = ({
       markBlurred={markBlurred}
       formatSubmissionDateDisplay={formatSubmissionDateDisplay}
       modelNamePlaceholder={modelNamePlaceholder}
-      authTokenFieldHint={authTokenFieldHint}
+      authTokenFieldCopy={authTokenFieldCopy}
       renderPriceField={renderPriceField}
     />
   );
