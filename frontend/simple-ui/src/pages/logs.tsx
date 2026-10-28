@@ -757,6 +757,25 @@ function resolveNarrowRangeMessage(tracesError: unknown): string | null {
   return message;
 }
 
+function LogsPageShell({ children }: Readonly<{ children: React.ReactNode }>) {
+  return (
+    <>
+      <Head>
+        <title>{`Logs Dashboard - ${getPlatformName()}`}</title>
+        <meta
+          name="description"
+          content="View telemetry traces and request outcomes"
+        />
+      </Head>
+      <ContentLayout>
+        <VStack spacing={6} w="full" align="stretch">
+          {children}
+        </VStack>
+      </ContentLayout>
+    </>
+  );
+}
+
 function LogsAccessDeniedCard({
   cardBg,
   borderColor,
@@ -774,6 +793,367 @@ function LogsAccessDeniedCard({
         </Flex>
       </CardBody>
     </Card>
+  );
+}
+
+function isLogsRoleDenied(isUser: boolean, isGuest: boolean): boolean {
+  return isUser || isGuest;
+}
+
+function canPickLogsTenant(isAdmin: boolean, isTenantAdmin: boolean): boolean {
+  return isAdmin && !isTenantAdmin;
+}
+
+function soleSearchField(
+  searchFields: ReadonlySet<LogSearchField>,
+): LogSearchField | undefined {
+  if (searchFields.size !== 1) return undefined;
+  return Array.from(searchFields)[0];
+}
+
+function tracesQueryEnabled(options: {
+  isAuthenticated: boolean;
+  isTenantAdmin: boolean;
+  apiTenantId: string | null | undefined;
+  taskTypeFilterReady: boolean;
+}): boolean {
+  if (!options.isAuthenticated) return false;
+  if (options.isTenantAdmin && !options.apiTenantId) return false;
+  return options.taskTypeFilterReady;
+}
+
+function resolveAuthTenantId(tenantId: string | null | undefined): string | null {
+  const trimmed = tenantId?.trim();
+  if (trimmed) return trimmed;
+  return getTenantIdFromToken() || null;
+}
+
+function LogsAggregationStats({
+  cardBg,
+  borderColor,
+  total,
+  successCount,
+  failureCount,
+}: Readonly<{
+  cardBg: string;
+  borderColor: string;
+  total: number;
+  successCount: number;
+  failureCount: number;
+}>) {
+  return (
+    <SimpleGrid columns={{ base: 2, md: 3 }} spacing={4}>
+      <Card bg={cardBg} border="1px" borderColor={borderColor} boxShadow="sm">
+        <CardBody>
+          <Stat>
+            <StatLabel fontSize="sm" color="ink.600" fontWeight="medium">
+              Total Requests
+            </StatLabel>
+            <StatNumber fontSize="2xl" fontWeight="bold" color="ink.800">
+              {total.toLocaleString()}
+            </StatNumber>
+          </Stat>
+        </CardBody>
+      </Card>
+      <Card bg={cardBg} border="1px" borderColor="green.200" boxShadow="sm">
+        <CardBody>
+          <Stat>
+            <StatLabel fontSize="sm" color="ink.600" fontWeight="medium">
+              Success
+            </StatLabel>
+            <StatNumber fontSize="2xl" fontWeight="bold" color="green.500">
+              {successCount.toLocaleString()}
+            </StatNumber>
+          </Stat>
+        </CardBody>
+      </Card>
+      <Card bg={cardBg} border="1px" borderColor="red.200" boxShadow="sm">
+        <CardBody>
+          <Stat>
+            <StatLabel fontSize="sm" color="ink.600" fontWeight="medium">
+              Failures
+            </StatLabel>
+            <StatNumber fontSize="2xl" fontWeight="bold" color="red.500">
+              {failureCount.toLocaleString()}
+            </StatNumber>
+          </Stat>
+        </CardBody>
+      </Card>
+    </SimpleGrid>
+  );
+}
+
+function LogsColumnPicker({
+  columnDefs,
+  selectedColumns,
+  applyColumnSelection,
+  resetColumns,
+}: Readonly<{
+  columnDefs: TelemetryTraceColumnDef[];
+  selectedColumns: string[];
+  applyColumnSelection: (keys: string[]) => void;
+  resetColumns: () => void;
+}>) {
+  return (
+    <Menu closeOnSelect={false}>
+      <Tooltip label={FIELD_HINTS.logs.columns.tip} placement="top" hasArrow>
+        <Box as="span" display="inline-block">
+          <MenuButton
+            as={Button}
+            size="sm"
+            variant="outline"
+            leftIcon={<SettingsIcon />}
+            rightIcon={<ChevronDownIcon />}
+          >
+            Columns
+          </MenuButton>
+        </Box>
+      </Tooltip>
+      <Portal>
+        <MenuList maxH="320px" overflowY="auto" minW="240px" py={2}>
+          <Text px={3} pb={1} fontSize="xs" color="ink.500" fontWeight="medium">
+            {FIELD_HINTS.logs.columns.tip}
+          </Text>
+          {columnDefs.map((col) => {
+            const checked = selectedColumns.includes(col.key);
+            const onlyOne = selectedColumns.length === 1 && checked;
+            return (
+              <MenuItem
+                as="div"
+                key={col.key}
+                closeOnSelect={false}
+                isDisabled={onlyOne}
+                onClick={() => {
+                  if (onlyOne) return;
+                  // Absolute next set (not flip) so a double-fired
+                  // click cannot cancel the selection.
+                  const next = checked
+                    ? selectedColumns.filter((k) => k !== col.key)
+                    : [...selectedColumns, col.key];
+                  applyColumnSelection(next);
+                }}
+                py={1.5}
+                cursor={onlyOne ? "not-allowed" : "pointer"}
+              >
+                <Checkbox
+                  isChecked={checked}
+                  isDisabled={onlyOne}
+                  pointerEvents="none"
+                  colorScheme="blue"
+                  mr={2}
+                >
+                  <Text as="span" fontSize="sm">
+                    {col.label}
+                    {col.default ? (
+                      <Text as="span" color="ink.400" ml={1}>
+                        (default)
+                      </Text>
+                    ) : null}
+                  </Text>
+                </Checkbox>
+              </MenuItem>
+            );
+          })}
+          <MenuDivider />
+          <MenuItem onClick={resetColumns} fontSize="sm" color="blue.600">
+            Reset to default
+          </MenuItem>
+        </MenuList>
+      </Portal>
+    </Menu>
+  );
+}
+
+type LogsDashboardMainProps = Readonly<{
+  showLoginPrompt: boolean;
+  onLogin: () => void;
+  tracesError: unknown;
+  narrowRangeMessage: string | null;
+  aggregationStats: { total: number } | null | undefined;
+  cardBg: string;
+  borderColor: string;
+  successCount: number;
+  failureCount: number;
+  traceRows: TelemetryTraceRecord[];
+  traceColumns: DataTableColumn<TelemetryTraceRecord>[];
+  sort: DataTableSortState;
+  onSortChange: (next: DataTableSortState) => void;
+  onOpenTrace: (traceId: string) => void;
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (size: number) => void;
+  tracesLoading: boolean;
+  hasAppliedFilters: boolean;
+  onClearFilters: () => void;
+  searchValue: string;
+  onSearchChange: (value: string) => void;
+  onSearchSubmit: () => void;
+  searchPlaceholder: string;
+  searchHint: string;
+  searchError: string | undefined;
+  filterDefs: DataTableFilterDef[];
+  columnDefs: TelemetryTraceColumnDef[];
+  selectedColumns: string[];
+  applyColumnSelection: (keys: string[]) => void;
+  resetColumns: () => void;
+  followsPresent: boolean;
+  autoRefresh: boolean;
+  onAutoRefreshChange: (checked: boolean) => void;
+  onRefresh: () => void;
+  selectedTraceId: string | null;
+  isTraceModalOpen: boolean;
+  onCloseTrace: () => void;
+}>;
+
+function LogsDashboardMain(props: LogsDashboardMainProps) {
+  const emptyMessage = props.narrowRangeMessage
+    ? FIELD_HINTS.logs.narrowDateRange
+    : "No traces found for the selected filters. Try adjusting the time range or removing filters.";
+  const noResultsMessage = props.narrowRangeMessage
+    ? FIELD_HINTS.logs.narrowDateRange
+    : "No traces match the current filters.";
+  const errorDescription =
+    props.narrowRangeMessage ||
+    (props.tracesError as Error)?.message ||
+    "Error loading traces";
+  const autoRefreshTip = props.followsPresent
+    ? FIELD_HINTS.logs.autoRefresh.tip
+    : "Available only while End Time is the present";
+
+  return (
+    <>
+      <ManagementPageHeader
+        title="Logs Dashboard"
+        description="View telemetry traces and request outcomes"
+      />
+
+      {props.showLoginPrompt ? (
+        <Alert status="warning">
+          <AlertIcon />
+          <AlertDescription>
+            Please log in to view logs.{" "}
+            <Button size="sm" colorScheme="blue" ml={4} onClick={props.onLogin}>
+              Log In
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {props.tracesError ? (
+        <Alert status="error">
+          <AlertIcon />
+          <AlertDescription>{errorDescription}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      {props.aggregationStats ? (
+        <LogsAggregationStats
+          cardBg={props.cardBg}
+          borderColor={props.borderColor}
+          total={props.aggregationStats.total}
+          successCount={props.successCount}
+          failureCount={props.failureCount}
+        />
+      ) : null}
+
+      <DataTable
+        layout="admin"
+        items={props.traceRows}
+        columns={props.traceColumns}
+        getRowKey={(row) =>
+          `${row.trace_id}-${row.timestamp}-${row.task_type}-${row.url}`
+        }
+        sort={props.sort}
+        onSortChange={props.onSortChange}
+        onRowClick={(row) => {
+          if (row.trace_id) props.onOpenTrace(row.trace_id);
+        }}
+        paginate="server"
+        paginationPosition="bottom"
+        serverPagination={{
+          page: props.page,
+          pageSize: props.pageSize,
+          totalItems: props.totalItems,
+          onPageChange: props.onPageChange,
+          onPageSizeChange: (size) => {
+            props.onPageSizeChange(size);
+          },
+          pageSizeOptions: [10, 15, 25, 50, 100],
+        }}
+        isLoading={props.tracesLoading}
+        loadingMessage="Loading traces..."
+        emptyMessage={emptyMessage}
+        noResultsMessage={noResultsMessage}
+        hasActiveFilters={props.hasAppliedFilters}
+        onClearFilters={props.onClearFilters}
+        search={{
+          label: "Search",
+          value: props.searchValue,
+          debounceMs: 400,
+          onChange: props.onSearchChange,
+          onSubmit: props.onSearchSubmit,
+          placeholder: props.searchPlaceholder,
+          hint: props.searchHint,
+          error: props.searchError,
+          width: { base: "full", sm: "240px" },
+        }}
+        filterDefs={props.filterDefs}
+        filterToolbarRightContent={
+          <HStack spacing={3} flexWrap="wrap" align="center">
+            <LogsColumnPicker
+              columnDefs={props.columnDefs}
+              selectedColumns={props.selectedColumns}
+              applyColumnSelection={props.applyColumnSelection}
+              resetColumns={props.resetColumns}
+            />
+            <FormControl display="flex" alignItems="center" w="auto">
+              <FieldLabel
+                hint={FIELD_HINTS.logs.autoRefresh.tip}
+                formLabelProps={{
+                  htmlFor: "auto-refresh-toggle",
+                  mb: 0,
+                  fontSize: "sm",
+                  fontWeight: "medium",
+                  mr: 2,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Auto-refresh
+              </FieldLabel>
+              <Tooltip label={autoRefreshTip} placement="top" hasArrow>
+                <Box display="inline-flex" alignItems="center">
+                  <Switch
+                    id="auto-refresh-toggle"
+                    colorScheme="green"
+                    isChecked={props.autoRefresh}
+                    isDisabled={!props.followsPresent}
+                    onChange={(e) => props.onAutoRefreshChange(e.target.checked)}
+                  />
+                </Box>
+              </Tooltip>
+            </FormControl>
+            <Tooltip label="Refresh now" placement="top" hasArrow>
+              <IconButton
+                aria-label="Refresh"
+                icon={<RepeatIcon />}
+                onClick={props.onRefresh}
+                isLoading={props.tracesLoading}
+                size="sm"
+                variant="outline"
+              />
+            </Tooltip>
+          </HStack>
+        }
+      />
+
+      <TelemetryTraceDetailModal
+        traceId={props.selectedTraceId}
+        isOpen={props.isTraceModalOpen}
+        onClose={props.onCloseTrace}
+      />
+    </>
   );
 }
 
@@ -840,11 +1220,11 @@ const LogsPage: React.FC = () => {
   const isUser = userHasRole(user?.roles, "USER");
   const isGuest = userHasRole(user?.roles, "GUEST");
   const isTenantAdmin = isTenantAdminUser(user?.roles);
-  const canPickTenant = isAdmin && !isTenantAdmin;
+  const canPickTenant = canPickLogsTenant(isAdmin, isTenantAdmin);
   const { cardBg, borderColor } = useAdminTableSurface();
 
   const authTenantId = useMemo(
-    () => user?.tenant_id?.trim() || getTenantIdFromToken() || null,
+    () => resolveAuthTenantId(user?.tenant_id),
     [user?.tenant_id],
   );
 
@@ -878,8 +1258,7 @@ const LogsPage: React.FC = () => {
     statusCodeFilter,
   });
   const timeRangeError = dateRangeError(draft.startTime, draft.endTime);
-  const onlySearchField =
-    searchFields.size === 1 ? Array.from(searchFields)[0] : undefined;
+  const onlySearchField = soleSearchField(searchFields);
 
   useEffect(() => {
     if (followsPresent || !autoRefresh) return;
@@ -1084,10 +1463,12 @@ const LogsPage: React.FC = () => {
         columns: columnsParam || undefined,
       });
     },
-    enabled:
-      isAuthenticated &&
-      (!isTenantAdmin || !!apiTenantId) &&
+    enabled: tracesQueryEnabled({
+      isAuthenticated,
+      isTenantAdmin,
+      apiTenantId,
       taskTypeFilterReady,
+    }),
     staleTime: 30 * 1000,
     // Default app retry is 1; skip for AC-17 narrow-range 400 so the costly
     // keyword pre-query (up to 20,001 trace IDs) does not run twice.
@@ -1237,8 +1618,9 @@ const LogsPage: React.FC = () => {
   const hasAppliedFilters = hasLogsAppliedFilters(applied, canPickTenant);
   const narrowRangeMessage = resolveNarrowRangeMessage(tracesError);
   const showAccessDenied =
-    !authLoading && isAuthenticated && (isUser || isGuest);
+    !authLoading && isAuthenticated && isLogsRoleDenied(isUser, isGuest);
   const showLoginPrompt = !authLoading && !isAuthenticated;
+  const searchCopy = searchFieldCopy(onlySearchField);
 
   const logsFilterDefs = useMemo(
     () =>
@@ -1268,335 +1650,62 @@ const LogsPage: React.FC = () => {
     ],
   );
 
+  if (showAccessDenied) {
+    return (
+      <LogsPageShell>
+        <LogsAccessDeniedCard cardBg={cardBg} borderColor={borderColor} />
+      </LogsPageShell>
+    );
+  }
+
   return (
-    <>
-      <Head>
-        <title>{`Logs Dashboard - ${getPlatformName()}`}</title>
-        <meta
-          name="description"
-          content="View telemetry traces and request outcomes"
-        />
-      </Head>
-
-      <ContentLayout>
-        <VStack spacing={6} w="full" align="stretch">
-          {showAccessDenied ? (
-            <LogsAccessDeniedCard cardBg={cardBg} borderColor={borderColor} />
-          ) : (
-            <>
-              <ManagementPageHeader
-                title="Logs Dashboard"
-                description="View telemetry traces and request outcomes"
-              />
-
-              {showLoginPrompt ? (
-                <Alert status="warning">
-                  <AlertIcon />
-                  <AlertDescription>
-                    Please log in to view logs.{" "}
-                    <Button
-                      size="sm"
-                      colorScheme="blue"
-                      ml={4}
-                      onClick={() => router.push("/auth")}
-                    >
-                      Log In
-                    </Button>
-                  </AlertDescription>
-                </Alert>
-              ) : null}
-
-              {tracesError ? (
-                <Alert status="error">
-                  <AlertIcon />
-                  <AlertDescription>
-                    {narrowRangeMessage ||
-                      (tracesError as Error)?.message ||
-                      "Error loading traces"}
-                  </AlertDescription>
-                </Alert>
-              ) : null}
-
-              {aggregationStats ? (
-                <SimpleGrid columns={{ base: 2, md: 3 }} spacing={4}>
-                  <Card
-                    bg={cardBg}
-                    border="1px"
-                    borderColor={borderColor}
-                    boxShadow="sm"
-                  >
-                    <CardBody>
-                      <Stat>
-                        <StatLabel
-                          fontSize="sm"
-                          color="ink.600"
-                          fontWeight="medium"
-                        >
-                          Total Requests
-                        </StatLabel>
-                        <StatNumber
-                          fontSize="2xl"
-                          fontWeight="bold"
-                          color="ink.800"
-                        >
-                          {aggregationStats.total.toLocaleString()}
-                        </StatNumber>
-                      </Stat>
-                    </CardBody>
-                  </Card>
-                  <Card
-                    bg={cardBg}
-                    border="1px"
-                    borderColor="green.200"
-                    boxShadow="sm"
-                  >
-                    <CardBody>
-                      <Stat>
-                        <StatLabel
-                          fontSize="sm"
-                          color="ink.600"
-                          fontWeight="medium"
-                        >
-                          Success
-                        </StatLabel>
-                        <StatNumber
-                          fontSize="2xl"
-                          fontWeight="bold"
-                          color="green.500"
-                        >
-                          {successCount.toLocaleString()}
-                        </StatNumber>
-                      </Stat>
-                    </CardBody>
-                  </Card>
-                  <Card
-                    bg={cardBg}
-                    border="1px"
-                    borderColor="red.200"
-                    boxShadow="sm"
-                  >
-                    <CardBody>
-                      <Stat>
-                        <StatLabel
-                          fontSize="sm"
-                          color="ink.600"
-                          fontWeight="medium"
-                        >
-                          Failures
-                        </StatLabel>
-                        <StatNumber
-                          fontSize="2xl"
-                          fontWeight="bold"
-                          color="red.500"
-                        >
-                          {failureCount.toLocaleString()}
-                        </StatNumber>
-                      </Stat>
-                    </CardBody>
-                  </Card>
-                </SimpleGrid>
-              ) : null}
-
-              <DataTable
-                layout="admin"
-                items={traceRows}
-                columns={traceColumns}
-                getRowKey={(row) =>
-                  `${row.trace_id}-${row.timestamp}-${row.task_type}-${row.url}`
-                }
-                sort={sort}
-                onSortChange={handleSortChange}
-                onRowClick={(row) => {
-                  if (row.trace_id) openTraceDetail(row.trace_id);
-                }}
-                paginate="server"
-                paginationPosition="bottom"
-                serverPagination={{
-                  page,
-                  pageSize,
-                  totalItems: tracesData?.total ?? 0,
-                  onPageChange: setPage,
-                  onPageSizeChange: (size) => {
-                    setPageSize(size);
-                    setPage(1);
-                  },
-                  pageSizeOptions: [10, 15, 25, 50, 100],
-                }}
-                isLoading={tracesLoading}
-                loadingMessage="Loading traces..."
-                emptyMessage={
-                  narrowRangeMessage
-                    ? FIELD_HINTS.logs.narrowDateRange
-                    : "No traces found for the selected filters. Try adjusting the time range or removing filters."
-                }
-                noResultsMessage={
-                  narrowRangeMessage
-                    ? FIELD_HINTS.logs.narrowDateRange
-                    : "No traces match the current filters."
-                }
-                hasActiveFilters={hasAppliedFilters}
-                onClearFilters={clearAllFilters}
-                search={{
-                  label: "Search",
-                  value: draft.q,
-                  debounceMs: 400,
-                  onChange: (v) =>
-                    replaceDraft(withSearchText(draftRef.current, v)),
-                  onSubmit: () => commitFilters(draftRef.current),
-                  placeholder: searchFieldCopy(onlySearchField).placeholder,
-                  hint: searchFieldCopy(onlySearchField).hint,
-                  error: searchError,
-                  width: { base: "full", sm: "240px" },
-                }}
-                filterDefs={logsFilterDefs}
-                filterToolbarRightContent={
-                  <HStack spacing={3} flexWrap="wrap" align="center">
-                    <Menu closeOnSelect={false}>
-                      <Tooltip
-                        label={FIELD_HINTS.logs.columns.tip}
-                        placement="top"
-                        hasArrow
-                      >
-                        <Box as="span" display="inline-block">
-                          <MenuButton
-                            as={Button}
-                            size="sm"
-                            variant="outline"
-                            leftIcon={<SettingsIcon />}
-                            rightIcon={<ChevronDownIcon />}
-                          >
-                            Columns
-                          </MenuButton>
-                        </Box>
-                      </Tooltip>
-                      <Portal>
-                        <MenuList
-                          maxH="320px"
-                          overflowY="auto"
-                          minW="240px"
-                          py={2}
-                        >
-                          <Text
-                            px={3}
-                            pb={1}
-                            fontSize="xs"
-                            color="ink.500"
-                            fontWeight="medium"
-                          >
-                            {FIELD_HINTS.logs.columns.tip}
-                          </Text>
-                          {columnDefs.map((col) => {
-                            const checked = selectedColumns.includes(col.key);
-                            const onlyOne =
-                              selectedColumns.length === 1 && checked;
-                            return (
-                              <MenuItem
-                                as="div"
-                                key={col.key}
-                                closeOnSelect={false}
-                                isDisabled={onlyOne}
-                                onClick={() => {
-                                  if (onlyOne) return;
-                                  // Absolute next set (not flip) so a double-fired
-                                  // click cannot cancel the selection.
-                                  const next = checked
-                                    ? selectedColumns.filter(
-                                        (k) => k !== col.key,
-                                      )
-                                    : [...selectedColumns, col.key];
-                                  applyColumnSelection(next);
-                                }}
-                                py={1.5}
-                                cursor={onlyOne ? "not-allowed" : "pointer"}
-                              >
-                                <Checkbox
-                                  isChecked={checked}
-                                  isDisabled={onlyOne}
-                                  pointerEvents="none"
-                                  colorScheme="blue"
-                                  mr={2}
-                                >
-                                  <Text as="span" fontSize="sm">
-                                    {col.label}
-                                    {col.default ? (
-                                      <Text as="span" color="ink.400" ml={1}>
-                                        (default)
-                                      </Text>
-                                    ) : null}
-                                  </Text>
-                                </Checkbox>
-                              </MenuItem>
-                            );
-                          })}
-                          <MenuDivider />
-                          <MenuItem
-                            onClick={resetColumns}
-                            fontSize="sm"
-                            color="blue.600"
-                          >
-                            Reset to default
-                          </MenuItem>
-                        </MenuList>
-                      </Portal>
-                    </Menu>
-                    <FormControl display="flex" alignItems="center" w="auto">
-                      <FieldLabel
-                        hint={FIELD_HINTS.logs.autoRefresh.tip}
-                        formLabelProps={{
-                          htmlFor: "auto-refresh-toggle",
-                          mb: 0,
-                          fontSize: "sm",
-                          fontWeight: "medium",
-                          mr: 2,
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        Auto-refresh
-                      </FieldLabel>
-                      <Tooltip
-                        label={
-                          followsPresent
-                            ? FIELD_HINTS.logs.autoRefresh.tip
-                            : "Available only while End Time is the present"
-                        }
-                        placement="top"
-                        hasArrow
-                      >
-                        <Box display="inline-flex" alignItems="center">
-                          <Switch
-                            id="auto-refresh-toggle"
-                            colorScheme="green"
-                            isChecked={autoRefresh}
-                            isDisabled={!followsPresent}
-                            onChange={(e) => setAutoRefresh(e.target.checked)}
-                          />
-                        </Box>
-                      </Tooltip>
-                    </FormControl>
-                    <Tooltip label="Refresh now" placement="top" hasArrow>
-                      <IconButton
-                        aria-label="Refresh"
-                        icon={<RepeatIcon />}
-                        onClick={handleRefresh}
-                        isLoading={tracesLoading}
-                        size="sm"
-                        variant="outline"
-                      />
-                    </Tooltip>
-                  </HStack>
-                }
-              />
-
-              <TelemetryTraceDetailModal
-                traceId={selectedTraceId}
-                isOpen={isTraceModalOpen}
-                onClose={closeTraceDetail}
-              />
-            </>
-          )}
-        </VStack>
-      </ContentLayout>
-    </>
+    <LogsPageShell>
+      <LogsDashboardMain
+        showLoginPrompt={showLoginPrompt}
+        onLogin={() => router.push("/auth")}
+        tracesError={tracesError}
+        narrowRangeMessage={narrowRangeMessage}
+        aggregationStats={aggregationStats}
+        cardBg={cardBg}
+        borderColor={borderColor}
+        successCount={successCount}
+        failureCount={failureCount}
+        traceRows={traceRows}
+        traceColumns={traceColumns}
+        sort={sort}
+        onSortChange={handleSortChange}
+        onOpenTrace={openTraceDetail}
+        page={page}
+        pageSize={pageSize}
+        totalItems={tracesData?.total ?? 0}
+        onPageChange={setPage}
+        onPageSizeChange={(size) => {
+          setPageSize(size);
+          setPage(1);
+        }}
+        tracesLoading={tracesLoading}
+        hasAppliedFilters={hasAppliedFilters}
+        onClearFilters={clearAllFilters}
+        searchValue={draft.q}
+        onSearchChange={(v) => replaceDraft(withSearchText(draftRef.current, v))}
+        onSearchSubmit={() => commitFilters(draftRef.current)}
+        searchPlaceholder={searchCopy.placeholder}
+        searchHint={searchCopy.hint}
+        searchError={searchError}
+        filterDefs={logsFilterDefs}
+        columnDefs={columnDefs}
+        selectedColumns={selectedColumns}
+        applyColumnSelection={applyColumnSelection}
+        resetColumns={resetColumns}
+        followsPresent={followsPresent}
+        autoRefresh={autoRefresh}
+        onAutoRefreshChange={setAutoRefresh}
+        onRefresh={handleRefresh}
+        selectedTraceId={selectedTraceId}
+        isTraceModalOpen={isTraceModalOpen}
+        onCloseTrace={closeTraceDetail}
+      />
+    </LogsPageShell>
   );
 };
 
