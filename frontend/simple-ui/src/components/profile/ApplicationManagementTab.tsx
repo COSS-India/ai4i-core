@@ -692,6 +692,7 @@ export default function ApplicationManagementTab({
     },
   });
   const openFallbackEditor = fallbackEditor.open;
+  const refreshFallbackCatalogue = fallbackCatalogue.refresh;
   const { setViewOpen } = mgr;
   const openFallbacks = useCallback(
     (app: Application, fromView: boolean) => {
@@ -699,8 +700,10 @@ export default function ApplicationManagementTab({
       setFallbacksOpen(true);
       if (fromView) setViewOpen(false);
       openFallbackEditor(app);
+      // Services may have been unpublished or added to the Tier since the last load.
+      refreshFallbackCatalogue();
     },
-    [openFallbackEditor, setViewOpen],
+    [openFallbackEditor, refreshFallbackCatalogue, setViewOpen],
   );
 
   useEffect(() => {

@@ -18,6 +18,7 @@ import {
   rowsFromFallbackMap,
   withFallback,
   withPrimary,
+  withoutStaleServices,
   type FallbackCatalogue,
   type FallbackRow,
 } from "../serviceFallbackDraft";
@@ -30,11 +31,17 @@ export interface FallbackCatalogueState {
   status: FallbackCatalogueStatus;
   tierName: string | null;
   catalogue: FallbackCatalogue;
-  retry: () => void;
+  /** Reload the Tier and its services; status is "loading" until both are fresh. */
+  refresh: () => void;
 }
 
-/** The Institution's Tier and the published services mapped to it. */
+/**
+ * The Institution's Tier and the published services mapped to it. The page
+ * keeps these queries mounted, so callers `refresh()` when the editor opens
+ * rather than relying on `enabled` toggling.
+ */
 export function useFallbackCatalogue(tenantId: string, enabled: boolean): FallbackCatalogueState {
+  const [refreshing, setRefreshing] = useState(false);
   const tenantQuery = useQuery({
     queryKey: ["application-fallback-tenant", tenantId],
     queryFn: () => getViewTenant(tenantId),
@@ -53,6 +60,7 @@ export function useFallbackCatalogue(tenantId: string, enabled: boolean): Fallba
 
   let status: FallbackCatalogueStatus = "ready";
   if (!enabled && !tenantQuery.data) status = "idle";
+  else if (refreshing) status = "loading";
   else if (tenantQuery.isError || servicesQuery.isError) status = "error";
   else if (tenantQuery.isPending) status = "loading";
   else if (!tierId) status = "no-tier";
@@ -60,17 +68,24 @@ export function useFallbackCatalogue(tenantId: string, enabled: boolean): Fallba
 
   const { refetch: refetchTenant } = tenantQuery;
   const { refetch: refetchServices } = servicesQuery;
-  const tenantFailed = tenantQuery.isError;
-  const retry = useCallback(() => {
-    if (tenantFailed) refetchTenant();
-    else refetchServices();
-  }, [tenantFailed, refetchTenant, refetchServices]);
+  // Set in the same render as the editor opening, so rows are never built from the cached list.
+  const refresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const tenant = await refetchTenant();
+      const nextTierId = tenant.data?.tier_id?.trim() || null;
+      // A different Tier is a new query key, which fetches on its own.
+      if (nextTierId && nextTierId === tierId) await refetchServices();
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refetchTenant, refetchServices, tierId]);
 
   return {
     status,
     tierName: tierId ? tenantQuery.data?.tier_name?.trim() || null : null,
     catalogue,
-    retry,
+    refresh,
   };
 }
 
@@ -175,7 +190,7 @@ export function useServiceFallbackEditor({
     save,
     addRow: () => setRows((prev) => [...prev, emptyFallbackRow()]),
     removeRow: (key: string) => setRows((prev) => prev.filter((row) => row.key !== key)),
-    removeStaleRows: () => setRows((prev) => prev.filter((row) => !isRowStale(row, catalogue))),
+    removeStaleRows: () => setRows((prev) => withoutStaleServices(prev, catalogue)),
     setPrimary: (key: string, value: string) => updateRow(key, (row) => withPrimary(row, value, catalogue)),
     setFallback: (key: string, value: string) => updateRow(key, (row) => withFallback(row, value)),
   };

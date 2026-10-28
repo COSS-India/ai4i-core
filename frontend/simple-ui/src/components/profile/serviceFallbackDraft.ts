@@ -41,7 +41,7 @@ function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-export function toFallbackServiceOption(service: Service): FallbackServiceOption | null {
+function toFallbackServiceOption(service: Service): FallbackServiceOption | null {
   const serviceId = text(service.serviceId) || text(service.service_id);
   const task = service.task as { type?: unknown } | undefined;
   const taskType = (
@@ -164,26 +164,28 @@ export function fallbackMapFromRows(rows: FallbackRow[]): ServiceFallbackMap {
   const map: ServiceFallbackMap = {};
   for (const row of rows) {
     if (!isRowComplete(row)) continue;
-    map[row.primaryId] = [
-      row.fallbackId,
-      ...row.extraFallbackIds.filter((id) => id !== row.fallbackId && id !== row.primaryId),
-    ];
+    map[row.primaryId] = [row.fallbackId, ...extraFallbacksFor(row)];
   }
   return map;
 }
 
-export function sameFallbackMap(a: ServiceFallbackMap, b: ServiceFallbackMap): boolean {
-  const keysA = Object.keys(a).filter((key) => a[key].length > 0);
-  const keysB = Object.keys(b).filter((key) => b[key].length > 0);
-  if (keysA.length !== keysB.length) return false;
-  return keysA.every((key) => {
-    const other = b[key];
-    return (
-      Array.isArray(other) &&
-      other.length === a[key].length &&
-      other.every((id, index) => id === a[key][index])
-    );
-  });
+/** The row's fallbacks after the first, as they are shown and saved. */
+export function extraFallbacksFor(row: FallbackRow): string[] {
+  return row.extraFallbackIds.filter((id) => id !== row.fallbackId && id !== row.primaryId);
+}
+
+/**
+ * Drops rows whose primary or fallback is no longer in the Tier, and only the
+ * unavailable extra fallbacks from the rest.
+ */
+export function withoutStaleServices(
+  rows: FallbackRow[],
+  catalogue: FallbackCatalogue,
+): FallbackRow[] {
+  const gone = (id: string) => Boolean(id) && !catalogue.byId.has(id);
+  return rows
+    .filter((row) => !gone(row.primaryId) && !gone(row.fallbackId))
+    .map((row) => ({ ...row, extraFallbackIds: row.extraFallbackIds.filter((id) => !gone(id)) }));
 }
 
 function primariesUsedElsewhere(rows: FallbackRow[], rowKey: string): Set<string> {
@@ -241,13 +243,14 @@ export function withPrimary(
 ): FallbackRow {
   if (row.primaryId === primaryId) return row;
   const taskType = catalogue.byId.get(primaryId)?.taskType ?? "";
-  const keepFallback = row.fallbackId !== primaryId && taskType === row.taskType;
+  // Fallbacks of another task type cannot serve the new primary, so they go with it.
+  const sameTask = taskType === row.taskType;
   return {
     ...row,
     taskType,
     primaryId,
-    fallbackId: keepFallback ? row.fallbackId : "",
-    extraFallbackIds: [],
+    fallbackId: sameTask && row.fallbackId !== primaryId ? row.fallbackId : "",
+    extraFallbackIds: sameTask ? row.extraFallbackIds.filter((id) => id !== primaryId) : [],
   };
 }
 

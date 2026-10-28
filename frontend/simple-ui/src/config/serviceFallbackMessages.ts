@@ -26,6 +26,8 @@ export const SERVICE_FALLBACK_COPY = {
     selectPrimary: "Select service",
     selectFallback: "Select service",
     unavailableOption: (id: string) => `${id} (no longer available)`,
+    /** Leads the read-only list of fallbacks after the first, saved through the API. */
+    extraFallbacks: "Then:",
     sameModel: "Same model. Output stays consistent.",
     differentModel: "Different model. Output may differ when used.",
     noAlternatives:

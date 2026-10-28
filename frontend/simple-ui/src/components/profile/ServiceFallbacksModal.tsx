@@ -27,6 +27,7 @@ import {
 } from "../../config/serviceFallbackMessages";
 import {
   canAddFallbackRow,
+  extraFallbacksFor,
   fallbackOptionsFor,
   isRowComplete,
   isRowStale,
@@ -66,6 +67,38 @@ function ServiceOptions({
   );
 }
 
+/** Fallbacks after the first. The editor changes only the first, so these are read-only. */
+function ExtraFallbacks({
+  ids,
+  catalogue,
+}: Readonly<{
+  ids: string[];
+  catalogue: FallbackCatalogue;
+}>) {
+  return (
+    <Text mt={1.5} fontSize="xs" color="ink.600">
+      {COPY.extraFallbacks}{" "}
+      {ids.map((id, index) => {
+        const name = catalogue.byId.get(id)?.name;
+        return (
+          <React.Fragment key={id}>
+            {index > 0 ? ", " : null}
+            {name ? (
+              <Text as="span" fontWeight="600" color="ink.700">
+                {name}
+              </Text>
+            ) : (
+              <Text as="span" color="orange.700">
+                {COPY.unavailableOption(id)}
+              </Text>
+            )}
+          </React.Fragment>
+        );
+      })}
+    </Text>
+  );
+}
+
 function FallbackRowCard({
   index,
   row,
@@ -80,6 +113,7 @@ function FallbackRowCard({
   editor: ServiceFallbackEditor;
 }>) {
   const match = modelMatchFor(row, catalogue);
+  const extras = extraFallbacksFor(row);
   const stale = isRowStale(row, catalogue);
   const title = COPY.rowTitle(index);
   let borderColor = "ink.200";
@@ -143,6 +177,7 @@ function FallbackRowCard({
               {match === "same" ? COPY.sameModel : COPY.differentModel}
             </Text>
           ) : null}
+          {extras.length > 0 ? <ExtraFallbacks ids={extras} catalogue={catalogue} /> : null}
         </FormControl>
       </Grid>
     </Box>
@@ -200,7 +235,7 @@ function CatalogueNotice({ state }: Readonly<{ state: FallbackCatalogueState }>)
       <Alert status="error" borderRadius="md">
         <AlertIcon />
         <Box flex="1">{COPY.loadFailed}</Box>
-        <Button size="xs" variant="outline" colorScheme="red" ml={3} onClick={state.retry}>
+        <Button size="xs" variant="outline" colorScheme="red" ml={3} onClick={state.refresh}>
           {COPY.retry}
         </Button>
       </Alert>
