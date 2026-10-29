@@ -44,7 +44,9 @@ def _make_role_service(target: User | None) -> RoleService:
         side_effect=lambda name: MagicMock(id=7, name=name)
     )
     role_repo.get_user_role_record = AsyncMock(return_value=None)
+    role_repo.get_user_roles = AsyncMock(return_value=[])
     role_repo.assign_role = AsyncMock()
+    role_repo.remove_role = AsyncMock(return_value=True)
     user_repo = MagicMock()
     user_repo.get_by_id = AsyncMock(return_value=target)
     tenant_repo = MagicMock()
@@ -340,4 +342,23 @@ class TestUpdateTenantUserRole:
             TenantUserUpdate(role=TenantUserRole.USER),
         )
 
+        svc._users.save_and_refresh.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_role_change_replaces_previous_tenant_role(self) -> None:
+        target = _user(CreationType.TENANT, tenant_id=2)
+        svc = self._service(target)
+        svc._roles._roles.get_user_roles = AsyncMock(
+            return_value=[RoleName.TENANT_ADMIN.value, RoleName.USAGE_VIEWER.value]
+        )
+
+        await svc.update_tenant_user(
+            _user(CreationType.TENANT), 2, target.id,
+            TenantUserUpdate(role=TenantUserRole.USER),
+        )
+
+        svc._roles._roles.assign_role.assert_awaited_once()
+        # Only the old tenant role is dropped; USAGE VIEWER is left alone.
+        svc._roles._roles.remove_role.assert_awaited_once()
+        svc._roles._roles.commit.assert_not_awaited()
         svc._users.save_and_refresh.assert_awaited_once()

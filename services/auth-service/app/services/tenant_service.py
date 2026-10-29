@@ -570,11 +570,21 @@ class TenantService:
         user_id: UUID,
         role: TenantUserRole | RoleName | str,
         *,
-        commit: bool = True,
         created_by: Optional[UUID] = None,
     ) -> None:
+        """Replace the user's tenant role with ``role``; flush only, caller commits.
+
+        ``RoleService.assign_role`` is additive, so any other tenant-assignable
+        role the user holds is removed. Roles outside ``TenantUserRole`` (e.g.
+        USAGE VIEWER granted elsewhere) are left untouched.
+        """
         target = role.value if isinstance(role, TenantUserRole) else role_name_to_str(role)
-        await self._roles.assign_role(user_id, target, commit=commit, created_by=created_by)
+        tenant_roles = {r.value for r in TenantUserRole}
+        current = await self._roles.get_user_roles(user_id)
+        await self._roles.assign_role(user_id, target, commit=False, created_by=created_by)
+        for existing in current:
+            if existing in tenant_roles and existing != target:
+                await self._roles.remove_role(user_id, existing, commit=False)
 
     async def build_tenant_user_response(
         self, user: User, *, unmask_phone: bool = False
@@ -1948,7 +1958,7 @@ class TenantService:
         if role_update is not None:
             # Single commit via save_and_refresh — role repo shares this session.
             await self._set_tenant_user_role(
-                target.id, role_update, commit=False, created_by=current_user.id
+                target.id, role_update, created_by=current_user.id
             )
         await self._users.save_and_refresh(target)
         return target
