@@ -406,6 +406,7 @@ function renderMetadataCell(row: TelemetryTraceRecord): React.ReactNode {
   );
 }
 
+
 const TRACE_CELL_BY_KEY: Record<
   string,
   (row: TelemetryTraceRecord, options: TraceCellOptions) => React.ReactNode
