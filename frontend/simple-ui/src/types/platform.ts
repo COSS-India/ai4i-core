@@ -419,6 +419,11 @@ export interface ServiceListParams {
   isPublished?: boolean;
   createdBy?: string;
   /**
+   * Comma-separated Tier ids → `tier_ids=`. Open to non-admin callers, who
+   * then get published services only (Application fallback picker).
+   */
+  tierIds?: string;
+  /**
    * Extra query params from `GET /services/columns` filter.params.
    * Applied after the structured fields above; a key already set is left as-is.
    */
@@ -435,7 +440,7 @@ export interface ServiceLegacyFields {
   task_type?: string;
   created_at?: string;
   updated_at?: string;
-  /** UI-only: selected model display name (not sent to API). */
+  /** Model display name. Returned by GET /services; never sent on create/update. */
   modelName?: string;
   /** UI-only: derived from model submittedOn (not sent to API). */
   modelSubmissionDate?: string;

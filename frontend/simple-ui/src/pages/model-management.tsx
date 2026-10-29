@@ -23,11 +23,12 @@ import ModelExtraDetails from "../components/model-management/ModelDetails";
 import ModelForm from "../components/model-management/ModelForm";
 import { validateModelData } from "../components/model-management/modelJsonValidation";
 import {
-  fetchAllModelsMatchingFilters,
   createModel,
+  getAllModels,
   getModelById,
   updateModel,
   MODELS_ALL_QUERY_KEY,
+  MODELS_ALL_STALE_MS,
 } from "../services/modelManagementService";
 import type { ModelCreateRequest, ModelDetails } from "../types/platform";
 import {
@@ -79,8 +80,6 @@ type Model = ModelDetails & {
 };
 
 const ModelManagementPage: React.FC = () => {
-  const [models, setModels] = useState<Model[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [selectedModel, setSelectedModel] = useState<Model | null>(null);
   const [isViewingModel, setIsViewingModel] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -97,8 +96,6 @@ const ModelManagementPage: React.FC = () => {
   const [filterVersionStatus, setFilterVersionStatus] = useState<string>("");
   const [filterTaskType, setFilterTaskType] = useState<string>("");
   const { taskTypeNames, isLoading: isLoadingTaskTypes } = useInferenceTypes();
-  const enabledTaskTypesParam =
-    taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
   const didInitTaskTypeFilter = useRef(false);
   const [taskTypeFilterReady, setTaskTypeFilterReady] = useState(false);
   useEffect(() => {
@@ -210,29 +207,44 @@ const ModelManagementPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router.query.modelId]);
 
-  // Fetch all models for current task/status filters (paginated API walk) for client search + pagination
-  const fetchModels = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const result = await fetchAllModelsMatchingFilters({
-        taskType: filterTaskType || undefined,
-        taskTypes: enabledTaskTypesParam,
-        versionStatus: filterVersionStatus || undefined,
-      });
-      setModels(result.items as unknown as Model[]);
-    } catch (error: any) {
-      console.error("Failed to fetch models:", error);
-      showError(error);
-      setModels([]);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [filterTaskType, filterVersionStatus, enabledTaskTypesParam]);
+  // Shared catalogue with Services Management. Filters apply client-side.
+  const modelsQuery = useQuery({
+    queryKey: MODELS_ALL_QUERY_KEY,
+    queryFn: getAllModels,
+    staleTime: MODELS_ALL_STALE_MS,
+    enabled: taskTypeFilterReady,
+  });
+  const refreshModels = useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: MODELS_ALL_QUERY_KEY });
+  }, [queryClient]);
 
-  useEffect(() => {
-    if (!taskTypeFilterReady) return;
-    fetchModels();
-  }, [fetchModels, taskTypeFilterReady]);
+  const models = useMemo((): Model[] => {
+    const enabledTasks = new Set(
+      taskTypeNames.map((name) => name.toLowerCase()),
+    );
+    const wantTask = filterTaskType.trim().toLowerCase();
+    const wantStatus = filterVersionStatus.trim().toLowerCase();
+    return ((modelsQuery.data ?? []) as unknown as Model[]).filter((model) => {
+      const task = resolveTaskType(model).toLowerCase();
+      if (enabledTasks.size > 0 && task && !enabledTasks.has(task)) return false;
+      if (wantTask && task !== wantTask) return false;
+      if (wantStatus) {
+        const status = (model.versionStatus ?? "").toLowerCase();
+        if (wantStatus === "active") {
+          if (status && status !== "active") return false;
+        } else if (status !== wantStatus) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [
+    modelsQuery.data,
+    taskTypeNames,
+    filterTaskType,
+    filterVersionStatus,
+  ]);
+  const isLoading = modelsQuery.isPending;
 
   const {
     data: allServices,
@@ -397,8 +409,7 @@ const ModelManagementPage: React.FC = () => {
       });
 
       // Refresh models list
-      await fetchModels();
-      void queryClient.invalidateQueries({ queryKey: MODELS_ALL_QUERY_KEY });
+      await refreshModels();
 
       // Reset file input
       if (fileInputRef.current) {
@@ -547,8 +558,7 @@ const ModelManagementPage: React.FC = () => {
       });
 
       // Refresh models list and selected model
-      await fetchModels();
-      void queryClient.invalidateQueries({ queryKey: MODELS_ALL_QUERY_KEY });
+      await refreshModels();
       if (selectedModel && selectedModel.modelId === model.modelId) {
         const updatedModel = await getModelById(model.modelId);
         setSelectedModel(updatedModel as unknown as Model);
@@ -587,8 +597,7 @@ const ModelManagementPage: React.FC = () => {
       });
 
       // Refresh models list and selected model
-      await fetchModels();
-      void queryClient.invalidateQueries({ queryKey: MODELS_ALL_QUERY_KEY });
+      await refreshModels();
       if (selectedModel && selectedModel.modelId === model.modelId) {
         const updatedModel = await getModelById(model.modelId);
         setSelectedModel(updatedModel as unknown as Model);

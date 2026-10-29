@@ -22,7 +22,8 @@ export type DataTableAction = {
   visible?: boolean;
   disabled?: boolean;
   isLoading?: boolean;
-  tooltip?: string;
+  /** Defaults to `label`. May be rich content, e.g. a title and a status line. */
+  tooltip?: React.ReactNode;
   /** IconButton color when idle. */
   color?: string;
   /** Hover color / background pair. */

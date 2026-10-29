@@ -206,7 +206,7 @@ const MAX_REGISTRY_FETCH_PAGES = 500;
 export const fetchAllServicesMatchingFilters = async (
   params: Pick<
     ServiceListParams,
-    "taskType" | "taskTypes" | "isPublished" | "createdBy"
+    "taskType" | "taskTypes" | "isPublished" | "createdBy" | "tierIds"
   > = {},
 ): Promise<PaginatedServices> => {
   const items: Service[] = [];
@@ -243,6 +243,7 @@ function buildServiceListQueryParams(
     queryParams.is_published = params.isPublished;
   }
   if (params.createdBy) queryParams.created_by = params.createdBy;
+  if (params.tierIds) queryParams.tier_ids = params.tierIds;
   if (!params.query) return queryParams;
   for (const [key, value] of Object.entries(params.query)) {
     if (value !== "" && queryParams[key] === undefined) queryParams[key] = value;

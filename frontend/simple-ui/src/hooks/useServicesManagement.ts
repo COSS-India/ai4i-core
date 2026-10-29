@@ -8,15 +8,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   SERVICE_LIST_COLUMNS,
   serviceListCellKey,
-  serviceListServiceId,
   serviceListSortAccessors,
-  serviceModelName,
   type ServiceListColumnDef,
 } from "../components/services-management/serviceListColumns";
-import {
-  serviceMatchesRegistryFilters,
-  serviceSelectOptions,
-} from "../components/services-management/serviceRegistryFilters";
 import {
   applyServicePublishPatch,
   fetchRegistryServicesPage,
@@ -29,14 +23,14 @@ import {
 import { useDeferredColumnSort } from "../utils/tableSort";
 import { resolveTaskType } from "../utils/platformService";
 import {
-  fetchExistingServiceIds,
   getServiceListColumns,
-  listServices,
   createService,
   getServiceById,
   updateService,
   deleteService,
+  listServices,
   SERVICES_ALL_QUERY_KEY,
+  SERVICES_ALL_STALE_MS,
   sanitizeService,
   resolveMaskedAuthToken,
   Service,
@@ -62,6 +56,7 @@ import {
   hasActiveClientServiceFilters,
   hasActiveServerServiceFilters,
 } from "../components/services-management/serviceFormGates";
+import { serviceMatchesSearch } from "../components/services-management/serviceRegistryFilters";
 import { useAuth } from "./useAuth";
 import { isRegistryReadOnlyUser, userHasRole } from "../utils/rbac";
 import { useSessionExpiry } from "./useSessionExpiry";
@@ -146,14 +141,6 @@ const buildTierFilterOptions = (
   return Array.from(byId, ([id, name]) => ({ id, name })).sort((a, b) =>
     a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
   );
-};
-
-/** Client-side tier filter: a service carries many tiers, so this is membership. */
-const serviceMatchesTier = (service: Service, filterTierId: string): boolean => {
-  if (filterTierId === SERVICE_TIER.FILTER.ALL) return true;
-  const ids = (service.tierIds ?? []).filter(Boolean).map(String);
-  if (filterTierId === SERVICE_TIER.FILTER.NONE) return ids.length === 0;
-  return ids.includes(String(filterTierId));
 };
 
 const formatModelSubmissionDate = (value?: string | number | null): string => {
@@ -648,8 +635,6 @@ export function useServicesManagement() {
   const [activeTab, setActiveTab] = useState(0);
   const [registryEpoch, setRegistryEpoch] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
-  const [filterModelName, setFilterModelName] = useState("");
-  const [filterServiceId, setFilterServiceId] = useState("");
   const [filterStatus, setFilterStatus] = useState<string>("");
   const [filterTaskType, setFilterTaskType] = useState<string>("");
   const [filterTier, setFilterTier] = useState<string>(
@@ -725,31 +710,15 @@ export function useServicesManagement() {
   // View is always the second tab. Edit is a StandardModal, not a tab.
   const viewTabIndex = 1;
 
-  // Offline catalogue: name + tier filter, then sort, over the full fetched list.
-  // When GET /services/columns is available, filters and sort are query params
-  // and the rows are already one server page.
+  // Server mode: name, status, task type, and column searches are query params.
+  // Offline catalogue: name is filtered here; other column searches run in the table.
   const registryTableItems = useMemo(() => {
     if (serviceListUsesServer) return services;
-    let filtered = services.filter((service) =>
-      serviceMatchesRegistryFilters(service, {
-        query: searchQuery,
-        modelName: filterModelName,
-        serviceId: filterServiceId,
-      }),
-    );
-    if (filterTier !== SERVICE_TIER.FILTER.ALL) {
-      filtered = filtered.filter((s) => serviceMatchesTier(s, filterTier));
-    }
-    return registrySort.apply(filtered);
-  }, [
-    services,
-    searchQuery,
-    filterModelName,
-    filterServiceId,
-    filterTier,
-    registrySort,
-    serviceListUsesServer,
-  ]);
+    const named = searchQuery.trim()
+      ? services.filter((service) => serviceMatchesSearch(service, searchQuery))
+      : services;
+    return registrySort.apply(named);
+  }, [services, registrySort, serviceListUsesServer, searchQuery]);
 
   const tiersQuery = useQuery({
     queryKey: ACTIVE_TIERS_QUERY_KEY,
@@ -777,6 +746,8 @@ export function useServicesManagement() {
       ),
     [availableTiers, services, filterTier, pinnedTier],
   );
+  const tierFilterOptionsRef = useRef(tierFilterOptions);
+  tierFilterOptionsRef.current = tierFilterOptions;
 
   /** Remembers the label as it is picked, so a later refetch cannot orphan it. */
   const handleFilterTierChange = useCallback(
@@ -807,17 +778,11 @@ export function useServicesManagement() {
       : hasActiveClientServiceFilters({
         filterStatus,
         filterTaskType,
-        filterTier,
-        filterModelName,
-        filterServiceId,
         searchQuery,
         showTaskTypeAllOption,
-        allTierValue: SERVICE_TIER.FILTER.ALL,
       });
   const clearAllFilters = () => {
     setSearchQuery("");
-    setFilterModelName("");
-    setFilterServiceId("");
     setFilterStatus("");
     setFilterTaskType(taskTypeNames.length === 1 ? taskTypeNames[0] : "");
     handleFilterTierChange(SERVICE_TIER.FILTER.ALL);
@@ -831,44 +796,6 @@ export function useServicesManagement() {
   const nameFilterColumnId = serviceListCatalogue.find(
     (column) => serviceListCellKey(column.id) === "name",
   )?.id;
-  // Server pages are a slice. Option lists come from the full registry so a
-  // model name or service id off the current page can still be chosen.
-  const registryOptionServicesQuery = useQuery({
-    queryKey: ["service-registry-filter-options"],
-    queryFn: () => listServices(),
-    enabled: Boolean(user?.user_id) && serviceListUsesServer,
-    staleTime: 30 * 1000,
-  });
-  const registryOptionServices = useMemo(() => {
-    const loaded = registryOptionServicesQuery.data ?? [];
-    if (!serviceListUsesServer) return services;
-    if (loaded.length === 0) return services;
-    if (taskTypeNames.length === 0) return loaded;
-    const enabled = new Set(taskTypeNames.map((name) => name.toLowerCase()));
-    return loaded.filter((service) => {
-      const task = resolveTaskType(service).toLowerCase();
-      return task === "" || enabled.has(task);
-    });
-  }, [
-    registryOptionServicesQuery.data,
-    serviceListUsesServer,
-    services,
-    taskTypeNames,
-  ]);
-  const modelNameFilterOptions = useMemo(
-    () =>
-      serviceSelectOptions(
-        registryOptionServices.map((service) => serviceModelName(service)),
-      ),
-    [registryOptionServices],
-  );
-  const serviceIdFilterOptions = useMemo(
-    () =>
-      serviceSelectOptions(
-        registryOptionServices.map((service) => serviceListServiceId(service)),
-      ),
-    [registryOptionServices],
-  );
   const searchQueryRef = useRef(searchQuery);
   searchQueryRef.current = searchQuery;
   const writeServerSearch = useCallback(
@@ -942,15 +869,14 @@ export function useServicesManagement() {
   const [fullServiceIds, setFullServiceIds] = useState<string[] | null>(null);
 
   /**
-   * Unfiltered ids for the create-form duplicate check. An id registered under
-   * a task type the registry does not list would otherwise pass here and only
-   * fail as a 409 on submit.
+   * Full unfiltered registry for the create-form duplicate check. Shares
+   * SERVICES_ALL_QUERY_KEY with Model Management so one /services hit warms both.
    */
-  const allServiceIdsQuery = useQuery({
-    queryKey: ["all-service-ids"],
-    queryFn: fetchExistingServiceIds,
+  const allServicesQuery = useQuery({
+    queryKey: SERVICES_ALL_QUERY_KEY,
+    queryFn: listServices,
     enabled: isCreateOpen && !editingService,
-    staleTime: 30 * 1000,
+    staleTime: SERVICES_ALL_STALE_MS,
   });
 
   const modelsQuery = useQuery({
@@ -1022,6 +948,7 @@ export function useServicesManagement() {
           taskFilterColumnId,
           statusFilterColumnId,
           serviceListCatalogue,
+          tierOptions: tierFilterOptionsRef.current,
           registryPage,
           registryPageSize,
           sortMode: registrySort.mode,
@@ -1574,9 +1501,12 @@ export function useServicesManagement() {
   // Union the registry ids so a clash still shows while the unfiltered list loads.
   const existingServiceIds = useMemo(() => {
     const ids = new Set(fullServiceIds ?? []);
-    for (const id of allServiceIdsQuery.data ?? []) ids.add(id);
+    for (const service of allServicesQuery.data ?? []) {
+      const id = service.serviceId || service.service_id || "";
+      if (id) ids.add(id);
+    }
     return ids;
-  }, [fullServiceIds, allServiceIdsQuery.data]);
+  }, [fullServiceIds, allServicesQuery.data]);
 
   const {
     pricePerUnitError,
@@ -1958,7 +1888,7 @@ export function useServicesManagement() {
     // Remounts the client-paged table so pagination returns to page 1 on a filter change.
     tableKey: serviceListUsesServer
       ? `server-${registryEpoch}`
-      : `${filterStatus}-${filterTaskType}-${filterTier}-${filterModelName}-${filterServiceId}-${registryEpoch}`,
+      : `${filterStatus}-${filterTaskType}-${filterTier}-${registryEpoch}`,
     serviceListCatalogue,
     serviceListUsesServer,
     registryPage,
@@ -1972,12 +1902,6 @@ export function useServicesManagement() {
     setServerFilterValue,
     searchQuery,
     setSearchQuery: applyServiceSearch,
-    filterModelName,
-    setFilterModelName,
-    modelNameFilterOptions,
-    filterServiceId,
-    setFilterServiceId,
-    serviceIdFilterOptions,
     filterStatus,
     setFilterStatus,
     filterTaskType,
