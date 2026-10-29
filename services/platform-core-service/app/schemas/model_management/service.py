@@ -978,11 +978,12 @@ class ServiceResponse(BaseSchema):
     # validate_expected_response_schema's docstring) — there is no fixed
     # field set to name here, unlike the fields above.
     expectedResponseSchema: Optional[Dict[str, Any]] = None
-    # service_to_dict() also emits these two — added here to match; without
-    # them FastAPI would silently strip both from every response (createdAt
+    # service_to_dict() also emits these three — added here to match; without
+    # them FastAPI would silently strip them from every response (createdAt
     # is read by the frontend's Services table, ServicesManagement.tsx).
     deletedAt: Optional[str] = None
     createdAt: Optional[str] = None
+    updatedAt: Optional[str] = None
     createdBy: Optional[str] = None
     updatedBy: Optional[str] = None
 
@@ -990,6 +991,10 @@ class ServiceResponse(BaseSchema):
 class ServiceListItem(ServiceResponse):
     """List response item — augmented with the inline model snippet."""
 
+    # Required on ServiceResponse, optional here: GET /services?columns=...
+    # leaves out every field the selected columns don't need.
+    modelId: Optional[str] = None
+    modelVersion: Optional[str] = None
     languages: List[LanguagePairLenient] = Field(default_factory=list)
     versionStatus: Optional[str] = None
     modelName: Optional[str] = None

@@ -215,6 +215,7 @@ class ServiceService:
         filters: Optional[ServiceListFilters] = None,
         sort_by: Optional[str] = None,
         sort_order: str = "asc",
+        include_tier_names: bool = True,
     ) -> Tuple[List[Dict[str, Any]], int]:
         rows = await self._services.list_services(
             task_types=task_types,
@@ -226,14 +227,19 @@ class ServiceService:
             sort_by=sort_by,
             sort_order=sort_order,
         )
-        all_tier_ids = list({tid for svc, _ in rows for tid in (svc.tier_ids or [])})
-        tier_name_map = await self._services.get_tier_names_by_ids(all_tier_ids)
+        tier_name_map = None
+        if include_tier_names:
+            all_tier_ids = list({tid for svc, _ in rows for tid in (svc.tier_ids or [])})
+            tier_name_map = await self._services.get_tier_names_by_ids(all_tier_ids)
         items = [
             service_to_dict(
                 service,
                 model=model,
                 include_task_languages=True,
-                tier_names=[tier_name_map.get(tid) for tid in service.tier_ids] if service.tier_ids else None,
+                tier_names=(
+                    [tier_name_map.get(tid) for tid in service.tier_ids]
+                    if tier_name_map is not None and service.tier_ids else None
+                ),
             )
             for service, model in rows
         ]
