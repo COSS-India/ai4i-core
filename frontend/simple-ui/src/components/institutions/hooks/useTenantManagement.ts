@@ -1177,7 +1177,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   const loadContactAdmins = async (
     tenantId: string,
-    options?: { excludeUserId?: string | null; excludeEmail?: string | null },
+    options?: { excludeUserId?: string | null },
   ) => {
     const gen = ++contactAdminLoadGen.current;
     setContactAdmins([]);
@@ -1221,11 +1221,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
           isDefaultOrganisation: isDefaultTenant(unmasked),
         })
       ) {
-        // Prefer contact user id when BE returns it; else match masked list-row
-        // email to masked GET /users emails (unmasked form email never matches).
+        // Exclude by id only when BE returns it. Masked-email fallback collides
+        // across users; CONTACT_ALREADY_CURRENT covers picking the current contact.
         void loadContactAdmins(unmasked.tenant_id, {
           excludeUserId: unmasked.contact_user_id,
-          excludeEmail: t.email,
         });
       }
     } catch (err) {

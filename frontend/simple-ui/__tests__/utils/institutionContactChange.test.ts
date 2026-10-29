@@ -59,24 +59,22 @@ describe("listOtherActiveInstitutionAdmins (AI4IDS-3401)", () => {
     ]);
   });
 
-  it("falls back to excluding by masked email when user id is unknown", () => {
-    const options = listOtherActiveInstitutionAdmins(
-      [
-        admin({
-          user_id: "current",
-          email: "a***@acme.com",
-          full_name: "Current Contact",
-        }),
-        admin({
-          user_id: "other",
-          email: "p***@acme.com",
-          full_name: "Priya Sharma",
-        }),
-      ],
-      { excludeEmail: "A***@acme.com" },
-    );
+  it("keeps the current contact when excludeUserId is absent (BE guards save)", () => {
+    const options = listOtherActiveInstitutionAdmins([
+      admin({
+        user_id: "current",
+        email: "a***@acme.com",
+        full_name: "Current Contact",
+      }),
+      admin({
+        user_id: "other",
+        email: "p***@acme.com",
+        full_name: "Priya Sharma",
+      }),
+    ]);
 
     expect(options).toEqual([
+      { userId: "current", label: "Current Contact · a***@acme.com" },
       { userId: "other", label: "Priya Sharma · p***@acme.com" },
     ]);
   });

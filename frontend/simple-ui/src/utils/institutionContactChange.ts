@@ -12,13 +12,13 @@ export type InstitutionContactAdminOption = {
 };
 
 export type ListContactAdminOptions = {
-  /** Prefer this — BE should return the current contact's user id. */
-  excludeUserId?: string | null;
   /**
-   * Fallback when user id is unknown. Pass the *masked* list-row email so it
-   * can match masked emails from GET /tenants/{id}/users.
+   * Current contact's user id when GET /tenants/{id} returns it.
+   * No email fallback — masked addresses collide across users.
+   * If absent, the picker may include the current contact; BE returns
+   * CONTACT_ALREADY_CURRENT on save.
    */
-  excludeEmail?: string | null;
+  excludeUserId?: string | null;
 };
 
 function contactAdminLabel(user: TenantUserView): string {
@@ -27,32 +27,22 @@ function contactAdminLabel(user: TenantUserView): string {
   return email ? `${name} · ${email}` : name;
 }
 
-function isCurrentContact(
-  user: TenantUserView,
-  options?: ListContactAdminOptions,
-): boolean {
-  if (options?.excludeUserId && user.user_id === options.excludeUserId) {
-    return true;
-  }
-  const excludeEmail = normalizeEmail(options?.excludeEmail ?? "");
-  if (!excludeEmail) return false;
-  return normalizeEmail(user.email ?? "") === excludeEmail;
-}
-
 /**
  * Active, verified Institution Admins of this institution, excluding the
- * current contact. Emails stay masked; the save sends `user_id`.
+ * current contact when `excludeUserId` is known. Emails stay masked; the
+ * save sends `user_id`.
  */
 export function listOtherActiveInstitutionAdmins(
   users: readonly TenantUserView[],
   options?: ListContactAdminOptions,
 ): InstitutionContactAdminOption[] {
+  const excludeUserId = options?.excludeUserId || null;
   const out: InstitutionContactAdminOption[] = [];
   for (const user of users) {
     if (!user.user_id || !user.is_active) continue;
     if (user.is_activated === false) continue;
     if (!tenantUserHasRole(user, "TENANT ADMIN")) continue;
-    if (isCurrentContact(user, options)) continue;
+    if (excludeUserId && user.user_id === excludeUserId) continue;
     const email = normalizeEmail(user.email ?? "");
     if (!email) continue;
     out.push({ userId: user.user_id, label: contactAdminLabel(user) });

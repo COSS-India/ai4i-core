@@ -18,13 +18,14 @@ export const EMAIL_ALREADY_EXISTS_MSG =
   "This email is already associated with an existing account";
 export const EMAIL_AVAILABLE_MSG = "Email is available.";
 
-/** PATCH /tenants/{id} email uniqueness conflicts (AI4IDS-3401 / #1818). */
+/**
+ * PATCH /tenants/{id} typed-email uniqueness conflicts (AI4IDS-3401 / #1818).
+ * CONTACT_* picker failures are intentionally omitted — Change contact has no
+ * email field error UI, so those codes must reach showError as toasts.
+ */
 export const TENANT_EMAIL_CONFLICT_CODES = new Set([
   "DUPLICATE_EMAIL",
   "DUPLICATE_TENANT_EMAIL",
-  "CONTACT_NOT_INSTITUTION_ADMIN",
-  "CONTACT_NOT_VERIFIED",
-  "CONTACT_ALREADY_CURRENT",
 ]);
 
 export function normalizeEmail(email: string): string {

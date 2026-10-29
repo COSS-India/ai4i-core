@@ -122,6 +122,16 @@ describe("mapTenantEmailConflictToFieldError (AI4IDS-3401)", () => {
         conflict("TENANT_EMAIL_EDIT_NOT_ALLOWED", "Locked"),
       ),
     ).toBeUndefined();
+    expect(
+      mapTenantEmailConflictToFieldError(
+        conflict("CONTACT_ALREADY_CURRENT", "Already the contact."),
+      ),
+    ).toBeUndefined();
+    expect(
+      mapTenantEmailConflictToFieldError(
+        conflict("CONTACT_NOT_VERIFIED", "Not set up."),
+      ),
+    ).toBeUndefined();
   });
 
   it("falls back to EMAIL_ALREADY_EXISTS_MSG when detail has no message", () => {
