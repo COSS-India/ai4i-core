@@ -1,5 +1,6 @@
 import { CloseIcon } from "@chakra-ui/icons";
 import {
+  HStack,
   IconButton,
   Input,
   InputGroup,
@@ -8,6 +9,7 @@ import {
   Th,
   Tooltip,
   Tr,
+  VStack,
   type TableColumnHeaderProps,
 } from "@chakra-ui/react";
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -15,6 +17,22 @@ import type {
   DataTableColumnFilterConfig,
   DataTableColumnFilters,
 } from "./dataTableTypes";
+
+/** Packed form for `date_range` column filters (`from~to`, either side optional). */
+export function encodeDateRangeFilter(from: string, to: string): string {
+  const start = from.trim();
+  const end = to.trim();
+  if (!start && !end) return "";
+  return `${start}~${end}`;
+}
+
+export function parseDateRangeFilter(value: string): { from: string; to: string } {
+  const raw = value.trim();
+  if (!raw) return { from: "", to: "" };
+  const sep = raw.indexOf("~");
+  if (sep < 0) return { from: raw, to: "" };
+  return { from: raw.slice(0, sep).trim(), to: raw.slice(sep + 1).trim() };
+}
 
 /** Column fields the per-column search needs; keeps this file free of DataTable imports. */
 export type FilterableColumn<T> = {
@@ -105,74 +123,55 @@ export function withAutoColumnFilters<T, C extends FilterableColumn<T>>(
   );
 }
 
-type ToolbarFilterRef = { id: string; param?: string; type?: string };
-
-/** Normalize ids so `taskType` / `task_type` / `modelTaskType` all match `task`. */
-function columnIdAliases(id: string): string[] {
-  const raw = id.trim().toLowerCase();
-  const compact = raw.replaceAll(/[_-]/g, "");
-  const aliases = new Set<string>([raw, compact]);
-  if (
-    compact === "task" ||
-    compact === "tasktype" ||
-    compact === "modeltasktype" ||
-    compact === "model_task_type".replaceAll("_", "")
-  ) {
-    aliases.add("task");
-    aliases.add("tasktype");
-    aliases.add("task_type");
-    aliases.add("modeltasktype");
-    aliases.add("model_task_type");
-  }
-  if (compact === "tenant" || compact === "institution" || compact === "tenantid") {
-    aliases.add("tenant");
-    aliases.add("institution");
-    aliases.add("tenant_id");
-  }
-  if (compact === "level" || compact === "status") {
-    aliases.add("status");
-    aliases.add("level");
-  }
-  return Array.from(aliases);
-}
-
 /**
- * Toolbar select/date filters that already filter a column — that column
- * should not also expose header sort (same field in two places).
- */
-export function toolbarBlockedSortColumnIds(
-  filterDefs?: readonly ToolbarFilterRef[],
-): Set<string> {
-  const blocked = new Set<string>();
-  for (const def of filterDefs ?? []) {
-    if (def.type === "text") continue;
-    for (const alias of columnIdAliases(def.id)) blocked.add(alias);
-    if (def.param) {
-      for (const alias of columnIdAliases(def.param)) blocked.add(alias);
-    }
-  }
-  return blocked;
-}
-
-function isToolbarBlockedColumn(columnId: string, blocked: Set<string>): boolean {
-  return columnIdAliases(columnId).some((alias) => blocked.has(alias));
-}
-
-/**
- * Shared sort rule for every admin table: every data column is sortable
- * except Actions and columns already owned by a toolbar filter.
+ * Every data column is sortable except Actions.
+ * Toolbar filters may still own the same field for filtering; that must not
+ * hide sort (Services Status / Task Type stay sortable with toolbar selects).
  */
 export function withAutoColumnSort<T, C extends FilterableColumn<T> & { sortable?: boolean }>(
   columns: readonly C[],
-  filterDefs?: readonly ToolbarFilterRef[],
 ): C[] {
-  const blocked = toolbarBlockedSortColumnIds(filterDefs);
   return columns.map((col) => {
-    if (isActionsColumn(col) || isToolbarBlockedColumn(col.id, blocked)) {
+    if (isActionsColumn(col)) {
       return { ...col, sortable: false };
     }
     return { ...col, sortable: true };
   });
+}
+
+function rowDateMillis<T>(col: FilterableColumn<T>, row: T): number | null {
+  const raw = col.filterAccessor
+    ? col.filterAccessor(row)
+    : col.sortAccessor
+      ? col.sortAccessor(row)
+      : (row as Record<string, unknown>)[col.id];
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return null;
+  if (raw === Number.POSITIVE_INFINITY) return null;
+  return raw;
+}
+
+/** Inclusive local calendar-day bounds (`YYYY-MM-DD`), matching list API date_range. */
+function rowMatchesDateRangeFilter<T>(
+  col: FilterableColumn<T>,
+  row: T,
+  encoded: string,
+): boolean {
+  const { from, to } = parseDateRangeFilter(encoded);
+  if (!from && !to) return true;
+  const ms = rowDateMillis(col, row);
+  if (ms == null) return false;
+  if (from) {
+    const start = Date.parse(`${from}T00:00:00`);
+    if (!Number.isNaN(start) && ms < start) return false;
+  }
+  if (to) {
+    const endDay = new Date(`${to}T00:00:00`);
+    if (!Number.isNaN(endDay.getTime())) {
+      endDay.setDate(endDay.getDate() + 1);
+      if (ms >= endDay.getTime()) return false;
+    }
+  }
+  return true;
 }
 
 function rowMatchesColumnFilter<T>(
@@ -181,6 +180,9 @@ function rowMatchesColumnFilter<T>(
   index: number,
   needle: string,
 ): boolean {
+  if (col.filter && col.filter.type === "date_range") {
+    return rowMatchesDateRangeFilter(col, row, needle);
+  }
   if (col.filter && col.filter.type === "select" && col.filterAccessor) {
     const raw = col.filterAccessor(row);
     if (Array.isArray(raw)) {
@@ -275,10 +277,11 @@ function TextColumnFilterInput({
 
   return (
     <Tooltip label={error ?? config.helper} isDisabled={!error && !config.helper} hasArrow>
-      <InputGroup size="xs">
+      <InputGroup size="sm" w="full" minW={0} maxW="100%">
         <Input
           {...FILTER_CONTROL_STYLE}
-          pr={draft ? 6 : 2}
+          pl={2}
+          pr={draft ? 7 : 2}
           value={draft}
           placeholder={config.placeholder ?? "Search"}
           aria-label={name}
@@ -292,14 +295,16 @@ function TextColumnFilterInput({
           }}
         />
         {draft ? (
-          <InputRightElement h="28px" w={6}>
+          <InputRightElement h="100%" w={7}>
             <IconButton
               aria-label={`Clear ${name.toLowerCase()}`}
-              icon={<CloseIcon boxSize="7px" />}
+              icon={<CloseIcon boxSize="8px" />}
               size="xs"
               variant="ghost"
               minW={5}
+              w={5}
               h={5}
+              borderRadius="md"
               color="ink.500"
               onMouseDown={(e) => e.preventDefault()}
               onClick={clear}
@@ -311,19 +316,134 @@ function TextColumnFilterInput({
   );
 }
 
+/** Tall enough for 12px text + padding; focus stays inside the cell (no outer ring). */
 const FILTER_CONTROL_STYLE = {
-  h: "28px",
+  h: "30px",
+  minH: "30px",
   minW: 0,
   w: "100%",
+  maxW: "100%",
   fontSize: "12px",
+  lineHeight: "1.25",
   fontWeight: "normal",
+  letterSpacing: "normal",
+  textTransform: "none" as const,
   borderRadius: "6px",
   bg: "white",
+  borderWidth: "1px",
   borderColor: "ink.200",
   color: "ink.800",
+  boxShadow: "none",
+  sx: {
+    minWidth: "0 !important",
+    boxSizing: "border-box",
+  },
   _hover: { borderColor: "ink.300" },
-  _placeholder: { color: "ink.400" },
+  _focus: {
+    borderColor: "blue.400",
+    boxShadow: "none",
+  },
+  _focusVisible: {
+    borderColor: "blue.500",
+    boxShadow: "none",
+  },
+  _invalid: {
+    borderColor: "red.400",
+    boxShadow: "none",
+  },
+  _placeholder: { color: "ink.400", textOverflow: "ellipsis" },
 } as const;
+
+function DateRangeColumnFilterInput({
+  label,
+  config,
+  value,
+  onChange,
+}: Readonly<{
+  label: string;
+  config: Extract<DataTableColumnFilterConfig, { type: "date_range" }>;
+  value: string;
+  onChange: (next: string) => void;
+}>) {
+  const parsed = parseDateRangeFilter(value);
+  const [from, setFrom] = useState(parsed.from);
+  const [to, setTo] = useState(parsed.to);
+  const committed = useRef(value);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+
+  useEffect(() => {
+    committed.current = value;
+    const next = parseDateRangeFilter(value);
+    setFrom(next.from);
+    setTo(next.to);
+  }, [value]);
+
+  const commit = useCallback((nextFrom: string, nextTo: string) => {
+    const encoded = encodeDateRangeFilter(nextFrom, nextTo);
+    if (encoded === committed.current.trim()) return;
+    committed.current = encoded;
+    onChangeRef.current(encoded);
+  }, []);
+
+  const clear = () => {
+    setFrom("");
+    setTo("");
+    commit("", "");
+  };
+
+  return (
+    <HStack spacing={1} align="center" minW={0} w="full">
+      <VStack spacing={1} align="stretch" flex={1} minW={0}>
+        <Input
+          {...FILTER_CONTROL_STYLE}
+          type="date"
+          pl={2}
+          pr={2}
+          value={from}
+          placeholder={config.fromPlaceholder ?? "From"}
+          aria-label={`${label} from`}
+          title={`${label} from`}
+          onChange={(e) => {
+            const next = e.target.value;
+            setFrom(next);
+            commit(next, to);
+          }}
+        />
+        <Input
+          {...FILTER_CONTROL_STYLE}
+          type="date"
+          pl={2}
+          pr={2}
+          value={to}
+          placeholder={config.toPlaceholder ?? "To"}
+          aria-label={`${label} to`}
+          title={`${label} to`}
+          onChange={(e) => {
+            const next = e.target.value;
+            setTo(next);
+            commit(from, next);
+          }}
+        />
+      </VStack>
+      {from || to ? (
+        <IconButton
+          aria-label={`Clear ${label.toLowerCase()} dates`}
+          icon={<CloseIcon boxSize="8px" />}
+          size="xs"
+          variant="ghost"
+          minW={5}
+          w={5}
+          h={5}
+          flexShrink={0}
+          borderRadius="md"
+          color="ink.500"
+          onClick={clear}
+        />
+      ) : null}
+    </HStack>
+  );
+}
 
 function ColumnFilterInput({
   label,
@@ -339,8 +459,10 @@ function ColumnFilterInput({
   if (config.type === "select") {
     return (
       <Select
-        size="xs"
+        size="sm"
         {...FILTER_CONTROL_STYLE}
+        pl={2}
+        pr={8}
         value={value}
         aria-label={`Filter ${label}`}
         onChange={(e) => onChange(e.target.value)}
@@ -352,6 +474,16 @@ function ColumnFilterInput({
           </option>
         ))}
       </Select>
+    );
+  }
+  if (config.type === "date_range") {
+    return (
+      <DateRangeColumnFilterInput
+        label={label}
+        config={config}
+        value={value}
+        onChange={onChange}
+      />
     );
   }
   return (
@@ -381,13 +513,21 @@ export function ColumnFilterRow<T>({
       {columns.map((col) => (
         <Th
           key={col.id}
-          pt={0}
-          pb={2}
-          px={2}
+          pt={1}
+          pb={2.5}
+          px={3}
+          minW={0}
+          maxW="100%"
           textTransform="none"
           letterSpacing="normal"
-          overflow="hidden"
+          fontWeight="normal"
+          verticalAlign="middle"
           display={col.thProps?.display}
+          sx={{
+            // Keep the control inside the column; do not clip focus borders.
+            overflow: "visible",
+            "& > *": { minWidth: 0, maxWidth: "100%", display: "block" },
+          }}
         >
           {col.filter ? (
             <ColumnFilterInput
@@ -399,7 +539,7 @@ export function ColumnFilterRow<T>({
           ) : null}
         </Th>
       ))}
-      {trailingCell ? <Th pt={0} pb={2} /> : null}
+      {trailingCell ? <Th pt={1} pb={2.5} px={1} /> : null}
     </Tr>
   );
 }

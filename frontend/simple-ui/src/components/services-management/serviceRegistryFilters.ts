@@ -3,7 +3,12 @@ import type { ServiceTierFilterOption } from "../../hooks/useServicesManagement"
 import type { Service } from "../../types/platform";
 import type { DataTableFilterDef } from "../common/dataTableTypes";
 import {
+  encodeDateRangeFilter,
+  parseDateRangeFilter,
+} from "../common/DataTableColumnFilter";
+import {
   serviceListCellKey,
+  serviceListRangeFilterKeys,
   serviceListServiceId,
   serviceModelName,
   type ServiceListColumnDef,
@@ -16,14 +21,39 @@ const TOOLBAR_FILTER_ORDER = ["status", "task"] as const;
 
 /**
  * Column search that maps to server filter params.
- * Status and task type stay on the toolbar selects only.
+ * Name is the toolbar search. Status and task type stay on the toolbar selects.
  */
 export const SERVICE_COLUMN_SEARCH_KEYS = new Set([
-  "name",
   "tier",
   "modelName",
   "serviceId",
 ]);
+
+/**
+ * Date columns use `date_range` UI and `columnId__from` / `columnId__to` in
+ * serverFilters (see {@link serviceListRangeFilterKeys}).
+ */
+export const SERVICE_COLUMN_DATE_KEYS = new Set(["createdAt", "publishedOn"]);
+
+/** Sent when a tier name search matches nothing, so the list stays empty. */
+export const UNMATCHED_TIER_FILTER = "__no_tier__";
+
+/** Tier column search is a name. The list API filters by tier id. */
+export function tierIdsForColumnSearch(
+  query: string,
+  tiers: readonly { id: string; name: string }[],
+): string {
+  const q = query.trim().toLowerCase();
+  if (!q) return "";
+  const ids = tiers
+    .filter((tier) => {
+      const name = tier.name.trim().toLowerCase();
+      return name.includes(q) || tier.id.trim().toLowerCase() === q;
+    })
+    .map((tier) => tier.id);
+  if (ids.length === 0) return UNMATCHED_TIER_FILTER;
+  return ids.join(",");
+}
 
 function selectOptionsForColumn(
   column: ServiceListColumnDef,
@@ -218,4 +248,28 @@ export function statusFilterToApiValue(status: string): string {
   if (status === "published") return "true";
   if (status === "unpublished") return "false";
   return "";
+}
+
+/** Read packed column date_range UI value from `columnId__from` / `__to` server keys. */
+export function dateRangeColumnFilterValue(
+  columnId: string,
+  serverFilters: Record<string, string> | undefined,
+): string {
+  const keys = serviceListRangeFilterKeys(columnId);
+  return encodeDateRangeFilter(
+    serverFilters?.[keys.from] ?? "",
+    serverFilters?.[keys.to] ?? "",
+  );
+}
+
+/** Write packed date_range UI value into `columnId__from` / `__to` server keys. */
+export function applyDateRangeColumnFilter(
+  columnId: string,
+  encoded: string,
+  onChange: (filterKey: string, value: string) => void,
+): void {
+  const keys = serviceListRangeFilterKeys(columnId);
+  const { from, to } = parseDateRangeFilter(encoded);
+  onChange(keys.from, from);
+  onChange(keys.to, to);
 }

@@ -2,6 +2,8 @@ import React from "react";
 import {
   activeColumnFilterCount,
   applyColumnFilters,
+  encodeDateRangeFilter,
+  parseDateRangeFilter,
   setColumnFilterValue,
   withAutoColumnFilters,
   withAutoColumnSort,
@@ -43,31 +45,22 @@ describe("withAutoColumnSort", () => {
     expect(result.map((c) => c.sortable)).toEqual([true, true, false, false]);
   });
 
-  it("disables sort for columns owned by toolbar select filters", () => {
-    const result = withAutoColumnSort<Row, FilterableColumn<Row> & { sortable?: boolean }>(
-      [
-        { id: "latency", header: "Latency" },
-        { id: "status", header: "Status" },
-        { id: "task_type", header: "Task Type" },
-        { id: "institution", header: "Institution" },
-        { id: "method", header: "Method" },
-        { id: "timestamp", header: "Timestamp" },
-        { id: "actions", header: "Actions" },
-      ],
-      [
-        { id: "status", type: "select" },
-        { id: "taskType", type: "select" },
-        { id: "tenant", type: "select" },
-        { id: "method", type: "select" },
-        { id: "q", type: "text" },
-      ],
-    );
+  it("keeps every data column sortable; only Actions is excluded", () => {
+    const result = withAutoColumnSort<Row, FilterableColumn<Row> & { sortable?: boolean }>([
+      { id: "latency", header: "Latency" },
+      { id: "status", header: "Status" },
+      { id: "task_type", header: "Task Type" },
+      { id: "institution", header: "Institution" },
+      { id: "method", header: "Method" },
+      { id: "timestamp", header: "Timestamp" },
+      { id: "actions", header: "Actions" },
+    ]);
     expect(result.find((c) => c.id === "latency")?.sortable).toBe(true);
     expect(result.find((c) => c.id === "timestamp")?.sortable).toBe(true);
-    expect(result.find((c) => c.id === "status")?.sortable).toBe(false);
-    expect(result.find((c) => c.id === "task_type")?.sortable).toBe(false);
-    expect(result.find((c) => c.id === "institution")?.sortable).toBe(false);
-    expect(result.find((c) => c.id === "method")?.sortable).toBe(false);
+    expect(result.find((c) => c.id === "status")?.sortable).toBe(true);
+    expect(result.find((c) => c.id === "task_type")?.sortable).toBe(true);
+    expect(result.find((c) => c.id === "institution")?.sortable).toBe(true);
+    expect(result.find((c) => c.id === "method")?.sortable).toBe(true);
     expect(result.find((c) => c.id === "actions")?.sortable).toBe(false);
   });
 });
@@ -122,6 +115,50 @@ describe("applyColumnFilters", () => {
   it("searches array values and ignores columns without a filter config", () => {
     expect(applyColumnFilters(rows, columns, { tags: "tts" }).map((r) => r.id)).toEqual(["2"]);
     expect(applyColumnFilters(rows, columns, { id: "2" })).toHaveLength(3);
+  });
+
+  it("matches date_range columns on inclusive local calendar days", () => {
+    type Dated = { id: string; at: number };
+    const datedRows: Dated[] = [
+      { id: "a", at: Date.parse("2026-10-01T12:00:00") },
+      { id: "b", at: Date.parse("2026-10-15T08:00:00") },
+      { id: "c", at: Date.parse("2026-10-26T23:00:00") },
+    ];
+    const datedCols: FilterableColumn<Dated>[] = [
+      {
+        id: "at",
+        header: "Created",
+        filter: { type: "date_range" },
+        filterAccessor: (row) => row.at,
+      },
+    ];
+    expect(
+      applyColumnFilters(datedRows, datedCols, {
+        at: encodeDateRangeFilter("2026-10-15", "2026-10-26"),
+      }).map((r) => r.id),
+    ).toEqual(["b", "c"]);
+    expect(
+      applyColumnFilters(datedRows, datedCols, {
+        at: encodeDateRangeFilter("2026-10-01", ""),
+      }).map((r) => r.id),
+    ).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("date range filter encoding", () => {
+  it("packs and unpacks optional from/to bounds", () => {
+    expect(encodeDateRangeFilter("", "")).toBe("");
+    expect(encodeDateRangeFilter("2026-10-01", "2026-10-26")).toBe(
+      "2026-10-01~2026-10-26",
+    );
+    expect(parseDateRangeFilter("2026-10-01~2026-10-26")).toEqual({
+      from: "2026-10-01",
+      to: "2026-10-26",
+    });
+    expect(parseDateRangeFilter("~2026-10-26")).toEqual({
+      from: "",
+      to: "2026-10-26",
+    });
   });
 });
 

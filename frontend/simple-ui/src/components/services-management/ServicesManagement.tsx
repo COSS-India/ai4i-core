@@ -21,7 +21,9 @@ import ServiceRegistryTab from "./ServiceRegistryTab";
 import ServiceFormTab from "./ServiceFormTab";
 import ServiceDetailTab from "./ServiceDetailTab";
 import {
+  serviceCreatedAtMillis,
   serviceListCellKey,
+  servicePublishedOnMillis,
   type ServiceListColumnDef,
 } from "./serviceListColumns";
 import { useServiceListVisibleColumns } from "./useServiceListVisibleColumns";
@@ -350,6 +352,8 @@ const ServicesManagement: React.FC = () => {
     totalServicesCount,
     isLoading,
     tableKey,
+    searchQuery,
+    setSearchQuery,
     filterStatus,
     setFilterStatus,
     filterTaskType,
@@ -496,13 +500,16 @@ const ServicesManagement: React.FC = () => {
         header: "Name",
         sortable: true,
         minWidth: "9rem",
+        // Toolbar search owns this field.
+        filter: false,
         sortAccessor: (service) => service.name ?? "",
         cell: renderServiceNameCell,
       },
       {
         id: "task",
         header: "Task Type",
-        // Toolbar select owns this field — no column search; sort via autoColumnSort.
+        sortable: true,
+        // Toolbar select owns filter; column stays sortable.
         filter: false,
         cell: renderServiceTaskTypeCell,
       },
@@ -512,23 +519,17 @@ const ServicesManagement: React.FC = () => {
         hint: FIELD_HINTS.service.col.tier,
         sortable: true,
         minWidth: "7rem",
-        // API expects tier ids on `tier_ids`; a text box would send the name.
-        filter: {
-          type: "select",
-          options: tierFilterOptions.map((tier) => ({
-            label: tier.name,
-            value: tier.id,
-          })),
-        },
+        filter: { type: "text", placeholder: "Search" },
         filterAccessor: (service) =>
-          (service.tierIds ?? []).map(String),
+          (service.tierNames ?? service.tiers ?? []).join(" "),
         cell: renderServiceTierCell,
       },
       {
         id: "status",
         header: "Status",
         hint: FIELD_HINTS.service.col.status,
-        // Toolbar select owns this field — no column search; sort via autoColumnSort.
+        sortable: true,
+        // Toolbar select owns filter; column stays sortable.
         filter: false,
         cell: renderServiceStatusCell,
       },
@@ -536,6 +537,9 @@ const ServicesManagement: React.FC = () => {
         id: "createdAt",
         header: "Created At",
         sortable: true,
+        minWidth: "9rem",
+        filter: { type: "date_range" },
+        filterAccessor: (service) => serviceCreatedAtMillis(service),
         cell: renderServiceCreatedAtCell,
       },
       {
@@ -543,6 +547,7 @@ const ServicesManagement: React.FC = () => {
         header: "Model Name",
         sortable: true,
         minWidth: "7rem",
+        filter: { type: "text", placeholder: "Search" },
         cell: renderServiceModelNameCell,
       },
       {
@@ -550,6 +555,7 @@ const ServicesManagement: React.FC = () => {
         header: "Service ID",
         sortable: true,
         minWidth: "7rem",
+        filter: { type: "text", placeholder: "Search" },
         cell: renderServiceIdCell,
       },
       {
@@ -559,6 +565,8 @@ const ServicesManagement: React.FC = () => {
         sortable: true,
         isNumeric: true,
         maxW: "6rem",
+        // GET /services has no price filter params (catalogue leaves filter_type unset).
+        filter: false,
         cell: renderServiceInputPriceCell,
       },
       {
@@ -568,6 +576,8 @@ const ServicesManagement: React.FC = () => {
         sortable: true,
         isNumeric: true,
         maxW: "6rem",
+        // GET /services has no price filter params (catalogue leaves filter_type unset).
+        filter: false,
         cell: renderServiceOutputPriceCell,
       },
       {
@@ -577,6 +587,8 @@ const ServicesManagement: React.FC = () => {
         sortable: true,
         isNumeric: true,
         maxW: "7rem",
+        // GET /services has no price filter params (catalogue leaves filter_type unset).
+        filter: false,
         cell: renderServiceCachedInputPriceCell,
       },
       {
@@ -584,6 +596,9 @@ const ServicesManagement: React.FC = () => {
         header: "Published On",
         hint: FIELD_HINTS.service.col.publishedOn,
         sortable: true,
+        minWidth: "9rem",
+        filter: { type: "date_range" },
+        filterAccessor: (service) => servicePublishedOnMillis(service),
         cell: renderServicePublishedOnCell,
       },
     ];
@@ -596,7 +611,7 @@ const ServicesManagement: React.FC = () => {
       );
     }
     return columns;
-  }, [actionsContext, tierFilterOptions]);
+  }, [actionsContext]);
 
   const serviceColumns = useMemo(
     () =>
@@ -710,6 +725,8 @@ const ServicesManagement: React.FC = () => {
         totalServicesCount={totalServicesCount}
         onRowClick={(service) => handleViewService(serviceRowId(service))}
         tableKey={tableKey}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
         filterStatus={filterStatus}
         onFilterStatusChange={setFilterStatus}
         filterTaskType={filterTaskType}

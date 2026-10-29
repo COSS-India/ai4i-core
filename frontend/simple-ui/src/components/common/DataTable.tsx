@@ -195,6 +195,11 @@ export interface DataTableCardProps<T> extends DataTableSharedProps<T> {
    */
   sort?: DataTableSortState;
   onSortChange?: (next: DataTableSortState) => void;
+  /**
+   * Make every non-actions column sortable. Off by default so card tables keep
+   * their explicit `sortable` flags (same opt-in as admin layout).
+   */
+  autoColumnSort?: boolean;
   showAsyncState?: boolean;
   isEmpty?: boolean;
   errorMessage?: string | null;
@@ -1277,6 +1282,7 @@ function CardLayoutDataTable<T>({
   sortable: sortingEnabled = true,
   sort: controlledSort,
   onSortChange,
+  autoColumnSort = false,
   showAsyncState = true,
   isLoading = false,
   isEmpty = false,
@@ -1301,8 +1307,11 @@ function CardLayoutDataTable<T>({
   const resolvedCellPy = cellPy ?? defaults.cellPy;
   const resolvedContainerMt = containerMt ?? defaults.containerMt;
   const resolvedColumns = useMemo(
-    () => withAutoColumnSort<T, DataTableColumn<T>>(columns),
-    [columns],
+    () =>
+      autoColumnSort
+        ? withAutoColumnSort<T, DataTableColumn<T>>(columns)
+        : columns,
+    [autoColumnSort, columns],
   );
   const sortAccessors = useMemo(
     () => buildSortAccessors(resolvedColumns),
@@ -1864,7 +1873,13 @@ function AdminTableHead<T>({
   const hasFilterRow = columns.some((col) => col.filter);
   return (
     <Thead bg="ink.50" position="sticky" top={0} zIndex={1}>
-      <Tr sx={hasFilterRow ? { "& > th": { borderBottomWidth: 0, pb: 2 } } : undefined}>
+      <Tr
+        sx={
+          hasFilterRow
+            ? { "& > th": { borderBottomWidth: 0, pt: 2.5, pb: 1 } }
+            : undefined
+        }
+      >
         {columns.map((col) => {
           const layout = columnLayouts.get(col.id) ?? { minW: 0 };
           const title =
@@ -1873,6 +1888,7 @@ function AdminTableHead<T>({
             <Th
               key={col.id}
               py={3}
+              px={3}
               title={title}
               overflow={layout.whiteSpace === "nowrap" ? "visible" : "hidden"}
               w={layout.w}
@@ -2147,8 +2163,8 @@ function useAdminColumnFilteredItems<T>(options: Readonly<{
       ? withAutoColumnFilters<T, DataTableColumn<T>>(columns, pageOnlyHelper)
       : columns;
     if (!autoColumnSort) return withFilters;
-    return withAutoColumnSort<T, DataTableColumn<T>>(withFilters, filterDefs);
-  }, [columnSearch, autoColumnSort, paginate, columns, filterDefs]);
+    return withAutoColumnSort<T, DataTableColumn<T>>(withFilters);
+  }, [columnSearch, autoColumnSort, paginate, columns]);
   // Server + parent-owned filters: keep exact API inputs off the client matcher
   // (`500, 503` / `env = prod` would empty the table). Page-only columns still
   // filter the loaded rows.

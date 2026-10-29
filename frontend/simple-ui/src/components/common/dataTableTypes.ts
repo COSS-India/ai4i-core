@@ -100,6 +100,8 @@ export type DataTableFilterDef = {
  * Per-column search shown as a search icon in the column header.
  * - `text`: free text; client tables match case-insensitive "contains"
  * - `select`: one value from `options`; client tables match exactly
+ * - `date_range`: from/to `YYYY-MM-DD` (local); stored as `from~to` in
+ *   {@link DataTableColumnFilters}; client tables match inclusive calendar days
  */
 export type DataTableColumnFilterConfig =
   | {
@@ -113,6 +115,11 @@ export type DataTableColumnFilterConfig =
   | {
       type: "select";
       options: DataTableFilterOption[];
+    }
+  | {
+      type: "date_range";
+      fromPlaceholder?: string;
+      toPlaceholder?: string;
     };
 
 /** Active per-column search values keyed by column id. Empty values are dropped. */

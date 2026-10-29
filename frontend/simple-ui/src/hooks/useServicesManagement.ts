@@ -56,6 +56,7 @@ import {
   hasActiveClientServiceFilters,
   hasActiveServerServiceFilters,
 } from "../components/services-management/serviceFormGates";
+import { serviceMatchesSearch } from "../components/services-management/serviceRegistryFilters";
 import { useAuth } from "./useAuth";
 import { isRegistryReadOnlyUser, userHasRole } from "../utils/rbac";
 import { useSessionExpiry } from "./useSessionExpiry";
@@ -709,17 +710,15 @@ export function useServicesManagement() {
   // View is always the second tab. Edit is a StandardModal, not a tab.
   const viewTabIndex = 1;
 
-  // Offline catalogue: name + tier filter, then sort, over the full fetched list.
-  // When GET /services/columns is available, filters and sort are query params
-  // and the rows are already one server page.
-  // Toolbar search filters by name. Status/task type are in the fetch query.
-  // Tier / model / service id are column searches on the table.
-  // Name search is the Name column filter (DataTable applyColumnFilters on client;
-  // serverFilters[name] on server). Do not also filter here by searchQuery.
+  // Server mode: name, status, task type, and column searches are query params.
+  // Offline catalogue: name is filtered here; other column searches run in the table.
   const registryTableItems = useMemo(() => {
     if (serviceListUsesServer) return services;
-    return registrySort.apply(services);
-  }, [services, registrySort, serviceListUsesServer]);
+    const named = searchQuery.trim()
+      ? services.filter((service) => serviceMatchesSearch(service, searchQuery))
+      : services;
+    return registrySort.apply(named);
+  }, [services, registrySort, serviceListUsesServer, searchQuery]);
 
   const tiersQuery = useQuery({
     queryKey: ACTIVE_TIERS_QUERY_KEY,
@@ -747,6 +746,8 @@ export function useServicesManagement() {
       ),
     [availableTiers, services, filterTier, pinnedTier],
   );
+  const tierFilterOptionsRef = useRef(tierFilterOptions);
+  tierFilterOptionsRef.current = tierFilterOptions;
 
   /** Remembers the label as it is picked, so a later refetch cannot orphan it. */
   const handleFilterTierChange = useCallback(
@@ -947,6 +948,7 @@ export function useServicesManagement() {
           taskFilterColumnId,
           statusFilterColumnId,
           serviceListCatalogue,
+          tierOptions: tierFilterOptionsRef.current,
           registryPage,
           registryPageSize,
           sortMode: registrySort.mode,
