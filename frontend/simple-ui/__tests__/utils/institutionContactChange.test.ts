@@ -59,7 +59,19 @@ describe("listOtherActiveInstitutionAdmins (AI4IDS-3401)", () => {
     ]);
   });
 
-  it("keeps the current contact when excludeUserId is absent (BE guards save)", () => {
+  it("returns no options for a sole admin when excludeUserId is absent", () => {
+    expect(
+      listOtherActiveInstitutionAdmins([
+        admin({
+          user_id: "current",
+          email: "a***@acme.com",
+          full_name: "Current Contact",
+        }),
+      ]),
+    ).toEqual([]);
+  });
+
+  it("lists all admins when excludeUserId is absent but alternatives exist", () => {
     const options = listOtherActiveInstitutionAdmins([
       admin({
         user_id: "current",

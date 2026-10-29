@@ -1,5 +1,5 @@
 // Service Registry tab: filterable/searchable table of all registered services
-import React, { useCallback, useMemo } from "react";
+import React, { useCallback, useState } from "react";
 import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
   type DataTableColumn,
@@ -13,11 +13,8 @@ import {
   type ServiceListColumnDef,
 } from "./serviceListColumns";
 import {
-  applyDateRangeColumnFilter,
   buildClientServiceFilterDefs,
   buildServerServiceFilterDefs,
-  dateRangeColumnFilterValue,
-  SERVICE_COLUMN_DATE_KEYS,
   SERVICE_COLUMN_SEARCH_KEYS,
 } from "./serviceRegistryFilters";
 
@@ -131,6 +128,11 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
   const serverMode = Boolean(
     serverColumns && onServerFilterChange && onServerPageChange,
   );
+  // Own full column-filter state so page-only searches (dates, prices) stick;
+  // API-backed keys are also pushed to serverFilters below.
+  const [columnFilters, setColumnFilters] = useState<DataTableColumnFilters>(
+    {},
+  );
   const serverFilterDefs = resolveServerFilterDefs({
     serverMode,
     serverColumns,
@@ -155,39 +157,14 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
     onServerPageSizeChange,
   });
 
-  const columnFilters = useMemo((): DataTableColumnFilters | undefined => {
-    if (!serverMode || !serverColumns) return undefined;
-    const next: DataTableColumnFilters = {};
-    for (const column of serverColumns) {
-      const cellKey = serviceListCellKey(column.id);
-      if (SERVICE_COLUMN_DATE_KEYS.has(cellKey)) {
-        const value = dateRangeColumnFilterValue(column.id, serverFilterValues);
-        if (value) next[column.id] = value;
-        continue;
-      }
-      if (!SERVICE_COLUMN_SEARCH_KEYS.has(cellKey)) continue;
-      const value = serverFilterValues?.[column.id];
-      if (value) next[column.id] = value;
-    }
-    return next;
-  }, [serverMode, serverColumns, serverFilterValues]);
-
   const handleColumnFiltersChange = useCallback(
     (next: DataTableColumnFilters) => {
-      if (serverMode && serverColumns && onServerFilterChange) {
-        for (const column of serverColumns) {
-          const cellKey = serviceListCellKey(column.id);
-          if (SERVICE_COLUMN_DATE_KEYS.has(cellKey)) {
-            applyDateRangeColumnFilter(
-              column.id,
-              next[column.id] ?? "",
-              onServerFilterChange,
-            );
-            continue;
-          }
-          if (SERVICE_COLUMN_SEARCH_KEYS.has(cellKey)) {
-            onServerFilterChange(column.id, next[column.id] ?? "");
-          }
+      setColumnFilters(next);
+      if (!serverMode || !serverColumns || !onServerFilterChange) return;
+      for (const column of serverColumns) {
+        const cellKey = serviceListCellKey(column.id);
+        if (SERVICE_COLUMN_SEARCH_KEYS.has(cellKey)) {
+          onServerFilterChange(column.id, next[column.id] ?? "");
         }
       }
     },
@@ -228,7 +205,7 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
       filterDefs={serverMode ? serverFilterDefs : clientFilterDefs}
       columnSearch
       autoColumnSort
-      columnFilters={columnFilters}
+      columnFilters={serverMode ? columnFilters : undefined}
       onColumnFiltersChange={serverMode ? handleColumnFiltersChange : undefined}
     />
   );

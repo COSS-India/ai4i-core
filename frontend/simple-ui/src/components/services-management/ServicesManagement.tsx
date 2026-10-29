@@ -20,9 +20,7 @@ import ServiceRegistryTab from "./ServiceRegistryTab";
 import ServiceFormTab from "./ServiceFormTab";
 import ServiceDetailTab from "./ServiceDetailTab";
 import {
-  serviceCreatedAtMillis,
   serviceListCellKey,
-  servicePublishedOnMillis,
   type ServiceListColumnDef,
 } from "./serviceListColumns";
 import {
@@ -526,8 +524,6 @@ const ServicesManagement: React.FC = () => {
         header: "Created At",
         sortable: true,
         minWidth: "9rem",
-        filter: { type: "date_range" },
-        filterAccessor: (service) => serviceCreatedAtMillis(service),
         cell: renderServiceCreatedAtCell,
       },
       {
@@ -553,8 +549,6 @@ const ServicesManagement: React.FC = () => {
         sortable: true,
         isNumeric: true,
         maxW: "6rem",
-        // GET /services has no price filter params (catalogue leaves filter_type unset).
-        filter: false,
         cell: renderServiceInputPriceCell,
       },
       {
@@ -564,8 +558,6 @@ const ServicesManagement: React.FC = () => {
         sortable: true,
         isNumeric: true,
         maxW: "6rem",
-        // GET /services has no price filter params (catalogue leaves filter_type unset).
-        filter: false,
         cell: renderServiceOutputPriceCell,
       },
       {
@@ -575,8 +567,6 @@ const ServicesManagement: React.FC = () => {
         sortable: true,
         isNumeric: true,
         maxW: "7rem",
-        // GET /services has no price filter params (catalogue leaves filter_type unset).
-        filter: false,
         cell: renderServiceCachedInputPriceCell,
       },
       {
@@ -585,8 +575,6 @@ const ServicesManagement: React.FC = () => {
         hint: FIELD_HINTS.service.col.publishedOn,
         sortable: true,
         minWidth: "9rem",
-        filter: { type: "date_range" },
-        filterAccessor: (service) => servicePublishedOnMillis(service),
         cell: renderServicePublishedOnCell,
       },
     ];
