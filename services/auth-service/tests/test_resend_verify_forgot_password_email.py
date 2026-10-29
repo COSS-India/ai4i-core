@@ -109,9 +109,13 @@ class TestResendVerificationSilentNoOp:
         svc = MagicMock(spec=AuthService)
         svc._users = MagicMock()
         svc._users.get_by_email = AsyncMock(return_value=active_user)
+        svc._credentials = MagicMock()
+        svc._verifications = MagicMock()
+        svc._tokens = MagicMock()
 
         result = await AuthService.resend_verification(svc, email="active@example.com")
         assert result is None
+        svc._tokens.create_verify_token.assert_not_called()
 
 
 class TestForgotPasswordSilentNoOp:

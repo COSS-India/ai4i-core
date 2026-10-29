@@ -483,15 +483,18 @@ async def resend_tenant_user_setup_link(
 
     Use this — not /auth/resend-verification — for users created under a tenant,
     who are provisioned passwordless and onboard via a set-password link.
+    A self-registered user still waiting on email verification gets a new
+    verification link instead.
     """
-    await svc.resend_tenant_user_setup_link(
+    link_kind = await svc.resend_tenant_user_setup_link(
         current_user, tenant_id, user_id, background_tasks
     )
-    return ResendTenantUserSetupLinkResponse(
-        data=MessageData(
-            message="A password setup link has been sent to the user's email."
-        )
+    message = (
+        "A verification link has been sent to the user's email."
+        if link_kind == "verify"
+        else "A password setup link has been sent to the user's email."
     )
+    return ResendTenantUserSetupLinkResponse(data=MessageData(message=message))
 
 
 @router.patch(

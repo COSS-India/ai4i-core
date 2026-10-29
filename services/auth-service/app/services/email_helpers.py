@@ -130,6 +130,41 @@ async def reissue_setup_token(
     return setup_token
 
 
+async def reissue_verify_token(
+    user,
+    *,
+    credentials_repo,
+    verifications_repo,
+    token_service,
+) -> Optional[str]:
+    """Invalidate ``user``'s outstanding VERIFY tokens and mint a new one.
+
+    Only for a self-signup still waiting on email verification: credentials
+    exist but the account was never activated. Returns ``None`` otherwise —
+    including for an admin-suspended user (inactive, already activated), who
+    must not be able to re-activate through a verification link.
+
+    Like ``reissue_setup_token``, it does not commit or enqueue the email.
+    """
+    from app.core.constants import TokenType
+
+    if user.is_active or user.is_activated():
+        return None
+    if await credentials_repo.get_by_user_id(user.id) is None:
+        return None  # passwordless onboarding — uses a SETUP link instead
+
+    await verifications_repo.deactivate_all_for_user(
+        str(user.id), token_type=TokenType.VERIFY
+    )
+    verify_token = token_service.create_verify_token(
+        user_id=str(user.id), email=user.email
+    )
+    await persist_token_verification(
+        verifications_repo, verify_token, user.id, setup_token_expires_at()
+    )
+    return verify_token
+
+
 async def issue_session(
     user,
     roles_svc,

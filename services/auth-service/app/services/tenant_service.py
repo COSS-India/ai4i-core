@@ -80,6 +80,7 @@ from app.services.email_helpers import (
     enqueue_email,
     persist_token_verification,
     reissue_setup_token,
+    reissue_verify_token,
     resolve_tenant_id,
     setup_token_expires_at,
 )
@@ -579,8 +580,8 @@ class TenantService:
         self, user: User, *, unmask_phone: bool = False
     ) -> dict:
         # Delegate to the batched builder so the payload shape is defined in
-        # one place; the credentials/roles lookups handle a one-element list
-        # at no extra cost.
+        # one place; the roles lookup handles a one-element list at no extra
+        # cost.
         responses = await self.build_tenant_user_responses(
             [user], unmask_phone=unmask_phone
         )
@@ -599,7 +600,6 @@ class TenantService:
             return []
         user_ids = [u.id for u in users]
         roles_by_user = await self._roles.get_roles_for_users(user_ids)
-        activated_ids = await self._credentials.user_ids_with_credentials(user_ids)
         responses: list[dict] = []
         for user in users:
             # role = self.resolve_tenant_user_role(roles_by_user.get(user.id, []))
@@ -610,7 +610,7 @@ class TenantService:
                         **base,
                         roles=roles_by_user.get(user.id, []),
                         is_tenant_active=user.is_tenant_active,
-                        is_activated=user.id in activated_ids,
+                        is_activated=user.is_activated(),
                     ).model_dump(mode="json", by_alias=True),
                     mask_phones=not unmask_phone,
                 )
@@ -1977,6 +1977,10 @@ class TenantService:
         if body.is_active is False:
             await self._assert_not_last_platform_admin(target, tenant, action="suspend")
         payload = {"is_active": body.is_active, "updated_by": current_user.id}
+        if body.is_active and not target.is_activated():
+            # An admin activating a never-activated user counts as activation,
+            # so a later Suspend shows Suspended, not Pending Activation.
+            payload["activated_at"] = datetime.now(timezone.utc)
         _assert_tenant_active_for_user_deactivation(tenant, payload)
 
         await self._users.update(target, payload)
@@ -1992,8 +1996,8 @@ class TenantService:
         tenant_id: int,
         user_id: UUID,
         background_tasks: BackgroundTasks,
-    ) -> None:
-        """Re-send the set-password (SETUP) email for a not-yet-activated tenant user.
+    ) -> Literal["setup", "verify"]:
+        """Re-send the onboarding email for a not-yet-activated tenant user.
 
         Tenant users are provisioned passwordless (``email_kind="setup"``), so
         the onboarding email is a set-password link — NOT an email-verification
@@ -2002,6 +2006,10 @@ class TenantService:
         by ``user_id`` (already unmasked in the tenant-user list) avoids the
         masked-email / PENDING-tenant limits of ``/auth/resend-setup-link``,
         which only targets the tenant contact admin.
+
+        A self-registered user still waiting on email verification already has
+        a password, so they get a fresh verification link instead. Returns
+        which kind of link was sent.
         """
         await self.enforce_scope(current_user, tenant_id)
         await self._deny_moderator(current_user)
@@ -2026,6 +2034,26 @@ class TenantService:
                 message="This user's access is suspended; reactivate before resending.",
                 code="USER_SUSPENDED",
             )
+
+        verify_token = await reissue_verify_token(
+            target,
+            credentials_repo=self._credentials,
+            verifications_repo=self._verifications,
+            token_service=self._tokens,
+        )
+        if verify_token is not None:
+            await self._users.commit()
+            logger.info(
+                "Verification link resent for tenant user id=%s (tenant %s)",
+                target.id,
+                tenant_id,
+            )
+            enqueue_email(
+                background_tasks,
+                self._email,
+                lambda: render_verify_email(target, verify_token),
+            )
+            return "verify"
 
         setup_token = await reissue_setup_token(
             target,
@@ -2053,6 +2081,7 @@ class TenantService:
             self._email,
             lambda: render_setup_link(target, setup_token),
         )
+        return "setup"
 
     async def delete_tenant_user(
         self, current_user: User, tenant_id: int, user_id: UUID, background_tasks: BackgroundTasks

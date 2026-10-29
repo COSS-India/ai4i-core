@@ -4,6 +4,7 @@ User ORM model.
 
 import enum
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
@@ -42,6 +43,12 @@ class User(Base):
         index=True,
     )
     last_login = Column(DateTime(timezone=True), nullable=True)
+    # First time the account became active (email verified, password set,
+    # OAuth signup or admin activation). Never cleared, so an inactive user
+    # with it set was suspended; without it they are Pending Activation.
+    # A credentials row can't tell these apart: self-signup stores the
+    # password before the email is verified.
+    activated_at = Column(DateTime(timezone=True), nullable=True)
     avatar_url = Column(String(500), nullable=True)
     phone_number = Column(EncryptedPhone(), nullable=True)
     timezone = Column(String(50), server_default="UTC")
@@ -81,6 +88,16 @@ class User(Base):
     def is_accessible(self) -> bool:
         """Account can be logged into: active and not soft-deleted."""
         return bool(self.is_active and not self.is_delete)
+
+    def is_activated(self) -> bool:
+        """Has been active at least once (see ``activated_at``)."""
+        return self.activated_at is not None
+
+    def mark_activated(self) -> None:
+        """Set ``is_active`` and stamp ``activated_at`` on the first activation."""
+        self.is_active = True
+        if self.activated_at is None:
+            self.activated_at = datetime.now(timezone.utc)
 
     def soft_delete(self) -> None:
         self.is_delete = True

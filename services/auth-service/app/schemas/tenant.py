@@ -357,9 +357,9 @@ class TenantUserResponse(BaseSchema):
     # ``is_active`` is never touched by tenant lifecycle changes, so the frontend
     # combines both flags to render the effective status.
     is_tenant_active: Optional[bool] = None
-    # True once the user has completed setup (a credentials row exists). Lets the
-    # frontend tell an admin-suspended user (activated, is_active=False) apart
-    # from one who never set a password (Pending Activation).
+    # True once the account has been active at least once (``users.activated_at``).
+    # Lets the frontend tell an admin-suspended user (activated, is_active=False)
+    # apart from one who never verified / set a password (Pending Activation).
     is_activated: Optional[bool] = None
     creation_type: Optional[CreationType] = None
     created_at: Optional[datetime] = None
