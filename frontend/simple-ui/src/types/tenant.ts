@@ -30,10 +30,15 @@ export interface TenantView {
   organisation: string;
   email: string;
   /**
-   * New contact email awaiting verification (AI4IDS-3401).
-   * Effective `email` stays the old address until the link is used (or 48h expiry).
+   * New contact email awaiting verification (legacy; removed from auth-service
+   * after #1858 — kept optional for older payloads).
    */
   pending_email?: string | null;
+  /**
+   * Current contact's user id when BE returns it (AI4IDS-3401 / #1858).
+   * Used to exclude them from the Change contact picker.
+   */
+  contact_user_id?: string | null;
   /**
    * Present on PATCH /tenants/{id} when an email change was requested.
    * True when a verification/activation email was sent to the new address.
@@ -135,6 +140,8 @@ export interface TenantUpdateRequest {
   organisation?: string;
   email?: string;
   phone_number?: string;
+  /** Switch the contact to this Institution Admin. Applies immediately. */
+  contact_user_id?: string;
 }
 export type TenantUpdateResponse = TenantView;
 
