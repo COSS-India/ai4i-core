@@ -7,17 +7,7 @@ from sqlalchemy.orm import load_only
 
 from app.models.tenant import Tenant, TenantStatus
 from app.repositories.base import BaseRepository
-
-# tenants.id is a Postgres ``integer`` (int4). asyncpg refuses to encode a
-# larger bind value at all (DataError: value out of int32 range) instead of
-# just matching no rows, so an out-of-range id from a path param would
-# surface as a 500 rather than the route's 404. No such row can exist, so
-# the lookups below short-circuit to None without querying.
-_INT4_MAX = 2**31 - 1
-
-
-def _is_valid_tenant_id(tenant_id: int) -> bool:
-    return tenant_id is not None and 0 < tenant_id <= _INT4_MAX
+from app.repositories.ids import is_int4_id
 
 
 class TenantRepository(BaseRepository):
@@ -25,7 +15,7 @@ class TenantRepository(BaseRepository):
         super().__init__(db)
 
     async def get_by_id(self, tenant_id: int) -> Optional[Tenant]:
-        if not _is_valid_tenant_id(tenant_id):
+        if not is_int4_id(tenant_id):
             return None
         result = await self._db.execute(
             select(Tenant).where(Tenant.id == tenant_id)
@@ -57,7 +47,7 @@ class TenantRepository(BaseRepository):
         the five loaded here; add to the list rather than falling back to
         ``get_by_id`` if a caller ever needs one more.
         """
-        if not _is_valid_tenant_id(tenant_id):
+        if not is_int4_id(tenant_id):
             return None
         result = await self._db.execute(
             select(Tenant)
@@ -85,7 +75,7 @@ class TenantRepository(BaseRepository):
         can still see a pre-revision value. This forces a refresh from the
         just-locked row every time.
         """
-        if not _is_valid_tenant_id(tenant_id):
+        if not is_int4_id(tenant_id):
             return None
         result = await self._db.execute(
             select(Tenant)
