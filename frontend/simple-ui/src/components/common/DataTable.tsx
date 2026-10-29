@@ -2130,7 +2130,6 @@ const PAGE_ONLY_SEARCH_HELPER = "Searches the rows on this page only";
 function useAdminColumnFilteredItems<T>(options: Readonly<{
   items: readonly T[];
   columns: DataTableColumn<T>[];
-  filterDefs?: DataTableFilterDef[];
   columnSearch: boolean;
   autoColumnSort: boolean;
   paginate: "client" | "server" | false;
@@ -2141,7 +2140,6 @@ function useAdminColumnFilteredItems<T>(options: Readonly<{
   const {
     items,
     columns,
-    filterDefs,
     columnSearch,
     autoColumnSort,
     paginate,
@@ -2263,7 +2261,6 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
   } = useAdminColumnFilteredItems({
     items,
     columns,
-    filterDefs,
     columnSearch,
     autoColumnSort,
     paginate,

@@ -140,11 +140,14 @@ export function withAutoColumnSort<T, C extends FilterableColumn<T> & { sortable
 }
 
 function rowDateMillis<T>(col: FilterableColumn<T>, row: T): number | null {
-  const raw = col.filterAccessor
-    ? col.filterAccessor(row)
-    : col.sortAccessor
-      ? col.sortAccessor(row)
-      : (row as Record<string, unknown>)[col.id];
+  let raw: unknown;
+  if (col.filterAccessor) {
+    raw = col.filterAccessor(row);
+  } else if (col.sortAccessor) {
+    raw = col.sortAccessor(row);
+  } else {
+    raw = (row as Record<string, unknown>)[col.id];
+  }
   if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return null;
   if (raw === Number.POSITIVE_INFINITY) return null;
   return raw;
