@@ -23,10 +23,6 @@ class CredentialsRepository(BaseRepository):
         )
         return result.scalar_one_or_none()
 
-    async def delete(self, creds: UserCredentials) -> None:
-        await self._db.delete(creds)
-        await self._db.flush()
-
     async def user_ids_with_credentials(
         self, user_ids: Iterable[UUID]
     ) -> set[UUID]:

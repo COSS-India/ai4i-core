@@ -6,7 +6,6 @@ Token contract:
 - Refresh tokens: sub, tenant_id, type=refresh — no roles, no token_id
 - API key tokens: sub, tenant_id, permission_ids, type=api_key, token_id (for revocation)
 - Setup tokens:   sub, email, type=setup (for email activation)
-- Email-change:   sub, email (new address), tenant_id, type=email_change
 All tokens include: iss, iat, kid, alg=RS256
 """
 
@@ -45,7 +44,6 @@ class TokenPayload:
     token_type: str
     token_id: Optional[str] = None
     tenant_id: Optional[str] = None
-    email: Optional[str] = None
 
 
 class TokenService:
@@ -162,26 +160,6 @@ class TokenService:
             expires_delta=expires_delta,
         )
 
-    def create_email_change_token(
-        self,
-        user_id: str,
-        new_email: str,
-        tenant_id: int,
-        expires_delta: Optional[timedelta] = None,
-    ) -> str:
-        """Tenant-email-change confirmation token. ``sub`` is the requester,
-        ``email`` the pending new address (checked against
-        ``tenants.pending_email`` on confirmation). Signed, so the pending
-        value can't be tampered with in transit.
-        """
-        return self._create_token(
-            token_type=TokenType.EMAIL_CHANGE,
-            sub=str(user_id),
-            extra={"email": new_email, "tenant_id": str(tenant_id)},
-            default_delta=timedelta(hours=settings.setup_token_expire_hours),
-            expires_delta=expires_delta,
-        )
-
     # ── Validation ──
 
     def validate_token(self, token: str) -> TokenPayload:
@@ -232,7 +210,6 @@ class TokenService:
                 token_type=payload.get("type", ""),
                 token_id=payload.get("token_id"),
                 tenant_id=payload.get("tenant_id"),
-                email=payload.get("email"),
             )
 
         except ExpiredSignatureError as exc:

@@ -1,18 +1,14 @@
 """Tenant status transition rules and user-flag sync (shared by auth + tenant services)."""
 
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 from uuid import UUID
 
 from app.core.config import settings
-from app.core.constants import RoleName
 from app.core.exceptions import AppError, EntityNotFoundError, ValidationError
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User
 from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
-
-if TYPE_CHECKING:  # role_service imports this module
-    from app.services.role_service import RoleService
 
 # PATCH /tenants/{id}/status and onboarding (PENDING → ACTIVE on set-password).
 ALLOWED_TENANT_STATUS_TRANSITIONS: dict[TenantStatus, frozenset[TenantStatus]] = {
@@ -109,54 +105,27 @@ async def sync_tenant_users_for_status(
         await user_repo.lock_tenant_users_for_status(tenant_id, updated_by=updated_by)
 
 
-# ── Institution email changes ────────────────────────────────────────
-# Shared by TenantService.update_tenant (request) and
-# AuthService.confirm_tenant_email_change (confirmation) so the two rule sets
-# can't drift apart.
+# ── Institution contact changes ──────────────────────────────────────
 
-#: Email edits are refused for these statuses; other fields stay editable.
+#: Contact changes are refused for these statuses; other fields stay editable.
 EMAIL_LOCKED_STATUSES: frozenset[TenantStatus] = frozenset(
     {TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED}
 )
 
 
 def assert_tenant_email_editable(tenant: Tenant) -> None:
+    """409 TENANT_EMAIL_EDIT_NOT_ALLOWED while SUSPENDED/DEACTIVATED, and for
+    the Default Organisation (its contact is the seeded platform admin)."""
     if tenant.status in EMAIL_LOCKED_STATUSES:
-        raise AppError(
-            message=(
-                "The email cannot be changed while the institution "
-                f"is {tenant.status.value.lower()}."
-            ),
-            code="TENANT_EMAIL_EDIT_NOT_ALLOWED",
-            status_code=409,
+        message = (
+            "The contact cannot be changed while the institution "
+            f"is {tenant.status.value.lower()}."
         )
-    # Its contact is the seeded platform admin — changing the email would
-    # hand that account over.
-    assert_default_tenant_not_targeted(
-        tenant, message="The Default Organisation's email cannot be changed."
-    )
-
-
-async def find_email_contact(user_repo: UserRepository, tenant: Tenant) -> Optional[User]:
-    """The user whose login tracks ``tenant.email``; None when the address no
-    longer maps to a user of this tenant (contact's own email edited, contact
-    deleted, legacy data)."""
-    contact = await user_repo.get_by_email(tenant.email)
-    return contact if contact is not None and contact.tenant_id == tenant.id else None
-
-
-async def assert_not_platform_admin(role_service: "RoleService", user: User) -> None:
-    # Re-aligning would move (and on confirmation, hand over) a platform
-    # administrator's account.
-    if RoleName.ADMIN.value in await role_service.get_user_roles(user.id):
-        raise AppError(
-            message=(
-                "The email cannot be changed: the institution's contact "
-                "is a platform administrator."
-            ),
-            code="TENANT_EMAIL_EDIT_NOT_ALLOWED",
-            status_code=409,
-        )
+    elif is_default_tenant(tenant):
+        message = "The Default Organisation's contact cannot be changed."
+    else:
+        return
+    raise AppError(message=message, code="TENANT_EMAIL_EDIT_NOT_ALLOWED", status_code=409)
 
 
 async def assert_email_available(
