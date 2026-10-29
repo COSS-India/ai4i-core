@@ -143,6 +143,7 @@ def _make_svc() -> "ServiceService":
     cache = MagicMock()
     cache.invalidate_service = AsyncMock()
     cache.set_service = AsyncMock()
+    cache.set_service_access = AsyncMock()
 
     svc = ServiceService(service_repo=service_repo, model_repo=model_repo, cache=cache)
 
@@ -515,6 +516,7 @@ class TestNewFieldsPersistence:
         cache = MagicMock()
         cache.invalidate_service = AsyncMock()
         cache.set_service = AsyncMock()
+        cache.set_service_access = AsyncMock()
         cache.invalidate_pricing = AsyncMock()
 
         svc = ServiceService(service_repo=service_repo, model_repo=model_repo, cache=cache)

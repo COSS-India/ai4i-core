@@ -124,6 +124,7 @@ def _make_svc(existing_service_id: str | None = None) -> ServiceService:
     cache = MagicMock()
     cache.invalidate_service = AsyncMock()
     cache.set_service = AsyncMock()
+    cache.set_service_access = AsyncMock()
 
     return ServiceService(
         service_repo=service_repo,

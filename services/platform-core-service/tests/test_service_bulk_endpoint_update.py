@@ -74,6 +74,7 @@ def _make_svc(instances_by_id: dict) -> ServiceService:
     cache = MagicMock()
     cache.invalidate_service = AsyncMock()
     cache.set_service = AsyncMock()
+    cache.set_service_access = AsyncMock()
 
     svc = ServiceService(service_repo=service_repo, model_repo=model_repo, cache=cache)
     svc._validate_endpoint_for_model = AsyncMock()

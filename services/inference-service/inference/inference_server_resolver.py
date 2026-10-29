@@ -1,11 +1,19 @@
 """
 InferenceServerResolver — looks up Triton endpoints and adapter config from the
 model management service, with a TTL'd in-memory cache.
+
+is_published and tier_ids are the exception: platform-core writes them to Redis
+as core:service:{service_id}:access whenever the service is saved, and they are
+read from there on every resolve, so an unpublish or Tier change applies at
+once on every pod instead of after CACHE_TTL_SECONDS.
 """
 
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
+import json
 import logging
 import time
+
+import redis.asyncio as aioredis
 
 from config import settings
 
@@ -13,6 +21,36 @@ from utils import HTTPServiceClient
 
 
 logger = logging.getLogger(__name__)
+
+_access_redis: Optional[aioredis.Redis] = None
+
+
+def _get_access_redis() -> aioredis.Redis:
+    global _access_redis
+    if _access_redis is None:
+        _access_redis = aioredis.Redis(
+            host=settings.REDIS_HOST,
+            port=settings.REDIS_PORT,
+            password=settings.REDIS_PASSWORD,
+            db=settings.REDIS_DB,
+            # Read on every request: an unreachable Redis must cost about a
+            # second, not REDIS_TIMEOUT, before the cached flags are used.
+            socket_timeout=settings.SERVICE_ACCESS_REDIS_TIMEOUT,
+            socket_connect_timeout=settings.SERVICE_ACCESS_REDIS_TIMEOUT,
+            decode_responses=True,
+        )
+    return _access_redis
+
+
+async def _read_service_access(service_id: str) -> Optional[Dict[str, Any]]:
+    """platform-core's current {is_published, tier_ids} for ``service_id``, or
+    None when the key is missing or Redis can't be read."""
+    try:
+        raw = await _get_access_redis().get(f"core:service:{service_id}:access")
+        return json.loads(raw) if raw else None
+    except Exception as exc:
+        logger.warning("Service access lookup failed for %s: %s", service_id, type(exc).__name__)
+        return None
 
 
 class InferenceServerResolver:
@@ -41,11 +79,22 @@ class InferenceServerResolver:
         cached = self._memory_cache.get(service_id)
         if cached and time.time() - cached[1] < settings.CACHE_TTL_SECONDS:
             logger.debug(f"Cache hit for service {service_id}")
-            return cached[0]
+            service_info = cached[0]
+        else:
+            service_info = await self._query_model_management_service(service_id)
+            self._memory_cache[service_id] = (service_info, time.time())
 
-        service_info = await self._query_model_management_service(service_id)
-        self._memory_cache[service_id] = (service_info, time.time())
-        return service_info
+        # A missing key or a Redis failure keeps the cached flags: platform-core
+        # keeps the key longer than CACHE_TTL_SECONDS, so by the time it is gone
+        # the cached copy was fetched after the last change.
+        access = await _read_service_access(service_id)
+        if access is None:
+            return service_info
+        return {
+            **service_info,
+            "is_published": bool(access.get("is_published", False)),
+            "tier_ids": access.get("tier_ids") or [],
+        }
 
     async def resolve_smr_service(self, payload: Dict[str, Any]) -> str:
         """

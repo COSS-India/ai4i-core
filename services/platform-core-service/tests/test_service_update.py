@@ -95,6 +95,7 @@ def _make_svc(service_id: str = "svc-abc") -> ServiceService:
     cache = MagicMock()
     cache.invalidate_service = AsyncMock()
     cache.set_service = AsyncMock()
+    cache.set_service_access = AsyncMock()
     cache.invalidate_pricing = AsyncMock()
 
     return ServiceService(
@@ -536,3 +537,69 @@ class TestUpdateServiceLlmTokenPrices:
         applied = self._applied(svc)
         assert applied["cached_input_cost_per_unit"] is None
         assert applied["output_cost_per_unit"] is None
+
+
+class TestUpdateServiceAccessCache:
+    """An unpublish or Tier change is written to Redis (core:service:{id}:access)
+    so inference-service rejects the service at once instead of after its
+    in-memory TTL."""
+
+    @staticmethod
+    def _svc_applying_updates(service_id: str = "svc-abc") -> ServiceService:
+        svc = _make_svc(service_id)
+
+        async def _apply(instance, data):
+            for key, value in data.items():
+                setattr(instance, key, value)
+            return instance
+
+        svc._services.apply_updates = AsyncMock(side_effect=_apply)
+        return svc
+
+    @pytest.mark.asyncio
+    async def test_unpublish_writes_is_published_false(self) -> None:
+        svc = self._svc_applying_updates()
+
+        await svc.update_service(ServiceUpdateRequest(serviceId="svc-abc", isPublished=False), updated_by="u")
+
+        svc._cache.set_service_access.assert_awaited_once_with("svc-abc", False, ["tier-1"])
+
+    @pytest.mark.asyncio
+    async def test_tier_change_writes_the_new_tier_ids(self) -> None:
+        svc = self._svc_applying_updates()
+        svc._services.get_tier_names_by_ids = AsyncMock(return_value={"tier-2": "Tier 2"})
+        svc._services.get_active_tier_ids = AsyncMock(return_value={"tier-2"})
+        payload = ServiceUpdateRequest(
+            serviceId="svc-abc", taskType="asr", costPerUnit=1.0, unitSize=1, tierIds=["tier-2"]
+        )
+
+        await svc.update_service(payload, updated_by="u")
+
+        _, is_published, tier_ids = svc._cache.set_service_access.await_args.args
+        assert tier_ids == ["tier-2"]
+
+    @pytest.mark.asyncio
+    async def test_written_even_when_the_model_lookup_after_commit_fails(self) -> None:
+        """The DB already says unpublished; a later lookup failing must not
+        leave inference serving the service."""
+        svc = self._svc_applying_updates()
+        svc._models.get_by_id_version = AsyncMock(side_effect=RuntimeError("db gone"))
+
+        with pytest.raises(RuntimeError):
+            await svc.update_service(ServiceUpdateRequest(serviceId="svc-abc", isPublished=False), updated_by="u")
+
+        svc._cache.set_service_access.assert_awaited_once_with("svc-abc", False, ["tier-1"])
+
+
+class TestDeleteServiceAccessCache:
+    @pytest.mark.asyncio
+    async def test_delete_writes_unpublished_instead_of_dropping_the_key(self) -> None:
+        """A missing key sends inference back to its in-memory copy, which
+        could still say published."""
+        svc = _make_svc("svc-abc")
+        svc._services.get_by_service_id.return_value.is_published = False
+        svc._services.delete_by_service_id = AsyncMock()
+
+        await svc.delete_service("svc-abc")
+
+        svc._cache.set_service_access.assert_awaited_once_with("svc-abc", False, [])

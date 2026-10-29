@@ -10,6 +10,12 @@ Keys (note the encoding — mixing up GET and HGETALL is a WRONGTYPE error):
   core:model:{model_id}:{version}       — model details (Redis STRING, use GET)
   core:model:{model_id}                  — latest active version (Redis STRING, use GET)
   core:service:{service_id}             — service details (in-memory)
+  core:service:{service_id}:access      — {"is_published", "tier_ids"} (Redis STRING, use GET)
+Written when a service is created, updated or deleted (see set_service_access),
+not on reads: a read could write back a row loaded just before an unpublish.
+Read by inference-service's resolver on every resolve, so an unpublish or Tier
+change reaches every inference pod at once instead of after its in-memory TTL;
+with no key, inference keeps its cached flags.
 
 Owned elsewhere, listed here so the namespace stays legible:
   core:inference_type:{name}            — one catalogue row (Redis HASH, use HGETALL)
@@ -31,7 +37,7 @@ delete blind — the consumer's read path always falls back to the DB and re-war
 import json
 import logging
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import redis.asyncio as aioredis
 
@@ -152,6 +158,31 @@ class CacheService:
             CacheService._service_store.pop(self._service_key(service_id), None)
         except Exception as exc:
             logger.warning("Service cache invalidation failed for %s: %s", service_id, exc)
+
+    # ── Service access (Redis, read by inference-service) ──
+
+    # Must outlive inference-service's in-memory resolver TTL (CACHE_TTL_SECONDS,
+    # 300 s) and this cache's own (SERVICE_CACHE_TTL_SECONDS): inference falls
+    # back to its cached copy when the key is gone, and by then that copy was
+    # fetched after the last write.
+    _SERVICE_ACCESS_TTL_SECONDS = 3600
+
+    @classmethod
+    def _service_access_key(cls, service_id: str) -> str:
+        return f"{cls._SERVICE_KEY}:{service_id}:access"
+
+    async def set_service_access(
+        self, service_id: str, is_published: bool, tier_ids: Optional[List[str]]
+    ) -> None:
+        """Publish whether ``service_id`` may be called, and by which Tiers."""
+        try:
+            await self._redis.setex(
+                self._service_access_key(service_id),
+                self._SERVICE_ACCESS_TTL_SECONDS,
+                json.dumps({"is_published": bool(is_published), "tier_ids": [str(t) for t in tier_ids or []]}),
+            )
+        except Exception as exc:
+            logger.warning("Service access cache write failed for %s: %s", service_id, exc)
 
     # ── Pricing cache (owned by payperuse_consumer; see module docstring) ──
 

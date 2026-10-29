@@ -42,13 +42,17 @@ class Settings(BaseSettings):
     CACHE_TTL_SECONDS: int = Field(
         300, description="In-memory service-resolution cache TTL in seconds"
     )
+    SERVICE_ACCESS_REDIS_TIMEOUT: int = Field(
+        1, description="Redis timeout in seconds for the per-request core:service:{id}:access read"
+    )
 
-    # Redis — read-only, and only for the inference-type catalogue
-    # (core:inference_type:*, written by platform-core). Must point at the same
+    # Redis — read-only: the inference-type catalogue (core:inference_type:*)
+    # and each service's publish/Tier flags (core:service:{id}:access), both
+    # written by platform-core. Must point at the same
     # host AND logical DB as platform-core or the keys will not be found; both
     # default to DB 0. The catalogue falls back to platform-core over HTTP and
-    # then to a stale snapshot, so an unset or unreachable Redis degrades the
-    # billing-unit label rather than breaking inference.
+    # then to a stale snapshot, and the flags to the resolver's cached copy, so
+    # an unset or unreachable Redis degrades rather than breaks inference.
     REDIS_HOST: str = Field("localhost", description="Redis host")
     REDIS_PORT: int = Field(6379, description="Redis port")
     REDIS_PASSWORD: Optional[str] = Field(None, description="Redis password")

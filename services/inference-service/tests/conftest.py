@@ -8,6 +8,19 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _no_service_access_redis(monkeypatch):
+    """Keep resolver tests off a real Redis: no core:service:{id}:access key,
+    so the resolved flags are whatever the test's MMS response says.
+    test_service_access.py patches this per test."""
+    async def _missing(service_id):
+        return None
+
+    resolver_module = sys.modules.get("inference.inference_server_resolver")
+    if resolver_module is not None:
+        monkeypatch.setattr(resolver_module, "_read_service_access", _missing, raising=False)
+
+
 @pytest.fixture
 def asr_service():
     from services.asr_service import ASRTaskService

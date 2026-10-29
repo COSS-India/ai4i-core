@@ -47,10 +47,12 @@ NEVER_LOG_VALUE = "sentinel-value-that-must-not-be-logged"
 
 
 def _make_svc() -> ServiceService:
+    cache = MagicMock()
+    cache.set_service_access = AsyncMock()
     return ServiceService(
         service_repo=MagicMock(),
         model_repo=MagicMock(),
-        cache=MagicMock(),
+        cache=cache,
     )
 
 

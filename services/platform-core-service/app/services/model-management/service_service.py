@@ -380,6 +380,7 @@ class ServiceService:
         tier_names = [tier_name_map.get(tid) for tid in instance.tier_ids] if instance.tier_ids else None
         data = service_detail_dict(instance, model, tier_names=tier_names)
         self._cache.set_service(instance.service_id, data)
+        await self._cache.set_service_access(instance.service_id, instance.is_published, instance.tier_ids)
         logger.info("Created service '%s' (id=%s)", payload.name, service_id)
         return service_id
 
@@ -611,6 +612,11 @@ class ServiceService:
         # Refresh cache (eager rebuild)
         self._cache.invalidate_service(instance.service_id)
 
+        # An unpublish or Tier change must reach inference-service now, not
+        # after its in-memory TTL — written here, before the lookups below
+        # can raise, for the same reason as the pricing invalidation.
+        await self._cache.set_service_access(instance.service_id, instance.is_published, instance.tier_ids)
+
         # A pricing field changed: bust payperuse_consumer's cached rate so
         # billing picks up the new price on the next event instead of
         # waiting out its 1-hour TTL (see CacheService.invalidate_pricing).
@@ -752,6 +758,9 @@ class ServiceService:
             raise
 
         self._cache.invalidate_service(instance.service_id)
+        # Not deleted: a missing key sends inference back to its cached copy,
+        # which may still say published.
+        await self._cache.set_service_access(instance.service_id, False, [])
         logger.info("Deleted service %s", instance.service_id)
 
     # ── Internals ──
