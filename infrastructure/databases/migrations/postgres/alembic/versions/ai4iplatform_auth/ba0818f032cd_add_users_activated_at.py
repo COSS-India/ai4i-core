@@ -18,7 +18,7 @@ was then suspended is indistinguishable from an unverified one and stays
 Pending Activation.
 
 Revision ID: ba0818f032cd
-Revises: 7a28dca07e9d
+Revises: d5e6f7a8b9c1
 Create Date: 2026-10-28
 
 """
@@ -28,7 +28,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = "ba0818f032cd"
-down_revision: Union[str, None] = "7a28dca07e9d"
+down_revision: Union[str, None] = "d5e6f7a8b9c1"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, None] = None
 

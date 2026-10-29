@@ -160,6 +160,9 @@ class TenantUpdate(BaseSchema):
     email: Optional[EmailStr] = None
     phone_number: Optional[str] = None
     status: Optional[TenantStatus] = None
+    # "Change contact": user_id of an existing Institution Admin of this
+    # tenant (from GET /auth/tenants/{id}/users). Applied immediately.
+    contact_user_id: Optional[UUID] = None
 
     @field_validator("organisation", "contact_name", mode="before")
     @classmethod
@@ -244,10 +247,6 @@ class TenantResponse(BaseSchema):
     allocated_budget: Optional[Decimal] = None
     budget_effective_from: Optional[datetime] = None
     budget_effective_to: Optional[datetime] = None
-    # New contact email awaiting verification (masked); ``email`` keeps the
-    # current value until it is verified. Read via active_pending_email so an
-    # expired request stops showing as pending.
-    pending_email: Optional[str] = Field(None, validation_alias="active_pending_email")
 
 
 _TENANT_USER_CREATE_EXAMPLE = {
@@ -542,6 +541,8 @@ class GetTenantResponse(SuccessResponse):
 
 
 class UpdateTenantData(TenantResponse):
+    # True only when a PENDING tenant's email correction re-sent the
+    # activation link; always False for a "Change contact" switch.
     email_verification_sent: bool = False
 
 

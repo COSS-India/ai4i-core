@@ -22,10 +22,6 @@ class CredentialsRepository(BaseRepository):
         )
         return result.scalar_one_or_none()
 
-    async def delete(self, creds: UserCredentials) -> None:
-        await self._db.delete(creds)
-        await self._db.flush()
-
     async def update_password(
         self, creds: UserCredentials, password_hash: str, password_salt: str
     ) -> None:

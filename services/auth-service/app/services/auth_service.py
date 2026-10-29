@@ -29,10 +29,6 @@ from app.models.credentials import UserCredentials
 from app.models.tenant import Tenant, TenantStatus
 from app.services.tenant_lifecycle import (
     TENANT_ONBOARDING_STATUSES,
-    assert_email_available,
-    assert_not_platform_admin,
-    assert_tenant_email_editable,
-    find_email_contact,
     assert_valid_tenant_status_transition,
     sync_tenant_users_for_status,
 )
@@ -140,17 +136,6 @@ class AuthService:
         self._email = email_client
         self._cache = cache_service
         self._api_keys = api_key_service
-
-    async def _revoke_sessions_best_effort(self, user_id) -> None:
-        """Reject every access token issued before now. Best-effort: callers
-        have already committed, so a cache failure is logged, not raised."""
-        try:
-            await self._cache.revoke_all_sessions(str(user_id))
-        except Exception:
-            logger.error(
-                "Failed to set logout timestamp for user id=%s; live access tokens not revoked",
-                user_id,
-            )
 
     def _validate_token_of_type(self, token: str, expected_type: str):
         """Validate a JWT and assert its type. Raises TokenExpiredError / TokenInvalidError on failure."""
@@ -276,20 +261,12 @@ class AuthService:
         self,
         token: str,
         background_tasks: Optional[BackgroundTasks] = None,
-    ) -> Optional[bool]:
+    ) -> None:
         """Consume a verify token and activate the user (/auth/register flow).
 
         Tenant admins use setup-password links instead; they must not rely on
-        verify-email for onboarding. EMAIL_CHANGE tokens share this endpoint
-        (and the frontend verify page) and are routed to
-        ``confirm_tenant_email_change``.
-
-        Returns None for a sign-up verification; for a tenant email change,
-        whether a set-password link was sent to the new address.
+        verify-email for onboarding.
         """
-        if self._tokens.validate_token(token).token_type == TokenType.EMAIL_CHANGE:
-            return await self.confirm_tenant_email_change(token, background_tasks)
-
         token_obj, user = await self._resolve_verified_token(token, TokenType.VERIFY, "verification link")
         # Verification only ever activates a never-activated account; an
         # admin-suspended user must not re-activate themselves with a link.
@@ -302,102 +279,6 @@ class AuthService:
         await self._users.commit()
         logger.info("Email verified for user id=%s", user.id)
         enqueue_email(background_tasks, self._email, lambda: render_welcome(user))
-        return None
-
-    async def confirm_tenant_email_change(
-        self, token: str, background_tasks: Optional[BackgroundTasks] = None
-    ) -> bool:
-        """Apply a held Institution Admin email change (issued by
-        ``TenantService.update_tenant``): swap ``tenant.email`` and, when
-        ``tenant.email`` belongs to a user of this tenant (the contact), that
-        user's ``users.email`` to the verified address. Without a contact,
-        only ``tenant.email`` changes.
-
-        The contact account is handed over to whoever holds the new address,
-        so the outgoing admin's password and sessions are revoked and a setup
-        link goes to the new address (as in the PENDING reissue path).
-
-        Returns whether that set-password link was sent (never without a
-        contact).
-        """
-        token_obj, tenant, new_email = await self._load_email_change(token)
-
-        # Same rules as the request (TenantService.update_tenant), re-checked
-        # because status, roles or address ownership may have changed since.
-        assert_tenant_email_editable(tenant)
-        admin = await find_email_contact(self._users, tenant)
-        if admin is not None:
-            await assert_not_platform_admin(self._roles, admin)
-        await assert_email_available(self._tenants, self._users, new_email, tenant.id, admin)
-
-        tenant.email = new_email
-        tenant.pending_email = None
-        tenant.pending_email_expires_at = None
-        await self._verifications.deactivate(token_obj)
-        setup_token = (
-            await self._hand_over_contact(admin, new_email, background_tasks)
-            if admin is not None
-            else None
-        )
-        await self._users.commit()
-        logger.info(
-            "Tenant %s email change verified (contact re-aligned=%s)", tenant.id, admin is not None
-        )
-        if admin is None:
-            return False
-        await self._revoke_sessions_best_effort(admin.id)
-        if setup_token is None:
-            return False
-        enqueue_email(
-            background_tasks, self._email,
-            lambda: render_setup_link(admin, setup_token),
-        )
-        return True
-
-    async def _load_email_change(self, token: str) -> tuple[TokenVerification, Tenant, str]:
-        """The EMAIL_CHANGE link's token row, tenant and new address. Raises
-        TokenInvalidError when the link is invalid, used, or superseded (a
-        newer request or an applied change replaced ``pending_email``, or it
-        expired)."""
-        link_name = "email change link"
-        payload = self._validate_token_of_type(token, TokenType.EMAIL_CHANGE)
-        token_obj = await self._verifications.get_by_token(token)
-        if not token_obj:
-            raise TokenInvalidError(f"Invalid {link_name}.")
-        if not token_obj.is_active:
-            raise TokenInvalidError(f"{link_name.capitalize()} has already been used.")
-
-        new_email = (payload.email or "").lower().strip()
-        tenant = (
-            await self._tenants.get_by_id(int(payload.tenant_id))
-            if payload.tenant_id else None
-        )
-        if (
-            not new_email
-            or tenant is None
-            or (tenant.active_pending_email or "").lower().strip() != new_email
-        ):
-            raise TokenInvalidError(f"This {link_name} is no longer valid.")
-        return token_obj, tenant, new_email
-
-    async def _hand_over_contact(
-        self, admin: User, new_email: str, background_tasks: Optional[BackgroundTasks]
-    ) -> Optional[str]:
-        """Move the contact account to ``new_email``: the outgoing admin loses
-        their password and refresh tokens, and the incoming one gets a setup
-        token (flush only; the caller commits). Returns that token."""
-        admin.email = new_email
-        creds = await self._credentials.get_by_user_id(admin.id)
-        if creds is not None:
-            await self._credentials.delete(creds)
-        await self._refresh_tokens.delete_by_user_id(admin.id)
-        return await reissue_setup_token(
-            admin,
-            credentials_repo=self._credentials,
-            verifications_repo=self._verifications,
-            token_service=self._tokens,
-            background_tasks=background_tasks,
-        )
 
     # ── Email verification: Resend ──
 
@@ -496,7 +377,10 @@ class AuthService:
         # and reject any already-issued access token via the global logout gate.
         await self._refresh_tokens.delete_by_user_id(user.id)
         await self._credentials.commit()
-        await self._revoke_sessions_best_effort(user.id)
+        try:
+            await self._cache.revoke_all_sessions(str(user.id))
+        except Exception:
+            logger.error("Failed to set logout timestamp for user id=%s; live access tokens not revoked", user.id)
         logger.info("Password reset for user id=%s; all sessions revoked", user.id)
         enqueue_email(background_tasks, self._email, lambda: render_password_changed(user))
 
@@ -665,7 +549,10 @@ class AuthService:
         # this request) is signed out. Must happen BEFORE minting the caller's
         # replacement pair below — otherwise a fresh token could land in the
         # same second as this write and get rejected by its own revocation gate.
-        await self._revoke_sessions_best_effort(user.id)
+        try:
+            await self._cache.revoke_all_sessions(str(user.id))
+        except Exception:
+            logger.error("Failed to set logout timestamp for user id=%s; live access tokens not revoked", user.id)
 
         # Issue a fresh token pair for the caller instead of trying to guess
         # which DB-stored refresh token belongs to them — the refresh table

@@ -101,3 +101,31 @@ class TestBuildTenantUserResponses:
 
         assert await svc.build_tenant_user_responses([]) == []
         svc._roles.get_roles_for_users.assert_not_awaited()
+
+
+class TestActivationNeverReadFromCredentials:
+    """A merge with #1858 resurrected ``user_ids_with_credentials`` (without
+    its ``Iterable`` import), which both broke the module import and brought
+    back the "has a password ⇒ activated" lookup behind the SUSPENDED bug."""
+
+    def test_repository_has_no_credentials_based_activation_lookup(self) -> None:
+        from app.repositories.credentials_repository import CredentialsRepository
+
+        assert not hasattr(CredentialsRepository, "user_ids_with_credentials")
+
+    @pytest.mark.asyncio
+    async def test_unverified_self_signup_with_password_is_not_activated(self) -> None:
+        from app.repositories.credentials_repository import CredentialsRepository
+
+        svc = _make_service()
+        # spec'd mock: any credentials lookup the builder makes must exist on
+        # the real repository, and none of them may decide is_activated.
+        svc._credentials = MagicMock(spec=CredentialsRepository)
+        svc._credentials.get_by_user_id = AsyncMock(return_value=MagicMock())
+        user = _user(is_active=False, is_tenant_active=True, activated=False)
+        svc._roles.get_roles_for_users = AsyncMock(return_value={user.id: ["USER"]})
+
+        out = await svc.build_tenant_user_response(user)
+
+        assert out["is_active"] is False
+        assert out["is_activated"] is False

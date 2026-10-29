@@ -16,7 +16,7 @@ from typing import Any, Iterable, Optional
 #: which is what ``looks_masked`` keys off of.
 _MASK_CHAR = "*"
 
-_DEFAULT_EMAIL_KEYS = ("email", "pending_email")
+_DEFAULT_EMAIL_KEYS = ("email",)
 _DEFAULT_PHONE_KEYS = ("phone_number", "phone")
 
 
