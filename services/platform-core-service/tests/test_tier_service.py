@@ -17,7 +17,7 @@ from uuid import uuid4
 import httpx
 import pytest
 from fastapi import HTTPException
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import IntegrityError
 
 from app.core.constants import TierStatus
 from app.core.exceptions import ValidationError
@@ -530,16 +530,28 @@ class TestUpdateTierDuplicateName:
         assert result.name == "Alpha"
 
     @pytest.mark.asyncio
-    async def test_unique_violation_on_commit_maps_to_409(self):
+    async def test_name_index_violation_on_commit_maps_to_409(self):
         tier = _tier(name="Beta")
-        orig = Exception("duplicate key value violates unique constraint")
-        orig.sqlstate = "23505"
+        orig = Exception('duplicate key value violates unique constraint "uq_tiers_name_active"')
         session = AsyncMock()
         session.execute = AsyncMock(side_effect=[_mock_result(scalar=tier), _mock_result(scalar=None)])
-        session.commit = AsyncMock(side_effect=DBAPIError("UPDATE tiers", {}, orig))
+        session.commit = AsyncMock(side_effect=IntegrityError("UPDATE tiers", {}, orig))
 
         with pytest.raises(HTTPException) as exc_info:
             await tier_service.update_tier(TierUpdate(tier_id=str(tier.id), name="Alpha"), session, updated_by="admin")
 
         assert exc_info.value.status_code == 409
+        session.rollback.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_other_constraint_violation_on_commit_is_not_a_name_clash(self):
+        tier = _tier(name="Beta")
+        orig = Exception('duplicate key value violates unique constraint "uq_tier_quotas_tier_inference_type"')
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_mock_result(scalar=tier))
+        session.commit = AsyncMock(side_effect=IntegrityError("UPDATE tier_quotas", {}, orig))
+
+        with pytest.raises(IntegrityError):
+            await tier_service.update_tier(TierUpdate(tier_id=str(tier.id), description="d"), session, updated_by="admin")
+
         session.rollback.assert_awaited_once()
