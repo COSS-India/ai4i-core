@@ -868,22 +868,30 @@ async def search_traces_opensearch(
                 opensearch_client, agg_filter_query, effective_status, 0, tenant_filter,
             )
             if is_partial:
-                # Breakdown was capped; by_level may undercount the status-filtered
-                # total. Fall back to an exact cardinality on the filtered query.
-                _count_resp = opensearch_client.search_traces(
+                # Breakdown was capped; all_traces is an alphabetical-by-trace-id
+                # subset, not a time-ordered one — slicing it would put arbitrary
+                # old traces on page 1 while newer ones are missing. Fall back to
+                # the span-level collapse path (same as the no-status branch) so
+                # the page stays time-ordered and total is exact.
+                ids_response = opensearch_client.search_traces(
                     query=filter_query,
-                    size=0,
+                    size=page_size,
+                    from_=offset,
+                    source_fields=["context.trace_id"],
+                    collapse={"field": _TRACE_ID_KEYWORD},
+                    sort=sort_clause,
                     aggs={"trace_count": {"cardinality": {
                         "field": _TRACE_ID_KEYWORD,
                         "precision_threshold": _TOTAL_PRECISION_THRESHOLD,
                     }}},
                 )
-                total = _count_resp.get("aggregations", {}).get("trace_count", {}).get("value", 0)
+                total = ids_response.get("aggregations", {}).get("trace_count", {}).get("value", 0)
+                paginated_trace_ids = _extract_paginated_trace_ids(ids_response)
             else:
                 total = by_level.get(effective_status, 0)
-            paginated_trace_ids = _paginate_resolved_traces(
-                all_traces, effective_status, sort_by, sort_dir, offset, page_size,
-            )
+                paginated_trace_ids = _paginate_resolved_traces(
+                    all_traces, effective_status, sort_by, sort_dir, offset, page_size,
+                )
             # Step 3: fetch spans for the resolved page.
             data, paginated_trace_ids = _fetch_span_page_data(
                 opensearch_client, paginated_trace_ids, selected_columns, tenant_filter, is_admin,
