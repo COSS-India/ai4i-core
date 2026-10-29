@@ -5,13 +5,14 @@ add one (e.g. the logs dashboard) register a ``ViewCatalogue`` for it.
 """
 
 from dataclasses import dataclass
-from typing import Callable, Dict, FrozenSet, List, Sequence
+from typing import Callable, Dict, FrozenSet, List, Optional, Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.exceptions import EntityNotFoundError, ValidationError
 from app.repositories.user_preferences import table_preference_repository as repo
 from app.schemas.model_management import service_columns
+from app.services.user_preferences import preference_cache
 
 
 @dataclass(frozen=True)
@@ -50,11 +51,20 @@ def _defaults(cat: ViewCatalogue, is_admin: bool) -> List[str]:
     return [i for i in _order(cat, is_admin) if i in cat.defaults or i in cat.mandatory]
 
 
+async def _stored(session: AsyncSession, user_id: str, view_key: str) -> Optional[List[str]]:
+    """Stored column ids (None if nothing saved): cache first, DB on a miss."""
+    stored = await preference_cache.get_columns(user_id, view_key)
+    if stored is preference_cache.MISS:
+        stored = await repo.get(session, user_id, view_key)
+        await preference_cache.set_columns(user_id, view_key, stored)
+    return stored
+
+
 async def get_preference(
     session: AsyncSession, user_id: str, view_key: str, is_admin: bool
 ) -> dict:
     cat = _catalogue(view_key)
-    stored = await repo.get(session, user_id, view_key)
+    stored = await _stored(session, user_id, view_key)
     if stored:
         allowed = set(_order(cat, is_admin))
         kept = {i for i in stored if i in allowed}
@@ -78,6 +88,7 @@ async def save_preference(
     chosen |= cat.mandatory
     ordered = [i for i in order if i in chosen]
     await repo.upsert(session, user_id, view_key, ordered)
+    await preference_cache.set_columns(user_id, view_key, ordered)
     return _shape(view_key, ordered, False)
 
 
@@ -86,4 +97,5 @@ async def reset_preference(
 ) -> dict:
     cat = _catalogue(view_key)
     await repo.delete_preference(session, user_id, view_key)
+    await preference_cache.set_columns(user_id, view_key, None)
     return _shape(view_key, _defaults(cat, is_admin), True)
