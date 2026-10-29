@@ -19,8 +19,6 @@ function admin(
 }
 
 describe("listOtherActiveInstitutionAdmins (AI4IDS-3401)", () => {
-  const current = "a***@acme.com";
-
   it("offers other active, verified Institution Admins only", () => {
     const options = listOtherActiveInstitutionAdmins(
       [
@@ -53,7 +51,29 @@ describe("listOtherActiveInstitutionAdmins (AI4IDS-3401)", () => {
           full_name: "Not Verified",
         }),
       ],
-      current,
+      { excludeUserId: "current" },
+    );
+
+    expect(options).toEqual([
+      { userId: "other", label: "Priya Sharma · p***@acme.com" },
+    ]);
+  });
+
+  it("falls back to excluding by masked email when user id is unknown", () => {
+    const options = listOtherActiveInstitutionAdmins(
+      [
+        admin({
+          user_id: "current",
+          email: "a***@acme.com",
+          full_name: "Current Contact",
+        }),
+        admin({
+          user_id: "other",
+          email: "p***@acme.com",
+          full_name: "Priya Sharma",
+        }),
+      ],
+      { excludeEmail: "A***@acme.com" },
     );
 
     expect(options).toEqual([
@@ -63,7 +83,10 @@ describe("listOtherActiveInstitutionAdmins (AI4IDS-3401)", () => {
 });
 
 describe("contactChangeBlockedMessage (AI4IDS-3401)", () => {
-  it("blocks suspended, deactivated, and the Default Organisation", () => {
+  it("blocks pending, suspended, deactivated, and the Default Organisation", () => {
+    expect(contactChangeBlockedMessage(TENANT.STATUS.PENDING)).toBe(
+      FIELD_HINTS.tenant.contactChangePending,
+    );
     expect(contactChangeBlockedMessage(TENANT.STATUS.SUSPENDED)).toBe(
       FIELD_HINTS.tenant.contactChangeSuspended,
     );
@@ -77,8 +100,13 @@ describe("contactChangeBlockedMessage (AI4IDS-3401)", () => {
     ).toBe(FIELD_HINTS.tenant.contactChangeDefaultOrg);
   });
 
-  it("allows Pending and Active institutions", () => {
-    expect(contactChangeBlockedMessage(TENANT.STATUS.PENDING)).toBeNull();
+  it("allows Active institutions only", () => {
     expect(contactChangeBlockedMessage(TENANT.STATUS.ACTIVE)).toBeNull();
+  });
+
+  it("uses a neutral message for other non-editable statuses", () => {
+    expect(contactChangeBlockedMessage("UNKNOWN")).toBe(
+      FIELD_HINTS.tenant.contactChangeUnavailable,
+    );
   });
 });

@@ -41,19 +41,26 @@ export const FIELD_HINTS = {
     },
     emailChecking: "Checking if email exists…",
     emailAvailable: EMAIL_AVAILABLE_MSG,
+    emailPendingOnly: `Editable only while Pending — not for the Default Organisation.`,
+    emailEdit: "Correct email",
+    emailEditHint:
+      "Opens a typed correction. A new activation link is sent to the new address.",
     emailVerifyOnChange:
-      "New address applies after verification. An existing Institution Admin email applies immediately.",
-    emailPendingOnly: `Editable only while Pending or Active — not for the Default Organisation.`,
+      "A new activation link is sent to the corrected address.",
     emailVerificationPending: "Verification pending",
     contactChange: "Change contact",
     contactChangeLoading: "Loading Institution Admins…",
     contactChangeHint:
       "Only another active Institution Admin. The change applies immediately.",
     contactChangeNone: "Add an Institution Admin before changing the contact.",
+    contactChangePending:
+      "The contact can't be changed until the institution is active. Correct the contact email instead.",
     contactChangeSuspended:
       "The contact cannot be changed while the institution is suspended.",
     contactChangeDeactivated:
       "The contact cannot be changed while the institution is deactivated.",
+    contactChangeUnavailable:
+      "The contact cannot be changed for this institution.",
     contactChangeDefaultOrg:
       "The Default Organisation's contact cannot be changed.",
     contactChangeLoadFailed: "Institution Admins could not be loaded.",

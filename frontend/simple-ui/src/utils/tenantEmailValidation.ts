@@ -54,16 +54,16 @@ export function collectUserEmails(users: { email?: string | null }[]): Set<strin
   return out;
 }
 
-/** Contact email editable for PENDING/ACTIVE non-default institutions (AI4IDS-3401). */
+/**
+ * Typed contact email is only for PENDING non-default institutions
+ * (AI4IDS-3401 / #1858). ACTIVE institutions use Change contact (`contact_user_id`).
+ */
 export function isTenantContactEmailEditable(
   status: string | null | undefined,
   options?: { isDefaultOrganisation?: boolean },
 ): boolean {
   if (options?.isDefaultOrganisation) return false;
-  return (
-    isTenantStatus(status, TENANT.STATUS.PENDING) ||
-    isTenantStatus(status, TENANT.STATUS.ACTIVE)
-  );
+  return isTenantStatus(status, TENANT.STATUS.PENDING);
 }
 
 function asErrorDetailRecord(
