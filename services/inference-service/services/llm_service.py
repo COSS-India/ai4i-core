@@ -350,6 +350,8 @@ class OpenAIProxyService:
         app_id = get_application_id()
         guardrail_ctx, payload, err = await self._apply_guardrail_input(app_id, payload)
         if err is not None:
+            with traced_span("model") as model_attrs:
+                self._seed_model_attrs(model_attrs, None, None, failure_status_code=503)
             return err
 
         status_code, body = await self._forward_traced(path, url, service_id, model_name, payload, service_info)

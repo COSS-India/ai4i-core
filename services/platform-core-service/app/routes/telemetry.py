@@ -188,9 +188,16 @@ def _build_traces_map(hits: list, tenant_filter: Optional[str]) -> dict:
         if span_name == "request" and not traces_map[trace_id]["url"]:
             traces_map[trace_id]["url"] = attrs.get("url")
 
-        # Extract status from any span
-        if not traces_map[trace_id]["status"] or traces_map[trace_id]["status"] == "unknown":
-            traces_map[trace_id]["status"] = attrs.get("status", "unknown")
+        # Extract status: the request span is authoritative for the overall trace
+        # outcome — it reflects the HTTP response and is always present. Always
+        # override with its status so a model span arriving earlier in the sorted
+        # hits cannot mask a request-level failure with its own success status.
+        # For other spans, only fill in if we have nothing yet.
+        span_status = attrs.get("status", "unknown")
+        if span_name == "request" and span_status and span_status != "unknown":
+            traces_map[trace_id]["status"] = span_status
+        elif not traces_map[trace_id]["status"] or traces_map[trace_id]["status"] == "unknown":
+            traces_map[trace_id]["status"] = span_status
 
     return traces_map
 
@@ -681,6 +688,11 @@ async def search_traces_opensearch(
             filter_clauses.append({"terms": {"context.trace_id.keyword": keyword_trace_ids}})
 
         filter_query = {"bool": {"must": filter_clauses}} if filter_clauses else {"match_all": {}}
+        # agg_filter_query excludes the status filter so summary cards always show
+        # global success/failure totals, not counts scoped to the selected status.
+        status_clause = {"match_phrase": {"attributes.status": effective_status}}
+        agg_filter_clauses = [c for c in filter_clauses if c != status_clause]
+        agg_filter_query = {"bool": {"must": agg_filter_clauses}} if agg_filter_clauses else {"match_all": {}}
 
         # --- Sort ---
         sort_field = _SORT_FIELD_MAP.get(sort_by or "timestamp", "@timestamp")
@@ -747,17 +759,40 @@ async def search_traces_opensearch(
             )
             hits = spans_response.get("hits", {}).get("hits", [])
             traces_map = _build_traces_map(hits, tenant_filter)
+            # Post-filter: the span-level query may include traces whose resolved
+            # status (derived from all spans) doesn't match the requested status.
+            # Drop those so only correctly-matching traces appear in the response.
+            if effective_status:
+                traces_map = {tid: t for tid, t in traces_map.items()
+                              if (t.get("status") or "unknown") == effective_status}
+                paginated_trace_ids = [tid for tid in paginated_trace_ids if tid in traces_map]
             data = _build_page_data(traces_map, hits, selected_columns, paginated_trace_ids, is_admin=is_admin)
 
         # Calculate aggregations across ALL matching traces (not just this page) so the
         # summary cards match the pagination footer's total instead of the page size.
-        is_capped = total > _MAX_BREAKDOWN_TRACE_IDS
+        # Use agg_filter_query (no status filter) so the summary cards always show
+        # global success/failure totals regardless of which status is selected.
+        # When no status filter is active, agg_filter_query == filter_query so we
+        # can reuse the already-known total instead of making a second round-trip.
+        if effective_status:
+            agg_total_response = opensearch_client.search_traces(
+                query=agg_filter_query,
+                size=0,
+                aggs={"trace_count": {"cardinality": {
+                    "field": "context.trace_id.keyword",
+                    "precision_threshold": _TOTAL_PRECISION_THRESHOLD,
+                }}},
+            )
+            agg_total = agg_total_response.get("aggregations", {}).get("trace_count", {}).get("value", 0)
+        else:
+            agg_total = total
+        is_capped = agg_total > _MAX_BREAKDOWN_TRACE_IDS
         if is_capped:
             logger.warning(
-                f"Trace breakdown capped at {_MAX_BREAKDOWN_TRACE_IDS} of {total} matching "
+                f"Trace breakdown capped at {_MAX_BREAKDOWN_TRACE_IDS} of {agg_total} matching "
                 "traces; by_level/by_task counts are partial for this filter."
             )
-        all_trace_ids = _collect_all_trace_ids(opensearch_client, filter_query, min(total, _MAX_BREAKDOWN_TRACE_IDS))
+        all_trace_ids = _collect_all_trace_ids(opensearch_client, agg_filter_query, min(agg_total, _MAX_BREAKDOWN_TRACE_IDS))
         by_level, by_task, breakdown_truncated = await _compute_full_breakdown(opensearch_client, all_trace_ids, tenant_filter)
         is_partial = is_capped or breakdown_truncated
 
@@ -766,13 +801,16 @@ async def search_traces_opensearch(
             failure=by_level.get("failed", 0) + by_level.get("failure", 0),
         )
 
+        if effective_status:
+            total = by_level.get(effective_status, 0)
+
         return SearchTracesResponse(
             data=data,
             total=total,
             page=page,
             pageSize=page_size,
             aggregations={
-                "total": total,
+                "total": agg_total if effective_status else total,
                 "by_level": by_level,
                 "by_task": by_task,
                 "partial": is_partial,
