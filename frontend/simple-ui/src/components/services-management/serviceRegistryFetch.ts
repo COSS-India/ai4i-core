@@ -37,7 +37,21 @@ export type RegistryFetchContext = {
   sortMode: "time" | "sorted";
   sortKey: string;
   sortDirection: "asc" | "desc";
+  /** Comma-separated visible column ids (API catalogue only) → `columns=`. */
+  columns?: string;
 };
+
+/** 422 codes GET /services returns when it rejects the `columns` selection. */
+const REJECTED_COLUMNS_CODES = new Set(["INVALID_COLUMNS", "COLUMN_NOT_PERMITTED"]);
+
+function isColumnsRejected(error: unknown): boolean {
+  const response = (error as {
+    response?: { status?: number; data?: { detail?: { code?: unknown } } };
+  } | null)?.response;
+  if (response?.status !== 422) return false;
+  const code = response.data?.detail?.code;
+  return typeof code === "string" && REJECTED_COLUMNS_CODES.has(code);
+}
 
 function mergeServerFilters(
   context: RegistryFetchContext,
@@ -100,7 +114,7 @@ export async function fetchRegistryServicesPage(
       sortOrder = context.sortDirection;
     }
   }
-  const result = await listServicesPaginated({
+  const params = {
     offset: (context.registryPage - 1) * context.registryPageSize,
     limit: context.registryPageSize,
     query: serviceListFilterParams({
@@ -114,8 +128,17 @@ export async function fetchRegistryServicesPage(
       sortBy,
       sortOrder,
     }),
-  });
-  return { items: result.items, total: result.total };
+  };
+  try {
+    const result = await listServicesPaginated({ ...params, columns: context.columns });
+    return { items: result.items, total: result.total };
+  } catch (error) {
+    // A stale catalogue (e.g. role changed) can name a column the API now
+    // rejects. Full rows still render every column, so retry without it.
+    if (!context.columns || !isColumnsRejected(error)) throw error;
+    const result = await listServicesPaginated(params);
+    return { items: result.items, total: result.total };
+  }
 }
 
 export function shouldReplaceFullServiceIds(

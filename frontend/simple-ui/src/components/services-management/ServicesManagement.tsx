@@ -14,7 +14,6 @@ import {
 } from "../common/table";
 import type { Service } from "../../services/servicesManagementService";
 import ConfirmDialog from "../common/ConfirmDialog";
-import { useAuth } from "../../hooks/useAuth";
 import { useServicesManagement } from "../../hooks/useServicesManagement";
 import ServiceListColumnPicker from "./ServiceListColumnPicker";
 import ServiceRegistryTab from "./ServiceRegistryTab";
@@ -26,7 +25,6 @@ import {
   servicePublishedOnMillis,
   type ServiceListColumnDef,
 } from "./serviceListColumns";
-import { useServiceListVisibleColumns } from "./useServiceListVisibleColumns";
 import {
   renderEmptyServiceCell,
   renderServiceCachedInputPriceCell,
@@ -363,6 +361,10 @@ const ServicesManagement: React.FC = () => {
     hasActiveFilters,
     clearAllFilters,
     registrySort,
+    visibleColumnIds,
+    applyVisibleColumns,
+    resetVisibleColumns,
+    handleRegistrySortChange,
     serviceListCatalogue,
     serviceListUsesServer,
     registryPage,
@@ -455,20 +457,6 @@ const ServicesManagement: React.FC = () => {
     leaveCreateToCaller,
     closeCreateModal,
   );
-
-  const { user } = useAuth();
-  const {
-    visibleColumnIds,
-    applyVisibleColumns,
-    resetVisibleColumns,
-    handleRegistrySortChange,
-  } = useServiceListVisibleColumns({
-    userId: user?.user_id ?? "",
-    serviceListCatalogue,
-    serviceListUsesServer,
-    registrySort,
-    setRegistryPage,
-  });
 
   const actionsContext = useMemo(
     (): ServiceActionsContext => ({
