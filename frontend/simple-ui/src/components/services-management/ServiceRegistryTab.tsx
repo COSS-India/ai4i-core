@@ -6,6 +6,7 @@ import DataTable, {
   type DataTableColumnFilters,
   type DataTableSortState,
 } from "../common/table";
+import { activeColumnFilterCount } from "../common/DataTableColumnFilter";
 import type { ServiceTierFilterOption } from "../../hooks/useServicesManagement";
 import type { Service } from "../../services/servicesManagementService";
 import {
@@ -171,6 +172,14 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
     [serverMode, serverColumns, onServerFilterChange],
   );
 
+  // Page-only column searches live here, not in serverFilters — clear must
+  // reset them too, and Clear must show when only those are set.
+  const handleClearFilters = useCallback(() => {
+    setColumnFilters({});
+    onClearFilters();
+  }, [onClearFilters]);
+  const hasColumnFilters = activeColumnFilterCount(columnFilters) > 0;
+
   return (
     <DataTable
       layout="admin"
@@ -191,8 +200,8 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
       emptyMessage="No services in the registry yet."
       noResultsMessage="No results found. Try adjusting your search or filters."
       unfilteredCount={totalServicesCount}
-      hasActiveFilters={hasActiveFilters}
-      onClearFilters={onClearFilters}
+      hasActiveFilters={hasActiveFilters || (serverMode && hasColumnFilters)}
+      onClearFilters={handleClearFilters}
       filterToolbarRightContent={columnPicker}
       search={{
         label: "Search",
