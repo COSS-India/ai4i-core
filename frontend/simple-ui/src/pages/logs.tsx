@@ -620,13 +620,25 @@ function buildLogsFilterDefs(options: {
   return defs;
 }
 
-function filterActiveTenants(
-  tenantsData: { tenants?: Array<{ status?: string; tenant_id: string; organisation?: string }> } | undefined,
-): Array<{ tenant_id: string; organisation?: string; status?: string }> {
+type LogsTenantOption = {
+  tenant_id: string;
+  organisation?: string;
+  status?: string;
+};
+
+function tenantsFromResponse(
+  tenantsData: { tenants?: LogsTenantOption[] } | undefined,
+): LogsTenantOption[] {
   if (!tenantsData?.tenants || !Array.isArray(tenantsData.tenants)) {
     return [];
   }
-  return tenantsData.tenants.filter((tenant) =>
+  return tenantsData.tenants;
+}
+
+function filterActiveTenants(
+  tenantsData: { tenants?: LogsTenantOption[] } | undefined,
+): LogsTenantOption[] {
+  return tenantsFromResponse(tenantsData).filter((tenant) =>
     isTenantStatus(tenant?.status, TENANT.STATUS.ACTIVE),
   );
 }
@@ -1180,15 +1192,22 @@ const LogsPage: React.FC = () => {
     [tenantsData],
   );
 
+  // Name lookup includes non-active tenants (AI4IDS-3600 / AC-9).
   const tenantById = useMemo(
-    () => new Map(activeTenants.map((tenant) => [tenant.tenant_id, tenant])),
-    [activeTenants],
+    () =>
+      new Map(
+        tenantsFromResponse(tenantsData).map((tenant) => [
+          String(tenant.tenant_id),
+          tenant,
+        ]),
+      ),
+    [tenantsData],
   );
 
   const resolveTenantName = useCallback(
     (tenantId: string | null | undefined) => {
       if (!tenantId) return "-";
-      const tenant = tenantById.get(tenantId);
+      const tenant = tenantById.get(String(tenantId));
       return tenant?.organisation || tenantId;
     },
     [tenantById],
