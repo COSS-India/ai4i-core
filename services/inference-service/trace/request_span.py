@@ -168,7 +168,7 @@ def finalize_span(span, attributes: dict, *, error=None, ok: bool = False) -> No
 
 
 
-def record_rejected_request(request, status_code: int) -> None:
+def record_rejected_request(request, status_code: int, description: "str | None" = None) -> None:
     """A finished "request" span for a request rejected before its route ran
     (e.g. a body that fails validation), which otherwise leaves no span. The
     billing consumer writes each API-key request's usage_events row from its
@@ -180,6 +180,8 @@ def record_rejected_request(request, status_code: int) -> None:
         attrs.update(get_context_attributes())
         attrs["status"] = "failure"
         attrs["status_code"] = status_code
+        if description is not None:
+            attrs["_error_description"] = description
 
 
 @asynccontextmanager

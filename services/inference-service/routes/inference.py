@@ -541,8 +541,11 @@ def _llm_error_description(status_code: int, body: Any) -> str:
         error = body.get("error")
         if isinstance(error, dict) and error.get("message"):
             return str(error["message"])
-        if body.get("detail"):
-            return str(body["detail"])
+        detail = body.get("detail")
+        if detail:
+            if isinstance(detail, dict) and detail.get("message"):
+                return str(detail["message"])
+            return str(detail)
     return f"LLM upstream error {status_code}"
 
 

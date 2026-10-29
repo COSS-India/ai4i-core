@@ -127,3 +127,9 @@ class TestRejectedRequestSpan:
 
         attrs = _request_span(exporter)
         assert (attrs["status"], attrs["status_code"], attrs["url"]) == ("failure", 400, "/api/v1/nmt/inference")
+
+    def test_propagates_description_to_span_status(self, exporter):
+        request_span_module.record_rejected_request(_http_request(), 400, "field required")
+
+        (span,) = [s for s in exporter.get_finished_spans() if s.name == "request"]
+        assert span.status.description == "field required"
