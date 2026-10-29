@@ -506,7 +506,9 @@ class TenantService:
             },
         )
 
-    async def _assert_not_last_tenant_admin(self, target: User, tenant: Tenant) -> None:
+    async def _assert_not_last_tenant_admin(
+        self, target: User, tenant: Tenant, *, action: str = "delete user"
+    ) -> None:
         """Raise 422 if the target is the sole active TENANT ADMIN for their tenant.
 
         Prevents a tenant from becoming unmanageable by blocking deletion of
@@ -527,7 +529,7 @@ class TenantService:
                 detail={
                     "code": "LAST_TENANT_ADMIN",
                     "message": (
-                        f"Cannot delete user: {tenant.name} must retain at least one active Tenant Admin."
+                        f"Cannot {action}: {tenant.name} must retain at least one active Tenant Admin."
                     ),
                 },
             )
@@ -565,26 +567,56 @@ class TenantService:
                 },
             )
 
+    async def _assert_tenant_admin_demotable(self, target: User, tenant: Tenant) -> None:
+        """Block removing TENANT ADMIN from the tenant's last admin or its contact.
+
+        Same invariant ``delete_tenant_user`` enforces, plus the contact: "Change
+        contact" only accepts an Institution Admin, so the contact must stay one.
+        """
+        roles = await self._roles.get_user_roles(target.id)
+        if RoleName.TENANT_ADMIN.value not in roles:
+            return
+        if (target.email or "").lower().strip() == (tenant.email or "").lower().strip():
+            raise AppError(
+                message=(
+                    "This Tenant Admin is the institution's contact. "
+                    "Change the institution's contact before changing their role."
+                ),
+                code="CONTACT_ROLE_LOCKED",
+                status_code=409,
+            )
+        if not target.is_active:
+            # Inactive admins aren't counted, so demoting one can't drop the
+            # active-admin count (mirrors _assert_not_last_platform_admin).
+            return
+        await self._assert_not_last_tenant_admin(
+            target, tenant, action="remove the Tenant Admin role"
+        )
+
     async def _set_tenant_user_role(
         self,
         user_id: UUID,
         role: TenantUserRole | RoleName | str,
         *,
         created_by: Optional[UUID] = None,
-    ) -> None:
+    ) -> bool:
         """Replace the user's tenant role with ``role``; flush only, caller commits.
 
         ``RoleService.assign_role`` is additive, so any other tenant-assignable
         role the user holds is removed. Roles outside ``TenantUserRole`` (e.g.
-        USAGE VIEWER granted elsewhere) are left untouched.
+        USAGE VIEWER granted elsewhere) are left untouched. Returns True when
+        the user's roles actually changed.
         """
         target = role.value if isinstance(role, TenantUserRole) else role_name_to_str(role)
         tenant_roles = {r.value for r in TenantUserRole}
         current = await self._roles.get_user_roles(user_id)
+        changed = target not in current
         await self._roles.assign_role(user_id, target, commit=False, created_by=created_by)
         for existing in current:
             if existing in tenant_roles and existing != target:
                 await self._roles.remove_role(user_id, existing, commit=False)
+                changed = True
+        return changed
 
     async def build_tenant_user_response(
         self, user: User, *, unmask_phone: bool = False
@@ -1941,7 +1973,8 @@ class TenantService:
         tenant_id: int,
         user_id: UUID,
         body: TenantUserUpdate,
-    ) -> User:
+    ) -> tuple[User, bool]:
+        """Returns the updated user and whether their roles changed."""
         await self.enforce_scope(current_user, tenant_id)
         await self._deny_moderator(current_user)
         tenant = await self._load_tenant_or_404(tenant_id)
@@ -1953,15 +1986,18 @@ class TenantService:
         role_update = payload.pop("role", None)
         if role_update == TenantUserRole.TENANT_ADMIN.value:
             assert_default_tenant_not_targeted(tenant)
+        elif role_update == TenantUserRole.USER.value:
+            await self._assert_tenant_admin_demotable(target, tenant)
         payload["updated_by"] = current_user.id
         await self._users.update(target, payload)
+        role_changed = False
         if role_update is not None:
             # Single commit via save_and_refresh — role repo shares this session.
-            await self._set_tenant_user_role(
+            role_changed = await self._set_tenant_user_role(
                 target.id, role_update, created_by=current_user.id
             )
         await self._users.save_and_refresh(target)
-        return target
+        return target, role_changed
 
     async def update_tenant_user_status(
         self,
