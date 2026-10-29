@@ -270,6 +270,21 @@ async def _resolve_tier_for_update(body: TierUpdate, session: AsyncSession) -> T
     return tier
 
 
+async def _ensure_tier_name_available(name: str, tier: Tier, session: AsyncSession) -> None:
+    """409 if another non-deleted tier already uses ``name`` — the PATCH
+    counterpart of create_tier's pre-check. Keeping the current name is a no-op."""
+    if name == tier.name:
+        return
+    existing = await session.execute(
+        select(Tier).where(Tier.name == name, Tier.status != TierStatus.DELETED, Tier.id != tier.id)
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Tier with name '{name}' already exists",
+        )
+
+
 async def _upsert_quotas(
     session: AsyncSession, tier: Tier, quotas: List, updated_by: Optional[str]
 ) -> List[dict]:
@@ -421,16 +436,8 @@ async def update_tier(
 ) -> TierOut:
     tier = await _resolve_tier_for_update(body, session)
 
-    if body.name is not None and body.name != tier.name:
-        existing = await session.execute(
-            select(Tier).where(Tier.name == body.name, Tier.status != TierStatus.DELETED, Tier.id != tier.id)
-        )
-        if existing.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Tier with name '{body.name}' already exists",
-            )
     if body.name is not None:
+        await _ensure_tier_name_available(body.name, tier, session)
         tier.name = body.name
     if body.description is not None:
         tier.description = body.description
