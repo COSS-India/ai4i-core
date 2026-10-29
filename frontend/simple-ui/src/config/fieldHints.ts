@@ -45,6 +45,19 @@ export const FIELD_HINTS = {
       "New address applies after verification. An existing Institution Admin email applies immediately.",
     emailPendingOnly: `Editable only while Pending or Active — not for the Default Organisation.`,
     emailVerificationPending: "Verification pending",
+    contactChange: "Change contact",
+    contactChangeLoading: "Loading Institution Admins…",
+    contactChangeHint:
+      "Only another active Institution Admin. The change applies immediately.",
+    contactChangeNone: "Add an Institution Admin before changing the contact.",
+    contactChangeSuspended:
+      "The contact cannot be changed while the institution is suspended.",
+    contactChangeDeactivated:
+      "The contact cannot be changed while the institution is deactivated.",
+    contactChangeDefaultOrg:
+      "The Default Organisation's contact cannot be changed.",
+    contactChangeLoadFailed: "Institution Admins could not be loaded.",
+    contactChangeSelect: "Select an Institution Admin",
     planAppliesImmediately: "Tier and budget apply immediately.",
   },
   tenantUser: {

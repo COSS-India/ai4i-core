@@ -135,6 +135,8 @@ export interface TenantUpdateRequest {
   organisation?: string;
   email?: string;
   phone_number?: string;
+  /** Switch the contact to this Institution Admin. Applies immediately. */
+  contact_user_id?: string;
 }
 export type TenantUpdateResponse = TenantView;
 

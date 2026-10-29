@@ -7,6 +7,12 @@ import { showToast } from "../../../utils/toast";
 import authService from "../../../services/authService";
 import * as tenantService from "../../../services/tenantService";
 import { showError } from "../../../utils/errorHandler";
+import { FIELD_HINTS } from "../../../config/fieldHints";
+import {
+  contactChangeBlockedMessage,
+  listOtherActiveInstitutionAdmins,
+  type InstitutionContactAdminOption,
+} from "../../../utils/institutionContactChange";
 import { refreshUntil } from "../../../utils/postMutationRefresh";
 import {
   collectTenantContactEmails,
@@ -214,6 +220,14 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     Record<string, string>
   >({});
   const [isSubmittingEditTenant, setIsSubmittingEditTenant] = useState(false);
+  const [contactAdmins, setContactAdmins] = useState<InstitutionContactAdminOption[]>(
+    [],
+  );
+  const [contactAdminsLoading, setContactAdminsLoading] = useState(false);
+  const [contactAdminsError, setContactAdminsError] = useState(false);
+  const [contactChangeOpen, setContactChangeOpen] = useState(false);
+  const [selectedContactUserId, setSelectedContactUserId] = useState("");
+  const contactAdminLoadGen = useRef(0);
   // Status update confirmation
   const [statusUpdateTarget, setStatusUpdateTarget] =
     useState<StatusUpdateTargetUnion | null>(null);
@@ -1133,6 +1147,36 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setIsViewUserModalOpen(true);
   };
 
+  const resetContactChange = () => {
+    contactAdminLoadGen.current += 1;
+    setContactAdmins([]);
+    setContactAdminsLoading(false);
+    setContactAdminsError(false);
+    setContactChangeOpen(false);
+    setSelectedContactUserId("");
+  };
+
+  const loadContactAdmins = async (
+    tenantId: string,
+    currentEmail: string | undefined,
+  ) => {
+    const gen = ++contactAdminLoadGen.current;
+    setContactAdmins([]);
+    setContactAdminsError(false);
+    setContactAdminsLoading(true);
+    try {
+      const { users } = await tenantService.listAllUsers(tenantId);
+      if (gen !== contactAdminLoadGen.current) return;
+      setContactAdmins(listOtherActiveInstitutionAdmins(users, currentEmail));
+    } catch (err) {
+      console.error("Failed to load Institution Admins for contact change:", err);
+      if (gen !== contactAdminLoadGen.current) return;
+      setContactAdminsError(true);
+    } finally {
+      if (gen === contactAdminLoadGen.current) setContactAdminsLoading(false);
+    }
+  };
+
   // ----- Edit tenant -----
   const handleOpenEditTenant = async (t: TenantView) => {
     try {
@@ -1149,9 +1193,17 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         phone_number: unmasked.phone_number ?? "",
       });
       setEditTenantFormErrors({});
+      resetContactChange();
       editTenantEmailAvailability.clear();
       setIsEditTenantModalOpen(true);
       void refreshKnownAccountEmails();
+      if (
+        !contactChangeBlockedMessage(unmasked.status, {
+          isDefaultOrganisation: isDefaultTenant(unmasked),
+        })
+      ) {
+        void loadContactAdmins(unmasked.tenant_id, unmasked.email);
+      }
     } catch (err) {
       console.error("Failed to load tenant for edit:", err);
       showError(err);
@@ -1222,15 +1274,21 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       setEditTenantFormErrors({});
       const nextEmail = normalizeEmail(editTenantForm.email ?? "");
       const emailChanged =
-        isEditTenantEmailEditable &&
-        nextEmail !== normalizeEmail(editTenantRow?.email ?? "");
+        Boolean(selectedContactUserId) ||
+        (isEditTenantEmailEditable &&
+          nextEmail !== normalizeEmail(editTenantRow?.email ?? ""));
 
       const patch = {
         tenant_id: editTenantForm.tenant_id,
         organisation: editTenantForm.organisation,
         contact_name: editTenantForm.contact_name,
         phone_number: editTenantForm.phone_number,
-        ...(isEditTenantEmailEditable ? { email: editTenantForm.email } : {}),
+        ...(selectedContactUserId
+          ? { contact_user_id: selectedContactUserId }
+          : {}),
+        ...(isEditTenantEmailEditable && !selectedContactUserId
+          ? { email: editTenantForm.email }
+          : {}),
       };
       const updated = await tenantService.updateTenant(patch);
       const localPatch = buildEditTenantLocalPatch(patch, updated, emailChanged);
@@ -1238,6 +1296,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
       setIsEditTenantModalOpen(false);
       setEditTenantRow(null);
+      resetContactChange();
       const expectedOrg = patch.organisation;
       const expectedContact = patch.contact_name;
       await refreshTenantAndUserLists(editTenantForm.tenant_id, (rows) =>
@@ -1263,9 +1322,46 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   const closeEditTenantModal = () => {
     editTenantEmailAvailability.clear();
+    resetContactChange();
     setIsEditTenantModalOpen(false);
     setEditTenantRow(null);
     setEditTenantFormErrors({});
+  };
+
+  const isDefaultEditTenant =
+    editTenantRow != null && isDefaultTenant(editTenantRow);
+  const contactChangeStatusMessage = contactChangeBlockedMessage(
+    editTenantRow?.status,
+    { isDefaultOrganisation: isDefaultEditTenant },
+  );
+  const contactChangeMessage =
+    contactChangeStatusMessage ??
+    (contactAdminsError ? FIELD_HINTS.tenant.contactChangeLoadFailed : null) ??
+    (!contactAdminsLoading && contactAdmins.length === 0
+      ? FIELD_HINTS.tenant.contactChangeNone
+      : null);
+  const contactChangeDisabled =
+    Boolean(contactChangeMessage) ||
+    contactAdminsLoading ||
+    isSubmittingEditTenant;
+  const contactChange = {
+    disabled: contactChangeDisabled,
+    helper:
+      contactChangeMessage ??
+      (contactAdminsLoading ? FIELD_HINTS.tenant.contactChangeLoading : null) ??
+      (contactChangeOpen ? FIELD_HINTS.tenant.contactChangeHint : null),
+    open: contactChangeOpen,
+    admins: contactAdmins,
+    selectedUserId: selectedContactUserId,
+    onOpen: () => {
+      if (contactChangeDisabled) return;
+      setContactChangeOpen(true);
+    },
+    onSelect: (userId: string) => setSelectedContactUserId(userId),
+    onCancel: () => {
+      setContactChangeOpen(false);
+      setSelectedContactUserId("");
+    },
   };
 
   const canSubmitEditTenantForm = useMemo(() => {
@@ -1891,6 +1987,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     handleEditTenantEmailChange,
     handleEditTenantPhoneChange,
     isEditTenantEmailEditable,
+    contactChange,
     editTenantEmailStatus: editTenantEmailAvailability.status,
     canSubmitEditTenantForm,
     closeEditTenantModal,

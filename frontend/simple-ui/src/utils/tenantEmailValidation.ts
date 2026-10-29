@@ -22,6 +22,9 @@ export const EMAIL_AVAILABLE_MSG = "Email is available.";
 export const TENANT_EMAIL_CONFLICT_CODES = new Set([
   "DUPLICATE_EMAIL",
   "DUPLICATE_TENANT_EMAIL",
+  "CONTACT_NOT_INSTITUTION_ADMIN",
+  "CONTACT_NOT_VERIFIED",
+  "CONTACT_ALREADY_CURRENT",
 ]);
 
 export function normalizeEmail(email: string): string {
