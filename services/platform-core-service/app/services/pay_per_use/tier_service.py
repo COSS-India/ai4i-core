@@ -421,6 +421,15 @@ async def update_tier(
 ) -> TierOut:
     tier = await _resolve_tier_for_update(body, session)
 
+    if body.name is not None and body.name != tier.name:
+        existing = await session.execute(
+            select(Tier).where(Tier.name == body.name, Tier.status != TierStatus.DELETED, Tier.id != tier.id)
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Tier with name '{body.name}' already exists",
+            )
     if body.name is not None:
         tier.name = body.name
     if body.description is not None:
@@ -441,7 +450,15 @@ async def update_tier(
         await session.commit()
     except DBAPIError as exc:
         await session.rollback()
-        if getattr(exc.orig, "sqlstate", None) == "22003":
+        sqlstate = getattr(exc.orig, "sqlstate", None)
+        # uq_tiers_name_active — a concurrent create/rename can still win the
+        # race past the pre-check above.
+        if sqlstate == "23505":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Tier with name '{body.name}' already exists",
+            )
+        if sqlstate == "22003":
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Quota limit must be between 0 and 100,000,000,000 (100 billion)",
