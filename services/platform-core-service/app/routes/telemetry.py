@@ -1063,8 +1063,7 @@ async def get_trace_by_id(
         service = None
         for hit in hits:
             source = hit.get("_source", {})
-            if not service and source.get("service_name"):
-                service = source.get("service_name")
+            service = service or source.get("service_name")
             spans.append({
                 "name": source.get("name"),
                 "context": source.get("context", {}),
