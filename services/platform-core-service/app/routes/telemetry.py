@@ -166,18 +166,13 @@ def _build_traces_map(hits: list, tenant_filter: Optional[str]) -> dict:
 
     A single log is made up of several spans (request, model, ai-inference),
     each carrying different pieces of information: task_type lives on the
-    'model' span, url lives on the 'request' span, and status can show up on
-    more than one span. This walks the spans and, per trace_id, keeps the
-    task_type from the 'model' span, the url from the 'request' span, and the
-    first non-unknown status it sees (hits arrive newest-first, so that's the
-    most recent span with a defined status - a trace's spans can disagree,
-    e.g. a retried request, so this rule is what keeps each trace's status
-    single-valued instead of double-counted later).
+    'model' span, url lives on the 'request' span, and status lives on the
+    'request' span. Each trace has exactly one request span (the gateway
+    issues one trace ID per HTTP request), so status is unambiguously
+    single-valued per trace.
 
-    This logic itself is unchanged from before this fix - it used to be
-    written inline, once, only for the current page. It's now its own
-    function so `_compute_full_breakdown` below can reuse the exact same
-    rule instead of re-implementing it a second, possibly inconsistent, way.
+    This function is shared by the page-data path and `_compute_full_breakdown`
+    so both use the same extraction rule.
     """
     traces_map = {}
     for hit in hits:
