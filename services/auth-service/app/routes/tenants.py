@@ -1,7 +1,7 @@
 """Tenant + tenant-user CRUD routes — thin handlers; logic in TenantService."""
 
 import logging
-from typing import Optional
+from typing import Annotated, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
@@ -510,9 +510,9 @@ async def update_tenant_user(
     tenant_id: int,
     user_id: UUID,
     body: TenantUserUpdate,
-    current_user: User = Depends(get_current_user),
-    svc: TenantService = Depends(get_tenant_service),
-    cache_svc: CacheService = Depends(get_cache_service),
+    current_user: Annotated[User, Depends(get_current_user)],
+    svc: Annotated[TenantService, Depends(get_tenant_service)],
+    cache_svc: Annotated[CacheService, Depends(get_cache_service)],
 ):
     """Update a tenant user's profile and/or role.
 
