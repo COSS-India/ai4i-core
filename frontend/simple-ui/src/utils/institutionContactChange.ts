@@ -16,7 +16,8 @@ export type ListContactAdminOptions = {
    * Current contact's user id when GET /tenants/{id} returns it.
    * No email fallback — masked addresses collide across users.
    * If absent, the picker may include the current contact; BE returns
-   * CONTACT_ALREADY_CURRENT on save.
+   * CONTACT_ALREADY_CURRENT on save. Do not assume a sole eligible admin is
+   * the current contact — they may already be deactivated (AI4IDS-3401).
    */
   excludeUserId?: string | null;
 };
