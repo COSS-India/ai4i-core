@@ -184,11 +184,13 @@ async def update_tenant(
     Status changes go through PATCH /{tenant_id}/status. Duplicate
     organisation or email returns 409. Returned contact PII is masked.
 
-    Email changes are refused (409) while the tenant is SUSPENDED or
-    DEACTIVATED. Changing the email to an existing Institution Admin of this
-    tenant applies immediately. Otherwise (non-PENDING tenant) a verification link
-    is sent to the new address and ``email`` stays unchanged until it is
-    confirmed — ``pending_email`` / ``email_verification_sent`` report this.
+    Contact change: send ``contact_user_id`` (an active, set-up Institution
+    Admin of this tenant) — ``email`` switches to theirs immediately, no
+    email is sent. 409 CONTACT_NOT_INSTITUTION_ADMIN / CONTACT_NOT_VERIFIED /
+    CONTACT_ALREADY_CURRENT, or TENANT_EMAIL_EDIT_NOT_ALLOWED while
+    PENDING/SUSPENDED/DEACTIVATED, for the Default Organisation, or for a
+    typed email change on a non-PENDING tenant. A PENDING tenant may still correct
+    its email directly (activation link re-sent; ``email_verification_sent``).
     """
     tenant, link_sent = await svc.update_tenant(current_user, tenant_id, body, background)
     data = to_response(tenant, TenantResponse)

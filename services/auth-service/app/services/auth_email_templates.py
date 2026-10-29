@@ -111,28 +111,6 @@ def render_verify_email(user: User, verify_token: str) -> EmailMessage:
     )
 
 
-def render_email_change(
-    new_email: str, organisation: str, change_token: str, *, sends_setup_link: bool
-) -> EmailMessage:
-    """Sent to the *new* address when an Institution's admin email is changed.
-    No greeting by name: the recipient is usually not the outgoing admin.
-    Lands on the verify-email page; the change applies only once confirmed.
-    ``sends_setup_link``: a set-password link follows confirmation (the
-    contact account is handed over), so the copy says so."""
-    name = _platform_name()
-    return _render(
-        "email_change",
-        to=new_email,
-        subject=f"Confirm your email for {organisation} — {name}",
-        ctx={
-            "organisation": organisation,
-            "verify_url": build_verify_url(change_token),
-            "expires_hours": settings.setup_token_expire_hours,
-            "sends_setup_link": sends_setup_link,
-        },
-    )
-
-
 def render_setup_link(user: User, setup_token: str) -> EmailMessage:
     """Setup-link email — sent on tenant-admin / tenant-user activation.
 
