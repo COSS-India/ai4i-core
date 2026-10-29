@@ -73,7 +73,7 @@ export function serviceListCellKey(id: string): string {
 /** Display order. Actions stay last, matching the rest of the admin tables. */
 export const SERVICE_LIST_COLUMNS: readonly ServiceListColumnDef[] = [
   { id: "name", label: "Name", mandatory: true, defaultVisible: true },
-  { id: "modelTaskType", label: "Model Task Type", mandatory: false, defaultVisible: true },
+  { id: "modelTaskType", label: "Task Type", mandatory: false, defaultVisible: true },
   { id: "tier", label: "Tier", mandatory: false, defaultVisible: true },
   { id: "status", label: "Status", mandatory: false, defaultVisible: true },
   { id: "createdAt", label: "Created At", mandatory: false, defaultVisible: true },

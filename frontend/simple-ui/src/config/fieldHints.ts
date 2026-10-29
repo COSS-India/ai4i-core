@@ -237,7 +237,7 @@ export const FIELD_HINTS = {
   },
   logs: {
     search: {
-      placeholder: "Keyword across log fields",
+      placeholder: "Keyword search",
       tip: "Find traces by text in log fields.",
       tooLong: "Keyword must be at most 256 characters",
     },

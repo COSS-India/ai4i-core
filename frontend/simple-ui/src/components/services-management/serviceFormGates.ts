@@ -214,21 +214,14 @@ export function computeServiceFormGates(input: FormGateInput): ServiceFormGates 
 export function hasActiveClientServiceFilters(options: {
   filterStatus: string;
   filterTaskType: string;
-  filterTier: string;
-  filterModelName: string;
-  filterServiceId: string;
-  searchQuery: string;
+  searchQuery?: string;
   showTaskTypeAllOption: boolean;
-  allTierValue: string;
 }): boolean {
   if (options.filterStatus !== "") return true;
   if (options.showTaskTypeAllOption && options.filterTaskType !== "") {
     return true;
   }
-  if (options.filterTier !== options.allTierValue) return true;
-  if (options.filterModelName !== "") return true;
-  if (options.filterServiceId !== "") return true;
-  return options.searchQuery.trim() !== "";
+  return (options.searchQuery ?? "").trim() !== "";
 }
 
 export function hasActiveServerServiceFilters(

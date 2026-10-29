@@ -1,7 +1,8 @@
-import { Badge, HStack, Text } from "@chakra-ui/react";
+import { HStack, Text } from "@chakra-ui/react";
 import React from "react";
 import { getTaskColorScheme } from "../../config/constants";
 import type { Service } from "../../services/servicesManagementService";
+import { TruncatingBadge } from "../common/dataTableUtils";
 import { resolveTaskType } from "../../utils/platformService";
 import {
   formatServiceListDate,
@@ -29,9 +30,15 @@ export function renderServiceTaskTypeCell(service: Service): React.ReactNode {
   const taskType = resolveTaskType(service);
   const label = taskType ? taskType.toUpperCase() : "N/A";
   return (
-    <Badge colorScheme={getTaskColorScheme(taskType)} fontSize="sm" p={1}>
+    <TruncatingBadge
+      colorScheme={getTaskColorScheme(taskType)}
+      fontSize="sm"
+      px={1.5}
+      py={0.5}
+      title={label}
+    >
       {label}
-    </Badge>
+    </TruncatingBadge>
   );
 }
 
@@ -55,24 +62,27 @@ export function renderServiceTierCell(service: Service): React.ReactNode {
       flexWrap="nowrap"
       overflow="hidden"
       minW={0}
+      maxW="100%"
       title={fullLabel}
     >
-      {visible.map((name) => (
-        <Badge
+      {visible.map((name, index) => (
+        <TruncatingBadge
           key={name}
           colorScheme="gray"
           fontSize="xs"
           px={2}
           py={0.5}
-          flexShrink={0}
+          maxW={index === 0 ? "100%" : undefined}
+          flexShrink={index === 0 ? 1 : 0}
+          title={name}
         >
           {name}
-        </Badge>
+        </TruncatingBadge>
       ))}
       {hiddenCount > 0 ? (
-        <Badge colorScheme="gray" fontSize="xs" px={2} py={0.5} flexShrink={0}>
+        <TruncatingBadge colorScheme="gray" fontSize="xs" px={2} py={0.5} flexShrink={0}>
           +{hiddenCount}
-        </Badge>
+        </TruncatingBadge>
       ) : null}
     </HStack>
   );
@@ -81,15 +91,15 @@ export function renderServiceTierCell(service: Service): React.ReactNode {
 export function renderServiceStatusCell(service: Service): React.ReactNode {
   if (service.isPublished === true) {
     return (
-      <Badge colorScheme="green" fontSize="sm" p={1}>
+      <TruncatingBadge colorScheme="green" fontSize="sm" p={1}>
         Published
-      </Badge>
+      </TruncatingBadge>
     );
   }
   return (
-    <Badge colorScheme="gray" fontSize="sm" p={1}>
+    <TruncatingBadge colorScheme="gray" fontSize="sm" p={1}>
       Unpublished
-    </Badge>
+    </TruncatingBadge>
   );
 }
 

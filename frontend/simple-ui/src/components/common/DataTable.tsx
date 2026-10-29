@@ -67,10 +67,20 @@ import {
   useAdminTableSurface,
 } from "./TableControls";
 import type {
+  DataTableColumnFilterConfig,
+  DataTableColumnFilters,
   DataTableFilterDef,
   DataTableSearchConfig,
   DataTableSortState,
 } from "./dataTableTypes";
+import {
+  ColumnFilterRow,
+  withAutoColumnFilters,
+  withAutoColumnSort,
+  activeColumnFilterCount,
+  applyColumnFilters,
+  useColumnFilterState,
+} from "./DataTableColumnFilter";
 import {
   ADMIN_CHEVRON_COLUMN_WIDTH,
   DATA_TABLE_CELL_MAX_W,
@@ -87,6 +97,8 @@ import {
 export { DATA_TABLE_CELL_MAX_W };
 export type { DataTableSortDirection } from "./dataTableTypes";
 export type {
+  DataTableColumnFilterConfig,
+  DataTableColumnFilters,
   DataTableFilterDef,
   DataTableFilterOption,
   DataTableSearchConfig,
@@ -127,6 +139,15 @@ export interface DataTableColumn<T> {
   sortKey?: string;
   /** Value used for client-side sorting (card layout, or admin when parent does not own sort). */
   sortAccessor?: (row: T) => string | number;
+  /**
+   * Admin layout: search box under this column's header. With `columnSearch`,
+   * columns without a config get a text search (`false` opts out). On
+   * `paginate="server"` tables, configured columns are searched by the API
+   * (parent reads `onColumnFiltersChange`); the rest search the loaded page.
+   */
+  filter?: DataTableColumnFilterConfig | false;
+  /** Value matched by client-side column search. Defaults to `sortAccessor`, then `row[id]`. */
+  filterAccessor?: (row: T) => unknown;
   /**
    * Admin layout: ellipsis-truncate cell content when true.
    * Auto-skipped for action/control columns unless explicitly true.
@@ -174,6 +195,11 @@ export interface DataTableCardProps<T> extends DataTableSharedProps<T> {
    */
   sort?: DataTableSortState;
   onSortChange?: (next: DataTableSortState) => void;
+  /**
+   * Make every non-actions column sortable. Off by default so card tables keep
+   * their explicit `sortable` flags (same opt-in as admin layout).
+   */
+  autoColumnSort?: boolean;
   showAsyncState?: boolean;
   isEmpty?: boolean;
   errorMessage?: string | null;
@@ -210,6 +236,23 @@ export interface DataTableAdminProps<T> extends DataTableSharedProps<T> {
    * `param` / `search.fields` are documentation for call sites — DataTable does not read them.
    */
   filterDefs?: DataTableFilterDef[];
+  /**
+   * Adds a search box under every column header except actions columns
+   * (see `DataTableColumn.filter`). Columns with an explicit `filter` config
+   * get one regardless.
+   */
+  columnSearch?: boolean;
+  /**
+   * Opt in to making every non-actions / non-toolbar-filter column sortable.
+   * Off by default so other admin tables keep their explicit `sortable` flags.
+   */
+  autoColumnSort?: boolean;
+  /**
+   * Per-column search values (see `DataTableColumn.filter`). Omit to let
+   * DataTable keep them; pass with `onColumnFiltersChange` when the API filters.
+   */
+  columnFilters?: DataTableColumnFilters;
+  onColumnFiltersChange?: (next: DataTableColumnFilters) => void;
   hasActiveFilters?: boolean;
   onClearFilters?: () => void;
   filterToolbarAlign?: "flex-start" | "center";
@@ -496,9 +539,11 @@ export function TableDateField({
   const { resetPage, inputBg, deferApply } = useDataTableFilterContext();
   const commitOnChange = !onBlur;
 
+  const isDateTime = inputType === "datetime-local";
+
   return (
     <FormControl
-      w={{ base: "full", sm: "220px" }}
+      w={{ base: "full", sm: isDateTime ? "168px" : "160px" }}
       isInvalid={Boolean(error)}
       {...formControlProps}
     >
@@ -519,12 +564,37 @@ export function TableDateField({
         }}
         bg={inputBg}
         aria-label={label}
-        fontSize={inputType === "datetime-local" ? "xs" : undefined}
-        px={inputType === "datetime-local" ? 2 : undefined}
+        fontSize={isDateTime ? "xs" : undefined}
+        px={isDateTime ? 1.5 : undefined}
         sx={{
           minWidth: 0,
-          "&::-webkit-datetime-edit": { padding: 0, minWidth: 0 },
-          "&::-webkit-calendar-picker-indicator": { margin: 0, padding: 0 },
+          ...(isDateTime
+            ? {
+                "&::-webkit-datetime-edit": { padding: 0, minWidth: 0 },
+                "&::-webkit-datetime-edit-fields-wrapper": {
+                  padding: 0,
+                  minWidth: 0,
+                },
+                "&::-webkit-datetime-edit-text": { padding: "0 1px" },
+                "&::-webkit-datetime-edit-year-field": { padding: 0 },
+                "&::-webkit-datetime-edit-month-field": { padding: 0 },
+                "&::-webkit-datetime-edit-day-field": { padding: 0 },
+                "&::-webkit-datetime-edit-hour-field": { padding: 0 },
+                "&::-webkit-datetime-edit-minute-field": { padding: 0 },
+                "&::-webkit-datetime-edit-ampm-field": { padding: 0 },
+                "&::-webkit-calendar-picker-indicator": {
+                  margin: 0,
+                  marginLeft: "2px",
+                  padding: 0,
+                  width: "14px",
+                  height: "14px",
+                  cursor: "pointer",
+                },
+              }
+            : {
+                "&::-webkit-datetime-edit": { padding: 0, minWidth: 0 },
+                "&::-webkit-calendar-picker-indicator": { margin: 0, padding: 0 },
+              }),
         }}
         {...inputProps}
       />
@@ -758,17 +828,17 @@ const CLUSTER_CHILD_PROPS: FormControlProps = {
   w: "full",
 };
 
-const CLUSTER_GAP_PX = 16;
+const CLUSTER_GAP_PX = 8;
 
 function clusterStackProps(
   defs: DataTableFilterDef[],
 ): React.ComponentProps<typeof HStack> {
   const flex = sumClusterFlex(defs);
   if (!flex) {
-    return { spacing: 3, align: "flex-start", flexShrink: 0 };
+    return { spacing: 2, align: "flex-start", flexShrink: 0 };
   }
   return {
-    spacing: 4,
+    spacing: 2,
     align: "flex-start",
     minW: sumClusterSize(defs, "minWidth"),
     maxW: sumClusterSize(defs, "maxWidth"),
@@ -1075,6 +1145,8 @@ function AdminSortableHeader<T>({
 function columnHeaderSx<T>(col: DataTableColumn<T>) {
   return {
     ...DATA_TABLE_HEADER_SX,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
     ...(col.isNumeric || col.align === "right"
       ? { textAlign: "right" as const }
       : {}),
@@ -1177,9 +1249,13 @@ function CardLayoutDataRow<T>({
             textAlign={col.align}
             w={shrinkToContentWidth(col)}
             minW={col.minWidth}
+            maxW={col.maxW}
+            overflow="hidden"
             whiteSpace={shouldAutoTruncateColumn(col) ? undefined : "nowrap"}
           >
-            {col.cell(row, index)}
+            <TruncatingCellContent ellipsis={shouldAutoTruncateColumn(col)}>
+              {col.cell(row, index)}
+            </TruncatingCellContent>
           </Td>
         ))}
         {showRowChevron ? (
@@ -1206,6 +1282,7 @@ function CardLayoutDataTable<T>({
   sortable: sortingEnabled = true,
   sort: controlledSort,
   onSortChange,
+  autoColumnSort = false,
   showAsyncState = true,
   isLoading = false,
   isEmpty = false,
@@ -1229,11 +1306,21 @@ function CardLayoutDataTable<T>({
   const resolvedBorderRadius = borderRadius ?? defaults.borderRadius;
   const resolvedCellPy = cellPy ?? defaults.cellPy;
   const resolvedContainerMt = containerMt ?? defaults.containerMt;
-  const sortAccessors = useMemo(() => buildSortAccessors(columns), [columns]);
+  const resolvedColumns = useMemo(
+    () =>
+      autoColumnSort
+        ? withAutoColumnSort<T, DataTableColumn<T>>(columns)
+        : columns,
+    [autoColumnSort, columns],
+  );
+  const sortAccessors = useMemo(
+    () => buildSortAccessors(resolvedColumns),
+    [resolvedColumns],
+  );
   const initialSortKey =
     defaultSortKey ??
-    columns.find((c) => c.sortable)?.id ??
-    columns[0]?.id ??
+    resolvedColumns.find((c) => c.sortable)?.id ??
+    resolvedColumns[0]?.id ??
     "";
   const parentOwnsSort = Boolean(onSortChange);
 
@@ -1259,12 +1346,12 @@ function CardLayoutDataTable<T>({
 
   const displayRows =
     sortingEnabled && !parentOwnsSort ? sortedRows : [...rows];
-  const hasFooter = showFooter && columns.some((c) => c.footer != null);
+  const hasFooter = showFooter && resolvedColumns.some((c) => c.footer != null);
   const clickable = Boolean(onRowClick);
 
   const table = (
     <Box
-      overflowX="auto"
+      overflowX="hidden"
       mt={resolvedContainerMt}
       borderWidth="1px"
       borderColor="ink.200"
@@ -1274,13 +1361,20 @@ function CardLayoutDataTable<T>({
       <Table
         size="sm"
         variant="simple"
+        w="100%"
+        maxW="100%"
         minW={tableMinWidth}
-        sx={{ "th, td": { verticalAlign: "middle" } }}
+        sx={{
+          tableLayout: "fixed",
+          width: "100%",
+          maxWidth: "100%",
+          "th, td": { verticalAlign: "middle" },
+        }}
         {...tableProps}
       >
         <Thead bg={theadBg}>
           <Tr>
-            {columns.map((col) => (
+            {resolvedColumns.map((col) => (
                 <Th
                   key={col.id}
                   w={shrinkToContentWidth(col)}
@@ -1310,7 +1404,7 @@ function CardLayoutDataTable<T>({
               key={rowKey(row)}
               row={row}
               index={index}
-              columns={columns}
+              columns={resolvedColumns}
               cellPy={resolvedCellPy}
               clickable={clickable}
               onRowClick={onRowClick}
@@ -1321,7 +1415,7 @@ function CardLayoutDataTable<T>({
           ))}
           {hasFooter ? (
             <Tr bg={theadBg}>
-              {columns.map((col) => (
+              {resolvedColumns.map((col) => (
                 <Td
                   key={col.id}
                   py={resolvedCellPy}
@@ -1460,7 +1554,9 @@ function resolveAdminShowEmpty(options: {
   itemCount: number;
 }): boolean {
   if (options.isLoading) return false;
-  if (options.paginate === "server") return options.serverTotalItems === 0;
+  if (options.paginate === "server") {
+    return options.serverTotalItems === 0 || options.itemCount === 0;
+  }
   if (options.paginate === "client") return options.clientTotalItems === 0;
   return options.itemCount === 0;
 }
@@ -1763,22 +1859,37 @@ function AdminTableHead<T>({
   sort,
   onSortChange,
   rowChevron,
+  columnFilters,
+  onColumnFiltersChange,
 }: Readonly<{
   columns: DataTableColumn<T>[];
   columnLayouts: ReturnType<typeof resolveAdminColumnLayouts>;
   sort?: DataTableSortState;
   onSortChange?: (next: DataTableSortState) => void;
   rowChevron: boolean;
+  columnFilters: DataTableColumnFilters;
+  onColumnFiltersChange: (next: DataTableColumnFilters) => void;
 }>): React.ReactElement {
+  const hasFilterRow = columns.some((col) => col.filter);
   return (
     <Thead bg="ink.50" position="sticky" top={0} zIndex={1}>
-      <Tr>
+      <Tr
+        sx={
+          hasFilterRow
+            ? { "& > th": { borderBottomWidth: 0, pt: 2.5, pb: 1 } }
+            : undefined
+        }
+      >
         {columns.map((col) => {
           const layout = columnLayouts.get(col.id) ?? { minW: 0 };
+          const title =
+            typeof col.header === "string" ? col.header : undefined;
           return (
             <Th
               key={col.id}
               py={3}
+              px={3}
+              title={title}
               overflow={layout.whiteSpace === "nowrap" ? "visible" : "hidden"}
               w={layout.w}
               minW={layout.minW}
@@ -1807,6 +1918,12 @@ function AdminTableHead<T>({
           />
         ) : null}
       </Tr>
+      <ColumnFilterRow
+        columns={columns}
+        filters={columnFilters}
+        onChange={onColumnFiltersChange}
+        trailingCell={rowChevron}
+      />
     </Thead>
   );
 }
@@ -1879,7 +1996,7 @@ function AdminFilterToolbarSection({
       borderColor="ink.100"
       minW={0}
       w="full"
-      overflowX={filterToolbarSingleRow ? "auto" : undefined}
+      overflowX="hidden"
     >
       <VStack spacing={4} align="stretch">
         {showFiltersHeading ? (
@@ -1898,8 +2015,8 @@ function AdminFilterToolbarSection({
           align={filterToolbarAlign}
           alignActionsToInputs={toolbarLabelsVisible}
           rightContent={filterToolbarRightContent}
-          spacing={filterToolbarSingleRow ? 4 : 3}
-          flexWrap={filterToolbarSingleRow ? { base: "wrap", md: "nowrap" } : "wrap"}
+          spacing={filterToolbarSingleRow ? 2 : 3}
+          flexWrap="wrap"
         >
           <ConfigDrivenFilters search={search} filterDefs={filterDefs} />
         </TableFilterToolbar>
@@ -2003,6 +2120,86 @@ function stripAdminTableContainerChrome(
   return { containerMaxH, restTableContainerProps };
 }
 
+const PAGE_ONLY_SEARCH_HELPER = "Searches the rows on this page only";
+
+/**
+ * Column-search state, sortable column list, and the rows visible after
+ * client-side column filters. Kept out of AdminLayoutDataTable so that
+ * component stays under Sonar's cognitive-complexity limit.
+ */
+function useAdminColumnFilteredItems<T>(options: Readonly<{
+  items: readonly T[];
+  columns: DataTableColumn<T>[];
+  columnSearch: boolean;
+  autoColumnSort: boolean;
+  paginate: "client" | "server" | false;
+  columnFiltersProp?: DataTableColumnFilters;
+  onColumnFiltersChange?: (next: DataTableColumnFilters) => void;
+  hasToolbarFilters: boolean;
+}>) {
+  const {
+    items,
+    columns,
+    columnSearch,
+    autoColumnSort,
+    paginate,
+    columnFiltersProp,
+    onColumnFiltersChange,
+    hasToolbarFilters,
+  } = options;
+
+  const [columnFilters, setColumnFilters] = useColumnFilterState(
+    columnFiltersProp,
+    onColumnFiltersChange,
+  );
+  const columnFilterCount = activeColumnFilterCount(columnFilters);
+  const hasActiveFilters = hasToolbarFilters || columnFilterCount > 0;
+  const searchColumns = useMemo(() => {
+    const pageOnlyHelper =
+      paginate === "server" ? PAGE_ONLY_SEARCH_HELPER : undefined;
+    const withFilters = columnSearch
+      ? withAutoColumnFilters<T, DataTableColumn<T>>(columns, pageOnlyHelper)
+      : columns;
+    if (!autoColumnSort) return withFilters;
+    return withAutoColumnSort<T, DataTableColumn<T>>(withFilters);
+  }, [columnSearch, autoColumnSort, paginate, columns]);
+  // Server + parent-owned filters: keep exact API inputs off the client matcher
+  // (`500, 503` / `env = prod` would empty the table). Page-only columns still
+  // filter the loaded rows.
+  const apiOwnsColumnFilters =
+    paginate === "server" && Boolean(onColumnFiltersChange);
+  const visibleItems = useMemo(() => {
+    if (!apiOwnsColumnFilters) {
+      return applyColumnFilters(items, searchColumns, columnFilters);
+    }
+    const pageOnlyFilters: DataTableColumnFilters = {};
+    for (const col of searchColumns) {
+      const value = columnFilters[col.id];
+      const config = col.filter;
+      if (
+        !value ||
+        !config ||
+        typeof config === "boolean" ||
+        config.type !== "text" ||
+        !config.helper?.toLowerCase().includes("page only")
+      ) {
+        continue;
+      }
+      pageOnlyFilters[col.id] = value;
+    }
+    return applyColumnFilters(items, searchColumns, pageOnlyFilters);
+  }, [apiOwnsColumnFilters, items, searchColumns, columnFilters]);
+
+  return {
+    columnFilters,
+    setColumnFilters,
+    columnFilterCount,
+    hasActiveFilters,
+    searchColumns,
+    visibleItems,
+  };
+}
+
 function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
   const {
     items,
@@ -2010,7 +2207,11 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
     getRowKey,
     search,
     filterDefs,
-    hasActiveFilters = false,
+    columnSearch = false,
+    autoColumnSort = false,
+    columnFilters: columnFiltersProp,
+    onColumnFiltersChange,
+    hasActiveFilters: hasToolbarFilters = false,
     onClearFilters,
     filterToolbarAlign = "flex-start",
     filterToolbarRightContent,
@@ -2050,7 +2251,25 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
   const tableRef = useRef<HTMLTableElement>(null);
   const tableContainerRef = useRef<HTMLDivElement>(null);
 
-  const clientTable = useAdminDataTable(paginate === "client" ? items : [], {
+  const {
+    columnFilters,
+    setColumnFilters,
+    columnFilterCount,
+    hasActiveFilters,
+    searchColumns,
+    visibleItems,
+  } = useAdminColumnFilteredItems({
+    items,
+    columns,
+    columnSearch,
+    autoColumnSort,
+    paginate,
+    columnFiltersProp,
+    onColumnFiltersChange,
+    hasToolbarFilters,
+  });
+
+  const clientTable = useAdminDataTable(paginate === "client" ? visibleItems : [], {
     initialPageSize,
     pageSizeOptions,
   });
@@ -2067,7 +2286,7 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
   );
 
   const displayItems =
-    paginate === "client" ? clientTable.paginatedItems : items;
+    paginate === "client" ? clientTable.paginatedItems : visibleItems;
 
   const measuredWidths = useContentColumnWidths({
     tableRef,
@@ -2076,6 +2295,7 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
     trailingFixedPx: rowChevron ? cssLengthToPx(ADMIN_CHEVRON_COLUMN_WIDTH) : undefined,
     trailingColumnId: "row-chevron",
     enabled: !isLoading,
+    freeze: columnFilterCount > 0,
     contentKey: displayItems,
   });
   /** Once measured, `<colgroup>` owns widths; cells keep only wrapping rules. */
@@ -2094,10 +2314,21 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
     serverPagination,
   );
 
+  const resetPage = pagination?.resetPage;
   const handleClearFilters = useCallback(() => {
+    if (columnFilterCount > 0) setColumnFilters({});
     onClearFilters?.();
-    pagination?.resetPage();
-  }, [onClearFilters, pagination?.resetPage]);
+    resetPage?.();
+  }, [columnFilterCount, setColumnFilters, onClearFilters, resetPage]);
+
+  const handleColumnFiltersChange = useCallback(
+    (next: DataTableColumnFilters) => {
+      setColumnFilters(next);
+      resetPage?.();
+    },
+    [setColumnFilters, resetPage],
+  );
+  const canClearFilters = Boolean(onClearFilters) || columnFilterCount > 0;
 
   const deferApply = Boolean(search?.onSubmit);
   const filterContextValue = useMemo(
@@ -2114,7 +2345,7 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
     paginate,
     serverTotalItems: serverPagination?.totalItems ?? 0,
     clientTotalItems: clientTable.totalItems,
-    itemCount: items.length,
+    itemCount: visibleItems.length,
   });
   const emptyText = resolveAdminEmptyText({
     hasActiveFilters,
@@ -2141,7 +2372,6 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
       overflowY="auto"
       overflowX="auto"
       bg="white"
-      sx={{ scrollbarGutter: "stable" }}
       {...restTableContainerProps}
     >
       <Table
@@ -2150,11 +2380,13 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
         bg="white"
         size={size}
         w="100%"
+        maxW="100%"
         aria-busy={isLoading || undefined}
         aria-label={isLoading ? loadingMessage : undefined}
         sx={{
           tableLayout: "fixed",
           width: "100%",
+          maxWidth: "100%",
           "th, td": { verticalAlign: "middle" },
         }}
       >
@@ -2166,11 +2398,13 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
           </colgroup>
         ) : null}
         <AdminTableHead
-          columns={columns}
+          columns={searchColumns}
           columnLayouts={columnLayouts}
           sort={sort}
           onSortChange={onSortChange}
           rowChevron={rowChevron}
+          columnFilters={columnFilters}
+          onColumnFiltersChange={handleColumnFiltersChange}
         />
         <Tbody>
           {renderAdminTableBody({
@@ -2199,7 +2433,7 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
       search={search}
       filterDefs={filterDefs}
       hasActiveFilters={hasActiveFilters}
-      onClear={onClearFilters ? handleClearFilters : undefined}
+      onClear={canClearFilters ? handleClearFilters : undefined}
       filterToolbarAlign={filterToolbarAlign}
       filterToolbarRightContent={filterToolbarRightContent}
       filterToolbarSingleRow={filterToolbarSingleRow}

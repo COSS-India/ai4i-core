@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useToast } from "@chakra-ui/react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  APPLICATIONS_ALL_STALE_MS,
+  applicationsAllQueryKey,
   createApplication,
   getApplicationErrorCode,
   listAllApplicationsForBudget,
@@ -143,6 +146,7 @@ export function useApplicationManagement(
   currency = "INR",
 ) {
   const toast = useToast();
+  const queryClient = useQueryClient();
   const [applications, setApplications] = useState<Application[]>([]);
   /** Count from the full budget list, so search does not change the overview. */
   const [institutionApplicationCount, setInstitutionApplicationCount] = useState<number | null>(
@@ -209,20 +213,24 @@ export function useApplicationManagement(
   /** Drops in-flight key loads when the bulk dialog is opened again. */
   const bulkLoadGenerationRef = useRef(0);
 
-  const loadAllocationSummary = useCallback(async () => {
-    if (!tenantId) return;
-    try {
-      const all = await listAllApplicationsForBudget(tenantId);
-      budgetApplicationsRef.current = {
-        tenantId,
-        applications: all.applications,
-      };
-      setTotalAllocatedPct(sumAllocatedPercentage(all.applications));
-      setInstitutionApplicationCount(all.applications.length);
-    } catch {
-      // Keep the previous summary if the full fetch fails.
-    }
-  }, [tenantId]);
+  /**
+   * One unfiltered list powers the allocation summary, bulk budget dialog, and
+   * the table when search is empty — avoids the old parallel size=25 + size=500.
+   */
+  const allAppsQuery = useQuery({
+    queryKey: applicationsAllQueryKey(tenantId),
+    queryFn: () => listAllApplicationsForBudget(tenantId),
+    enabled: Boolean(tenantId),
+    staleTime: APPLICATIONS_ALL_STALE_MS,
+  });
+
+  useEffect(() => {
+    if (!tenantId || !allAppsQuery.data) return;
+    const apps = allAppsQuery.data.applications;
+    budgetApplicationsRef.current = { tenantId, applications: apps };
+    setTotalAllocatedPct(sumAllocatedPercentage(apps));
+    setInstitutionApplicationCount(apps.length);
+  }, [tenantId, allAppsQuery.data]);
 
   const loadTable = useCallback(async () => {
     if (!tenantId) return;
@@ -230,17 +238,32 @@ export function useApplicationManagement(
     setIsLoading(true);
     setLoadError(null);
     try {
-      const list = await listApplications(tenantId, {
-        search: search || undefined,
-        page,
-        size: pageSize,
-      });
+      let pageApps: Application[];
+      let pageTotal: number;
+      if (search) {
+        const list = await listApplications(tenantId, {
+          search,
+          page,
+          size: pageSize,
+        });
+        pageApps = list.applications;
+        pageTotal = list.pagination.total;
+      } else {
+        const all = await queryClient.ensureQueryData({
+          queryKey: applicationsAllQueryKey(tenantId),
+          queryFn: () => listAllApplicationsForBudget(tenantId),
+          staleTime: APPLICATIONS_ALL_STALE_MS,
+        });
+        const start = (page - 1) * pageSize;
+        pageApps = all.applications.slice(start, start + pageSize);
+        pageTotal = all.applications.length;
+      }
       if (requestId !== tableRequestRef.current) return;
-      setApplications(list.applications);
-      setTotal(list.pagination.total);
+      setApplications(pageApps);
+      setTotal(pageTotal);
       setIsLoading(false);
       const counts = await countActiveApiKeysForApplications(
-        list.applications.map((app) => app.application_id),
+        pageApps.map((app) => app.application_id),
       );
       if (requestId !== tableRequestRef.current) return;
       setApplications((prev) =>
@@ -255,19 +278,18 @@ export function useApplicationManagement(
     } finally {
       if (requestId === tableRequestRef.current) setIsLoading(false);
     }
-  }, [tenantId, search, page, pageSize]);
+  }, [tenantId, search, page, pageSize, queryClient]);
 
   useEffect(() => {
     void loadTable();
   }, [loadTable]);
 
-  useEffect(() => {
-    void loadAllocationSummary();
-  }, [loadAllocationSummary]);
-
   const reload = useCallback(async () => {
-    await Promise.all([loadTable(), loadAllocationSummary()]);
-  }, [loadTable, loadAllocationSummary]);
+    await queryClient.invalidateQueries({
+      queryKey: applicationsAllQueryKey(tenantId),
+    });
+    await loadTable();
+  }, [queryClient, tenantId, loadTable]);
 
   const remainingPct = Math.max(0, 100 - totalAllocatedPct);
   const institutionBudgetUnset = tenantBudget <= 0;
@@ -358,17 +380,15 @@ export function useApplicationManagement(
     setBulkLoading(true);
     setBulkRows([]);
     try {
-      const cached = budgetApplicationsRef.current;
-      const list =
-        cached?.tenantId === tenantId
-          ? { applications: cached.applications }
-          : await listAllApplicationsForBudget(tenantId);
-      if (cached?.tenantId !== tenantId) {
-        budgetApplicationsRef.current = {
-          tenantId,
-          applications: list.applications,
-        };
-      }
+      const list = await queryClient.ensureQueryData({
+        queryKey: applicationsAllQueryKey(tenantId),
+        queryFn: () => listAllApplicationsForBudget(tenantId),
+        staleTime: APPLICATIONS_ALL_STALE_MS,
+      });
+      budgetApplicationsRef.current = {
+        tenantId,
+        applications: list.applications,
+      };
       let usageWarning: string | null = null;
       let usageRows: Awaited<
         ReturnType<typeof fetchApplicationUsageList>
@@ -424,7 +444,7 @@ export function useApplicationManagement(
         setBulkLoading(false);
       }
     }
-  }, [tenantId, institutionBudget, loadKeysForRow]);
+  }, [tenantId, institutionBudget, loadKeysForRow, queryClient]);
 
   const onBulkRowFocus = useCallback(
     (applicationId: string) => {

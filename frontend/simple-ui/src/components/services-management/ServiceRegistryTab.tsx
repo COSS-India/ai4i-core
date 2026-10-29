@@ -1,19 +1,24 @@
 // Service Registry tab: filterable/searchable table of all registered services
-import React from "react";
+import React, { useCallback, useMemo } from "react";
 import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
   type DataTableColumn,
+  type DataTableColumnFilters,
   type DataTableSortState,
 } from "../common/table";
 import type { ServiceTierFilterOption } from "../../hooks/useServicesManagement";
 import type { Service } from "../../services/servicesManagementService";
 import {
+  serviceListCellKey,
   type ServiceListColumnDef,
 } from "./serviceListColumns";
 import {
+  applyDateRangeColumnFilter,
   buildClientServiceFilterDefs,
   buildServerServiceFilterDefs,
-  buildServiceRegistrySearch,
+  dateRangeColumnFilterValue,
+  SERVICE_COLUMN_DATE_KEYS,
+  SERVICE_COLUMN_SEARCH_KEYS,
 } from "./serviceRegistryFilters";
 
 interface ServiceRegistryTabProps {
@@ -26,21 +31,13 @@ interface ServiceRegistryTabProps {
   onRowClick: (service: Service) => void;
   tableKey: string;
   searchQuery: string;
-  onSearchQueryChange: (value: string) => void;
+  onSearchChange: (value: string) => void;
   filterStatus: string;
   onFilterStatusChange: (value: string) => void;
   filterTaskType: string;
   onFilterTaskTypeChange: (value: string) => void;
   taskTypeNames: string[];
-  filterTier: string;
-  onFilterTierChange: (value: string) => void;
   tierFilterOptions: ServiceTierFilterOption[];
-  filterModelName: string;
-  onFilterModelNameChange: (value: string) => void;
-  modelNameOptions: { label: string; value: string }[];
-  filterServiceId: string;
-  onFilterServiceIdChange: (value: string) => void;
-  serviceIdOptions: { label: string; value: string }[];
   hasActiveFilters: boolean;
   onClearFilters: () => void;
   /** Column picker, rendered at the end of the filter toolbar. */
@@ -66,8 +63,6 @@ function resolveServerFilterDefs(options: {
   serverFilterValues?: Record<string, string>;
   taskTypeNames: string[];
   tierFilterOptions: ServiceTierFilterOption[];
-  modelNameOptions: { label: string; value: string }[];
-  serviceIdOptions: { label: string; value: string }[];
   onServerFilterChange?: (columnId: string, value: string) => void;
 }) {
   if (!options.serverMode || !options.onServerFilterChange) return [];
@@ -76,8 +71,6 @@ function resolveServerFilterDefs(options: {
     serverFilterValues: options.serverFilterValues,
     taskTypeNames: options.taskTypeNames,
     tierFilterOptions: options.tierFilterOptions,
-    modelNameOptions: options.modelNameOptions,
-    serviceIdOptions: options.serviceIdOptions,
     onChange: options.onServerFilterChange,
   });
 }
@@ -116,21 +109,13 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
   onRowClick,
   tableKey,
   searchQuery,
-  onSearchQueryChange,
+  onSearchChange,
   filterStatus,
   onFilterStatusChange,
   filterTaskType,
   onFilterTaskTypeChange,
   taskTypeNames,
-  filterTier,
-  onFilterTierChange,
   tierFilterOptions,
-  filterModelName,
-  onFilterModelNameChange,
-  modelNameOptions,
-  filterServiceId,
-  onFilterServiceIdChange,
-  serviceIdOptions,
   hasActiveFilters,
   onClearFilters,
   columnPicker,
@@ -152,8 +137,6 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
     serverFilterValues,
     taskTypeNames,
     tierFilterOptions,
-    modelNameOptions,
-    serviceIdOptions,
     onServerFilterChange,
   });
   const clientFilterDefs = buildClientServiceFilterDefs({
@@ -162,20 +145,6 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
     filterTaskType,
     onFilterTaskTypeChange,
     taskTypeNames,
-    filterTier,
-    onFilterTierChange,
-    tierFilterOptions,
-    filterModelName,
-    onFilterModelNameChange,
-    modelNameOptions,
-    filterServiceId,
-    onFilterServiceIdChange,
-    serviceIdOptions,
-  });
-  const search = buildServiceRegistrySearch({
-    serverMode,
-    searchQuery,
-    onSearchQueryChange,
   });
   const serverPagination = resolveServerPagination({
     serverMode,
@@ -185,6 +154,45 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
     onServerPageChange,
     onServerPageSizeChange,
   });
+
+  const columnFilters = useMemo((): DataTableColumnFilters | undefined => {
+    if (!serverMode || !serverColumns) return undefined;
+    const next: DataTableColumnFilters = {};
+    for (const column of serverColumns) {
+      const cellKey = serviceListCellKey(column.id);
+      if (SERVICE_COLUMN_DATE_KEYS.has(cellKey)) {
+        const value = dateRangeColumnFilterValue(column.id, serverFilterValues);
+        if (value) next[column.id] = value;
+        continue;
+      }
+      if (!SERVICE_COLUMN_SEARCH_KEYS.has(cellKey)) continue;
+      const value = serverFilterValues?.[column.id];
+      if (value) next[column.id] = value;
+    }
+    return next;
+  }, [serverMode, serverColumns, serverFilterValues]);
+
+  const handleColumnFiltersChange = useCallback(
+    (next: DataTableColumnFilters) => {
+      if (serverMode && serverColumns && onServerFilterChange) {
+        for (const column of serverColumns) {
+          const cellKey = serviceListCellKey(column.id);
+          if (SERVICE_COLUMN_DATE_KEYS.has(cellKey)) {
+            applyDateRangeColumnFilter(
+              column.id,
+              next[column.id] ?? "",
+              onServerFilterChange,
+            );
+            continue;
+          }
+          if (SERVICE_COLUMN_SEARCH_KEYS.has(cellKey)) {
+            onServerFilterChange(column.id, next[column.id] ?? "");
+          }
+        }
+      }
+    },
+    [serverMode, serverColumns, onServerFilterChange],
+  );
 
   return (
     <DataTable
@@ -209,8 +217,19 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
       hasActiveFilters={hasActiveFilters}
       onClearFilters={onClearFilters}
       filterToolbarRightContent={columnPicker}
-      search={search}
+      search={{
+        label: "Search",
+        value: searchQuery,
+        onChange: onSearchChange,
+        placeholder: "Search by name",
+        debounceMs: 400,
+        width: { base: "full", sm: "220px" },
+      }}
       filterDefs={serverMode ? serverFilterDefs : clientFilterDefs}
+      columnSearch
+      autoColumnSort
+      columnFilters={columnFilters}
+      onColumnFiltersChange={serverMode ? handleColumnFiltersChange : undefined}
     />
   );
 };
