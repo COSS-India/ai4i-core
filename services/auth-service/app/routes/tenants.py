@@ -1,6 +1,7 @@
 """Tenant + tenant-user CRUD routes — thin handlers; logic in TenantService."""
 
-from typing import Optional
+import logging
+from typing import Annotated, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
@@ -12,7 +13,7 @@ from app.core.responses import to_response
 from app.utils.auth_helper import has_permission_id
 from app.utils.masking import mask_pii_in_dict
 from app.dependencies.auth import get_current_user
-from app.dependencies.services import get_tenant_service
+from app.dependencies.services import get_cache_service, get_tenant_service
 from app.models.tenant import TenantStatus
 from app.models.user import User
 from app.schemas.common import MessageData, error_responses
@@ -47,7 +48,10 @@ from app.schemas.tenant import (
     UpdateTenantUserResponse,
     UpdateTenantUserStatusResponse,
 )
+from app.services.cache_service import CacheService
 from app.services.tenant_service import TenantService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/auth/tenants",
@@ -506,14 +510,22 @@ async def update_tenant_user(
     tenant_id: int,
     user_id: UUID,
     body: TenantUserUpdate,
-    current_user: User = Depends(get_current_user),
-    svc: TenantService = Depends(get_tenant_service),
+    current_user: Annotated[User, Depends(get_current_user)],
+    svc: Annotated[TenantService, Depends(get_tenant_service)],
+    cache_svc: Annotated[CacheService, Depends(get_cache_service)],
 ):
     """Update a tenant user's profile and/or role.
 
     Provide at least one field. Duplicate email/username returns 409.
+    A role change signs the user out: access tokens carry permission_ids,
+    so a token issued under the old role would keep its permissions.
     """
-    target = await svc.update_tenant_user(current_user, tenant_id, user_id, body)
+    target, role_changed = await svc.update_tenant_user(current_user, tenant_id, user_id, body)
+    if role_changed:
+        try:
+            await cache_svc.revoke_all_sessions(str(target.id))
+        except Exception:
+            logger.error("Failed to revoke sessions for user id=%s after role change", target.id)
     return UpdateTenantUserResponse(
         data=await svc.build_tenant_user_response(target)
     )
