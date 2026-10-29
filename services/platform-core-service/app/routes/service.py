@@ -4,7 +4,7 @@ Service management API endpoints.
 
 import logging
 from datetime import date, datetime
-from typing import Annotated, Any, Dict, List, Optional, Union
+from typing import Annotated, Any, Dict, FrozenSet, List, Optional, Union
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BeforeValidator
@@ -24,7 +24,10 @@ from app.repositories.model_management.service_repository import (
 from app.schemas.model_management.service_columns import (
     ADMIN_ONLY_FILTER_PARAMS,
     ADMIN_ONLY_KEYS,
+    MANDATORY_KEYS,
     SORTABLE_KEYS,
+    VALID_COLUMN_KEYS,
+    response_fields_for,
 )
 from app.schemas.common import MessageMeta, TotalMeta, error_responses
 from app.schemas.enums.model_management import TaskTypeEnum
@@ -116,6 +119,11 @@ def _filter_service_fields(item: Dict[str, Any]) -> Dict[str, Any]:
     """Strip internal/sensitive fields (api_key, billing, health,
     hardware, tiers, audit) down to what non-admin/public callers need."""
     return {k: v for k, v in item.items() if k in _NON_ADMIN_SERVICE_FIELDS}
+
+
+def _select_fields(item: Dict[str, Any], fields: FrozenSet[str]) -> Dict[str, Any]:
+    """Keep only the response fields the selected columns need."""
+    return {k: v for k, v in item.items() if k in fields}
 
 
 _TRY_IT_SUPPORTED_TASK_TYPES = {TaskTypeEnum.nmt.value, TaskTypeEnum.llm.value}
@@ -322,6 +330,29 @@ class ServiceListSortParams:
         self.limit = limit
 
 
+def _parse_columns(columns: Optional[str], is_admin: bool) -> Optional[FrozenSet[str]]:
+    """Selected column ids plus the mandatory ones; None means the full item."""
+    requested = set(_split_csv(columns))
+    if not requested:
+        return None
+    unknown = requested - VALID_COLUMN_KEYS
+    if unknown:
+        raise ValidationError(
+            message=(
+                f"Unknown column keys: {', '.join(sorted(unknown))}. "
+                f"Valid keys: {', '.join(sorted(VALID_COLUMN_KEYS))}"
+            ),
+            code="INVALID_COLUMNS",
+        )
+    denied = requested & ADMIN_ONLY_KEYS if not is_admin else set()
+    if denied:
+        raise ValidationError(
+            message=f"Column(s) not available to this caller: {', '.join(sorted(denied))}",
+            code="COLUMN_NOT_PERMITTED",
+        )
+    return frozenset(requested | MANDATORY_KEYS)
+
+
 def _validate_sort(sort_by: Optional[str], sort_order: str, is_admin: bool) -> None:
     """Reject unknown sort columns/directions and admin-only sorts for non-admins."""
     if sort_by is not None and sort_by not in SORTABLE_KEYS:
@@ -397,6 +428,18 @@ async def list_services(
     db: Annotated[AsyncSession, Depends(get_db)],
     filters: Annotated[ServiceListFilterParams, Depends()],
     paging: Annotated[ServiceListSortParams, Depends()],
+    columns: Annotated[
+        Optional[str],
+        Query(
+            description=(
+                "Comma-separated column ids; each row then carries only the fields those columns "
+                "need, plus serviceId, name, isPublished, versionStatus and tierIds (and createdAt, "
+                "updatedAt, publishedAt for admin/moderator). Valid keys: "
+                + ", ".join(sorted(VALID_COLUMN_KEYS)) + ". Price, tier, created_at and published_at "
+                "are admin/moderator only. Omit to return the full item."
+            ),
+        ),
+    ] = None,
 ) -> ListServicesResponse:
     """List services with optional filters, sorting and offset/limit pagination.
 
@@ -407,6 +450,7 @@ async def list_services(
     is_admin = is_platform_admin(request)
     sort_by = paging.sort_by or None  # a blank sort_by from the UI means default order
     _validate_sort(sort_by, paging.sort_order, is_admin)
+    selected = _parse_columns(columns, is_admin)
     _reject_admin_only_filters(filters, is_admin)
     _validate_date_ranges(filters)
     task_types = await _resolve_task_types(filters.task_types, db)
@@ -432,6 +476,7 @@ async def list_services(
         ),
         sort_by=sort_by,
         sort_order=paging.sort_order,
+        include_tier_names=selected is None or "tier" in selected,
     )
     # Non-admin already loses api_key/inferenceEndPoint entirely below, so
     # masking them first would be wasted work — only admins need it.
@@ -439,6 +484,10 @@ async def list_services(
         items = [mask_service_secrets(i) for i in items]
     else:
         items = [_filter_service_fields(i) for i in items]
+    # After the role filter, so columns can only narrow what the role allows.
+    if selected is not None:
+        fields = response_fields_for(selected, is_admin)
+        items = [_select_fields(i, fields) for i in items]
     response.headers["X-Total-Count"] = str(total)
     return ListServicesResponse(
         success=True,

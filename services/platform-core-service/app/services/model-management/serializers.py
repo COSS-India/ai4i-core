@@ -162,6 +162,7 @@ def service_to_dict(
         "tierNames": tier_names,
         "deletedAt": _iso(service.deleted_at),
         "createdAt": _iso(service.created_at),
+        "updatedAt": _iso(service.updated_at),
         "createdBy": service.created_by,
         "updatedBy": service.updated_by,
     }

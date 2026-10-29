@@ -16,10 +16,18 @@ from fastapi.testclient import TestClient
 from app.core.exceptions import AppError, EntityNotFoundError, ValidationError
 from app.schemas.model_management import service_columns as cols
 from app.services.user_preferences import column_preference_service as svc
+from app.services.user_preferences import preference_cache
 
 _REPO = "app.services.user_preferences.column_preference_service.repo"
 VIEW = "service-list"
 NON_ADMIN_DEFAULTS = ["name", "actions", "task_type", "status"]
+
+
+@pytest.fixture(autouse=True)
+def _no_redis(monkeypatch):
+    """Redis off, so these tests keep covering the DB path; the cache has
+    its own tests in test_user_preference_cache.py."""
+    monkeypatch.setattr(preference_cache, "_get_redis", lambda: None)
 
 
 def _order(ids, is_admin):
