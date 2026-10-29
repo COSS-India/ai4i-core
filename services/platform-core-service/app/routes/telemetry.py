@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/telemetry", tags=["Telemetry"])
 
 _TRACE_ID_KEYWORD = "context.trace_id.keyword"
+_TRACE_ID_FIELD = "context.trace_id"
+_TIMESTAMP_FIELD = "@timestamp"
 
 # Role IDs (must match the seeded values in roles table)
 _ROLE_ADMIN = 1
@@ -197,20 +199,18 @@ def _build_traces_map(hits: list, tenant_filter: Optional[str]) -> dict:
                 "latency": None,
                 "status_code": None,
                 "tenant_id": tenant_filter or attrs.get("tenantId") or "system",
-                "timestamp": source.get("@timestamp") or source.get("timestamp"),
+                "timestamp": source.get(_TIMESTAMP_FIELD) or source.get("timestamp"),
             }
-        elif not traces_map[trace_id]["service"] or traces_map[trace_id]["service"] == "ai4x-inference":
-            # Upgrade the service name from a later span if a real name is present
-            if source.get("service_name"):
-                traces_map[trace_id]["service"] = source.get("service_name")
+        elif source.get("service_name") and (not traces_map[trace_id]["service"] or traces_map[trace_id]["service"] == "ai4x-inference"):
+            traces_map[trace_id]["service"] = source.get("service_name")
 
         _apply_span_to_trace(traces_map[trace_id], span_name, attrs)
         # Request span is authoritative for timestamp (same as status); override
         # whatever the first-seen span set so sort-by-timestamp is consistent.
         if span_name == "request":
-            ts = source.get("@timestamp") or source.get("timestamp")
-            if ts:
-                traces_map[trace_id]["timestamp"] = ts
+            traces_map[trace_id]["timestamp"] = (
+                source.get(_TIMESTAMP_FIELD) or source.get("timestamp") or traces_map[trace_id]["timestamp"]
+            )
 
     return traces_map
 
@@ -309,7 +309,7 @@ _BREAKDOWN_CONCURRENCY = 5
 # Maps sort_by parameter values to their OpenSearch field names.
 # URL and status_code are keyword/numeric fields on the request span.
 _SORT_FIELD_MAP = {
-    "timestamp": "@timestamp",
+    "timestamp": _TIMESTAMP_FIELD,
     "url": "attributes.url.keyword",
     "latency": "attributes.total_time_ms",
     "status_code": "attributes.status_code",
@@ -383,13 +383,13 @@ async def _compute_full_breakdown(opensearch_client: OpenSearchTraceClient, trac
     batches = [trace_ids[i:i + _BREAKDOWN_BATCH_SIZE] for i in range(0, len(trace_ids), _BREAKDOWN_BATCH_SIZE)]
 
     async def fetch_batch(batch: list) -> dict:
-        trace_id_clauses = [{"match_phrase": {"context.trace_id": tid}} for tid in batch]
+        trace_id_clauses = [{"match_phrase": {_TRACE_ID_FIELD: tid}} for tid in batch]
         async with semaphore:
             return await asyncio.to_thread(
                 opensearch_client.search_traces,
                 query={"bool": {"should": trace_id_clauses, "minimum_should_match": 1}},
                 size=len(batch) * _BREAKDOWN_SPAN_CEILING_PER_TRACE,
-                source_fields=["@timestamp", "name", "context.trace_id", "attributes", "service_name"],
+                source_fields=[_TIMESTAMP_FIELD, "name", _TRACE_ID_FIELD, "attributes", "service_name"],
             )
 
     responses = await asyncio.gather(*(fetch_batch(batch) for batch in batches))
@@ -562,7 +562,7 @@ def _build_base_filter_clauses(
             range_query["gte"] = start_date
         if end_date:
             range_query["lte"] = end_date
-        base_filter_clauses.append({"range": {"@timestamp": range_query}})
+        base_filter_clauses.append({"range": {_TIMESTAMP_FIELD: range_query}})
     return base_filter_clauses
 
 
@@ -676,7 +676,7 @@ def _fetch_span_page_data(
 ) -> tuple:
     if not paginated_trace_ids:
         return [], paginated_trace_ids
-    trace_id_clauses = [{"match_phrase": {"context.trace_id": tid}} for tid in paginated_trace_ids]
+    trace_id_clauses = [{"match_phrase": {_TRACE_ID_FIELD: tid}} for tid in paginated_trace_ids]
     required_spans = _required_span_types(selected_columns)
     if required_spans < ALL_SPAN_TYPES:
         step3_query: dict = {
@@ -690,12 +690,53 @@ def _fetch_span_page_data(
     spans_response = opensearch_client.search_traces(
         query=step3_query,
         size=len(paginated_trace_ids) * _SPAN_CEILING_PER_TRACE,
-        source_fields=["@timestamp", "name", "context.trace_id", "attributes", "service_name", "status"],
+        source_fields=[_TIMESTAMP_FIELD, "name", _TRACE_ID_FIELD, "attributes", "service_name", "status"],
     )
     hits = spans_response.get("hits", {}).get("hits", [])
     traces_map = _build_traces_map(hits, tenant_filter)
     data = _build_page_data(traces_map, hits, selected_columns, paginated_trace_ids, is_admin=is_admin)
     return data, paginated_trace_ids
+
+
+def _resolve_paginated_ids_for_status(
+    opensearch_client: OpenSearchTraceClient,
+    is_partial: bool,
+    all_traces: dict,
+    by_level: dict,
+    effective_status: str,
+    filter_query: dict,
+    page_size: int,
+    offset: int,
+    sort_clause: list,
+    sort_by: Optional[str],
+    sort_dir: str,
+) -> tuple:
+    """Return (total, paginated_trace_ids) for a status-filtered search.
+
+    When the breakdown was capped (is_partial=True), falls back to span-level
+    collapse so the page remains time-ordered.
+    """
+    if is_partial:
+        ids_response = opensearch_client.search_traces(
+            query=filter_query,
+            size=page_size,
+            from_=offset,
+            source_fields=[_TRACE_ID_FIELD],
+            collapse={"field": _TRACE_ID_KEYWORD},
+            sort=sort_clause,
+            aggs={"trace_count": {"cardinality": {
+                "field": _TRACE_ID_KEYWORD,
+                "precision_threshold": _TOTAL_PRECISION_THRESHOLD,
+            }}},
+        )
+        total = ids_response.get("aggregations", {}).get("trace_count", {}).get("value", 0)
+        paginated_trace_ids = _extract_paginated_trace_ids(ids_response)
+    else:
+        total = by_level.get(effective_status, 0)
+        paginated_trace_ids = _paginate_resolved_traces(
+            all_traces, effective_status, sort_by, sort_dir, offset, page_size,
+        )
+    return total, paginated_trace_ids
 
 
 async def _compute_agg_totals(
@@ -828,8 +869,7 @@ async def search_traces_opensearch(
         # Adding name="request" pins those conditions to that span type so they
         # are evaluated on the same document.
         needs_request_anchor = bool(
-            status_code_list
-            or (sort_by and sort_by in {"latency", "url", "status_code"})
+            status_code_list or sort_by in {"latency", "url", "status_code"}
         )
 
         filter_clauses = _build_search_filter_clauses(
@@ -846,7 +886,7 @@ async def search_traces_opensearch(
         agg_filter_query = {"bool": {"must": agg_filter_clauses}} if agg_filter_clauses else {"match_all": {}}
 
         # --- Sort ---
-        sort_field = _SORT_FIELD_MAP.get(sort_by or "timestamp", "@timestamp")
+        sort_field = _SORT_FIELD_MAP.get(sort_by or "timestamp", _TIMESTAMP_FIELD)
         sort_dir = sort_order if sort_order in {"asc", "desc"} else "desc"
         sort_clause = [{sort_field: {"order": sort_dir}}]
 
@@ -867,31 +907,10 @@ async def search_traces_opensearch(
             agg_total, by_level, by_task, is_partial, all_traces = await _compute_agg_totals(
                 opensearch_client, agg_filter_query, effective_status, 0, tenant_filter,
             )
-            if is_partial:
-                # Breakdown was capped; all_traces is an alphabetical-by-trace-id
-                # subset, not a time-ordered one — slicing it would put arbitrary
-                # old traces on page 1 while newer ones are missing. Fall back to
-                # the span-level collapse path (same as the no-status branch) so
-                # the page stays time-ordered and total is exact.
-                ids_response = opensearch_client.search_traces(
-                    query=filter_query,
-                    size=page_size,
-                    from_=offset,
-                    source_fields=["context.trace_id"],
-                    collapse={"field": _TRACE_ID_KEYWORD},
-                    sort=sort_clause,
-                    aggs={"trace_count": {"cardinality": {
-                        "field": _TRACE_ID_KEYWORD,
-                        "precision_threshold": _TOTAL_PRECISION_THRESHOLD,
-                    }}},
-                )
-                total = ids_response.get("aggregations", {}).get("trace_count", {}).get("value", 0)
-                paginated_trace_ids = _extract_paginated_trace_ids(ids_response)
-            else:
-                total = by_level.get(effective_status, 0)
-                paginated_trace_ids = _paginate_resolved_traces(
-                    all_traces, effective_status, sort_by, sort_dir, offset, page_size,
-                )
+            total, paginated_trace_ids = _resolve_paginated_ids_for_status(
+                opensearch_client, is_partial, all_traces, by_level, effective_status,
+                filter_query, page_size, offset, sort_clause, sort_by, sort_dir,
+            )
             # Step 3: fetch spans for the resolved page.
             data, paginated_trace_ids = _fetch_span_page_data(
                 opensearch_client, paginated_trace_ids, selected_columns, tenant_filter, is_admin,
@@ -905,7 +924,7 @@ async def search_traces_opensearch(
                 query=filter_query,
                 size=page_size,
                 from_=offset,
-                source_fields=["context.trace_id"],
+                source_fields=[_TRACE_ID_FIELD],
                 collapse={"field": _TRACE_ID_KEYWORD},
                 sort=sort_clause,
                 aggs={"trace_count": {"cardinality": {
@@ -1003,9 +1022,9 @@ async def get_trace_by_id(
 
         # Query OpenSearch for all spans with matching trace_id
         response = opensearch_client.get_trace_by_id(trace_id, source_fields=[
-            "@timestamp",
+            _TIMESTAMP_FIELD,
             "name",
-            "context.trace_id",
+            _TRACE_ID_FIELD,
             "context.parent_span_id",
             # span_id too: a failed-over trace has two "model" / "ai-inference"
             # spans, so the UI needs it to tell the rows apart.
@@ -1051,7 +1070,7 @@ async def get_trace_by_id(
                 "context": source.get("context", {}),
                 "kind": source.get("kind"),
                 "attributes": source.get("attributes", {}),
-                "timestamp": source.get("@timestamp") or source.get("timestamp"),
+                "timestamp": source.get(_TIMESTAMP_FIELD) or source.get("timestamp"),
             })
 
         # @timestamp is Fluent Bit's ingestion time, not the span's real OTel
