@@ -25,7 +25,7 @@ Rules:
 
 import json
 import logging
-from typing import List, Optional, Union
+from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ def _get_redis():
         return None
 
 
-async def get_columns(user_id: str, view_key: str) -> Union[List[str], None, _Miss]:
+async def get_columns(user_id: str, view_key: str) -> List[str] | None | _Miss:
     """Cached column ids, None for a cached "nothing saved", or MISS."""
     redis = _get_redis()
     if redis is None:
@@ -76,7 +76,7 @@ async def get_columns(user_id: str, view_key: str) -> Union[List[str], None, _Mi
         return MISS
 
 
-async def set_columns(user_id: str, view_key: str, columns: Optional[List[str]]) -> None:
+async def set_columns(user_id: str, view_key: str, columns: List[str] | None) -> None:
     """Cache the stored column ids (None for "nothing saved")."""
     redis = _get_redis()
     if redis is None:

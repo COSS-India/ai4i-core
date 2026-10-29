@@ -5,7 +5,7 @@ add one (e.g. the logs dashboard) register a ``ViewCatalogue`` for it.
 """
 
 from dataclasses import dataclass
-from typing import Callable, Dict, FrozenSet, List, Optional, Sequence
+from typing import Callable, Dict, FrozenSet, List, Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,7 +51,7 @@ def _defaults(cat: ViewCatalogue, is_admin: bool) -> List[str]:
     return [i for i in _order(cat, is_admin) if i in cat.defaults or i in cat.mandatory]
 
 
-async def _stored(session: AsyncSession, user_id: str, view_key: str) -> Optional[List[str]]:
+async def _stored(session: AsyncSession, user_id: str, view_key: str) -> List[str] | None:
     """Stored column ids (None if nothing saved): cache first, DB on a miss."""
     stored = await preference_cache.get_columns(user_id, view_key)
     if stored is preference_cache.MISS:
