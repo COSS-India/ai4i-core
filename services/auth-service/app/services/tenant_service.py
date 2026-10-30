@@ -2133,12 +2133,9 @@ class TenantService:
         self, current_user: User, tenant_id: int, user_id: UUID, background_tasks: BackgroundTasks
     ) -> None:
         await self.enforce_scope(current_user, tenant_id)
+        await self._deny_moderator(current_user)
         tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
-        # MODERATORs may delete USER-role accounts but not higher-privileged roles.
-        target_roles = await self._roles.get_user_roles(target.id)
-        if RoleName.TENANT_ADMIN.value in target_roles:
-            await self._deny_moderator(current_user)
         await self._assert_not_last_tenant_admin(target, tenant)
         await self._assert_not_last_platform_admin(target, tenant, action="delete")
 
