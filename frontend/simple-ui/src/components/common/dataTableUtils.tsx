@@ -87,32 +87,22 @@ const WEAK_PRIMARY_IDS = new Set([
   "application",
 ]);
 
-/**
- * Badge / icon / code columns under `table-layout: fixed`.
- * Pin rem widths so they do not share leftover space equally with URL/name/error.
- * Keys are normalizeColumnId / compactColumnId forms.
- */
+/** Compact rem pins for badge / icon / code columns (`table-layout: fixed`). */
 const COMPACT_COLUMN_WIDTHS: Record<string, string> = {
-  // Fits "Unpublished" badge + hint/sort on Services; icon + STATUS on Logs.
   status: "8.5rem",
   level: "6.5rem",
-  // Locale datetime / date — pin so they do not absorb leftover flex width.
   timestamp: "11.5rem",
   createdat: "11.5rem",
   created_at: "11.5rem",
   created: "7.5rem",
-  // Short version tokens ("v6") — header still needs a little room for sort.
   version: "5.5rem",
-  // Badge column (LLM / NMT) — keep tight; full header is available via title.
   task: "5.75rem",
   modeltasktype: "5.75rem",
-  // "TASK TYPE" header on Logs.
   tasktype: "7.75rem",
   task_type: "7.75rem",
   method: "5.25rem",
   statuscode: "6.75rem",
   status_code: "6.75rem",
-  // Count columns (Models "No. of Services", Tier services/institutions).
   servicecount: "7.5rem",
   services: "6.5rem",
   institutions: "7rem",
@@ -133,11 +123,7 @@ export function shouldAutoTruncateColumn(col: { id: string; truncate?: boolean }
   return !(NO_AUTO_TRUNCATE_IDS.has(id) || NO_AUTO_TRUNCATE_IDS.has(compactColumnId(col.id)));
 }
 
-/**
- * Non-truncating columns (actions, toggles) without an explicit width should
- * shrink to their content in `table-layout: fixed` tables. `1%` is the usual
- * hint; content + nowrap then sets the real width from the action count.
- */
+/** `1%` hint for non-truncating columns so content + nowrap sets the real width. */
 export function shrinkToContentWidth(col: {
   id: string;
   truncate?: boolean;
@@ -210,10 +196,7 @@ const PRIMARY_FLEX_IDS = [
   new Set(["institution"]),
 ];
 
-/**
- * Column that should absorb leftover width.
- * Prefer long-form fields (name, error, url, …). Never fall back to timestamp/status.
- */
+/** Prefer long-form fields (name, error, url) for leftover width; never timestamp/status. */
 export function resolvePrimaryColumnId(
   columns: readonly { id: string; truncate?: boolean }[],
 ): string | null {
@@ -245,7 +228,6 @@ export type AdminColumnLayout = {
   whiteSpace?: TableCellProps["whiteSpace"];
 };
 
-/** Compact Actions width — fits up to 4 `sm` ghost IconButtons under `table-layout: fixed`. */
 export const ADMIN_ACTIONS_COLUMN_WIDTH = "9.75rem";
 export const ADMIN_CHEVRON_COLUMN_WIDTH = "2.25rem";
 
@@ -257,7 +239,7 @@ type AdminColumnInput = {
   maxW?: TableCellProps["maxW"];
 };
 
-/** `1%` / auto widths are shrink-wrap hints, not real pins under `table-layout: fixed`. */
+/** `1%` / auto are shrink-wrap hints, not real pins under `table-layout: fixed`. */
 function isFluidWidthHint(value: TableCellProps["w"] | TableCellProps["minW"]): boolean {
   if (value == null) return true;
   if (typeof value !== "string") return false;
@@ -283,10 +265,6 @@ function actionsColumnLayout(): AdminColumnLayout {
   };
 }
 
-/**
- * Actions / control columns must stay a pinned content-width rail.
- * Never absorb leftover table space; never crush to `1%` (truncates "Actions" → "A").
- */
 function pinnedControlColumnLayout(col: AdminColumnInput): AdminColumnLayout {
   const candidate = col.width ?? col.minWidth ?? col.maxW;
   if (candidate != null && !isFluidWidthHint(candidate)) {
@@ -308,14 +286,10 @@ function partitionAdminColumns(columns: readonly AdminColumnInput[]): {
   const layouts = new Map<string, AdminColumnLayout>();
   const flexColumns: AdminColumnInput[] = [];
   for (const col of columns) {
-    // Control columns win over generic explicit widths (incl. legacy `width: "1%"`).
     if (isShrinkWrapColumn(col)) {
       layouts.set(col.id, pinnedControlColumnLayout(col));
       continue;
     }
-    // Only a hard `width` leaves the flex pool — same rule as measured sizing.
-    // minWidth / compact hints stay flexible so Logs + Services column pickers
-    // spread evenly when few columns are visible.
     if (col.width != null && !isFluidWidthHint(col.width)) {
       layouts.set(col.id, explicitColumnLayout(col));
       continue;
@@ -329,18 +303,12 @@ function applyFlexColumnLayouts(
   layouts: Map<string, AdminColumnLayout>,
   flexColumns: AdminColumnInput[],
 ): void {
-  // Even share until content measurement runs. Do not assign % that sum to
-  // 100% — Actions / chevron sit outside that budget.
   for (const col of flexColumns) {
     layouts.set(col.id, { minW: 0 });
   }
 }
 
-/**
- * Viewport-fit layouts for admin tables (`table-layout: fixed; width: 100%`).
- * - Actions: fixed rem (always visible, no horizontal scroll)
- * - All other columns: flexible — share space evenly, truncate when crowded
- */
+/** Viewport-fit layouts for admin tables (`table-layout: fixed`). */
 export function resolveAdminColumnLayouts(
   columns: readonly AdminColumnInput[],
 ): Map<string, AdminColumnLayout> {
@@ -349,31 +317,17 @@ export function resolveAdminColumnLayouts(
   return layouts;
 }
 
-/**
- * - `fixed`: control rails and caller-pinned widths; never grow or shrink.
- * - `content`: dates, badges, counts; always show in full.
- * - `shrink`: free text; first to give up width, truncated with an ellipsis.
- */
 export type ColumnSizingMode = "fixed" | "content" | "shrink";
 
 export type ColumnSizingInput = {
-  /** Widest of header and cells, px including cell padding. */
   natural: number;
   header: number;
   mode: ColumnSizingMode;
   minPx?: number;
 };
 
-/** Soft floor while shrinking; headers/cells may truncate below their natural width. */
 const MIN_SHRINK_COLUMN_PX = 96;
 
-/**
- * Jira-style flexible columns (no horizontal scroll):
- * - Actions / explicit pins stay fixed
- * - Every other column shares leftover width evenly when few are visible
- * - When many are visible, every flexible column shrinks and truncates
- * Compact rem hints are minimums only — never hard pins.
- */
 export function resolveColumnSizingMode(col: AdminColumnInput): ColumnSizingMode {
   if (isShrinkWrapColumn(col)) return "fixed";
   if (col.width != null && !isFluidWidthHint(col.width)) return "fixed";
@@ -403,8 +357,6 @@ export function cssLengthToPx(value: unknown): number | undefined {
 
 function shrinkFloor(col: ColumnSizingInput): number {
   if (col.mode !== "shrink") return col.natural;
-  // Do not floor on full header width — long labels ("Cached Input Price")
-  // must truncate when many columns share the viewport.
   return Math.min(col.natural, col.minPx ?? MIN_SHRINK_COLUMN_PX);
 }
 
@@ -414,11 +366,6 @@ function shrinkableIndexes(cols: readonly ColumnSizingInput[]): number[] {
     .filter((i) => i >= 0);
 }
 
-/**
- * Give leftover viewport space to shrink columns (even split).
- * Consume every leftover pixel — a shortfall lets the browser pad the last
- * columns, which shows up as a gap after price amounts before Actions.
- */
 function growShrinkColumns(
   widths: number[],
   _cols: readonly ColumnSizingInput[],
@@ -427,8 +374,6 @@ function growShrinkColumns(
   total: number,
 ): number[] {
   const next = widths.map((w) => Math.floor(w));
-  // No shrink columns (only badges/prices/actions): park leftover on the first
-  // column so the browser does not pad Cached / Actions.
   const targets = shrinkable.length > 0 ? shrinkable : [0];
   let remaining = Math.max(0, available - total);
   const share = Math.floor(remaining / targets.length);
@@ -472,16 +417,11 @@ function fitWidthsToAvailable(widths: number[], available: number): number[] {
   if (assigned <= available) {
     return widths.map((w) => Math.round(w));
   }
-  // Scale to the viewport — never force horizontal scroll. Cells truncate.
   const scale = available / assigned;
   return widths.map((w) => Math.max(1, Math.floor(w * scale)));
 }
 
-/**
- * Viewport-fit widths (no horizontal scroll):
- * - room to spare: flexible columns grow evenly (Jira-like spread)
- * - too tight: flexible columns shrink/truncate; actions stay fixed
- */
+/** Fit column widths to the viewport without horizontal scroll. */
 export function distributeColumnWidths(
   cols: readonly ColumnSizingInput[],
   available: number,
@@ -512,14 +452,7 @@ export function distributeColumnWidths(
   return fitWidthsToAvailable(widths, available);
 }
 
-/**
- * Natural (unconstrained, single-line) width of each column, measured from
- * offscreen clones of the rendered header and body cells.
- *
- * `visible[i]` is false for columns hidden at the current breakpoint
- * (`display: none`); those drop out of the table's column structure, so
- * callers must not emit a `<col>` for them.
- */
+/** Natural single-line widths from offscreen clones; `visible` skips `display: none` cols. */
 export function measureColumnNaturalWidths(
   table: HTMLTableElement,
   columnCount: number,
@@ -659,14 +592,7 @@ export function buildMeasuredColumnWidths(options: Readonly<{
   }));
 }
 
-/**
- * Pixel widths for a fixed-layout table's `<colgroup>`, derived from the data
- * actually on screen. Returns null until the first measurement.
- *
- * Columns hidden at the current breakpoint are left out, so each width lands
- * on the column it was measured for. Widths only ratchet up while the visible
- * column set is unchanged, so paging or filtering does not make columns jump.
- */
+/** Measured `<colgroup>` widths for a fixed-layout table; null until first measure. */
 export function useContentColumnWidths(options: Readonly<{
   tableRef: React.RefObject<HTMLTableElement>;
   containerRef: React.RefObject<HTMLElement>;
@@ -675,7 +601,7 @@ export function useContentColumnWidths(options: Readonly<{
   trailingColumnId?: string;
   enabled: boolean;
   contentKey: unknown;
-  /** Keep the current widths (e.g. while the user is searching); first measure still runs. */
+  /** Keep current widths (e.g. while searching); first measure still runs. */
   freeze?: boolean;
 }>): MeasuredColumnWidth[] | null {
   const {
@@ -728,7 +654,6 @@ export function useContentColumnWidths(options: Readonly<{
       }
       return { ...prev, header, natural };
     });
-    // `available` re-measures when a resize crosses a breakpoint that hides columns.
   }, [enabled, key, contentKey, columns.length, tableRef, available, freeze]);
 
   return useMemo(
@@ -796,7 +721,6 @@ const TRUNCATING_CELL_SX = {
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
-  // Chakra Badge is inline-flex; switch to block so ellipsis applies.
   "& .chakra-badge": {
     display: "inline-block",
     maxWidth: "100%",
@@ -820,11 +744,7 @@ const TRUNCATING_CELL_SX = {
   },
 } as const;
 
-/**
- * Clip overflowing cell content across every DataTable. Native `title` shows
- * the full value when anything inside is cut off. Used by admin and card
- * layouts so badge/text columns behave the same on every page.
- */
+/** Clip overflowing cell content; native `title` shows the full value on hover. */
 export function TruncatingCellContent({
   children,
   ellipsis = true,
@@ -864,11 +784,7 @@ export function TruncatingCellContent({
   );
 }
 
-/**
- * Badge that truncates inside fixed-layout columns. Prefer this (or plain
- * Badge inside TruncatingCellContent) so long labels like LANGUAGE-DIARIZATION
- * never blow out column widths.
- */
+/** Badge that truncates inside fixed-layout columns. */
 export function TruncatingBadge({
   children,
   title,

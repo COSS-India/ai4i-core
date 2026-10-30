@@ -18,7 +18,6 @@ describe("distributeColumnWidths", () => {
       ],
       720,
     );
-    // extra = 720 - 420 = 300 → +150 each shrink column
     expect(widths[0]).toBe(350);
     expect(widths[1]).toBe(250);
     expect(widths[2]).toBe(120);
@@ -32,15 +31,14 @@ describe("distributeColumnWidths", () => {
 
     const widths = distributeColumnWidths(
       [
-        { natural: 220, header: 60, mode: "shrink" }, // name
-        { natural: 110, header: 90, mode: "shrink" }, // input
-        { natural: 110, header: 90, mode: "shrink" }, // output
-        { natural: 110, header: 90, mode: "shrink" }, // cached
-        { natural: 156, header: 156, mode: "fixed" }, // actions
+        { natural: 220, header: 60, mode: "shrink" },
+        { natural: 110, header: 90, mode: "shrink" },
+        { natural: 110, header: 90, mode: "shrink" },
+        { natural: 110, header: 90, mode: "shrink" },
+        { natural: 156, header: 156, mode: "fixed" },
       ],
       900,
     );
-    // All four flexible columns grow by roughly the same amount (±1px remainder)
     const growth = widths.slice(0, 4).map((w, i) => w - [220, 110, 110, 110][i]);
     const maxGrowth = Math.max(...growth);
     const minGrowth = Math.min(...growth);

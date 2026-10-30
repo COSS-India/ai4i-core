@@ -1,5 +1,3 @@
-// Update Institution — pick another Institution Admin as the contact (AI4IDS-3401).
-
 import { FIELD_HINTS } from "../config/fieldHints";
 import { TENANT, isTenantStatus } from "../config/constants";
 import type { TenantUserView } from "../types/tenant";
@@ -12,16 +10,7 @@ export type InstitutionContactAdminOption = {
 };
 
 export type ListContactAdminOptions = {
-  /**
-   * Current contact's user id when GET /tenants/{id} returns it.
-   * No email fallback — masked addresses collide across users.
-   * If absent and there is more than one admin, the picker may include the
-   * current contact; BE returns CONTACT_ALREADY_CURRENT on save.
-   * A sole eligible admin with no id is treated as "no alternative"
-   * (AI4IDS-3617) so Change contact stays blocked with the hover message.
-   * Precise exclusion when the contact is deactivated needs `contact_user_id`
-   * from the backend.
-   */
+  /** Current contact user id from GET /tenants/{id}; omit when unknown. */
   excludeUserId?: string | null;
 };
 
@@ -38,11 +27,7 @@ function isEligibleContactAdmin(user: TenantUserView): boolean {
   return Boolean(normalizeEmail(user.email ?? ""));
 }
 
-/**
- * Active, verified Institution Admins available as a new contact. Excludes
- * the current contact when `excludeUserId` is known. Emails stay masked; the
- * save sends `user_id`.
- */
+/** Active, verified Institution Admins available as a new contact. */
 export function listOtherActiveInstitutionAdmins(
   users: readonly TenantUserView[],
   options?: ListContactAdminOptions,
@@ -50,8 +35,6 @@ export function listOtherActiveInstitutionAdmins(
   const excludeUserId = options?.excludeUserId || null;
   const eligible = users.filter(isEligibleContactAdmin);
 
-  // Without a contact user id we cannot tell who the current contact is.
-  // A single eligible admin must be them — nothing to switch to (AI4IDS-3617).
   if (!excludeUserId && eligible.length <= 1) {
     return [];
   }
