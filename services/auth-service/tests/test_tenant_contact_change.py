@@ -207,6 +207,33 @@ class TestContactUserIdSchema:
             TenantUpdate(contact_user_id="not-a-uuid")
 
 
+class TestResolveContactUserId:
+    """GET /tenants/{id} exposes contact_user_id for the Change-contact picker."""
+
+    @pytest.mark.asyncio
+    async def test_returns_same_tenant_user_holding_contact_email(self) -> None:
+        contact = _user(email="old@tenant.com", is_active=False)  # deactivated contact
+        svc = _service(_tenant("old@tenant.com"), contact)
+        svc._users.get_by_email = AsyncMock(return_value=contact)
+
+        assert await svc.resolve_contact_user_id(_tenant("old@tenant.com")) == contact.id
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_matching_user(self) -> None:
+        svc = _service(_tenant(), None)
+        svc._users.get_by_email = AsyncMock(return_value=None)
+
+        assert await svc.resolve_contact_user_id(_tenant()) is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_email_belongs_to_another_tenant(self) -> None:
+        other = _user(email="old@tenant.com", tenant_id=99)
+        svc = _service(_tenant("old@tenant.com"), other)
+        svc._users.get_by_email = AsyncMock(return_value=other)
+
+        assert await svc.resolve_contact_user_id(_tenant("old@tenant.com")) is None
+
+
 class TestUpdateTenantRouteResponse:
     def test_contact_switch_response_shape(self) -> None:
         """email_verification_sent is false and pending_email is gone."""

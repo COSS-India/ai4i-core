@@ -129,6 +129,8 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
   const serverMode = Boolean(
     serverColumns && onServerFilterChange && onServerPageChange,
   );
+  // Own full column-filter state so page-only searches (dates, prices) stick;
+  // API-backed keys are also pushed to serverFilters below.
   const [columnFilters, setColumnFilters] = useState<DataTableColumnFilters>(
     {},
   );
@@ -170,6 +172,8 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
     [serverMode, serverColumns, onServerFilterChange],
   );
 
+  // Page-only column searches live here, not in serverFilters — clear must
+  // reset them too, and Clear must show when only those are set.
   const handleClearFilters = useCallback(() => {
     setColumnFilters({});
     onClearFilters();

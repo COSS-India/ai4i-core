@@ -30,8 +30,10 @@ export type InstitutionFormErrors = Partial<
   Record<keyof InstitutionFormValues, string>
 >;
 
+/** Other Institution Admins who can become the contact (AI4IDS-3401). */
 export type InstitutionContactChange = {
   disabled: boolean;
+  /** Why the control is unavailable, or the picker hint while it is open. */
   helper: string | null;
   open: boolean;
   admins: ReadonlyArray<{ userId: string; label: string }>;
@@ -41,6 +43,11 @@ export type InstitutionContactChange = {
   onCancel: () => void;
 };
 
+/**
+ * Opt-in typed email correction for PENDING institutions awaiting
+ * verification (AI4IDS-3401). Email is not in the PATCH until this is open
+ * and the address actually changes.
+ */
 export type InstitutionEmailEdit = {
   open: boolean;
   onOpen: () => void;
@@ -51,10 +58,18 @@ type InstitutionFormProps = Readonly<{
   mode: InstitutionFormMode;
   values: InstitutionFormValues;
   errors?: InstitutionFormErrors;
+  /**
+   * Edit only. When true with `emailEdit`, shows Correct email (PENDING).
+   * Free-text email stays off for ACTIVE — use `contactChange` instead.
+   */
   emailEditable?: boolean;
+  /** Edit only. Locked email + Correct email for PENDING tenants. */
   emailEdit?: InstitutionEmailEdit;
+  /** Edit only. Read-only email plus Change contact. */
   contactChange?: InstitutionContactChange;
+  /** Keeps the email input mounted but non-editable (e.g. while submit awaits). */
   emailDisabled?: boolean;
+  /** Pending verification address from GET/PATCH (shown in view + locked edit). */
   pendingEmail?: string | null;
   emailStatus?: string;
   onOrganisationChange?: (value: string) => void;

@@ -9,58 +9,31 @@ import {
 const sum = (values: number[]) => values.reduce((a, b) => a + b, 0);
 
 describe("distributeColumnWidths", () => {
-  it("spreads leftover width evenly across flexible columns (actions stay fixed)", () => {
-    const widths = distributeColumnWidths(
-      [
-        { natural: 200, header: 60, mode: "shrink" },
-        { natural: 100, header: 80, mode: "shrink" },
-        { natural: 120, header: 70, mode: "fixed" },
-      ],
-      720,
-    );
-    expect(widths[0]).toBe(350);
-    expect(widths[1]).toBe(250);
+  const cols: ColumnSizingInput[] = [
+    { natural: 200, header: 60, mode: "shrink" },
+    { natural: 100, header: 80, mode: "content" },
+    { natural: 120, header: 70, mode: "fixed" },
+  ];
+
+  it("gives leftover space only to shrink columns", () => {
+    const widths = distributeColumnWidths(cols, 720);
     expect(widths[2]).toBe(120);
-    expect(sum(widths)).toBe(720);
+    expect(widths[1]).toBe(100);
+    expect(widths[0]).toBe(500);
+    expect(sum(widths)).toBeLessThanOrEqual(720);
   });
 
-  it("lets price columns share leftover space instead of staying pinned", () => {
+  it("treats price columns as shrinkable, not content-locked", () => {
     expect(resolveColumnSizingMode({ id: "inputPrice" })).toBe("shrink");
-    expect(resolveColumnSizingMode({ id: "outputPrice" })).toBe("shrink");
     expect(resolveColumnSizingMode({ id: "cached_input_price" })).toBe("shrink");
-
-    const widths = distributeColumnWidths(
-      [
-        { natural: 220, header: 60, mode: "shrink" },
-        { natural: 110, header: 90, mode: "shrink" },
-        { natural: 110, header: 90, mode: "shrink" },
-        { natural: 110, header: 90, mode: "shrink" },
-        { natural: 156, header: 156, mode: "fixed" },
-      ],
-      900,
-    );
-    const growth = widths.slice(0, 4).map((w, i) => w - [220, 110, 110, 110][i]);
-    const maxGrowth = Math.max(...growth);
-    const minGrowth = Math.min(...growth);
-    expect(maxGrowth - minGrowth).toBeLessThanOrEqual(1);
-    expect(minGrowth).toBeGreaterThan(0);
-    expect(widths[4]).toBe(156);
-    expect(sum(widths)).toBe(900);
   });
 
-  it("shrinks flexible columns when space is tight and keeps actions fixed", () => {
-    const widths = distributeColumnWidths(
-      [
-        { natural: 200, header: 60, mode: "shrink" },
-        { natural: 100, header: 80, mode: "shrink" },
-        { natural: 120, header: 70, mode: "fixed" },
-      ],
-      380,
-    );
+  it("shrinks only text columns when space is tight, keeping content columns whole", () => {
+    const widths = distributeColumnWidths(cols, 380);
+    expect(widths[1]).toBe(100);
     expect(widths[2]).toBe(120);
+    expect(widths[0]).toBe(160);
     expect(sum(widths)).toBeLessThanOrEqual(380);
-    expect(widths[0]).toBeGreaterThan(0);
-    expect(widths[1]).toBeGreaterThan(0);
   });
 
   it("levels the widest text column first", () => {
@@ -83,6 +56,8 @@ describe("distributeColumnWidths", () => {
       ],
       300,
     );
+    expect(roomy[0]).toBeGreaterThanOrEqual(150);
+    expect(roomy[1]).toBeGreaterThanOrEqual(128);
     expect(sum(roomy)).toBeLessThanOrEqual(300);
 
     const tight = distributeColumnWidths(
@@ -93,20 +68,19 @@ describe("distributeColumnWidths", () => {
       100,
     );
     expect(sum(tight)).toBeLessThanOrEqual(100);
-    expect(tight.every((w) => w >= 1)).toBe(true);
+    expect(tight.every((w) => w >= 40)).toBe(true);
   });
 });
 
 describe("resolveColumnSizingMode", () => {
-  it("only pins actions and explicit widths; data columns stay flexible", () => {
+  it("classifies control, compact badge, and text columns", () => {
     expect(resolveColumnSizingMode({ id: "actions" })).toBe("fixed");
     expect(resolveColumnSizingMode({ id: "x", width: "120px" })).toBe("fixed");
-    expect(resolveColumnSizingMode({ id: "task" })).toBe("shrink");
-    expect(resolveColumnSizingMode({ id: "status" })).toBe("shrink");
-    expect(resolveColumnSizingMode({ id: "createdAt" })).toBe("shrink");
+    expect(resolveColumnSizingMode({ id: "task" })).toBe("fixed");
+    expect(resolveColumnSizingMode({ id: "status" })).toBe("fixed");
+    expect(resolveColumnSizingMode({ id: "createdAt" })).toBe("fixed");
     expect(resolveColumnSizingMode({ id: "name" })).toBe("shrink");
     expect(resolveColumnSizingMode({ id: "email" })).toBe("shrink");
-    expect(resolveColumnSizingMode({ id: "inputPrice" })).toBe("shrink");
   });
 });
 

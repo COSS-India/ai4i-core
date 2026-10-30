@@ -1052,6 +1052,22 @@ class TenantService:
             return mask_pii_in_dict(data, mask_emails=True, mask_phones=False)
         return mask_pii_in_dict(data)
 
+    async def resolve_contact_user_id(self, tenant: Tenant) -> Optional[UUID]:
+        """User id of the account that currently holds ``tenant.email``.
+
+        Used by GET /tenants/{id} so the Change-contact picker can exclude the
+        current contact (AI4IDS-3617) without assuming a sole active admin is
+        that contact — they may already be deactivated (AI4IDS-3401). Returns
+        None when no same-tenant user owns the address.
+        """
+        email = (tenant.email or "").strip()
+        if not email:
+            return None
+        user = await self._users.get_by_email(email)
+        if user is None or user.tenant_id != tenant.id:
+            return None
+        return user.id
+
     @staticmethod
     def _prepare_tenant_update_payload(body: TenantUpdate) -> dict:
         """Shape the incoming PATCH body into the tenant-column update dict.
