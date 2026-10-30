@@ -244,6 +244,11 @@ class TenantResponse(BaseSchema):
     # filled in by GET /auth/tenants/{tenant_id} only. Null when no tier is
     # assigned or it can't be read (tier_name says which).
     tier_limits: Optional[TierLimits] = None
+    # Not a tenants column — the users row whose email matches ``email``
+    # (same tenant). Filled in by GET /auth/tenants/{tenant_id} only so the
+    # Change-contact picker can exclude the current contact (AI4IDS-3617 /
+    # AI4IDS-3401). Null when no matching user exists.
+    contact_user_id: Optional[UUID] = None
     allocated_budget: Optional[Decimal] = None
     budget_effective_from: Optional[datetime] = None
     budget_effective_to: Optional[datetime] = None

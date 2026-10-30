@@ -168,6 +168,7 @@ async def get_tenant(
     data = svc.build_tenant_response(tenant, unmask=unmask)
     data["tier_name"] = await svc.resolve_tier_name(tenant.tier_id, platform_core_db)
     data["tier_limits"] = await svc.resolve_tier_limits(tenant.tier_id, platform_core_db)
+    data["contact_user_id"] = await svc.resolve_contact_user_id(tenant)
     return GetTenantResponse(data=data)
 
 

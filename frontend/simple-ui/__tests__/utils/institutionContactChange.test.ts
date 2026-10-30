@@ -59,19 +59,45 @@ describe("listOtherActiveInstitutionAdmins (AI4IDS-3401)", () => {
     ]);
   });
 
-  it("keeps the current contact when excludeUserId is absent (BE guards save)", () => {
-    // Deactivated current contact is already filtered out of `users`; a sole
-    // remaining eligible admin must still be offered (AI4IDS-3401).
+  it("returns no options when the sole admin is the current contact (AI4IDS-3617)", () => {
     expect(
-      listOtherActiveInstitutionAdmins([
+      listOtherActiveInstitutionAdmins(
+        [
+          admin({
+            user_id: "current",
+            email: "a***@acme.com",
+            full_name: "Current Contact",
+          }),
+        ],
+        { excludeUserId: "current" },
+      ),
+    ).toEqual([]);
+  });
+
+  it("still offers the sole remaining admin when the contact is already deactivated (AI4IDS-3401)", () => {
+    // Contact Dana deactivated → excludeUserId is Dana (from GET contact_user_id);
+    // Eve is the only eligible admin and must remain pickable.
+    const options = listOtherActiveInstitutionAdmins(
+      [
+        admin({
+          user_id: "dana",
+          email: "d***@acme.com",
+          full_name: "Dana",
+          is_active: false,
+        }),
         admin({
           user_id: "eve",
           email: "e***@acme.com",
-          full_name: "Eve Admin",
+          full_name: "Eve",
         }),
-      ]),
-    ).toEqual([{ userId: "eve", label: "Eve Admin · e***@acme.com" }]);
+      ],
+      { excludeUserId: "dana" },
+    );
 
+    expect(options).toEqual([{ userId: "eve", label: "Eve · e***@acme.com" }]);
+  });
+
+  it("lists all admins when excludeUserId is absent (BE CONTACT_ALREADY_CURRENT on save)", () => {
     const options = listOtherActiveInstitutionAdmins([
       admin({
         user_id: "current",

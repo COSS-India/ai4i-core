@@ -1,5 +1,3 @@
-// Update Institution — pick another Institution Admin as the contact (AI4IDS-3401).
-
 import { FIELD_HINTS } from "../config/fieldHints";
 import { TENANT, isTenantStatus } from "../config/constants";
 import type { TenantUserView } from "../types/tenant";
@@ -28,10 +26,19 @@ function contactAdminLabel(user: TenantUserView): string {
   return email ? `${name} · ${email}` : name;
 }
 
+function isEligibleContactAdmin(user: TenantUserView): boolean {
+  if (!user.user_id || !user.is_active) return false;
+  if (user.is_activated === false) return false;
+  if (!tenantUserHasRole(user, "TENANT ADMIN")) return false;
+  return Boolean(normalizeEmail(user.email ?? ""));
+}
+
 /**
- * Active, verified Institution Admins of this institution, excluding the
- * current contact when `excludeUserId` is known. Emails stay masked; the
- * save sends `user_id`.
+ * Active, verified Institution Admins available as a new contact.
+ * When `excludeUserId` is the current contact, they are omitted so a sole
+ * remaining admin who *is* the contact yields an empty picker (AI4IDS-3617).
+ * When the contact is deactivated and absent from the eligible set, other
+ * admins stay listed (AI4IDS-3401).
  */
 export function listOtherActiveInstitutionAdmins(
   users: readonly TenantUserView[],
@@ -40,12 +47,8 @@ export function listOtherActiveInstitutionAdmins(
   const excludeUserId = options?.excludeUserId || null;
   const out: InstitutionContactAdminOption[] = [];
   for (const user of users) {
-    if (!user.user_id || !user.is_active) continue;
-    if (user.is_activated === false) continue;
-    if (!tenantUserHasRole(user, "TENANT ADMIN")) continue;
+    if (!isEligibleContactAdmin(user)) continue;
     if (excludeUserId && user.user_id === excludeUserId) continue;
-    const email = normalizeEmail(user.email ?? "");
-    if (!email) continue;
     out.push({ userId: user.user_id, label: contactAdminLabel(user) });
   }
   out.sort((a, b) => a.label.localeCompare(b.label));
