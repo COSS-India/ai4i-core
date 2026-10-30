@@ -123,7 +123,10 @@ export const apiEndpoints = {
       /** Public (no JWT required) — absent from api_permissions.json, so validate allows anonymous. */
       tryItList: `${API_V1}/services/try-it-service-list`,
     },
-    /** Per-user column selection. View name for the service registry is `service-list`. */
+    /**
+     * Per-user column selection.
+     * Known views: `service-list` (live), `model-list` (FE ready; BE pending AI4IDS-3351).
+     */
     columnPreferences: (view: string) =>
       `${API_V1}/preferences/columns/${encodeURIComponent(view)}`,
     tryIt: {

@@ -155,10 +155,12 @@ export const FIELD_HINTS = {
         },
       ],
     },
+    columns: { tip: "Columns shown in the model list." },
     col: {
       status: "Active models can back new services; deprecated cannot.",
       services: "Published services using this model.",
       task: "Capability family of this model.",
+      provider: "Organisation or submitter that registered this model.",
     },
   },
   service: {

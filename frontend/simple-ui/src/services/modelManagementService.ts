@@ -4,6 +4,11 @@ import { MODEL_VERSION } from '../config/constants';
 import { apiService } from './api';
 import { apiEndpoints } from './apiEndpoints';
 import {
+  MODEL_LIST_PREFERENCE_VIEW,
+  parseModelColumnPreferencePayload,
+  type ModelColumnPreference,
+} from '../components/model-management/modelListColumns';
+import {
   modelsListSchema,
   modelSingleSchema,
   servicesListSchema,
@@ -22,6 +27,9 @@ import type {
   Service,
   UnpublishModelResponse,
 } from '../types/platform';
+
+const httpStatus = (error: unknown): number | undefined =>
+  (error as { response?: { status?: number } })?.response?.status;
 
 export type {
   ModelCreateRequest,
@@ -217,6 +225,47 @@ export const publishModel = async (modelId: string): Promise<ModelStatusUpdateRe
  * @param publishedOnly - If true, return only published services (for logged-in users)
  * @returns Promise with list of services
  */
+/**
+ * Column preference for the model list (AI4IDS-3351).
+ * Ready for BE view key `model-list`; FE uses localStorage until that ships.
+ */
+export const getModelColumnPreference = async (): Promise<ModelColumnPreference | null> => {
+  try {
+    const response = await apiService.get(
+      apiEndpoints.platform.columnPreferences(MODEL_LIST_PREFERENCE_VIEW),
+      { suppressErrorAlert: true },
+    );
+    return parseModelColumnPreferencePayload(response.data);
+  } catch (error) {
+    if (httpStatus(error) === 404) return null;
+    throw error;
+  }
+};
+
+export const saveModelColumnPreference = async (
+  visibleColumns: readonly string[],
+): Promise<ModelColumnPreference | null> => {
+  const response = await apiService.put(
+    apiEndpoints.platform.columnPreferences(MODEL_LIST_PREFERENCE_VIEW),
+    { visibleColumns: [...visibleColumns] },
+    { suppressErrorAlert: true },
+  );
+  return parseModelColumnPreferencePayload(response.data);
+};
+
+export const resetModelColumnPreference = async (): Promise<ModelColumnPreference | null> => {
+  try {
+    const response = await apiService.delete(
+      apiEndpoints.platform.columnPreferences(MODEL_LIST_PREFERENCE_VIEW),
+      { suppressErrorAlert: true },
+    );
+    return parseModelColumnPreferencePayload(response.data);
+  } catch (error) {
+    if (httpStatus(error) === 404) return null;
+    throw error;
+  }
+};
+
 export const listServices = async (
   taskType?: string,
   publishedOnly?: boolean

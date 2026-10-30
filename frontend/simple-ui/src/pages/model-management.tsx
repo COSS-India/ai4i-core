@@ -21,7 +21,10 @@ import FormActions from "../components/common/FormActions";
 import FormDrawer from "../components/common/FormDrawer";
 import ModelExtraDetails from "../components/model-management/ModelDetails";
 import ModelForm from "../components/model-management/ModelForm";
+import ModelListColumnPicker from "../components/model-management/ModelListColumnPicker";
 import { validateModelData } from "../components/model-management/modelJsonValidation";
+import { MODEL_LIST_COLUMNS } from "../components/model-management/modelListColumns";
+import { useModelListVisibleColumns } from "../components/model-management/useModelListVisibleColumns";
 import {
   createModel,
   getAllModels,
@@ -109,6 +112,7 @@ const ModelManagementPage: React.FC = () => {
     () => ({
       name: (m: Model) => m.name ?? "",
       version: (m: Model) => m.version ?? "",
+      provider: (m: Model) => m.submitter?.name ?? "",
       created: (m: Model) => {
         if (m.createdAt != null) return new Date(m.createdAt).getTime();
         if (m.submittedOn != null) return m.submittedOn * 1000;
@@ -126,6 +130,16 @@ const ModelManagementPage: React.FC = () => {
   /** Bumped when the user leaves or opens a row, so a late return fetch cannot reopen. */
   const modelReturnGenRef = useRef(0);
   const { user } = useAuth();
+  const {
+    visibleColumnIds,
+    applyVisibleColumns,
+    resetVisibleColumns,
+  } = useModelListVisibleColumns({
+    userId: user?.user_id ?? "",
+    catalogue: MODEL_LIST_COLUMNS,
+    usesServer: false,
+    modelSort,
+  });
   const queryClient = useQueryClient();
   const isRegistryReadOnly = isRegistryReadOnlyUser(user?.roles);
   const { isOpen: isCreateOpen, onOpen: onCreateOpen, onClose: onCreateCloseRaw } = useDisclosure();
@@ -633,7 +647,7 @@ const ModelManagementPage: React.FC = () => {
     setConfirmAction(null);
   };
 
-  const modelColumns = useMemo((): DataTableColumn<Model>[] => {
+  const modelColumnTemplates = useMemo((): DataTableColumn<Model>[] => {
     return [
       {
         id: "name",
@@ -658,19 +672,6 @@ const ModelManagementPage: React.FC = () => {
         ),
       },
       {
-        id: "status",
-        header: "Status",
-        hint: FIELD_HINTS.model.col.status,
-        cell: (model) => (
-          <Badge
-            colorScheme={isModelVersionStatusActive(model.versionStatus) ? "green" : "gray"}
-            fontSize="xs"
-          >
-            {formatModelVersionStatusLabel(model.versionStatus)}
-          </Badge>
-        ),
-      },
-      {
         id: "task",
         header: "Task Type",
         hint: FIELD_HINTS.model.col.task,
@@ -682,6 +683,34 @@ const ModelManagementPage: React.FC = () => {
             </Badge>
           );
         },
+      },
+      {
+        id: "provider",
+        header: "Provider Name",
+        hint: FIELD_HINTS.model.col.provider,
+        sortable: true,
+        sortAccessor: (model) => model.submitter?.name ?? "",
+        cell: (model) => {
+          const label = model.submitter?.name?.trim() || "—";
+          return (
+            <Text fontSize="sm" color={label === "—" ? "ink.400" : "ink.700"} noOfLines={1} title={label}>
+              {label}
+            </Text>
+          );
+        },
+      },
+      {
+        id: "status",
+        header: "Status",
+        hint: FIELD_HINTS.model.col.status,
+        cell: (model) => (
+          <Badge
+            colorScheme={isModelVersionStatusActive(model.versionStatus) ? "green" : "gray"}
+            fontSize="xs"
+          >
+            {formatModelVersionStatusLabel(model.versionStatus)}
+          </Badge>
+        ),
       },
       {
         id: "created",
@@ -838,6 +867,28 @@ const ModelManagementPage: React.FC = () => {
     isRegistryReadOnly,
   ]);
 
+  const modelColumns = useMemo((): DataTableColumn<Model>[] => {
+    const byId = new Map(modelColumnTemplates.map((col) => [col.id, col]));
+    const visible = visibleColumnIds
+      .map((id) => byId.get(id))
+      .filter((col): col is DataTableColumn<Model> => Boolean(col));
+    // Always keep Actions last if present.
+    const withoutActions = visible.filter((col) => col.id !== "actions");
+    const actions = byId.get("actions");
+    return actions && visibleColumnIds.includes("actions")
+      ? [...withoutActions, actions]
+      : withoutActions;
+  }, [modelColumnTemplates, visibleColumnIds]);
+
+  const columnPicker = (
+    <ModelListColumnPicker
+      columns={MODEL_LIST_COLUMNS}
+      visibleIds={visibleColumnIds}
+      onChange={applyVisibleColumns}
+      onReset={resetVisibleColumns}
+    />
+  );
+
   return (
     <>
       <Head>
@@ -865,8 +916,8 @@ const ModelManagementPage: React.FC = () => {
                         key={`${filterTaskType}-${filterVersionStatus}`}
                         items={registryTableItems}
                         columns={modelColumns}
-            sort={modelSort.sort}
-            onSortChange={modelSort.onSortChange}
+                        sort={modelSort.sort}
+                        onSortChange={modelSort.onSortChange}
                         getRowKey={(model) => model.modelId}
                         onRowClick={(model) => handleViewModel(model.modelId)}
                         paginate="client"
@@ -879,6 +930,7 @@ const ModelManagementPage: React.FC = () => {
                         unfilteredCount={models.length}
                         hasActiveFilters={hasActiveFilters}
                         onClearFilters={clearAllFilters}
+                        filterToolbarRightContent={columnPicker}
                         search={{
                           label: "Search",
                           value: searchQuery,
