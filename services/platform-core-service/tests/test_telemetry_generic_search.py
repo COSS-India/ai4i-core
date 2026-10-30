@@ -83,8 +83,10 @@ def _make_client(trace_ids: list, pre_trace_ids: list | None = None):
                 "aggregations": {"trace_ids": {"buckets": [{"key": {"trace_id": t}} for t in ids]}}
             }
 
-        # Span fetch
-        should = query.get("bool", {}).get("should", [])
+        # Span fetch. Step 3 wraps the trace-id should clause inside a must+filter
+        # when only a subset of span types is needed; breakdown batches use plain should.
+        query_bool = query.get("bool", {})
+        should = query_bool.get("should") or query_bool.get("must", [{}])[0].get("bool", {}).get("should", [])
         batch_ids = [c["match_phrase"]["context.trace_id"] for c in should]
         return {"hits": {"hits": [_span_hit(tid) for tid in batch_ids]}}
 
@@ -377,12 +379,13 @@ def test_log_status_takes_precedence_over_status_filter():
     """The new `status` param must override the legacy status_filter when both given."""
     client = _make_client(["t1"])
 
-    _search(client, log_status="success", status_filter="failed")
+    # The mock's _span_hit returns status="success". If log_status="success" wins,
+    # the breakdown classifies t1 as success and total==1. If status_filter="failed"
+    # had won instead, t1 would not match the "failed" bucket and total would be 0.
+    response = _search(client, log_status="success", status_filter="failed")
 
-    assert len(client.captured_main_queries) == 1
-    flat = str(client.captured_main_queries[0])
-    assert "success" in flat
-    assert flat.count("attributes.status") == 1
+    assert response.total == 1
+    assert response.aggregations.by_level.get("success", 0) == 1
 
 
 # ── HTTP integration ──────────────────────────────────────────────────────────

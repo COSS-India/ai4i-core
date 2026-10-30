@@ -12,17 +12,17 @@ import { INSTITUTION, TENANT } from "../../src/config/constants";
 import { runEmailAvailabilityCheck } from "../../src/utils/tenantEmailAvailability";
 
 describe("isTenantContactEmailEditable (AI4IDS-3401)", () => {
-  it("allows PENDING and ACTIVE only", () => {
+  it("allows typed email for PENDING only (ACTIVE uses Change contact)", () => {
     expect(isTenantContactEmailEditable(TENANT.STATUS.PENDING)).toBe(true);
-    expect(isTenantContactEmailEditable(TENANT.STATUS.ACTIVE)).toBe(true);
+    expect(isTenantContactEmailEditable(TENANT.STATUS.ACTIVE)).toBe(false);
     expect(isTenantContactEmailEditable(TENANT.STATUS.SUSPENDED)).toBe(false);
     expect(isTenantContactEmailEditable(TENANT.STATUS.DEACTIVATED)).toBe(false);
     expect(isTenantContactEmailEditable(undefined)).toBe(false);
   });
 
-  it("locks the Default Organisation even when ACTIVE", () => {
+  it("locks the Default Organisation even when PENDING", () => {
     expect(
-      isTenantContactEmailEditable(TENANT.STATUS.ACTIVE, {
+      isTenantContactEmailEditable(TENANT.STATUS.PENDING, {
         isDefaultOrganisation: true,
       }),
     ).toBe(false);
@@ -120,6 +120,16 @@ describe("mapTenantEmailConflictToFieldError (AI4IDS-3401)", () => {
     expect(
       mapTenantEmailConflictToFieldError(
         conflict("TENANT_EMAIL_EDIT_NOT_ALLOWED", "Locked"),
+      ),
+    ).toBeUndefined();
+    expect(
+      mapTenantEmailConflictToFieldError(
+        conflict("CONTACT_ALREADY_CURRENT", "Already the contact."),
+      ),
+    ).toBeUndefined();
+    expect(
+      mapTenantEmailConflictToFieldError(
+        conflict("CONTACT_NOT_VERIFIED", "Not set up."),
       ),
     ).toBeUndefined();
   });

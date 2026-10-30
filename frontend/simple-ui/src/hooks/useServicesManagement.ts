@@ -57,6 +57,7 @@ import {
   hasActiveServerServiceFilters,
 } from "../components/services-management/serviceFormGates";
 import { serviceMatchesSearch } from "../components/services-management/serviceRegistryFilters";
+import { useServiceListVisibleColumns } from "../components/services-management/useServiceListVisibleColumns";
 import { useAuth } from "./useAuth";
 import { isRegistryReadOnlyUser, userHasRole } from "../utils/rbac";
 import { useSessionExpiry } from "./useSessionExpiry";
@@ -682,6 +683,27 @@ export function useServicesManagement() {
     [serviceListCatalogue],
   );
   const registrySort = useDeferredColumnSort("name", registrySortAccessors);
+  const {
+    visibleColumnIds,
+    visibleColumnsReady,
+    applyVisibleColumns,
+    resetVisibleColumns,
+    handleRegistrySortChange,
+  } = useServiceListVisibleColumns({
+    userId: user?.user_id ?? "",
+    serviceListCatalogue,
+    serviceListUsesServer,
+    registrySort,
+    setRegistryPage,
+  });
+  // GET /services?columns= accepts API catalogue ids only (the offline
+  // catalogue's camelCase ids would 422). Joined string keeps the fetch stable.
+  const visibleColumnsParam = useMemo(() => {
+    if (!serviceListUsesServer) return undefined;
+    const known = new Set(serviceListCatalogue.map((column) => column.id));
+    const ids = visibleColumnIds.filter((id) => known.has(id));
+    return ids.length > 0 ? ids.join(",") : undefined;
+  }, [serviceListUsesServer, serviceListCatalogue, visibleColumnIds]);
   const [confirmPublishService, setConfirmPublishService] =
     useState<Service | null>(null);
   const [confirmUnpublishService, setConfirmUnpublishService] =
@@ -954,6 +976,7 @@ export function useServicesManagement() {
           sortMode: registrySort.mode,
           sortKey: registrySort.sort.key,
           sortDirection: registrySort.sort.direction,
+          columns: visibleColumnsParam,
         },
         options,
       );
@@ -990,9 +1013,10 @@ export function useServicesManagement() {
     registrySort.mode,
     registrySort.sort.key,
     registrySort.sort.direction,
+    visibleColumnsParam,
   ]);
 
-  const serviceKey = (s: Pick<Service, "serviceId"> & { service_id?: string }) =>
+  const serviceKey =(s: Pick<Service, "serviceId"> & { service_id?: string }) =>
     s.serviceId || s.service_id || "";
 
   const upsertLocalService = useCallback((service: Service) => {
@@ -1047,9 +1071,9 @@ export function useServicesManagement() {
   );
 
   useEffect(() => {
-    if (!taskTypeFilterReady || !columnsQuery.isFetched) return;
+    if (!taskTypeFilterReady || !columnsQuery.isFetched || !visibleColumnsReady) return;
     ignoreAsync(fetchServices());
-  }, [fetchServices, taskTypeFilterReady, columnsQuery.isFetched]);
+  }, [fetchServices, taskTypeFilterReady, columnsQuery.isFetched, visibleColumnsReady]);
 
   /** AI4IDS-2949: block Create Service when the platform has no tiers. Edit remains allowed. */
   const isCreateServiceTabDisabled =
@@ -1913,6 +1937,10 @@ export function useServicesManagement() {
     hasActiveFilters,
     clearAllFilters,
     registrySort,
+    visibleColumnIds,
+    applyVisibleColumns,
+    resetVisibleColumns,
+    handleRegistrySortChange,
     handleViewService,
     handleEditService,
     handleDeleteClick,

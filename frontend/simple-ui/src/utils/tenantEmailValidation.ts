@@ -18,7 +18,11 @@ export const EMAIL_ALREADY_EXISTS_MSG =
   "This email is already associated with an existing account";
 export const EMAIL_AVAILABLE_MSG = "Email is available.";
 
-/** PATCH /tenants/{id} email uniqueness conflicts (AI4IDS-3401 / #1818). */
+/**
+ * PATCH /tenants/{id} typed-email uniqueness conflicts (AI4IDS-3401 / #1818).
+ * CONTACT_* picker failures are intentionally omitted — Change contact has no
+ * email field error UI, so those codes must reach showError as toasts.
+ */
 export const TENANT_EMAIL_CONFLICT_CODES = new Set([
   "DUPLICATE_EMAIL",
   "DUPLICATE_TENANT_EMAIL",
@@ -51,16 +55,16 @@ export function collectUserEmails(users: { email?: string | null }[]): Set<strin
   return out;
 }
 
-/** Contact email editable for PENDING/ACTIVE non-default institutions (AI4IDS-3401). */
+/**
+ * Typed contact email is only for PENDING non-default institutions
+ * (AI4IDS-3401 / #1858). ACTIVE institutions use Change contact (`contact_user_id`).
+ */
 export function isTenantContactEmailEditable(
   status: string | null | undefined,
   options?: { isDefaultOrganisation?: boolean },
 ): boolean {
   if (options?.isDefaultOrganisation) return false;
-  return (
-    isTenantStatus(status, TENANT.STATUS.PENDING) ||
-    isTenantStatus(status, TENANT.STATUS.ACTIVE)
-  );
+  return isTenantStatus(status, TENANT.STATUS.PENDING);
 }
 
 function asErrorDetailRecord(

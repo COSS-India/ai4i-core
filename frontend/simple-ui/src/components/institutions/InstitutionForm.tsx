@@ -1,7 +1,11 @@
 import {
+  Box,
+  Button,
   FormControl,
   FormErrorMessage,
   Input,
+  Select,
+  Tooltip,
   VStack,
 } from "@chakra-ui/react";
 import React from "react";
@@ -26,12 +30,43 @@ export type InstitutionFormErrors = Partial<
   Record<keyof InstitutionFormValues, string>
 >;
 
+/** Other Institution Admins who can become the contact (AI4IDS-3401). */
+export type InstitutionContactChange = {
+  disabled: boolean;
+  /** Why the control is unavailable, or the picker hint while it is open. */
+  helper: string | null;
+  open: boolean;
+  admins: ReadonlyArray<{ userId: string; label: string }>;
+  selectedUserId: string;
+  onOpen: () => void;
+  onSelect: (userId: string) => void;
+  onCancel: () => void;
+};
+
+/**
+ * Opt-in typed email correction for PENDING institutions awaiting
+ * verification (AI4IDS-3401). Email is not in the PATCH until this is open
+ * and the address actually changes.
+ */
+export type InstitutionEmailEdit = {
+  open: boolean;
+  onOpen: () => void;
+  onCancel: () => void;
+};
+
 type InstitutionFormProps = Readonly<{
   mode: InstitutionFormMode;
   values: InstitutionFormValues;
   errors?: InstitutionFormErrors;
-  /** Edit only. Contact email editable for PENDING/ACTIVE (AI4IDS-3401). */
+  /**
+   * Edit only. When true with `emailEdit`, shows Correct email (PENDING).
+   * Free-text email stays off for ACTIVE — use `contactChange` instead.
+   */
   emailEditable?: boolean;
+  /** Edit only. Locked email + Correct email for PENDING tenants. */
+  emailEdit?: InstitutionEmailEdit;
+  /** Edit only. Read-only email plus Change contact. */
+  contactChange?: InstitutionContactChange;
   /** Keeps the email input mounted but non-editable (e.g. while submit awaits). */
   emailDisabled?: boolean;
   /** Pending verification address from GET/PATCH (shown in view + locked edit). */
@@ -127,6 +162,153 @@ function InstitutionLockedEmailField({
       <ReadOnlyField label="Email">
         <InstitutionContactEmail email={email} pendingEmail={pendingEmail} />
       </ReadOnlyField>
+      <FieldHint>{FIELD_HINTS.tenant.emailPendingOnly}</FieldHint>
+    </FormControl>
+  );
+}
+
+function InstitutionChangeContactField({
+  email,
+  pendingEmail,
+  contactChange,
+}: Readonly<{
+  email: string;
+  pendingEmail: string | null;
+  contactChange: InstitutionContactChange;
+}>) {
+  return (
+    <FormControl>
+      <ReadOnlyField label="Email">
+        <InstitutionContactEmail email={email} pendingEmail={pendingEmail} />
+      </ReadOnlyField>
+      {contactChange.open && !contactChange.disabled ? (
+        <VStack align="stretch" spacing={2} mt={2}>
+          <Select
+            size="sm"
+            aria-label={FIELD_HINTS.tenant.contactChangeSelect}
+            placeholder={FIELD_HINTS.tenant.contactChangeSelect}
+            value={contactChange.selectedUserId}
+            onChange={(e) => contactChange.onSelect(e.target.value)}
+          >
+            {contactChange.admins.map((admin) => (
+              <option key={admin.userId} value={admin.userId}>
+                {admin.label}
+              </option>
+            ))}
+          </Select>
+          <Button
+            size="sm"
+            variant="link"
+            colorScheme="blue"
+            alignSelf="flex-start"
+            onClick={contactChange.onCancel}
+          >
+            Cancel
+          </Button>
+        </VStack>
+      ) : (
+        <Tooltip
+          label={contactChange.helper}
+          placement="top"
+          hasArrow
+          openDelay={300}
+          isDisabled={!contactChange.helper}
+        >
+          {/* Disabled buttons swallow hover — wrap so the reason still shows. */}
+          <Box as="span" display="inline-block" mt={1} alignSelf="flex-start">
+            <Button
+              size="sm"
+              variant="link"
+              colorScheme="blue"
+              isDisabled={contactChange.disabled}
+              onClick={contactChange.onOpen}
+            >
+              {FIELD_HINTS.tenant.contactChange}
+            </Button>
+          </Box>
+        </Tooltip>
+      )}
+      <FieldHint show={contactChange.open && Boolean(contactChange.helper)}>
+        {contactChange.helper}
+      </FieldHint>
+    </FormControl>
+  );
+}
+
+function InstitutionCorrectEmailField({
+  values,
+  errors,
+  pendingEmail,
+  emailStatus,
+  emailDisabled,
+  emailEdit,
+  onEmailChange,
+}: Readonly<{
+  values: InstitutionFormValues;
+  errors: InstitutionFormErrors;
+  pendingEmail: string | null;
+  emailStatus?: string;
+  emailDisabled?: boolean;
+  emailEdit: InstitutionEmailEdit;
+  onEmailChange?: (value: string) => void;
+}>) {
+  if (emailEdit.open) {
+    return (
+      <FormControl isRequired isInvalid={Boolean(errors.email)}>
+        <FieldLabel hint={FIELD_HINTS.tenant.email.tip}>Email</FieldLabel>
+        <Input
+          type="email"
+          value={values.email}
+          isDisabled={emailDisabled}
+          onChange={(e) => onEmailChange?.(e.target.value)}
+        />
+        <FormErrorMessage>{errors.email}</FormErrorMessage>
+        <EditEmailHints
+          errors={errors}
+          pendingEmail={pendingEmail}
+          emailStatus={emailStatus}
+        />
+        <Button
+          size="sm"
+          variant="link"
+          colorScheme="blue"
+          alignSelf="flex-start"
+          mt={1}
+          isDisabled={emailDisabled}
+          onClick={emailEdit.onCancel}
+        >
+          Cancel
+        </Button>
+      </FormControl>
+    );
+  }
+
+  return (
+    <FormControl>
+      <ReadOnlyField label="Email">
+        <InstitutionContactEmail
+          email={values.email}
+          pendingEmail={pendingEmail}
+        />
+      </ReadOnlyField>
+      <Tooltip
+        label={FIELD_HINTS.tenant.emailEditHint}
+        placement="top"
+        hasArrow
+        openDelay={300}
+      >
+        <Box as="span" display="inline-block" mt={1} alignSelf="flex-start">
+          <Button
+            size="sm"
+            variant="link"
+            colorScheme="blue"
+            isDisabled={emailDisabled}
+            onClick={emailEdit.onOpen}
+          >
+            {FIELD_HINTS.tenant.emailEdit}
+          </Button>
+        </Box>
+      </Tooltip>
       <FieldHint>{FIELD_HINTS.tenant.emailPendingOnly}</FieldHint>
     </FormControl>
   );
@@ -242,6 +424,7 @@ export default function InstitutionForm({
   values,
   errors = {},
   emailEditable = false,
+  emailEdit,
   emailDisabled = false,
   pendingEmail = null,
   emailStatus,
@@ -253,6 +436,7 @@ export default function InstitutionForm({
   onEmailBlur,
   onPhoneChange,
   showOrganisation = true,
+  contactChange,
   children,
 }: InstitutionFormProps) {
   const isView = mode === "view";
@@ -271,6 +455,51 @@ export default function InstitutionForm({
   }
 
   const emailHint = isCreate ? resolveCreateEmailHint(emailStatus) : null;
+
+  let emailField: React.ReactNode;
+  if (isCreate) {
+    emailField = (
+      <InstitutionEditableEmailField
+        isCreate
+        emailEditable
+        emailDisabled={emailDisabled}
+        values={values}
+        errors={errors}
+        pendingEmail={pendingEmail}
+        emailStatus={emailStatus}
+        emailHint={emailHint}
+        onEmailChange={onEmailChange}
+        onEmailBlur={onEmailBlur}
+      />
+    );
+  } else if (emailEditable && emailEdit) {
+    emailField = (
+      <InstitutionCorrectEmailField
+        values={values}
+        errors={errors}
+        pendingEmail={pendingEmail}
+        emailStatus={emailStatus}
+        emailDisabled={emailDisabled}
+        emailEdit={emailEdit}
+        onEmailChange={onEmailChange}
+      />
+    );
+  } else if (contactChange) {
+    emailField = (
+      <InstitutionChangeContactField
+        email={values.email}
+        pendingEmail={pendingEmail}
+        contactChange={contactChange}
+      />
+    );
+  } else {
+    emailField = (
+      <InstitutionLockedEmailField
+        email={values.email}
+        pendingEmail={pendingEmail}
+      />
+    );
+  }
 
   return (
     <FormSection title="Institution">
@@ -306,18 +535,7 @@ export default function InstitutionForm({
           </FieldHint>
         </FormControl>
 
-        <InstitutionEditableEmailField
-          isCreate={isCreate}
-          emailEditable={emailEditable}
-          emailDisabled={emailDisabled}
-          values={values}
-          errors={errors}
-          pendingEmail={pendingEmail}
-          emailStatus={emailStatus}
-          emailHint={emailHint}
-          onEmailChange={onEmailChange}
-          onEmailBlur={onEmailBlur}
-        />
+        {emailField}
 
         <FormControl isInvalid={Boolean(errors.phone_number)}>
           <FieldLabel hint={FIELD_HINTS.tenant.phone.tip}>Phone Number</FieldLabel>

@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.api_key import APIKey
 from app.models.application import Application, ApplicationStatus
 from app.repositories.base import BaseRepository
+from app.repositories.ids import is_int4_id
 
 
 def _escape_like(value: str) -> str:
@@ -33,6 +34,8 @@ class ApplicationRepository(BaseRepository):
         super().__init__(db)
 
     async def get_by_id(self, application_id: int) -> Optional[Application]:
+        if not is_int4_id(application_id):
+            return None
         result = await self._db.execute(
             select(Application).where(Application.id == application_id)
         )
@@ -53,6 +56,8 @@ class ApplicationRepository(BaseRepository):
         by this locked query — the lock is real, but ``allocated_budget``
         read off the result can still be the pre-lock, pre-revision value.
         """
+        if not is_int4_id(application_id):
+            return None
         result = await self._db.execute(
             select(Application)
             .where(Application.id == application_id)
@@ -68,6 +73,8 @@ class ApplicationRepository(BaseRepository):
         exist or belongs to a different tenant, so the caller cannot enumerate
         valid application IDs across tenants (matches APPLICATION_NOT_FOUND's
         uniform-404 contract)."""
+        if not (is_int4_id(application_id) and is_int4_id(tenant_id)):
+            return None
         result = await self._db.execute(
             select(Application).where(
                 Application.id == application_id, Application.tenant_id == tenant_id

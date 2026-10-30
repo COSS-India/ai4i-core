@@ -3,12 +3,7 @@ import type { ServiceTierFilterOption } from "../../hooks/useServicesManagement"
 import type { Service } from "../../types/platform";
 import type { DataTableFilterDef } from "../common/dataTableTypes";
 import {
-  encodeDateRangeFilter,
-  parseDateRangeFilter,
-} from "../common/DataTableColumnFilter";
-import {
   serviceListCellKey,
-  serviceListRangeFilterKeys,
   serviceListServiceId,
   serviceModelName,
   type ServiceListColumnDef,
@@ -22,18 +17,13 @@ const TOOLBAR_FILTER_ORDER = ["status", "task"] as const;
 /**
  * Column search that maps to server filter params.
  * Name is the toolbar search. Status and task type stay on the toolbar selects.
+ * Date and price columns use page-only text search (no list API filter params).
  */
 export const SERVICE_COLUMN_SEARCH_KEYS = new Set([
   "tier",
   "modelName",
   "serviceId",
 ]);
-
-/**
- * Date columns use `date_range` UI and `columnId__from` / `columnId__to` in
- * serverFilters (see {@link serviceListRangeFilterKeys}).
- */
-export const SERVICE_COLUMN_DATE_KEYS = new Set(["createdAt", "publishedOn"]);
 
 /** Sent when a tier name search matches nothing, so the list stays empty. */
 export const UNMATCHED_TIER_FILTER = "__no_tier__";
@@ -248,28 +238,4 @@ export function statusFilterToApiValue(status: string): string {
   if (status === "published") return "true";
   if (status === "unpublished") return "false";
   return "";
-}
-
-/** Read packed column date_range UI value from `columnId__from` / `__to` server keys. */
-export function dateRangeColumnFilterValue(
-  columnId: string,
-  serverFilters: Record<string, string> | undefined,
-): string {
-  const keys = serviceListRangeFilterKeys(columnId);
-  return encodeDateRangeFilter(
-    serverFilters?.[keys.from] ?? "",
-    serverFilters?.[keys.to] ?? "",
-  );
-}
-
-/** Write packed date_range UI value into `columnId__from` / `__to` server keys. */
-export function applyDateRangeColumnFilter(
-  columnId: string,
-  encoded: string,
-  onChange: (filterKey: string, value: string) => void,
-): void {
-  const keys = serviceListRangeFilterKeys(columnId);
-  const { from, to } = parseDateRangeFilter(encoded);
-  onChange(keys.from, from);
-  onChange(keys.to, to);
 }

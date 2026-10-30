@@ -22,6 +22,7 @@ from app.models.api_key import APIKey
 from app.models.application import Application
 from app.models.role import Permission
 from app.repositories.base import BaseRepository
+from app.repositories.ids import is_int4_id
 
 
 def _live_key_values(rows) -> list[str]:
@@ -41,6 +42,8 @@ class APIKeyRepository(BaseRepository):
         super().__init__(db)
 
     async def get_by_id(self, key_id: int) -> Optional[APIKey]:
+        if not is_int4_id(key_id):
+            return None
         result = await self._db.execute(
             select(APIKey).where(APIKey.id == key_id)
         )
@@ -50,6 +53,8 @@ class APIKeyRepository(BaseRepository):
         """Tenant-scoped lookup (via the key's Application): returns None whether
         the key doesn't exist or its application belongs to a different tenant,
         so a Tenant Admin caller cannot enumerate valid key IDs outside their tenant."""
+        if not (is_int4_id(key_id) and is_int4_id(tenant_id)):
+            return None
         result = await self._db.execute(
             select(APIKey)
             .join(Application, APIKey.application_id == Application.id)

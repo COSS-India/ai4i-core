@@ -36,6 +36,9 @@ export function useServiceListVisibleColumns(options: {
     defaultServiceListColumnIds,
   );
   const catalogueKey = serviceListCatalogue.map((column) => column.id).join("|");
+  // Catalogue the current selection was loaded for. The list fetch waits for
+  // this so it never sends the initial offline ids to the API.
+  const [loadedCatalogueKey, setLoadedCatalogueKey] = useState<string | null>(null);
 
   const preferenceUserId = useCallback(
     () => userId || authService.getStoredUser()?.user_id || "",
@@ -55,7 +58,10 @@ export function useServiceListVisibleColumns(options: {
         if (cancelled) return;
         setVisibleColumnIds((current) => nextVisibleColumnIds(current, next));
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setLoadedCatalogueKey(catalogueKey);
+      });
     return () => {
       cancelled = true;
     };
@@ -117,6 +123,7 @@ export function useServiceListVisibleColumns(options: {
 
   return {
     visibleColumnIds,
+    visibleColumnsReady: loadedCatalogueKey === catalogueKey,
     applyVisibleColumns,
     resetVisibleColumns,
     handleRegistrySortChange,

@@ -244,6 +244,7 @@ function buildServiceListQueryParams(
   }
   if (params.createdBy) queryParams.created_by = params.createdBy;
   if (params.tierIds) queryParams.tier_ids = params.tierIds;
+  if (params.columns) queryParams.columns = params.columns;
   if (!params.query) return queryParams;
   for (const [key, value] of Object.entries(params.query)) {
     if (value !== "" && queryParams[key] === undefined) queryParams[key] = value;

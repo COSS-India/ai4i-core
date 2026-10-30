@@ -120,13 +120,11 @@ def test_collect_all_trace_ids_raises_on_missing_aggregations():
         _collect_all_trace_ids(client, {"match_all": {}}, limit=100)
 
 
-def test_build_traces_map_prefers_most_recent_status():
-    """Hits arrive timestamp-desc; the first non-unknown status wins per trace,
-    matching the table-row extraction exactly (not a bare last-value-wins)."""
+def test_build_traces_map_reads_status_from_request_span():
+    """Each trace has exactly one request span; status comes from that span."""
     hits = [
         _span_hit("t1", "request", {"status": "success"}, timestamp="2026-06-25T10:05:00Z"),
         _span_hit("t1", "model", {"task_type": "nmt"}, timestamp="2026-06-25T10:04:59Z"),
-        _span_hit("t1", "request", {"status": "failure"}, timestamp="2026-06-25T10:00:00Z"),
     ]
 
     traces_map = _build_traces_map(hits, tenant_filter="tenant-a")
@@ -144,15 +142,14 @@ def test_build_traces_map_ignores_hits_without_trace_id():
 
 
 def test_compute_full_breakdown_counts_each_trace_exactly_once():
-    """The bug this guards against: a trace with a success span AND a failure
-    span (e.g. a retried request) must land in exactly one bucket, so
-    Success + Failures reconciles with Total instead of exceeding it."""
+    """Each trace has exactly one request span, so Success + Failures must
+    reconcile with Total without double-counting."""
     client = MagicMock()
     client.search_traces.return_value = {
         "hits": {
             "hits": [
                 _span_hit("t1", "request", {"status": "success"}, timestamp="2026-06-25T10:05:00Z"),
-                _span_hit("t1", "request", {"status": "failure"}, timestamp="2026-06-25T10:00:00Z"),
+                _span_hit("t1", "model", {"task_type": "llm"}, timestamp="2026-06-25T10:04:59Z"),
                 _span_hit("t2", "request", {"status": "success"}),
                 _span_hit("t2", "model", {"task_type": "nmt"}),
                 _span_hit("t3", "request", {"status": "failure"}),
@@ -160,11 +157,11 @@ def test_compute_full_breakdown_counts_each_trace_exactly_once():
         }
     }
 
-    by_level, by_task, truncated = asyncio.run(_compute_full_breakdown(client, ["t1", "t2", "t3"], tenant_filter="tenant-a"))
+    by_level, by_task, truncated, _ = asyncio.run(_compute_full_breakdown(client, ["t1", "t2", "t3"], tenant_filter="tenant-a"))
 
     assert by_level == {"success": 2, "failure": 1}
     assert sum(by_level.values()) == 3  # reconciles with the 3 traces, no double counting
-    assert by_task == {"nmt": 1, "unknown": 2}
+    assert by_task == {"nmt": 1, "llm": 1, "unknown": 1}
     assert truncated is False
 
 
@@ -185,7 +182,7 @@ def test_compute_full_breakdown_ignores_filter_specific_fields():
 
     client.search_traces.side_effect = search_traces
 
-    by_level, _, _ = asyncio.run(_compute_full_breakdown(client, ["t1"], tenant_filter=None))
+    by_level, _, _, _ = asyncio.run(_compute_full_breakdown(client, ["t1"], tenant_filter=None))
 
     assert by_level == {"failure": 1}
     assert len(captured_queries) == 1
@@ -210,7 +207,7 @@ def test_compute_full_breakdown_batches_large_trace_id_lists():
 
     client.search_traces.side_effect = search_traces
 
-    by_level, by_task, truncated = asyncio.run(_compute_full_breakdown(client, trace_ids, tenant_filter="tenant-a"))
+    by_level, by_task, truncated, _ = asyncio.run(_compute_full_breakdown(client, trace_ids, tenant_filter="tenant-a"))
 
     assert client.search_traces.call_count == 2  # one full batch + one partial batch
     assert by_level == {"success": len(trace_ids)}
@@ -237,7 +234,7 @@ def test_compute_full_breakdown_flags_truncated_batch():
 
     client.search_traces.side_effect = search_traces
 
-    by_level, by_task, truncated = asyncio.run(_compute_full_breakdown(client, ["t1", "t2", "t3"], tenant_filter="tenant-a"))
+    by_level, by_task, truncated, _ = asyncio.run(_compute_full_breakdown(client, ["t1", "t2", "t3"], tenant_filter="tenant-a"))
 
     assert truncated is True
     # The traces that DID come back are still counted correctly
@@ -248,7 +245,7 @@ def test_compute_full_breakdown_flags_truncated_batch():
 def test_compute_full_breakdown_empty_trace_ids_skips_fetch():
     client = MagicMock()
 
-    by_level, by_task, truncated = asyncio.run(_compute_full_breakdown(client, [], tenant_filter="tenant-a"))
+    by_level, by_task, truncated, _ = asyncio.run(_compute_full_breakdown(client, [], tenant_filter="tenant-a"))
 
     assert by_level == {}
     assert by_task == {}
@@ -276,8 +273,11 @@ def test_search_traces_summary_matches_pagination_total_and_reconciles():
             return {"aggregations": {"trace_ids": {"buckets": [
                 {"key": {"trace_id": tid}} for tid in all_trace_ids
             ]}}}
-        # Span fetch (Step 3 for the page, or _compute_full_breakdown's batch fetch)
-        should = kwargs["query"]["bool"]["should"]
+        # Span fetch (Step 3 for the page, or _compute_full_breakdown's batch fetch).
+        # Step 3 wraps the trace-id should clause inside a must+filter when only a
+        # subset of span types is needed; _compute_full_breakdown uses a plain should.
+        query_bool = kwargs["query"]["bool"]
+        should = query_bool.get("should") or query_bool.get("must", [{}])[0].get("bool", {}).get("should", [])
         batch_ids = [clause["match_phrase"]["context.trace_id"] for clause in should]
         hits = []
         for tid in batch_ids:

@@ -11,6 +11,7 @@ import pytest
 
 from app.core.constants import RoleName
 from app.core.exceptions import AppError
+from fastapi import HTTPException
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import CreationType, User
 from app.schemas.tenant import TenantUserRole, TenantUserUpdate
@@ -44,7 +45,9 @@ def _make_role_service(target: User | None) -> RoleService:
         side_effect=lambda name: MagicMock(id=7, name=name)
     )
     role_repo.get_user_role_record = AsyncMock(return_value=None)
+    role_repo.get_user_roles = AsyncMock(return_value=[])
     role_repo.assign_role = AsyncMock()
+    role_repo.remove_role = AsyncMock(return_value=True)
     user_repo = MagicMock()
     user_repo.get_by_id = AsyncMock(return_value=target)
     tenant_repo = MagicMock()
@@ -314,6 +317,9 @@ class TestUpdateTenantUserRole:
             )
         )
         svc._load_tenant_user_or_404 = AsyncMock(return_value=target)
+        # Last-admin guard: advisory lock + admin count (another admin exists).
+        svc._tenants._db.execute = AsyncMock()
+        role_service._roles.count_tenant_admins_in_tenant = AsyncMock(return_value=2)
         return svc
 
     @pytest.mark.asyncio
@@ -342,3 +348,119 @@ class TestUpdateTenantUserRole:
         )
 
         svc._users.save_and_refresh.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_role_change_replaces_previous_tenant_role(self) -> None:
+        target = _user(CreationType.TENANT, tenant_id=2)
+        svc = self._service(target)
+        svc._roles._roles.get_user_roles = AsyncMock(
+            return_value=[RoleName.TENANT_ADMIN.value, RoleName.USAGE_VIEWER.value]
+        )
+
+        _, role_changed = await svc.update_tenant_user(
+            _user(CreationType.TENANT), 2, target.id,
+            TenantUserUpdate(role=TenantUserRole.USER),
+        )
+
+        assert role_changed is True
+        svc._roles._roles.assign_role.assert_awaited_once()
+        # Only the old tenant role is dropped; USAGE VIEWER is left alone.
+        svc._roles._roles.remove_role.assert_awaited_once()
+        svc._roles._roles.commit.assert_not_awaited()
+        svc._users.save_and_refresh.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_same_role_reports_no_change(self) -> None:
+        target = _user(CreationType.TENANT, tenant_id=2)
+        svc = self._service(target)
+        svc._roles._roles.get_user_roles = AsyncMock(return_value=[RoleName.USER.value])
+
+        _, role_changed = await svc.update_tenant_user(
+            _user(CreationType.TENANT), 2, target.id,
+            TenantUserUpdate(role=TenantUserRole.USER),
+        )
+
+        assert role_changed is False
+        svc._roles._roles.remove_role.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_cannot_demote_last_tenant_admin(self) -> None:
+        target = _user(CreationType.TENANT, tenant_id=2)
+        svc = self._service(target)
+        svc._roles._roles.get_user_roles = AsyncMock(return_value=[RoleName.TENANT_ADMIN.value])
+        svc._roles._roles.count_tenant_admins_in_tenant = AsyncMock(return_value=1)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await svc.update_tenant_user(
+                _user(CreationType.TENANT), 2, target.id,
+                TenantUserUpdate(role=TenantUserRole.USER),
+            )
+
+        assert exc_info.value.status_code == 422
+        assert exc_info.value.detail["code"] == "LAST_TENANT_ADMIN"
+        svc._roles._roles.remove_role.assert_not_awaited()
+        svc._users.update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_cannot_demote_tenant_contact(self) -> None:
+        target = _user(CreationType.TENANT, tenant_id=2)
+        target.email = "TEST-CONTACT@example.invalid"
+        svc = self._service(target)
+        svc._roles._roles.get_user_roles = AsyncMock(return_value=[RoleName.TENANT_ADMIN.value])
+
+        with pytest.raises(AppError) as exc_info:
+            await svc.update_tenant_user(
+                _user(CreationType.TENANT), 2, target.id,
+                TenantUserUpdate(role=TenantUserRole.USER),
+            )
+
+        assert exc_info.value.code == "CONTACT_ROLE_LOCKED"
+        svc._roles._roles.remove_role.assert_not_awaited()
+        svc._users.update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_inactive_admin_can_be_demoted_without_admin_count(self) -> None:
+        target = _user(CreationType.TENANT, tenant_id=2)
+        target.is_active = False
+        svc = self._service(target)
+        svc._roles._roles.get_user_roles = AsyncMock(return_value=[RoleName.TENANT_ADMIN.value])
+        svc._roles._roles.count_tenant_admins_in_tenant = AsyncMock(return_value=0)
+
+        _, role_changed = await svc.update_tenant_user(
+            _user(CreationType.TENANT), 2, target.id,
+            TenantUserUpdate(role=TenantUserRole.USER),
+        )
+
+        assert role_changed is True
+        svc._roles._roles.count_tenant_admins_in_tenant.assert_not_awaited()
+
+
+class TestUpdateTenantUserRouteRevokesSessions:
+    """Access tokens carry permission_ids, so a role change must sign the user out."""
+
+    @staticmethod
+    async def _call(role_changed: bool):
+        from app.routes.tenants import update_tenant_user as route
+
+        target = _user(CreationType.TENANT, tenant_id=2)
+        svc = MagicMock()
+        svc.update_tenant_user = AsyncMock(return_value=(target, role_changed))
+        svc.build_tenant_user_response = AsyncMock(return_value={})
+        cache_svc = MagicMock()
+        cache_svc.revoke_all_sessions = AsyncMock()
+        with patch("app.routes.tenants.UpdateTenantUserResponse"):
+            await route(
+                2, target.id, TenantUserUpdate(role=TenantUserRole.USER),
+                current_user=_user(CreationType.TENANT), svc=svc, cache_svc=cache_svc,
+            )
+        return target, cache_svc
+
+    @pytest.mark.asyncio
+    async def test_role_change_revokes_sessions(self) -> None:
+        target, cache_svc = await self._call(role_changed=True)
+        cache_svc.revoke_all_sessions.assert_awaited_once_with(str(target.id))
+
+    @pytest.mark.asyncio
+    async def test_profile_only_update_keeps_sessions(self) -> None:
+        _, cache_svc = await self._call(role_changed=False)
+        cache_svc.revoke_all_sessions.assert_not_awaited()

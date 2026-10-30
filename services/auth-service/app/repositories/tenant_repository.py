@@ -7,6 +7,7 @@ from sqlalchemy.orm import load_only
 
 from app.models.tenant import Tenant, TenantStatus
 from app.repositories.base import BaseRepository
+from app.repositories.ids import is_int4_id
 
 
 class TenantRepository(BaseRepository):
@@ -14,6 +15,8 @@ class TenantRepository(BaseRepository):
         super().__init__(db)
 
     async def get_by_id(self, tenant_id: int) -> Optional[Tenant]:
+        if not is_int4_id(tenant_id):
+            return None
         result = await self._db.execute(
             select(Tenant).where(Tenant.id == tenant_id)
         )
@@ -44,6 +47,8 @@ class TenantRepository(BaseRepository):
         the five loaded here; add to the list rather than falling back to
         ``get_by_id`` if a caller ever needs one more.
         """
+        if not is_int4_id(tenant_id):
+            return None
         result = await self._db.execute(
             select(Tenant)
             .options(
@@ -70,6 +75,8 @@ class TenantRepository(BaseRepository):
         can still see a pre-revision value. This forces a refresh from the
         just-locked row every time.
         """
+        if not is_int4_id(tenant_id):
+            return None
         result = await self._db.execute(
             select(Tenant)
             .where(Tenant.id == tenant_id)

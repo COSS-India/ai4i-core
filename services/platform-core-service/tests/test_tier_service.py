@@ -17,6 +17,7 @@ from uuid import uuid4
 import httpx
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 
 from app.core.constants import TierStatus
 from app.core.exceptions import ValidationError
@@ -216,7 +217,9 @@ class TestUpdateTier:
         tier_id = uuid4()
         tier = _tier(tier_id=tier_id)
         session = AsyncMock()
-        session.execute = AsyncMock(return_value=_mock_result(scalar=tier, all_rows=[]))
+        resolve = _mock_result(scalar=tier, all_rows=[])
+        # resolve, duplicate-name check (no clash), then the quota reload
+        session.execute = AsyncMock(side_effect=[resolve, _mock_result(scalar=None), resolve])
         session.commit = AsyncMock()
         session.refresh = AsyncMock()
         scheduled = []
@@ -469,7 +472,12 @@ class TestTierRateLimit:
         tier = _tier(tier_id=tier_id)
         tier.rate_limit = 50
         session = AsyncMock()
-        session.execute = AsyncMock(return_value=_mock_result(scalar=tier, all_rows=[]))
+        resolve = _mock_result(scalar=tier, all_rows=[])
+        if "name" in fields:
+            # resolve, duplicate-name check (no clash), then the quota reload
+            session.execute = AsyncMock(side_effect=[resolve, _mock_result(scalar=None), resolve])
+        else:
+            session.execute = AsyncMock(return_value=resolve)
         session.commit = AsyncMock()
         session.refresh = AsyncMock()
 
@@ -492,3 +500,58 @@ class TestTierRateLimit:
         await tier_service.update_tier(TierUpdate(tier_id=str(tier_id), rateLimit=10), session, updated_by="admin")
 
         write.assert_awaited_once_with(tier)
+
+
+class TestUpdateTierDuplicateName:
+    @pytest.mark.asyncio
+    async def test_rename_to_existing_name_rejected_with_409(self):
+        tier = _tier(name="Beta")
+        session = AsyncMock()
+        session.execute = AsyncMock(side_effect=[_mock_result(scalar=tier), _mock_result(scalar=_tier(name="Alpha"))])
+
+        with pytest.raises(HTTPException) as exc_info:
+            await tier_service.update_tier(TierUpdate(tier_id=str(tier.id), name="Alpha"), session, updated_by="admin")
+
+        assert exc_info.value.status_code == 409
+        assert "'Alpha'" in exc_info.value.detail
+        assert tier.name == "Beta"
+        session.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unchanged_name_skips_duplicate_check(self):
+        tier = _tier(name="Alpha")
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_mock_result(scalar=tier, all_rows=[]))
+        session.commit = AsyncMock()
+        session.refresh = AsyncMock()
+
+        result = await tier_service.update_tier(TierUpdate(tier_id=str(tier.id), name="Alpha"), session, updated_by="admin")
+
+        assert result.name == "Alpha"
+
+    @pytest.mark.asyncio
+    async def test_name_index_violation_on_commit_maps_to_409(self):
+        tier = _tier(name="Beta")
+        orig = Exception('duplicate key value violates unique constraint "uq_tiers_name_active"')
+        session = AsyncMock()
+        session.execute = AsyncMock(side_effect=[_mock_result(scalar=tier), _mock_result(scalar=None)])
+        session.commit = AsyncMock(side_effect=IntegrityError("UPDATE tiers", {}, orig))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await tier_service.update_tier(TierUpdate(tier_id=str(tier.id), name="Alpha"), session, updated_by="admin")
+
+        assert exc_info.value.status_code == 409
+        session.rollback.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_other_constraint_violation_on_commit_is_not_a_name_clash(self):
+        tier = _tier(name="Beta")
+        orig = Exception('duplicate key value violates unique constraint "uq_tier_quotas_tier_inference_type"')
+        session = AsyncMock()
+        session.execute = AsyncMock(return_value=_mock_result(scalar=tier))
+        session.commit = AsyncMock(side_effect=IntegrityError("UPDATE tier_quotas", {}, orig))
+
+        with pytest.raises(IntegrityError):
+            await tier_service.update_tier(TierUpdate(tier_id=str(tier.id), description="d"), session, updated_by="admin")
+
+        session.rollback.assert_awaited_once()

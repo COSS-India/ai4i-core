@@ -137,6 +137,18 @@ function dateRangeError(startTime: string, endTime: string): string | undefined 
   return undefined;
 }
 
+/** Pause after the last Start/End Time change before it is applied. */
+const TIME_COMMIT_DELAY_MS = 700;
+
+/**
+ * A year still being typed reads as 0002, 0020, 0202 — real dates that would
+ * query centuries. Only auto-apply a 4-digit year from 1000 on.
+ */
+function hasCompleteYears(draft: DraftFilters): boolean {
+  const complete = /^[1-9]\d{3}-/;
+  return complete.test(draft.startTime) && complete.test(draft.endTime);
+}
+
 function resolveLogsSearchError(q: string): string | undefined {
   return q.trim().length > KEYWORD_MAX_LENGTH
     ? FIELD_HINTS.logs.search.tooLong
@@ -394,6 +406,7 @@ function renderMetadataCell(row: TelemetryTraceRecord): React.ReactNode {
   );
 }
 
+
 const TRACE_CELL_BY_KEY: Record<
   string,
   (row: TelemetryTraceRecord, options: TraceCellOptions) => React.ReactNode
@@ -472,7 +485,8 @@ function logsControlLayout(minPx: number, maxPx: number): LogsControlLayout {
 function buildLogsFilterDefs(options: {
   draft: DraftFilters;
   replaceDraft: (next: DraftFilters, commit?: boolean) => void;
-  commitFilters: (next: DraftFilters) => void;
+  scheduleTimeCommit: () => void;
+  flushTimeCommit: () => void;
   canPickTenant: boolean;
   tenantsLoading: boolean;
   tenantsError: boolean;
@@ -485,7 +499,8 @@ function buildLogsFilterDefs(options: {
   const {
     draft,
     replaceDraft,
-    commitFilters,
+    scheduleTimeCommit,
+    flushTimeCommit,
     canPickTenant,
     tenantsLoading,
     tenantsError,
@@ -587,8 +602,9 @@ function buildLogsFilterDefs(options: {
           { ...draftRef.current, timePreset: "custom", startTime: v },
           false,
         );
+        scheduleTimeCommit();
       },
-      onBlur: () => commitFilters(draftRef.current),
+      onBlur: flushTimeCommit,
       error: timeRangeError,
       inputType: "datetime-local",
       hint: FIELD_HINTS.logs.startTime.tip,
@@ -607,8 +623,9 @@ function buildLogsFilterDefs(options: {
           { ...draftRef.current, timePreset: "custom", endTime: v },
           false,
         );
+        scheduleTimeCommit();
       },
-      onBlur: () => commitFilters(draftRef.current),
+      onBlur: flushTimeCommit,
       error: timeRangeError,
       inputType: "datetime-local",
       hint: FIELD_HINTS.logs.endTime.tip,
@@ -620,13 +637,25 @@ function buildLogsFilterDefs(options: {
   return defs;
 }
 
-function filterActiveTenants(
-  tenantsData: { tenants?: Array<{ status?: string; tenant_id: string; organisation?: string }> } | undefined,
-): Array<{ tenant_id: string; organisation?: string; status?: string }> {
+type LogsTenantOption = {
+  tenant_id: string;
+  organisation?: string;
+  status?: string;
+};
+
+function tenantsFromResponse(
+  tenantsData: { tenants?: LogsTenantOption[] } | undefined,
+): LogsTenantOption[] {
   if (!tenantsData?.tenants || !Array.isArray(tenantsData.tenants)) {
     return [];
   }
-  return tenantsData.tenants.filter((tenant) =>
+  return tenantsData.tenants;
+}
+
+function filterActiveTenants(
+  tenantsData: { tenants?: LogsTenantOption[] } | undefined,
+): LogsTenantOption[] {
+  return tenantsFromResponse(tenantsData).filter((tenant) =>
     isTenantStatus(tenant?.status, TENANT.STATUS.ACTIVE),
   );
 }
@@ -1180,15 +1209,22 @@ const LogsPage: React.FC = () => {
     [tenantsData],
   );
 
+  // Name lookup includes non-active tenants (AI4IDS-3600 / AC-9).
   const tenantById = useMemo(
-    () => new Map(activeTenants.map((tenant) => [tenant.tenant_id, tenant])),
-    [activeTenants],
+    () =>
+      new Map(
+        tenantsFromResponse(tenantsData).map((tenant) => [
+          String(tenant.tenant_id),
+          tenant,
+        ]),
+      ),
+    [tenantsData],
   );
 
   const resolveTenantName = useCallback(
     (tenantId: string | null | undefined) => {
       if (!tenantId) return "-";
-      const tenant = tenantById.get(tenantId);
+      const tenant = tenantById.get(String(tenantId));
       return tenant?.organisation || tenantId;
     },
     [tenantById],
@@ -1255,7 +1291,34 @@ const LogsPage: React.FC = () => {
     [commitFilters],
   );
 
+  // The native datetime picker keeps focus in the input, so blur alone left a
+  // picked date unapplied until the user clicked elsewhere. Apply after a
+  // pause instead; blur still applies at once.
+  const timeCommitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancelTimeCommit = useCallback(() => {
+    if (timeCommitTimerRef.current === null) return;
+    clearTimeout(timeCommitTimerRef.current);
+    timeCommitTimerRef.current = null;
+  }, []);
+
+  const scheduleTimeCommit = useCallback(() => {
+    cancelTimeCommit();
+    timeCommitTimerRef.current = setTimeout(() => {
+      timeCommitTimerRef.current = null;
+      if (hasCompleteYears(draftRef.current)) commitFilters(draftRef.current);
+    }, TIME_COMMIT_DELAY_MS);
+  }, [cancelTimeCommit, commitFilters]);
+
+  const flushTimeCommit = useCallback(() => {
+    cancelTimeCommit();
+    commitFilters(draftRef.current);
+  }, [cancelTimeCommit, commitFilters]);
+
+  useEffect(() => cancelTimeCommit, [cancelTimeCommit]);
+
   const clearAllFilters = useCallback(() => {
+    cancelTimeCommit();
     const range = defaultTimeRange();
     const clearedDraft: DraftFilters = {
       q: "",
@@ -1280,7 +1343,7 @@ const LogsPage: React.FC = () => {
     setColumnFilters({});
     setFollowsPresent(true);
     setPage(1);
-  }, []);
+  }, [cancelTimeCommit]);
 
   const sortBy: TelemetryTraceSortBy =
     SORTABLE_API_KEYS[sort.key] ?? "timestamp";
@@ -1529,7 +1592,8 @@ const LogsPage: React.FC = () => {
       buildLogsFilterDefs({
         draft,
         replaceDraft,
-        commitFilters,
+        scheduleTimeCommit,
+        flushTimeCommit,
         canPickTenant,
         tenantsLoading,
         tenantsError: Boolean(tenantsError),
@@ -1542,7 +1606,8 @@ const LogsPage: React.FC = () => {
     [
       draft,
       replaceDraft,
-      commitFilters,
+      scheduleTimeCommit,
+      flushTimeCommit,
       canPickTenant,
       tenantsLoading,
       tenantsError,
