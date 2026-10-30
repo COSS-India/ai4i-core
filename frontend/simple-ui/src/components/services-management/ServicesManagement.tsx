@@ -547,8 +547,6 @@ const ServicesManagement: React.FC = () => {
         header: "Input Price",
         hint: FIELD_HINTS.service.col.inputPrice,
         sortable: true,
-        isNumeric: true,
-        maxW: "6rem",
         cell: renderServiceInputPriceCell,
       },
       {
@@ -556,8 +554,6 @@ const ServicesManagement: React.FC = () => {
         header: "Output Price",
         hint: FIELD_HINTS.service.col.outputPrice,
         sortable: true,
-        isNumeric: true,
-        maxW: "6rem",
         cell: renderServiceOutputPriceCell,
       },
       {
@@ -565,8 +561,6 @@ const ServicesManagement: React.FC = () => {
         header: "Cached Input Price",
         hint: FIELD_HINTS.service.col.cachedInputPrice,
         sortable: true,
-        isNumeric: true,
-        maxW: "7rem",
         cell: renderServiceCachedInputPriceCell,
       },
       {

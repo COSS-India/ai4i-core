@@ -186,32 +186,6 @@ function isCompactColumn(col: { id: string }): boolean {
   return compactColumnWidth(col) != null;
 }
 
-/** Short, scannable values (dates, badges, counts) — sized to content, never truncated. */
-const CONTENT_WIDTH_IDS = new Set([
-  ...Object.keys(COMPACT_COLUMN_WIDTHS),
-  "expires",
-  "expiry",
-  "expires_at",
-  "budget",
-  "allocation",
-  "permissions",
-  "latency",
-  "updated",
-  "updatedat",
-  "updated_at",
-  "published",
-  "publishedat",
-  "publishedon",
-  "published_on",
-]);
-
-function isContentWidthColumn(col: { id: string }): boolean {
-  return (
-    CONTENT_WIDTH_IDS.has(normalizeColumnId(col.id)) ||
-    CONTENT_WIDTH_IDS.has(compactColumnId(col.id))
-  );
-}
-
 const PRIMARY_FLEX_IDS = [
   new Set([
     "name",
@@ -283,26 +257,6 @@ type AdminColumnInput = {
   maxW?: TableCellProps["maxW"];
 };
 
-/** Fixed rem rail for status / task-type / method-style columns. */
-function pinnedCompactColumnLayout(col: AdminColumnInput): AdminColumnLayout {
-  const width = compactColumnWidth(col) ?? "7.5rem";
-  return {
-    w: width,
-    minW: width,
-    maxW: width,
-    whiteSpace: "nowrap",
-  };
-}
-
-function primaryFlexPercent(otherCount: number): number {
-  // Keep the lead column readable without eating half the table.
-  return Math.min(22, Math.max(14, 38 - otherCount * 5));
-}
-
-function hasExplicitColumnWidth(col: AdminColumnInput): boolean {
-  return col.width != null || col.minWidth != null || col.maxW != null;
-}
-
 /** `1%` / auto widths are shrink-wrap hints, not real pins under `table-layout: fixed`. */
 function isFluidWidthHint(value: TableCellProps["w"] | TableCellProps["minW"]): boolean {
   if (value == null) return true;
@@ -359,13 +313,11 @@ function partitionAdminColumns(columns: readonly AdminColumnInput[]): {
       layouts.set(col.id, pinnedControlColumnLayout(col));
       continue;
     }
-    if (hasExplicitColumnWidth(col)) {
+    // Only a hard `width` leaves the flex pool — same rule as measured sizing.
+    // minWidth / compact hints stay flexible so Logs + Services column pickers
+    // spread evenly when few columns are visible.
+    if (col.width != null && !isFluidWidthHint(col.width)) {
       layouts.set(col.id, explicitColumnLayout(col));
-      continue;
-    }
-    // Status / task type / method: pin rem width (do not flex with URL/name).
-    if (isCompactColumn(col)) {
-      layouts.set(col.id, pinnedCompactColumnLayout(col));
       continue;
     }
     flexColumns.push(col);
@@ -376,28 +328,10 @@ function partitionAdminColumns(columns: readonly AdminColumnInput[]): {
 function applyFlexColumnLayouts(
   layouts: Map<string, AdminColumnLayout>,
   flexColumns: AdminColumnInput[],
-  primaryColumnId: string | null,
 ): void {
-  const flexCount = flexColumns.length;
-  if (flexCount === 0) return;
-
-  const hasPrimary =
-    primaryColumnId != null && flexColumns.some((column) => column.id === primaryColumnId);
-  /*
-   * Do NOT assign % widths that sum to 100% — rem Actions / chevron sit outside that
-   * budget and would get clipped. Give primary a modest share; leave other flex
-   * columns as minW:0 so `table-layout: fixed` distributes leftover space.
-   */
-  let primaryPct: number | undefined;
-  if (hasPrimary && flexCount > 1) {
-    primaryPct = primaryFlexPercent(flexCount - 1);
-  }
-
+  // Even share until content measurement runs. Do not assign % that sum to
+  // 100% — Actions / chevron sit outside that budget.
   for (const col of flexColumns) {
-    if (hasPrimary && col.id === primaryColumnId && primaryPct != null) {
-      layouts.set(col.id, { w: `${primaryPct}%`, minW: 0 });
-      continue;
-    }
     layouts.set(col.id, { minW: 0 });
   }
 }
@@ -405,16 +339,13 @@ function applyFlexColumnLayouts(
 /**
  * Viewport-fit layouts for admin tables (`table-layout: fixed; width: 100%`).
  * - Actions: fixed rem (always visible, no horizontal scroll)
- * - Primary: larger % of remaining width
- * - Others: share the rest equally and truncate
- * Explicit caller widths still win.
+ * - All other columns: flexible — share space evenly, truncate when crowded
  */
 export function resolveAdminColumnLayouts(
   columns: readonly AdminColumnInput[],
 ): Map<string, AdminColumnLayout> {
-  const primaryColumnId = resolvePrimaryColumnId(columns);
   const { layouts, flexColumns } = partitionAdminColumns(columns);
-  applyFlexColumnLayouts(layouts, flexColumns, primaryColumnId);
+  applyFlexColumnLayouts(layouts, flexColumns);
   return layouts;
 }
 
@@ -433,16 +364,19 @@ export type ColumnSizingInput = {
   minPx?: number;
 };
 
-/** Below this a truncated value stops being recognisable. */
-const MIN_SHRINK_COLUMN_PX = 128;
+/** Soft floor while shrinking; headers/cells may truncate below their natural width. */
+const MIN_SHRINK_COLUMN_PX = 96;
 
+/**
+ * Jira-style flexible columns (no horizontal scroll):
+ * - Actions / explicit pins stay fixed
+ * - Every other column shares leftover width evenly when few are visible
+ * - When many are visible, every flexible column shrinks and truncates
+ * Compact rem hints are minimums only — never hard pins.
+ */
 export function resolveColumnSizingMode(col: AdminColumnInput): ColumnSizingMode {
   if (isShrinkWrapColumn(col)) return "fixed";
-  // Badge / status / task-type rails: fixed rem width so a long label like
-  // LANGUAGE-DIARIZATION cannot inflate the column past its pin.
-  if (isCompactColumn(col)) return "fixed";
   if (col.width != null && !isFluidWidthHint(col.width)) return "fixed";
-  if (isContentWidthColumn(col)) return "content";
   return "shrink";
 }
 
@@ -469,10 +403,9 @@ export function cssLengthToPx(value: unknown): number | undefined {
 
 function shrinkFloor(col: ColumnSizingInput): number {
   if (col.mode !== "shrink") return col.natural;
-  return Math.min(
-    col.natural,
-    Math.max(col.header, col.minPx ?? MIN_SHRINK_COLUMN_PX),
-  );
+  // Do not floor on full header width — long labels ("Cached Input Price")
+  // must truncate when many columns share the viewport.
+  return Math.min(col.natural, col.minPx ?? MIN_SHRINK_COLUMN_PX);
 }
 
 function shrinkableIndexes(cols: readonly ColumnSizingInput[]): number[] {
@@ -481,22 +414,32 @@ function shrinkableIndexes(cols: readonly ColumnSizingInput[]): number[] {
     .filter((i) => i >= 0);
 }
 
-/** Give leftover viewport space to shrink columns, proportional to natural width. */
+/**
+ * Give leftover viewport space to shrink columns (even split).
+ * Consume every leftover pixel — a shortfall lets the browser pad the last
+ * columns, which shows up as a gap after price amounts before Actions.
+ */
 function growShrinkColumns(
   widths: number[],
-  cols: readonly ColumnSizingInput[],
+  _cols: readonly ColumnSizingInput[],
   shrinkable: readonly number[],
   available: number,
   total: number,
 ): number[] {
-  const weight = shrinkable.reduce((sum, i) => sum + cols[i].natural, 0);
-  if (weight > 0) {
-    const extra = available - total;
-    for (const i of shrinkable) {
-      widths[i] += (extra * cols[i].natural) / weight;
-    }
+  const next = widths.map((w) => Math.floor(w));
+  // No shrink columns (only badges/prices/actions): park leftover on the first
+  // column so the browser does not pad Cached / Actions.
+  const targets = shrinkable.length > 0 ? shrinkable : [0];
+  let remaining = Math.max(0, available - total);
+  const share = Math.floor(remaining / targets.length);
+  for (const i of targets) {
+    next[i] += share;
   }
-  return widths.map((w) => Math.floor(w));
+  remaining = available - next.reduce((sum, w) => sum + w, 0);
+  for (let n = 0; remaining > 0; n += 1, remaining -= 1) {
+    next[targets[n % targets.length]] += 1;
+  }
+  return next;
 }
 
 /** Binary-search a shared max width so shrink columns fit the leftover budget. */
@@ -525,17 +468,19 @@ function shrinkLevelForBudget(
 
 function fitWidthsToAvailable(widths: number[], available: number): number[] {
   const assigned = widths.reduce((sum, w) => sum + w, 0);
+  if (assigned <= 0) return widths.map(() => 0);
   if (assigned <= available) {
     return widths.map((w) => Math.round(w));
   }
-  // Prefer horizontal scroll over unreadable columns (floor = MIN_SHRINK).
-  return widths.map((w) => Math.max(MIN_SHRINK_COLUMN_PX, Math.round(w)));
+  // Scale to the viewport — never force horizontal scroll. Cells truncate.
+  const scale = available / assigned;
+  return widths.map((w) => Math.max(1, Math.floor(w * scale)));
 }
 
 /**
- * Viewport-fit widths:
- * - room to spare: only `shrink` columns grow; fixed/content stay tight
- * - too tight: level down `shrink` columns, then keep a readable floor and scroll
+ * Viewport-fit widths (no horizontal scroll):
+ * - room to spare: flexible columns grow evenly (Jira-like spread)
+ * - too tight: flexible columns shrink/truncate; actions stay fixed
  */
 export function distributeColumnWidths(
   cols: readonly ColumnSizingInput[],
@@ -666,14 +611,16 @@ function sizingInputForColumn(
   }
   const cap = cssLengthToPx(col.maxW);
   const uncapped = Math.max(header, measured);
+  const minPx =
+    cssLengthToPx(col.minWidth) ?? cssLengthToPx(compactColumnWidth(col));
   if (cap == null) {
-    return { natural: uncapped, header, mode, minPx: cssLengthToPx(col.minWidth) };
+    return { natural: uncapped, header, mode, minPx };
   }
   return {
     natural: Math.min(uncapped, cap),
     header: Math.min(header, cap),
     mode,
-    minPx: cssLengthToPx(col.minWidth),
+    minPx,
   };
 }
 
