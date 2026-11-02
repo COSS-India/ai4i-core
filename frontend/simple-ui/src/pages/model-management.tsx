@@ -21,7 +21,19 @@ import FormActions from "../components/common/FormActions";
 import FormDrawer from "../components/common/FormDrawer";
 import ModelExtraDetails from "../components/model-management/ModelDetails";
 import ModelForm from "../components/model-management/ModelForm";
+import ModelListColumnPicker from "../components/model-management/ModelListColumnPicker";
 import { validateModelData } from "../components/model-management/modelJsonValidation";
+import { MODEL_LIST_COLUMNS } from "../components/model-management/modelListColumns";
+import {
+  modelCreatedAtMs,
+  renderModelCreatedAtCell,
+  renderModelNameCell,
+  renderModelProviderCell,
+  renderModelStatusCell,
+  renderModelTaskTypeCell,
+  renderModelVersionCell,
+} from "../components/model-management/modelListCells";
+import { useModelListVisibleColumns } from "../components/model-management/useModelListVisibleColumns";
 import {
   createModel,
   getAllModels,
@@ -57,14 +69,26 @@ import {
   MODEL_VERSION_FILTER_LIST,
   MODEL_API_KEY_REDACTED,
   formatModelTaskTypeLabel,
-  getTaskColorScheme,
   formatModelVersionFilterLabel,
-  formatModelVersionStatusLabel,
-  isModelVersionStatusActive,
 } from "../config/constants";
 import { useInferenceTypes } from "../hooks/useInferenceTypes";
 import { getPlatformName } from "../config/runtimeConfig";
 import { resolveTaskType } from "../utils/platformService";
+
+/** Right-align Actions-column content without nesting a helper inside `cell`. */
+function modelActionsRail(child: React.ReactNode): React.ReactElement {
+  return (
+    <Box
+      display="flex"
+      justifyContent="flex-end"
+      alignItems="center"
+      w="100%"
+      minH="32px"
+    >
+      {child}
+    </Box>
+  );
+}
 
 /** Registry UI model row — requires fields used in forms/tables. */
 type Model = ModelDetails & {
@@ -109,6 +133,7 @@ const ModelManagementPage: React.FC = () => {
     () => ({
       name: (m: Model) => m.name ?? "",
       version: (m: Model) => m.version ?? "",
+      provider: (m: Model) => m.submitter?.name ?? "",
       created: (m: Model) => {
         if (m.createdAt != null) return new Date(m.createdAt).getTime();
         if (m.submittedOn != null) return m.submittedOn * 1000;
@@ -126,6 +151,15 @@ const ModelManagementPage: React.FC = () => {
   /** Bumped when the user leaves or opens a row, so a late return fetch cannot reopen. */
   const modelReturnGenRef = useRef(0);
   const { user } = useAuth();
+  const {
+    visibleColumnIds,
+    applyVisibleColumns,
+    resetVisibleColumns,
+  } = useModelListVisibleColumns({
+    userId: user?.user_id ?? "",
+    catalogue: MODEL_LIST_COLUMNS,
+    modelSort,
+  });
   const queryClient = useQueryClient();
   const isRegistryReadOnly = isRegistryReadOnlyUser(user?.roles);
   const { isOpen: isCreateOpen, onOpen: onCreateOpen, onClose: onCreateCloseRaw } = useDisclosure();
@@ -633,78 +667,51 @@ const ModelManagementPage: React.FC = () => {
     setConfirmAction(null);
   };
 
-  const modelColumns = useMemo((): DataTableColumn<Model>[] => {
+  const modelColumnTemplates = useMemo((): DataTableColumn<Model>[] => {
     return [
       {
         id: "name",
         header: "Name",
         sortable: true,
         sortAccessor: (model) => model.name ?? "",
-        cell: (model) => (
-          <Text fontWeight="medium" fontSize="sm" noOfLines={1} title={model.name || model.modelId}>
-            {model.name || model.modelId || "—"}
-          </Text>
-        ),
+        cell: renderModelNameCell,
       },
       {
         id: "version",
         header: "Version",
         sortable: true,
         sortAccessor: (model) => model.version ?? "",
-        cell: (model) => (
-          <Text fontSize="sm" fontWeight="medium">
-            {model.version || "1.0"}
-          </Text>
-        ),
-      },
-      {
-        id: "status",
-        header: "Status",
-        hint: FIELD_HINTS.model.col.status,
-        cell: (model) => (
-          <Badge
-            colorScheme={isModelVersionStatusActive(model.versionStatus) ? "green" : "gray"}
-            fontSize="xs"
-          >
-            {formatModelVersionStatusLabel(model.versionStatus)}
-          </Badge>
-        ),
+        cell: renderModelVersionCell,
       },
       {
         id: "task",
         header: "Task Type",
         hint: FIELD_HINTS.model.col.task,
-        cell: (model) => {
-          const taskType = resolveTaskType(model);
-          return (
-            <Badge colorScheme={getTaskColorScheme(taskType)} fontSize="xs">
-              {taskType ? taskType.toUpperCase() : "N/A"}
-            </Badge>
-          );
-        },
+        cell: renderModelTaskTypeCell,
+      },
+      {
+        id: "provider",
+        header: "Provider Name",
+        hint: FIELD_HINTS.model.col.provider,
+        sortable: true,
+        sortAccessor: (model) => model.submitter?.name ?? "",
+        cell: renderModelProviderCell,
+      },
+      {
+        id: "status",
+        header: "Status",
+        hint: FIELD_HINTS.model.col.status,
+        cell: renderModelStatusCell,
       },
       {
         id: "created",
         header: "Created At",
         sortable: true,
         sortAccessor: (model) => {
-          if (model.createdAt != null) return new Date(model.createdAt).getTime();
-          if (model.submittedOn != null) return model.submittedOn * 1000;
-          return 0;
+          const ms = modelCreatedAtMs(model);
+          return Number.isFinite(ms) ? ms : 0;
         },
-        cell: (model) => {
-          const createdMs =
-            model.createdAt != null
-              ? new Date(model.createdAt).getTime()
-              : model.submittedOn != null
-                ? model.submittedOn * 1000
-                : NaN;
-          return (
-            <Text fontSize="sm" color="ink.600">
-              {Number.isFinite(createdMs) ? new Date(createdMs).toLocaleDateString() : "N/A"}
-            </Text>
-          );
-        },
+        cell: renderModelCreatedAtCell,
       },
       {
         id: "serviceCount",
@@ -744,16 +751,13 @@ const ModelManagementPage: React.FC = () => {
           px: 2,
         },
         cell: (model) => {
-          const rail = (child: React.ReactNode) => (
-            <Box display="flex" justifyContent="flex-end" alignItems="center" w="100%" minH="32px">
-              {child}
-            </Box>
-          );
           if (isServiceCountLoading) {
-            return rail(<Skeleton height="20px" width="36px" borderRadius="md" />);
+            return modelActionsRail(
+              <Skeleton height="20px" width="36px" borderRadius="md" />,
+            );
           }
           if (hasServiceCountError) {
-            return rail(
+            return modelActionsRail(
               <Tooltip label="Could not load services" placement="top" hasArrow>
                 <Text fontSize="sm" color="gray.400">
                   —
@@ -765,7 +769,7 @@ const ModelManagementPage: React.FC = () => {
           // Deprecated models must stay activatable even with 0 services
           // (Create Service is hidden for deprecated models).
           if (!isRegistryReadOnly && isModelDeprecated(model)) {
-            return rail(
+            return modelActionsRail(
               <Tooltip label="Activate model" placement="top" hasArrow>
                 <Box as="span" display="inline-flex" alignItems="center">
                   <Switch
@@ -783,7 +787,7 @@ const ModelManagementPage: React.FC = () => {
           }
 
           if (isModelActive(model) && !hasLinkedServices(model)) {
-            return rail(
+            return modelActionsRail(
               <Text fontSize="sm" color="ink.600">
                 NA
               </Text>,
@@ -791,11 +795,11 @@ const ModelManagementPage: React.FC = () => {
           }
 
           if (isRegistryReadOnly || !isModelActive(model)) {
-            return rail(null);
+            return modelActionsRail(null);
           }
 
           const blockedByPublished = hasPublishedService(model);
-          return rail(
+          return modelActionsRail(
             <Tooltip
               label={
                 blockedByPublished
@@ -838,6 +842,28 @@ const ModelManagementPage: React.FC = () => {
     isRegistryReadOnly,
   ]);
 
+  const modelColumns = useMemo((): DataTableColumn<Model>[] => {
+    const byId = new Map(modelColumnTemplates.map((col) => [col.id, col]));
+    const visible = visibleColumnIds
+      .map((id) => byId.get(id))
+      .filter((col): col is DataTableColumn<Model> => Boolean(col));
+    // Always keep Actions last if present.
+    const withoutActions = visible.filter((col) => col.id !== "actions");
+    const actions = byId.get("actions");
+    return actions && visibleColumnIds.includes("actions")
+      ? [...withoutActions, actions]
+      : withoutActions;
+  }, [modelColumnTemplates, visibleColumnIds]);
+
+  const columnPicker = (
+    <ModelListColumnPicker
+      columns={MODEL_LIST_COLUMNS}
+      visibleIds={visibleColumnIds}
+      onChange={applyVisibleColumns}
+      onReset={resetVisibleColumns}
+    />
+  );
+
   return (
     <>
       <Head>
@@ -865,8 +891,8 @@ const ModelManagementPage: React.FC = () => {
                         key={`${filterTaskType}-${filterVersionStatus}`}
                         items={registryTableItems}
                         columns={modelColumns}
-            sort={modelSort.sort}
-            onSortChange={modelSort.onSortChange}
+                        sort={modelSort.sort}
+                        onSortChange={modelSort.onSortChange}
                         getRowKey={(model) => model.modelId}
                         onRowClick={(model) => handleViewModel(model.modelId)}
                         paginate="client"
@@ -879,6 +905,7 @@ const ModelManagementPage: React.FC = () => {
                         unfilteredCount={models.length}
                         hasActiveFilters={hasActiveFilters}
                         onClearFilters={clearAllFilters}
+                        filterToolbarRightContent={columnPicker}
                         search={{
                           label: "Search",
                           value: searchQuery,
