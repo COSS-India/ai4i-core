@@ -65,16 +65,17 @@ export function resolveModelListColumns(
     catalogue.filter((column) => column.mandatory).map((column) => column.id),
   );
   const known = new Set(catalogue.map((column) => column.id));
-  if (!selected || selected.length === 0) return defaults;
-
-  const picked = new Set(
-    selected.filter((id) => known.has(id) && !mandatory.has(id)),
-  );
-  if (picked.size === 0) return defaults;
-
-  return catalogue
-    .filter((column) => column.mandatory || picked.has(column.id))
-    .map((column) => column.id);
+  if (selected && selected.length > 0) {
+    const picked = new Set(
+      selected.filter((id) => known.has(id) && !mandatory.has(id)),
+    );
+    if (picked.size > 0) {
+      return catalogue
+        .filter((column) => column.mandatory || picked.has(column.id))
+        .map((column) => column.id);
+    }
+  }
+  return defaults;
 }
 
 export function canToggleOffModelListColumn(
@@ -83,8 +84,8 @@ export function canToggleOffModelListColumn(
   catalogue: readonly ModelListColumnDef[] = MODEL_LIST_COLUMNS,
 ): boolean {
   const column = catalogue.find((entry) => entry.id === id);
-  if (!column || column.mandatory) return false;
-  if (!current.includes(id)) return true;
+  if (column == null || column.mandatory) return false;
+  if (current.includes(id) === false) return true;
   const mandatory = new Set(
     catalogue.filter((entry) => entry.mandatory).map((entry) => entry.id),
   );
@@ -98,13 +99,17 @@ export function toggleModelListColumn(
   id: string,
   catalogue: readonly ModelListColumnDef[] = MODEL_LIST_COLUMNS,
 ): string[] {
-  if (!canToggleOffModelListColumn(current, id, catalogue) && current.includes(id)) {
+  const isVisible = current.includes(id);
+  if (isVisible) {
+    if (canToggleOffModelListColumn(current, id, catalogue)) {
+      return resolveModelListColumns(
+        current.filter((columnId) => columnId !== id),
+        catalogue,
+      );
+    }
     return resolveModelListColumns(current, catalogue);
   }
-  const next = current.includes(id)
-    ? current.filter((columnId) => columnId !== id)
-    : [...current, id];
-  return resolveModelListColumns(next, catalogue);
+  return resolveModelListColumns([...current, id], catalogue);
 }
 
 export type ModelListColumnPreferenceStore = {
@@ -151,11 +156,10 @@ export function loadModelListColumns(
   store: ModelListColumnPreferenceStore = browserModelListColumnStore,
   catalogue: readonly ModelListColumnDef[] = MODEL_LIST_COLUMNS,
 ): string[] {
-  if (!userId) return defaultModelListColumnIds(catalogue);
-  return resolveModelListColumns(
-    (store ?? browserModelListColumnStore).read(userId),
-    catalogue,
-  );
+  if (userId) {
+    return resolveModelListColumns(store.read(userId), catalogue);
+  }
+  return defaultModelListColumnIds(catalogue);
 }
 
 export function saveModelListColumns(
@@ -165,7 +169,7 @@ export function saveModelListColumns(
   catalogue: readonly ModelListColumnDef[] = MODEL_LIST_COLUMNS,
 ): string[] {
   const resolved = resolveModelListColumns(columnIds, catalogue);
-  if (userId) (store ?? browserModelListColumnStore).write(userId, resolved);
+  if (userId) store.write(userId, resolved);
   return resolved;
 }
 

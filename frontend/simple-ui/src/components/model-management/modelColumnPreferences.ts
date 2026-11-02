@@ -37,16 +37,16 @@ export async function loadVisibleModelColumns(options: {
   catalogue: readonly ModelListColumnDef[];
 }): Promise<string[]> {
   const { userId, usesServer, catalogue } = options;
-  if (!usesServer) {
-    return loadModelListColumns(userId, undefined, catalogue);
+  if (usesServer) {
+    try {
+      const preference = await getModelColumnPreference();
+      return resolveModelListColumns(preference?.visibleColumns, catalogue);
+    } catch (error) {
+      console.warn("Model column preference could not be loaded.", error);
+      return loadModelListColumns(userId, undefined, catalogue);
+    }
   }
-  try {
-    const preference = await getModelColumnPreference();
-    return resolveModelListColumns(preference?.visibleColumns, catalogue);
-  } catch (error) {
-    console.warn("Model column preference could not be loaded.", error);
-    return loadModelListColumns(userId, undefined, catalogue);
-  }
+  return loadModelListColumns(userId, undefined, catalogue);
 }
 
 export function persistVisibleModelColumns(options: {
@@ -56,12 +56,12 @@ export function persistVisibleModelColumns(options: {
   columnIds: readonly string[];
 }): string[] {
   const { userId, usesServer, catalogue, columnIds } = options;
-  if (!usesServer) {
-    return saveModelListColumns(userId, columnIds, undefined, catalogue);
+  if (usesServer) {
+    const resolved = resolveModelListColumns(columnIds, catalogue);
+    saveModelColumnPreference(resolved).catch((error) => showError(error));
+    return resolved;
   }
-  const resolved = resolveModelListColumns(columnIds, catalogue);
-  saveModelColumnPreference(resolved).catch((error) => showError(error));
-  return resolved;
+  return saveModelListColumns(userId, columnIds, undefined, catalogue);
 }
 
 export async function resetVisibleModelColumns(options: {
@@ -71,15 +71,15 @@ export async function resetVisibleModelColumns(options: {
 }): Promise<string[]> {
   const { userId, usesServer, catalogue } = options;
   const defaults = defaultModelListColumnIds(catalogue);
-  if (!usesServer) {
-    saveModelListColumns(userId, defaults, undefined, catalogue);
-    return defaults;
+  if (usesServer) {
+    try {
+      const preference = await resetModelColumnPreference();
+      return resolveModelListColumns(preference?.visibleColumns ?? null, catalogue);
+    } catch (error) {
+      showError(error);
+      return defaults;
+    }
   }
-  try {
-    const preference = await resetModelColumnPreference();
-    return resolveModelListColumns(preference?.visibleColumns ?? null, catalogue);
-  } catch (error) {
-    showError(error);
-    return defaults;
-  }
+  saveModelListColumns(userId, defaults, undefined, catalogue);
+  return defaults;
 }

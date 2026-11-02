@@ -65,9 +65,13 @@ const ModelListColumnPicker: React.FC<
           </Text>
           {columns.map((column) => {
             const checked = visibleIds.includes(column.id);
+            const canTurnOff = canToggleOffModelListColumn(
+              visibleIds,
+              column.id,
+              columns,
+            );
             const locked =
-              column.mandatory ||
-              (checked && !canToggleOffModelListColumn(visibleIds, column.id, columns));
+              column.mandatory || (checked && canTurnOff === false);
             return (
               <MenuItem
                 as="div"

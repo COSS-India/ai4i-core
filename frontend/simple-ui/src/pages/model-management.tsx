@@ -69,6 +69,30 @@ import { useInferenceTypes } from "../hooks/useInferenceTypes";
 import { getPlatformName } from "../config/runtimeConfig";
 import { resolveTaskType } from "../utils/platformService";
 
+/** Right-align Actions-column content without nesting a helper inside `cell`. */
+function modelActionsRail(child: React.ReactNode): React.ReactElement {
+  return (
+    <Box
+      display="flex"
+      justifyContent="flex-end"
+      alignItems="center"
+      w="100%"
+      minH="32px"
+    >
+      {child}
+    </Box>
+  );
+}
+
+function modelCreatedAtMs(model: {
+  createdAt?: string | null;
+  submittedOn?: number | null;
+}): number {
+  if (model.createdAt != null) return new Date(model.createdAt).getTime();
+  if (model.submittedOn != null) return model.submittedOn * 1000;
+  return Number.NaN;
+}
+
 /** Registry UI model row — requires fields used in forms/tables. */
 type Model = ModelDetails & {
   name: string;
@@ -717,20 +741,16 @@ const ModelManagementPage: React.FC = () => {
         header: "Created At",
         sortable: true,
         sortAccessor: (model) => {
-          if (model.createdAt != null) return new Date(model.createdAt).getTime();
-          if (model.submittedOn != null) return model.submittedOn * 1000;
-          return 0;
+          const ms = modelCreatedAtMs(model);
+          return Number.isFinite(ms) ? ms : 0;
         },
         cell: (model) => {
-          const createdMs =
-            model.createdAt != null
-              ? new Date(model.createdAt).getTime()
-              : model.submittedOn != null
-                ? model.submittedOn * 1000
-                : NaN;
+          const createdMs = modelCreatedAtMs(model);
           return (
             <Text fontSize="sm" color="ink.600">
-              {Number.isFinite(createdMs) ? new Date(createdMs).toLocaleDateString() : "N/A"}
+              {Number.isFinite(createdMs)
+                ? new Date(createdMs).toLocaleDateString()
+                : "N/A"}
             </Text>
           );
         },
@@ -773,16 +793,13 @@ const ModelManagementPage: React.FC = () => {
           px: 2,
         },
         cell: (model) => {
-          const rail = (child: React.ReactNode) => (
-            <Box display="flex" justifyContent="flex-end" alignItems="center" w="100%" minH="32px">
-              {child}
-            </Box>
-          );
           if (isServiceCountLoading) {
-            return rail(<Skeleton height="20px" width="36px" borderRadius="md" />);
+            return modelActionsRail(
+              <Skeleton height="20px" width="36px" borderRadius="md" />,
+            );
           }
           if (hasServiceCountError) {
-            return rail(
+            return modelActionsRail(
               <Tooltip label="Could not load services" placement="top" hasArrow>
                 <Text fontSize="sm" color="gray.400">
                   —
@@ -794,7 +811,7 @@ const ModelManagementPage: React.FC = () => {
           // Deprecated models must stay activatable even with 0 services
           // (Create Service is hidden for deprecated models).
           if (!isRegistryReadOnly && isModelDeprecated(model)) {
-            return rail(
+            return modelActionsRail(
               <Tooltip label="Activate model" placement="top" hasArrow>
                 <Box as="span" display="inline-flex" alignItems="center">
                   <Switch
@@ -812,7 +829,7 @@ const ModelManagementPage: React.FC = () => {
           }
 
           if (isModelActive(model) && !hasLinkedServices(model)) {
-            return rail(
+            return modelActionsRail(
               <Text fontSize="sm" color="ink.600">
                 NA
               </Text>,
@@ -820,11 +837,11 @@ const ModelManagementPage: React.FC = () => {
           }
 
           if (isRegistryReadOnly || !isModelActive(model)) {
-            return rail(null);
+            return modelActionsRail(null);
           }
 
           const blockedByPublished = hasPublishedService(model);
-          return rail(
+          return modelActionsRail(
             <Tooltip
               label={
                 blockedByPublished
