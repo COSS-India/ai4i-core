@@ -18,20 +18,17 @@ type ModelSort = {
 };
 
 /**
- * Visible columns for the Model List. FE-only persistence uses localStorage
- * until BE registers the `model-list` preferences view (then set usesServer).
+ * Visible columns for the Model List (browser-local for 2.11).
+ * Server prefs (`model-list` view) are a follow-up.
  */
 export function useModelListVisibleColumns(options: {
   userId: string;
   catalogue?: readonly ModelListColumnDef[];
-  /** When true, GET/PUT/DELETE `/preferences/columns/model-list`. */
-  usesServer?: boolean;
   modelSort: ModelSort;
 }) {
   const {
     userId,
     catalogue = MODEL_LIST_COLUMNS,
-    usesServer = false,
     modelSort,
   } = options;
   const resolvedCatalogue = catalogue;
@@ -50,24 +47,13 @@ export function useModelListVisibleColumns(options: {
   useLayoutEffect(() => {
     const id = preferenceUserId();
     if (!id) return;
-    let cancelled = false;
-    loadVisibleModelColumns({
+    const next = loadVisibleModelColumns({
       userId: id,
-      usesServer,
       catalogue: resolvedCatalogue,
-    })
-      .then((next) => {
-        if (cancelled) return;
-        setVisibleColumnIds((current) => nextVisibleModelColumnIds(current, next));
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (!cancelled) setLoadedCatalogueKey(catalogueKey);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [preferenceUserId, usesServer, catalogueKey, resolvedCatalogue]);
+    });
+    setVisibleColumnIds((current) => nextVisibleModelColumnIds(current, next));
+    setLoadedCatalogueKey(catalogueKey);
+  }, [preferenceUserId, catalogueKey, resolvedCatalogue]);
 
   const resetSortIfColumnHidden = useCallback(
     (visibleIds: readonly string[]) => {
@@ -83,26 +69,23 @@ export function useModelListVisibleColumns(options: {
     (next: readonly string[]) => {
       const resolved = persistVisibleModelColumns({
         userId: preferenceUserId(),
-        usesServer,
         catalogue: resolvedCatalogue,
         columnIds: next,
       });
       setVisibleColumnIds(resolved);
       resetSortIfColumnHidden(resolved);
     },
-    [preferenceUserId, resetSortIfColumnHidden, resolvedCatalogue, usesServer],
+    [preferenceUserId, resetSortIfColumnHidden, resolvedCatalogue],
   );
 
   const resetVisibleColumns = useCallback(() => {
-    void resetVisibleModelColumns({
+    const resolved = resetVisibleModelColumns({
       userId: preferenceUserId(),
-      usesServer,
       catalogue: resolvedCatalogue,
-    }).then((resolved) => {
-      setVisibleColumnIds((current) => nextVisibleModelColumnIds(current, resolved));
-      resetSortIfColumnHidden(resolved);
     });
-  }, [preferenceUserId, resetSortIfColumnHidden, resolvedCatalogue, usesServer]);
+    setVisibleColumnIds((current) => nextVisibleModelColumnIds(current, resolved));
+    resetSortIfColumnHidden(resolved);
+  }, [preferenceUserId, resetSortIfColumnHidden, resolvedCatalogue]);
 
   return {
     visibleColumnIds,

@@ -125,7 +125,7 @@ export const apiEndpoints = {
     },
     /**
      * Per-user column selection.
-     * Known views: `service-list` (live), `model-list` (FE ready; BE pending AI4IDS-3351).
+     * Known views: `service-list` (live). `model-list` is a follow-up.
      */
     columnPreferences: (view: string) =>
       `${API_V1}/preferences/columns/${encodeURIComponent(view)}`,

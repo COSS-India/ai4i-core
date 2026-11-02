@@ -158,7 +158,6 @@ const ModelManagementPage: React.FC = () => {
   } = useModelListVisibleColumns({
     userId: user?.user_id ?? "",
     catalogue: MODEL_LIST_COLUMNS,
-    usesServer: false,
     modelSort,
   });
   const queryClient = useQueryClient();

@@ -2,15 +2,8 @@ import type { ModelListColumnDef } from "./modelListColumns";
 import {
   defaultModelListColumnIds,
   loadModelListColumns,
-  resolveModelListColumns,
   saveModelListColumns,
 } from "./modelListColumns";
-import {
-  getModelColumnPreference,
-  resetModelColumnPreference,
-  saveModelColumnPreference,
-} from "../../services/modelManagementService";
-import { showError } from "../../utils/errorHandler";
 
 export function sameModelColumnIds(
   left: readonly string[],
@@ -31,55 +24,32 @@ export function nextVisibleModelColumnIds(
   return [...next];
 }
 
-export async function loadVisibleModelColumns(options: {
+/** Browser-local until BE registers `model-list` column preferences. */
+export function loadVisibleModelColumns(options: {
   userId: string;
-  usesServer: boolean;
   catalogue: readonly ModelListColumnDef[];
-}): Promise<string[]> {
-  const { userId, usesServer, catalogue } = options;
-  if (usesServer) {
-    try {
-      const preference = await getModelColumnPreference();
-      return resolveModelListColumns(preference?.visibleColumns, catalogue);
-    } catch (error) {
-      console.warn("Model column preference could not be loaded.", error);
-      return loadModelListColumns(userId, undefined, catalogue);
-    }
-  }
-  return loadModelListColumns(userId, undefined, catalogue);
+}): string[] {
+  return loadModelListColumns(options.userId, undefined, options.catalogue);
 }
 
 export function persistVisibleModelColumns(options: {
   userId: string;
-  usesServer: boolean;
   catalogue: readonly ModelListColumnDef[];
   columnIds: readonly string[];
 }): string[] {
-  const { userId, usesServer, catalogue, columnIds } = options;
-  if (usesServer) {
-    const resolved = resolveModelListColumns(columnIds, catalogue);
-    saveModelColumnPreference(resolved).catch((error) => showError(error));
-    return resolved;
-  }
-  return saveModelListColumns(userId, columnIds, undefined, catalogue);
+  return saveModelListColumns(
+    options.userId,
+    options.columnIds,
+    undefined,
+    options.catalogue,
+  );
 }
 
-export async function resetVisibleModelColumns(options: {
+export function resetVisibleModelColumns(options: {
   userId: string;
-  usesServer: boolean;
   catalogue: readonly ModelListColumnDef[];
-}): Promise<string[]> {
-  const { userId, usesServer, catalogue } = options;
-  const defaults = defaultModelListColumnIds(catalogue);
-  if (usesServer) {
-    try {
-      const preference = await resetModelColumnPreference();
-      return resolveModelListColumns(preference?.visibleColumns ?? null, catalogue);
-    } catch (error) {
-      showError(error);
-      return defaults;
-    }
-  }
-  saveModelListColumns(userId, defaults, undefined, catalogue);
+}): string[] {
+  const defaults = defaultModelListColumnIds(options.catalogue);
+  saveModelListColumns(options.userId, defaults, undefined, options.catalogue);
   return defaults;
 }

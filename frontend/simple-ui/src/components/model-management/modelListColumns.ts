@@ -1,7 +1,7 @@
 /**
  * Model List column catalogue + local preference helpers (AI4IDS-3351).
  * Mirrors the Service List pattern (AI4IDS-3356). FE catalogue is the source of
- * truth until BE ships GET /models/columns + preferences view `model-list`.
+ * truth; column visibility is browser-local for 2.11 (server prefs follow-up).
  */
 
 export type ModelListColumnId =
@@ -43,7 +43,6 @@ export const MODEL_LIST_COLUMNS: readonly ModelListColumnDef[] = [
 ];
 
 export const MODEL_LIST_COLUMN_STORAGE_PREFIX = "model-list-columns";
-export const MODEL_LIST_PREFERENCE_VIEW = "model-list";
 
 export function defaultModelListColumnIds(
   catalogue: readonly ModelListColumnDef[] = MODEL_LIST_COLUMNS,
@@ -172,24 +171,4 @@ export function saveModelListColumns(
   const resolved = resolveModelListColumns(columnIds, catalogue);
   if (userId) store.write(userId, resolved);
   return resolved;
-}
-
-/** Preference body from GET/PUT/DELETE `/preferences/columns/model-list` (when BE is ready). */
-export type ModelColumnPreference = {
-  visibleColumns: string[];
-  isDefault?: boolean;
-};
-
-export function parseModelColumnPreferencePayload(
-  raw: unknown,
-): ModelColumnPreference | null {
-  if (!raw || typeof raw !== "object") return null;
-  const root = raw as { data?: unknown; visibleColumns?: unknown };
-  const body =
-    root.data && typeof root.data === "object"
-      ? (root.data as { visibleColumns?: unknown })
-      : root;
-  if (!Array.isArray(body.visibleColumns)) return null;
-  const list = body.visibleColumns.filter((id): id is string => typeof id === "string");
-  return { visibleColumns: list };
 }
