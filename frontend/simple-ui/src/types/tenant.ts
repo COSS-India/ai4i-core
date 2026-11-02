@@ -35,8 +35,8 @@ export interface TenantView {
    */
   pending_email?: string | null;
   /**
-   * Current contact's user id when BE returns it (AI4IDS-3401 / #1858).
-   * Used to exclude them from the Change contact picker.
+   * Optional on GET payloads; Change-contact exclusion is FE-only via
+   * masked contact email (AI4IDS-3617 / AI4IDS-3401). Still used on PATCH.
    */
   contact_user_id?: string | null;
   /**

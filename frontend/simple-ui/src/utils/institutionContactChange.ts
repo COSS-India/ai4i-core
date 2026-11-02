@@ -11,14 +11,48 @@ export type InstitutionContactAdminOption = {
 
 export type ListContactAdminOptions = {
   /**
-   * Current contact's user id when GET /tenants/{id} returns it.
-   * No email fallback — masked addresses collide across users.
-   * If absent, the picker may include the current contact; BE returns
-   * CONTACT_ALREADY_CURRENT on save. Do not assume a sole eligible admin is
-   * the current contact — they may already be deactivated (AI4IDS-3401).
+   * Institution contact email from the edit GET (usually unmasked).
+   * listUsers emails stay masked — we mask this the same way as auth-service
+   * and exclude matching admins (AI4IDS-3617). Never empty the picker solely
+   * because one admin remains: that admin may not be the contact (AI4IDS-3401).
    */
-  excludeUserId?: string | null;
+  contactEmail?: string | null;
 };
+
+/**
+ * Same shape as auth-service ``mask_email`` so unmasked contact addresses
+ * compare to masked listUsers emails (``j***@e***.com``).
+ */
+export function maskEmailForCompare(value: string): string {
+  const email = normalizeEmail(value);
+  if (!email || !email.includes("@")) return email;
+  const at = email.indexOf("@");
+  const local = email.slice(0, at);
+  const domain = email.slice(at + 1);
+  const maskedLocal = local ? `${local[0]}***` : "***";
+  if (!domain.includes(".")) {
+    const maskedDomain = domain ? `${domain[0]}***` : "***";
+    return `${maskedLocal}@${maskedDomain}`;
+  }
+  const dot = domain.indexOf(".");
+  const name = domain.slice(0, dot);
+  const rest = domain.slice(dot + 1);
+  const maskedName = name ? `${name[0]}***` : "***";
+  return `${maskedLocal}@${maskedName}.${rest}`;
+}
+
+function isCurrentContactEmail(
+  userEmail: string | null | undefined,
+  contactEmail: string | null | undefined,
+): boolean {
+  const user = normalizeEmail(userEmail ?? "");
+  const contact = normalizeEmail(contactEmail ?? "");
+  if (!user || !contact) return false;
+  if (user === contact) return true;
+  const maskedContact = maskEmailForCompare(contact);
+  const maskedUser = maskEmailForCompare(user);
+  return user === maskedContact || maskedUser === maskedContact;
+}
 
 function contactAdminLabel(user: TenantUserView): string {
   const name = user.full_name?.trim() || user.username;
@@ -35,20 +69,22 @@ function isEligibleContactAdmin(user: TenantUserView): boolean {
 
 /**
  * Active, verified Institution Admins available as a new contact.
- * When `excludeUserId` is the current contact, they are omitted so a sole
- * remaining admin who *is* the contact yields an empty picker (AI4IDS-3617).
- * When the contact is deactivated and absent from the eligible set, other
- * admins stay listed (AI4IDS-3401).
+ * Excludes admins whose (masked) email matches ``contactEmail`` so a sole
+ * admin who *is* the contact yields an empty picker (AI4IDS-3617). When the
+ * contact is deactivated and not among eligible admins, other admins stay
+ * listed (AI4IDS-3401). No unconditional sole-admin empty list.
  */
 export function listOtherActiveInstitutionAdmins(
   users: readonly TenantUserView[],
   options?: ListContactAdminOptions,
 ): InstitutionContactAdminOption[] {
-  const excludeUserId = options?.excludeUserId || null;
+  const contactEmail = options?.contactEmail || null;
   const out: InstitutionContactAdminOption[] = [];
   for (const user of users) {
     if (!isEligibleContactAdmin(user)) continue;
-    if (excludeUserId && user.user_id === excludeUserId) continue;
+    if (contactEmail && isCurrentContactEmail(user.email, contactEmail)) {
+      continue;
+    }
     out.push({ userId: user.user_id, label: contactAdminLabel(user) });
   }
   out.sort((a, b) => a.label.localeCompare(b.label));

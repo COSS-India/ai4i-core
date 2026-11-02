@@ -3,6 +3,7 @@ import type { TenantUserView } from "../../src/types/tenant";
 import {
   contactChangeBlockedMessage,
   listOtherActiveInstitutionAdmins,
+  maskEmailForCompare,
 } from "../../src/utils/institutionContactChange";
 import { FIELD_HINTS } from "../../src/config/fieldHints";
 
@@ -18,44 +19,51 @@ function admin(
   };
 }
 
-describe("listOtherActiveInstitutionAdmins (AI4IDS-3401)", () => {
+describe("maskEmailForCompare", () => {
+  it("matches auth-service mask_email shape", () => {
+    expect(maskEmailForCompare("john.doe@example.com")).toBe("j***@e***.com");
+    expect(maskEmailForCompare("alice@acme.com")).toBe("a***@a***.com");
+  });
+});
+
+describe("listOtherActiveInstitutionAdmins (AI4IDS-3401 / AI4IDS-3617)", () => {
   it("offers other active, verified Institution Admins only", () => {
     const options = listOtherActiveInstitutionAdmins(
       [
         admin({
           user_id: "current",
-          email: "A***@acme.com",
+          email: "a***@a***.com",
           full_name: "Current Contact",
         }),
         admin({
           user_id: "other",
-          email: "p***@acme.com",
+          email: "p***@a***.com",
           full_name: "Priya Sharma",
         }),
         admin({
           user_id: "user",
-          email: "u***@acme.com",
+          email: "u***@a***.com",
           roles: ["USER"],
           full_name: "A User",
         }),
         admin({
           user_id: "inactive",
-          email: "i***@acme.com",
+          email: "i***@a***.com",
           is_active: false,
           full_name: "Inactive Admin",
         }),
         admin({
           user_id: "pending",
-          email: "n***@acme.com",
+          email: "n***@a***.com",
           is_activated: false,
           full_name: "Not Verified",
         }),
       ],
-      { excludeUserId: "current" },
+      { contactEmail: "alice@acme.com" },
     );
 
     expect(options).toEqual([
-      { userId: "other", label: "Priya Sharma · p***@acme.com" },
+      { userId: "other", label: "Priya Sharma · p***@a***.com" },
     ]);
   });
 
@@ -65,55 +73,55 @@ describe("listOtherActiveInstitutionAdmins (AI4IDS-3401)", () => {
         [
           admin({
             user_id: "current",
-            email: "a***@acme.com",
+            email: "a***@a***.com",
             full_name: "Current Contact",
           }),
         ],
-        { excludeUserId: "current" },
+        { contactEmail: "alice@acme.com" },
       ),
     ).toEqual([]);
   });
 
   it("still offers the sole remaining admin when the contact is already deactivated (AI4IDS-3401)", () => {
-    // Contact Dana deactivated → excludeUserId is Dana (from GET contact_user_id);
-    // Eve is the only eligible admin and must remain pickable.
+    // Contact Dana deactivated (not eligible); Eve is the only remaining
+    // set-up admin and must remain pickable — never empty solely for count≤1.
     const options = listOtherActiveInstitutionAdmins(
       [
         admin({
           user_id: "dana",
-          email: "d***@acme.com",
+          email: "d***@a***.com",
           full_name: "Dana",
           is_active: false,
         }),
         admin({
           user_id: "eve",
-          email: "e***@acme.com",
+          email: "e***@a***.com",
           full_name: "Eve",
         }),
       ],
-      { excludeUserId: "dana" },
+      { contactEmail: "dana@acme.com" },
     );
 
-    expect(options).toEqual([{ userId: "eve", label: "Eve · e***@acme.com" }]);
+    expect(options).toEqual([{ userId: "eve", label: "Eve · e***@a***.com" }]);
   });
 
-  it("lists all admins when excludeUserId is absent (BE CONTACT_ALREADY_CURRENT on save)", () => {
+  it("lists all admins when contactEmail is absent", () => {
     const options = listOtherActiveInstitutionAdmins([
       admin({
         user_id: "current",
-        email: "a***@acme.com",
+        email: "a***@a***.com",
         full_name: "Current Contact",
       }),
       admin({
         user_id: "other",
-        email: "p***@acme.com",
+        email: "p***@a***.com",
         full_name: "Priya Sharma",
       }),
     ]);
 
     expect(options).toEqual([
-      { userId: "current", label: "Current Contact · a***@acme.com" },
-      { userId: "other", label: "Priya Sharma · p***@acme.com" },
+      { userId: "current", label: "Current Contact · a***@a***.com" },
+      { userId: "other", label: "Priya Sharma · p***@a***.com" },
     ]);
   });
 });
