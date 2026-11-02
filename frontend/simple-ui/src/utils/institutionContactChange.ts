@@ -19,26 +19,35 @@ export type ListContactAdminOptions = {
   contactEmail?: string | null;
 };
 
+/** Keep first char + `***`, matching auth-service ``mask_email`` segments. */
+function maskEmailSegment(part: string): string {
+  if (part.length > 0) {
+    return `${part.charAt(0)}***`;
+  }
+  return "***";
+}
+
+function maskEmailDomain(domain: string): string {
+  const dot = domain.indexOf(".");
+  if (dot >= 0) {
+    return `${maskEmailSegment(domain.slice(0, dot))}.${domain.slice(dot + 1)}`;
+  }
+  return maskEmailSegment(domain);
+}
+
 /**
  * Same shape as auth-service ``mask_email`` so unmasked contact addresses
  * compare to masked listUsers emails (``j***@e***.com``).
  */
 export function maskEmailForCompare(value: string): string {
   const email = normalizeEmail(value);
-  if (!email?.includes("@")) return email;
-  const at = email.indexOf("@");
-  const local = email.slice(0, at);
-  const domain = email.slice(at + 1);
-  const maskedLocal = local[0] != null ? `${local[0]}***` : "***";
-  if (!domain.includes(".")) {
-    const maskedDomain = domain[0] != null ? `${domain[0]}***` : "***";
-    return `${maskedLocal}@${maskedDomain}`;
+  if (email?.includes("@")) {
+    const at = email.indexOf("@");
+    const local = email.slice(0, at);
+    const domain = email.slice(at + 1);
+    return `${maskEmailSegment(local)}@${maskEmailDomain(domain)}`;
   }
-  const dot = domain.indexOf(".");
-  const name = domain.slice(0, dot);
-  const rest = domain.slice(dot + 1);
-  const maskedName = name[0] != null ? `${name[0]}***` : "***";
-  return `${maskedLocal}@${maskedName}.${rest}`;
+  return email;
 }
 
 function isCurrentContactEmail(
