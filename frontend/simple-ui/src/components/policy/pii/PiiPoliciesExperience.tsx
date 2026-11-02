@@ -29,6 +29,7 @@ import CreateButton from "../../common/CreateButton";
 import LoadingSpinner from "../../common/LoadingSpinner";
 import ManagementPageHeader from "../../common/ManagementPageHeader";
 import DataTable, {
+  FILL_HEIGHT_COLUMN_PROPS,
   TableSearchField,
   TableSelectField,
   createActionsColumn,
@@ -775,9 +776,12 @@ function ExperienceBody() {
     }
     return undefined;
   })();
+  // Configuration's tables fill the card (`ContentLayout fillHeight`); the other
+  // tabs keep normal flow so the card scrolls them as before.
+  const fillProps = tab === "configuration" ? FILL_HEIGHT_COLUMN_PROPS : {};
 
   return (
-    <Box>
+    <Box {...fillProps}>
       <ManagementPageHeader
         title="Policy Management"
         description={
@@ -815,6 +819,7 @@ function ExperienceBody() {
             const next = tabs[index];
             if (next) setTab(next.id);
           }}
+          {...fillProps}
         >
           <Flex
             align="flex-end"
@@ -842,7 +847,7 @@ function ExperienceBody() {
             ) : null}
           </Flex>
           {canManage ? (
-            <TabPanels>
+            <TabPanels {...fillProps}>
               <TabPanel px={0} pt={6}>
                 <PolicyList />
               </TabPanel>
@@ -853,7 +858,7 @@ function ExperienceBody() {
                   onClearFilters={clearCategoryFilters}
                 />
               </TabPanel>
-              <TabPanel px={0} pt={6}>
+              <TabPanel px={0} pt={6} {...fillProps}>
                 <ConfigurationPanel />
               </TabPanel>
               <TabPanel px={0} pt={6}>

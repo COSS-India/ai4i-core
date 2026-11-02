@@ -17,6 +17,7 @@ export {
   DataTable,
   DATA_TABLE_HEADER_SX,
   DATA_TABLE_CELL_MAX_W,
+  FILL_HEIGHT_COLUMN_PROPS,
   TableSearchField,
   TableSelectField,
   TableTextField,

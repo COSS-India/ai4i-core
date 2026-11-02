@@ -769,7 +769,10 @@ export default function ApiKeyManagementTab({
       >
         {viewKey ? <ApiKeyDetails mgmt={mgmt} viewKey={viewKey} /> : null}
       </FormDrawer>
-      <VStack align="stretch" spacing={5}>
+      <VStack align="stretch" spacing={5} minH={0}>
+        {/* The panel clips its overflow, so without flexShrink={0} it would
+            shrink before the table under the page's `fillHeight` layout. */}
+        <Box flexShrink={0}>
         {mgmt.isLoadingAllApiKeys && mgmt.allApiKeys.length === 0 ? (
           <InstitutionAllocationSkeleton />
         ) : mgmt.allocationOverview.comparable &&
@@ -802,8 +805,10 @@ export default function ApiKeyManagementTab({
             allocatedCaption="assigned to active keys"
           />
         )}
+        </Box>
       <DataTable
             layout="admin"
+            fillHeight
             toolbarAttached
             items={sortedApiKeys}
             columns={apiKeyColumns}

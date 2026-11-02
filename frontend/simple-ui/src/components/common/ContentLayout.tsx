@@ -5,9 +5,15 @@ import { Box, useColorModeValue } from '@chakra-ui/react';
 
 interface ContentLayoutProps {
   children: React.ReactNode;
+  /**
+   * Lay the card out as a flex column so a child (e.g. an admin DataTable with
+   * `fillHeight`) can shrink to the card's height and scroll internally,
+   * instead of the card scrolling as well.
+   */
+  fillHeight?: boolean;
 }
 
-const ContentLayout: React.FC<ContentLayoutProps> = ({ children }) => {
+const ContentLayout: React.FC<ContentLayoutProps> = ({ children, fillHeight = false }) => {
   const bgColor = useColorModeValue('white', 'dark.100');
 
   return (
@@ -23,7 +29,10 @@ const ContentLayout: React.FC<ContentLayoutProps> = ({ children }) => {
       w="100%"
     >
       <Box
-        py={5}
+        pt={5}
+        // The card doesn't scroll under `fillHeight`, so its bottom padding is
+        // always on screen; keep it tight so the table sits near the edge.
+        pb={fillHeight ? 3 : 5}
         px={{ base: 4, md: 6 }}
         bg={bgColor}
         borderRadius="lg"
@@ -35,6 +44,7 @@ const ContentLayout: React.FC<ContentLayoutProps> = ({ children }) => {
         minW={0}
         overflow="auto"
         w="100%"
+        {...(fillHeight ? { display: 'flex', flexDirection: 'column' } : {})}
       >
         {children}
       </Box>

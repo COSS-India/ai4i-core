@@ -58,7 +58,7 @@ const PolicyManagementPage: React.FC = () => {
         />
       </Head>
 
-      <ContentLayout>
+      <ContentLayout fillHeight>
           <PolicyManagement role={role} institutionId={institutionId} />
       </ContentLayout>
     </>

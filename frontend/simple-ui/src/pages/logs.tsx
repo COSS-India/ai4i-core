@@ -709,8 +709,8 @@ function LogsPageShell({ children }: Readonly<{ children: React.ReactNode }>) {
           content="View telemetry traces and request outcomes"
         />
       </Head>
-      <ContentLayout>
-        <VStack spacing={6} w="full" align="stretch">
+      <ContentLayout fillHeight>
+        <VStack spacing={6} w="full" align="stretch" minH={0}>
           {children}
         </VStack>
       </ContentLayout>
@@ -997,6 +997,7 @@ function LogsDashboardMain(props: LogsDashboardMainProps) {
 
       <DataTable
         layout="admin"
+        fillHeight
         columnSearch
         autoColumnSort
         items={props.traceRows}

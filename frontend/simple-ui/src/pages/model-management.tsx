@@ -871,7 +871,7 @@ const ModelManagementPage: React.FC = () => {
         <meta name="description" content="Manage and configure AI models" />
       </Head>
 
-      <ContentLayout>
+      <ContentLayout fillHeight>
                 <ManagementPageHeader
                     crumbs={false}
                     title="Model Management"
@@ -888,6 +888,7 @@ const ModelManagementPage: React.FC = () => {
                   />
                       <DataTable
                         layout="admin"
+                        fillHeight
                         key={`${filterTaskType}-${filterVersionStatus}`}
                         items={registryTableItems}
                         columns={modelColumns}

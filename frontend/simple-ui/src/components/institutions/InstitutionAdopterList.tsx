@@ -228,6 +228,7 @@ export function InstitutionAdopterList({
   return (
           <DataTable
             layout="admin"
+            fillHeight
             items={sortedTenants}
             columns={tenantColumns}
             getRowKey={(t) => t.tenant_id}
