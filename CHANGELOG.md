@@ -6,6 +6,66 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/).
 
 
+## [2.10.0] - 2026-11-02
+
+> Service fallback, Logs Dashboard search, column selection and institution contact release, 61 PRs merged
+
+### Added
+- Service fallback per Application. An Application stores an ordered list of fallback services per primary service (`applications.service_fallbacks`), validated against the Institution's tier, the task type and the published status. When the requested service times out, cannot be reached or returns 5xx, inference-service retries the next fallback on the buffered, streaming and audio-upload paths, and stops once a fallback has been partly billed. The Applications UI gets a fallback editor (AI4IDS-3488, AI4IDS-3568)
+- Logs Dashboard keyword search across all span fields (`q`, up to 256 characters, capped at 20,000 matching traces), `sort_by`, `sort_order`, `status_code` and `service_id` filters, success and failure counts in a `summary` block, and a column picker backed by `GET /api/v1/telemetry/traces/columns` and a `columns` parameter on search (AI4IDS-3526, AI4IDS-3527, AI4IDS-3529)
+- Column selector on the Service List. `GET /api/v1/services/columns` returns the column catalogue, `GET /api/v1/services` takes `columns`, column filters and sort, and returns only the fields the visible columns need. Each user's selection is stored server-side under `/api/v1/preferences/columns/{view_key}` and cached in Redis (AI4IDS-3356)
+- API key rotation rules and UI. The grace period is chosen at rotation and can be extended at `PATCH /api/v1/auth/api-keys/{key_id}/rotated-key`, the previous value can be revoked on its own, and revoking the current value revokes the key. Rotation never changes the key's expiry (AI4IDS-3463)
+- Change the institution contact by picking an existing, set-up Institution Admin (`contact_user_id` on `PATCH /api/v1/auth/tenants/{tenant_id}`), applied immediately with no email. A PENDING institution can still correct its contact email, which re-sends the activation link (AI4IDS-3401, AI4IDS-3549)
+- Update and delete for policy categories and sub-categories, in the API and the Policies page (AI4IDS-3498, AI4IDS-3499, AI4IDS-3500, AI4IDS-3501)
+- Default PII definitions per domain for Education, Finance and Healthcare, so a policy can attach one domain's entities without the others (AI4IDS-3489)
+- Tier rate limit and monthly quotas on My Institution (AI4IDS-3403)
+- Number of services per model on the Model list (AI4IDS-3402)
+- Separate sample JSON for NLP and LLM models on model creation, and a ULCA OpenAPI reference link (AI4IDS-3353, AI4IDS-3354)
+- `users.activated_at`, so the tenant-user list tells Pending Activation from Suspended (AI4IDS-3598)
+
+### Changed
+- Sidebar navigation grouped into Try, Track, Manage and Govern (AI4IDS-3587)
+- Self-registered users (email or Google) can only hold USER; other role assignments are rejected. Admin-created users created between 2026-04-29 and 2026-05-22, and the seeded admin, are re-labelled as admin-created (AI4IDS-3412, AI4IDS-3579, AI4IDS-3585)
+- Changing a tenant user's role replaces their tenant role instead of adding a second one. Demoting the institution's contact or its last active Institution Admin is refused (409 `CONTACT_ROLE_LOCKED`, 422 `LAST_TENANT_ADMIN`), and the user's sessions are revoked on a role change (AI4IDS-3618)
+- `PATCH /api/v1/auth/tenants/{tenant_id}/budget` accepts `top-up` only, and a top-up is rejected while the tenant's budget window has expired (AI4IDS-3398, AI4IDS-3543, AI4IDS-3583)
+- Policy and PII routes use the `policies.*` and `pii_types.read` permissions in place of the admin sentinel
+- Service and hardware descriptions are optional when creating a service (AI4IDS-3400, AI4IDS-3525)
+- The Adoption usage report shows consistent empty values, accurate figures and the reference layout (AI4IDS-3578)
+- Tier Management, Service Management, Institution Management and Logs Dashboard UI updates from the 2.10 demo feedback, including breadcrumbs, the Task Type label, removal of the View icon from list views, and page-only search on the Service List date and price columns (AI4IDS-3332, AI4IDS-3334, AI4IDS-3399, AI4IDS-3404, AI4IDS-3423, AI4IDS-3590)
+- Trace details show request metadata as `metadata`
+- Portal User Guide reviewed and updated (AI4IDS-3486)
+- Grafana dashboard JSONs updated
+- Services moved through `ai4i-core` 1.0.53 and 1.0.54
+
+### Fixed
+- The Logs Dashboard showed the tenant id instead of the institution name, including for suspended institutions (AI4IDS-3600)
+- Failed LLM requests had no task type, so `task_types=llm` returned unclassified rows; guardrail-blocked requests now carry their service and model, and a status filter counts traces by their request status (AI4IDS-3609)
+- The LLM error was not recorded on the trace span, and the readiness probe used the wrong Redis client (AI4IDS-3599, AI4IDS-3604)
+- Out-of-range tenant ids returned 500 instead of 404, and non-numeric tenant ids on notification subscription endpoints were not rejected (AI4IDS-3605, AI4IDS-3607)
+- Renaming a tier to an existing name returned 500 instead of 409 (AI4IDS-3606)
+- Self-registered users landed in Suspended instead of Pending Activation (AI4IDS-3598)
+- Logs Dashboard time range handling
+- The usage backfill guarded on `usage_events` instead of the recorded `daily_usage` rows
+- The policy category and sub-category edit and delete routes were missing from the gateway permission map
+
+### Removed
+- The `top-down` action on the tenant budget API (AI4IDS-3398, AI4IDS-3543)
+- The API Key column from the Logs Dashboard and its trace responses (AI4IDS-3506)
+- `api_key_revoked_at` from API key responses, and `ROTATED_API_KEY_EXPIRE_DAYS` from auth-service (AI4IDS-3463)
+- `pending_email` and `pending_email_expires_at` from institutions. The contact is changed by picking an Institution Admin instead (AI4IDS-3401)
+
+### Upgrade notes
+- Shared library `ai4i-core` 1.0.52 to 1.0.54. auth-service, platform-core and inference pin 1.0.54; kafka-consumers and pyjob stay on 1.0.52. 1.0.53 on PyPI was built from an older branch and must not be used
+- 12 migrations: nine on the auth database and three on the core database. Data-changing ones: `e7a1b2c3d4f5` re-labels admin-created users stored as self-registered, `a7c3e9f15b28` leaves non-privileged self-registered users with USER only, `ba0818f032cd` backfills `users.activated_at`, `b8a1957cd6a3` revokes keys whose current value alone was revoked and deletes their Redis entries, and `8fbe729b1331` renames the seeded domain PII definitions to `PII`
+- The auth migrations need a short maintenance window for auth-service. `b8a1957cd6a3` and `d5e6f7a8b9c1` drop columns the 2.9 auth-service reads, while `7a28dca07e9d` and `ba0818f032cd` add columns the 2.10 auth-service reads. Stop auth-service, run `./scripts/migrate.sh ai4iplatform_auth upgrade`, then start the 2.10 image
+- OpenSearch `max_result_window` must be raised to 20001 on `traces-*` for keyword search: `PUT /traces-*/_settings {"index": {"max_result_window": 20001}}`
+- New gateway routes: `PATCH /api/v1/auth/api-keys/{key_id}/rotated-key`, `GET /api/v1/services/columns`, `GET /api/v1/telemetry/traces/columns`, `GET|PUT|DELETE /api/v1/preferences/columns/{view_key}`, and `PATCH|DELETE` on policy categories and sub-categories. Their permissions are in `services/auth-service/api_permissions.json`
+- Breaking API changes: rotation requires `grace_days` and returns 422 `INVALID_GRACE_PERIOD` past the key's expiry; the budget API rejects `top-down` with 422; institution responses drop `pending_email`, and a typed email change on a non-PENDING institution returns 409 `TENANT_EMAIL_EDIT_NOT_ALLOWED`; a status filter on trace search now pages over traces resolved by their request status, and the summary cards stay global
+- The frontend reads `ROTATED_API_KEY_DEFAULT_GRACE_DAYS` (default 7) at build time
+- Users who already hold both USER and TENANT ADMIN from the old additive role change keep both until their role is saved again
+
+---
+
 ## [2.9.0] - 2026-10-16
 
 > PII guardrail, policy management, API key rotation and usage metering release, 76 PRs merged
