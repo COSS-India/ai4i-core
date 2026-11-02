@@ -15,7 +15,8 @@ export type ModelListColumnId =
   | "actions";
 
 export type ModelListColumnDef = {
-  id: ModelListColumnId | string;
+  /** Known ids are ModelListColumnId; string allows a future API catalogue. */
+  id: string;
   label: string;
   mandatory: boolean;
   defaultVisible: boolean;

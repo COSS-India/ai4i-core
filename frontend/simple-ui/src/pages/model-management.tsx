@@ -24,6 +24,15 @@ import ModelForm from "../components/model-management/ModelForm";
 import ModelListColumnPicker from "../components/model-management/ModelListColumnPicker";
 import { validateModelData } from "../components/model-management/modelJsonValidation";
 import { MODEL_LIST_COLUMNS } from "../components/model-management/modelListColumns";
+import {
+  modelCreatedAtMs,
+  renderModelCreatedAtCell,
+  renderModelNameCell,
+  renderModelProviderCell,
+  renderModelStatusCell,
+  renderModelTaskTypeCell,
+  renderModelVersionCell,
+} from "../components/model-management/modelListCells";
 import { useModelListVisibleColumns } from "../components/model-management/useModelListVisibleColumns";
 import {
   createModel,
@@ -60,10 +69,7 @@ import {
   MODEL_VERSION_FILTER_LIST,
   MODEL_API_KEY_REDACTED,
   formatModelTaskTypeLabel,
-  getTaskColorScheme,
   formatModelVersionFilterLabel,
-  formatModelVersionStatusLabel,
-  isModelVersionStatusActive,
 } from "../config/constants";
 import { useInferenceTypes } from "../hooks/useInferenceTypes";
 import { getPlatformName } from "../config/runtimeConfig";
@@ -82,15 +88,6 @@ function modelActionsRail(child: React.ReactNode): React.ReactElement {
       {child}
     </Box>
   );
-}
-
-function modelCreatedAtMs(model: {
-  createdAt?: string | null;
-  submittedOn?: number | null;
-}): number {
-  if (model.createdAt != null) return new Date(model.createdAt).getTime();
-  if (model.submittedOn != null) return model.submittedOn * 1000;
-  return Number.NaN;
 }
 
 /** Registry UI model row — requires fields used in forms/tables. */
@@ -678,35 +675,20 @@ const ModelManagementPage: React.FC = () => {
         header: "Name",
         sortable: true,
         sortAccessor: (model) => model.name ?? "",
-        cell: (model) => (
-          <Text fontWeight="medium" fontSize="sm" noOfLines={1} title={model.name || model.modelId}>
-            {model.name || model.modelId || "—"}
-          </Text>
-        ),
+        cell: renderModelNameCell,
       },
       {
         id: "version",
         header: "Version",
         sortable: true,
         sortAccessor: (model) => model.version ?? "",
-        cell: (model) => (
-          <Text fontSize="sm" fontWeight="medium">
-            {model.version || "1.0"}
-          </Text>
-        ),
+        cell: renderModelVersionCell,
       },
       {
         id: "task",
         header: "Task Type",
         hint: FIELD_HINTS.model.col.task,
-        cell: (model) => {
-          const taskType = resolveTaskType(model);
-          return (
-            <Badge colorScheme={getTaskColorScheme(taskType)} fontSize="xs">
-              {taskType ? taskType.toUpperCase() : "N/A"}
-            </Badge>
-          );
-        },
+        cell: renderModelTaskTypeCell,
       },
       {
         id: "provider",
@@ -714,27 +696,13 @@ const ModelManagementPage: React.FC = () => {
         hint: FIELD_HINTS.model.col.provider,
         sortable: true,
         sortAccessor: (model) => model.submitter?.name ?? "",
-        cell: (model) => {
-          const label = model.submitter?.name?.trim() || "—";
-          return (
-            <Text fontSize="sm" color={label === "—" ? "ink.400" : "ink.700"} noOfLines={1} title={label}>
-              {label}
-            </Text>
-          );
-        },
+        cell: renderModelProviderCell,
       },
       {
         id: "status",
         header: "Status",
         hint: FIELD_HINTS.model.col.status,
-        cell: (model) => (
-          <Badge
-            colorScheme={isModelVersionStatusActive(model.versionStatus) ? "green" : "gray"}
-            fontSize="xs"
-          >
-            {formatModelVersionStatusLabel(model.versionStatus)}
-          </Badge>
-        ),
+        cell: renderModelStatusCell,
       },
       {
         id: "created",
@@ -744,16 +712,7 @@ const ModelManagementPage: React.FC = () => {
           const ms = modelCreatedAtMs(model);
           return Number.isFinite(ms) ? ms : 0;
         },
-        cell: (model) => {
-          const createdMs = modelCreatedAtMs(model);
-          return (
-            <Text fontSize="sm" color="ink.600">
-              {Number.isFinite(createdMs)
-                ? new Date(createdMs).toLocaleDateString()
-                : "N/A"}
-            </Text>
-          );
-        },
+        cell: renderModelCreatedAtCell,
       },
       {
         id: "serviceCount",
