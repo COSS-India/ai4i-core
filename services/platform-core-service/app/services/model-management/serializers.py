@@ -162,10 +162,12 @@ def service_to_dict(
         "tierNames": tier_names,
         "deletedAt": _iso(service.deleted_at),
         "createdAt": _iso(service.created_at),
+        "updatedAt": _iso(service.updated_at),
         "createdBy": service.created_by,
         "updatedBy": service.updated_by,
     }
     if include_task_languages and model is not None:
+        out["modelName"] = model.name
         out["languages"] = _normalize_languages(model.languages or [])
         out["versionStatus"] = (
             model.version_status.value if model.version_status else None

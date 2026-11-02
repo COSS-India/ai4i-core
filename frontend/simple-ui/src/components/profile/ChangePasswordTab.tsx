@@ -208,9 +208,7 @@ export default function ChangePasswordTab({ onCancel }: ChangePasswordTabProps) 
               </InputGroup>
               {errors.current_password ? (
                 <FormErrorMessage>{errors.current_password}</FormErrorMessage>
-              ) : (
-                <FieldHint>{FIELD_HINTS.profile.currentPassword.helper}</FieldHint>
-              )}
+              ) : null}
             </FormControl>
 
             <FormControl isRequired isInvalid={!!errors.new_password}>
@@ -248,7 +246,9 @@ export default function ChangePasswordTab({ onCancel }: ChangePasswordTabProps) 
             </FormControl>
 
             <FormControl isRequired isInvalid={!!errors.confirm_password}>
-              <FieldLabel>Confirm New Password</FieldLabel>
+              <FieldLabel hint={FIELD_HINTS.profile.confirmPassword.tip}>
+                Confirm New Password
+              </FieldLabel>
               <InputGroup>
                 <Input
                   type={showConfirm ? "text" : "password"}

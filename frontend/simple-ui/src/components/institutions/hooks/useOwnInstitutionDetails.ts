@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import * as tenantService from "../../../services/tenantService";
 import { parseError } from "../../../utils/errorHandler";
-import type { TenantView } from "../../../types/tenant";
+import type { TenantView, TierLimits } from "../../../types/tenant";
 
 const INSTITUTION_STALE_MS = 2 * 60_000;
 
@@ -17,6 +17,8 @@ export interface UseOwnInstitutionDetailsOptions {
 export interface OwnInstitutionDetails {
   institution: TenantView | null;
   tierName: string | null;
+  /** Assigned tier's rate limit and quotas; null when unassigned or unreadable. */
+  tierLimits: TierLimits | null;
   budgetLimit: number | null;
   currency: string;
   isLoading: boolean;
@@ -55,6 +57,7 @@ export function useOwnInstitutionDetails({
   return {
     institution,
     tierName: institution?.tier_id ? tierName : null,
+    tierLimits: institution?.tier_id ? (institution.tier_limits ?? null) : null,
     budgetLimit: institution?.tier_id || budgetLimit != null ? budgetLimit : null,
     currency: "INR",
     isLoading: isEnabled && institutionQuery.isPending,

@@ -12,11 +12,21 @@ export type {
 export type DataTableSearchConfig = {
   value: string;
   onChange: (value: string) => void;
+  /**
+   * When set, Enter in the search box calls this instead of treating typing
+   * as the apply action. Use with an explicit Search button for server search.
+   */
+  onSubmit?: () => void;
   placeholder?: string;
   label?: string;
   /** Keep the label for screen readers and drop it from the toolbar layout. */
   hideLabel?: boolean;
+  /** Short always-visible line under the field. Prefer `hint` for longer guidance. */
   helper?: string;
+  /** Info-icon tip on the label (longer / optional guidance). */
+  hint?: string;
+  /** Validation message shown under the search input. */
+  error?: string;
   /**
    * Fields the parent should search (documentation / client helpers).
    * DataTable does not filter rows itself.
@@ -24,6 +34,12 @@ export type DataTableSearchConfig = {
   fields?: string[];
   /** Debounce `onChange` in ms. Default: immediate. */
   debounceMs?: number;
+  /** Control width. Defaults to a fixed search width. */
+  width?: string | Record<string, string>;
+  /** Lets the field shrink on a single-row toolbar. */
+  minWidth?: string | Record<string, string>;
+  maxWidth?: string | Record<string, string>;
+  flex?: string | Record<string, string>;
 };
 
 export type DataTableFilterOption = {
@@ -35,7 +51,7 @@ export type DataTableFilterOption = {
  * Declarative filter control rendered by DataTable.
  *
  * `param` is the backend query parameter name (parent maps values → API).
- * Multi-select / date / text types are reserved for future use.
+ * `multiselect` stores a comma-separated `value` (empty means all / none selected).
  */
 export type DataTableFilterDef = {
   id: string;
@@ -45,10 +61,15 @@ export type DataTableFilterDef = {
   param?: string;
   value: string;
   onChange: (value: string) => void;
+  /** For `date` filters: apply the draft value on blur instead of every keystroke. */
+  onBlur?: () => void;
   options?: DataTableFilterOption[];
   defaultValue?: string;
   placeholder?: string;
+  /** Short always-visible line under the field. Prefer `hint` for longer guidance. */
   helper?: string;
+  /** Info-icon tip on the label (longer / optional guidance). */
+  hint?: string;
   /** Keep the label for screen readers and drop it from the toolbar layout. */
   hideLabel?: boolean;
   /**
@@ -58,13 +79,51 @@ export type DataTableFilterDef = {
    */
   inputType?: "text" | "number" | "date" | "datetime-local";
   /**
-   * Validation message for `text` filters. When set the field is marked
+   * Validation message for `text` / `date` filters. When set the field is marked
    * invalid (aria-invalid) and this replaces `helper` under the input.
    */
   error?: string;
   /** Width hint for the control. */
   width?: string | Record<string, string>;
+  /** Lets the field shrink on a single-row toolbar. */
+  minWidth?: string | Record<string, string>;
+  maxWidth?: string | Record<string, string>;
+  flex?: string | Record<string, string>;
+  /**
+   * Consecutive filters with the same cluster stay on one row and wrap
+   * together, so a pair such as start and end time is not split.
+   */
+  cluster?: string;
 };
+
+/**
+ * Per-column search shown as a search icon in the column header.
+ * - `text`: free text; client tables match case-insensitive "contains"
+ * - `select`: one value from `options`; client tables match exactly
+ * - `date_range`: from/to `YYYY-MM-DD` (local); stored as `from~to` in
+ *   {@link DataTableColumnFilters}; client tables match inclusive calendar days
+ */
+export type DataTableColumnFilterConfig =
+  | {
+      type: "text";
+      placeholder?: string;
+      /** Short guidance under the input (e.g. accepted format). */
+      helper?: string;
+      /** Return a message to block Apply while the value is invalid. */
+      validate?: (value: string) => string | undefined;
+    }
+  | {
+      type: "select";
+      options: DataTableFilterOption[];
+    }
+  | {
+      type: "date_range";
+      fromPlaceholder?: string;
+      toPlaceholder?: string;
+    };
+
+/** Active per-column search values keyed by column id. Empty values are dropped. */
+export type DataTableColumnFilters = Record<string, string>;
 
 export type DataTableActionClickPayload<T = unknown> = {
   actionId: string;

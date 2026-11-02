@@ -22,6 +22,7 @@ export const BUDGET_COPY = {
   remaining: "Remaining",
   remainingInstitution: "Remaining (Institution)",
   leftForThisKey: "Left for this key",
+  leftOnThisApplication: "Left on this application",
   applicationPrefix: "Application:",
   apiKeyFallback: "API key",
   inactiveKeyNotEditable: "This API key is not active, so its allocation cannot be edited.",

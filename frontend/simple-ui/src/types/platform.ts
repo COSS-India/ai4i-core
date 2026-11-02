@@ -418,6 +418,21 @@ export interface ServiceListParams {
   taskTypes?: string;
   isPublished?: boolean;
   createdBy?: string;
+  /**
+   * Comma-separated Tier ids → `tier_ids=`. Open to non-admin callers, who
+   * then get published services only (Application fallback picker).
+   */
+  tierIds?: string;
+  /**
+   * Comma-separated column ids from `GET /services/columns` → `columns=`.
+   * Each row then carries only the fields those columns need; omit for full rows.
+   */
+  columns?: string;
+  /**
+   * Extra query params from `GET /services/columns` filter.params.
+   * Applied after the structured fields above; a key already set is left as-is.
+   */
+  query?: Record<string, string>;
 }
 
 /** Legacy snake_case keys for backward compatibility. */
@@ -430,7 +445,7 @@ export interface ServiceLegacyFields {
   task_type?: string;
   created_at?: string;
   updated_at?: string;
-  /** UI-only: selected model display name (not sent to API). */
+  /** Model display name. Returned by GET /services; never sent on create/update. */
   modelName?: string;
   /** UI-only: derived from model submittedOn (not sent to API). */
   modelSubmissionDate?: string;
@@ -469,8 +484,8 @@ export type Service = ServiceListItem & ServiceLegacyFields;
 
 export interface ServiceCreateRequest {
   name: string;
-  description: string;
-  hardwareDescription: string;
+  description?: string;
+  hardwareDescription?: string;
   modelId: string;
   modelVersion: string;
   endpoint: string;

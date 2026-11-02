@@ -71,7 +71,7 @@ const NotificationsAlertsPage: React.FC = () => {
   return (
     <>
       <Head>
-        <title>{`Platform Settings - ${getPlatformName()}`}</title>
+        <title>{`Alerts & Notifications - ${getPlatformName()}`}</title>
         <meta
           name="description"
           content="Configure system-seeded notifications and threshold alerts"
@@ -80,7 +80,7 @@ const NotificationsAlertsPage: React.FC = () => {
 
       <ContentLayout>
         <ManagementPageHeader
-          title="Platform Settings"
+          title="Alerts & Notifications"
           description={
             view === "adopter"
               ? "Configure system-seeded notification and alert catalog for Adopter Admin"

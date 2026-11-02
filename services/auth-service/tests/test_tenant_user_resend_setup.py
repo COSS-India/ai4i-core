@@ -3,8 +3,11 @@
 Tenant users are provisioned passwordless (a SETUP / set-password email, not an
 email-verification email), so onboarding resends must reissue a SETUP token via
 the tenant-scoped endpoint. ``/auth/resend-verification`` no-ops for them.
+A self-registered user still waiting on email verification already has a
+password, so the same action re-sends their verification link instead.
 """
 
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -32,6 +35,7 @@ def _service() -> TenantService:
     svc._verifications.create = AsyncMock()
     svc._users.commit = AsyncMock()
     svc._tokens.create_setup_token = MagicMock(return_value="setup-token")
+    svc._tokens.create_verify_token = MagicMock(return_value="verify-token")
     return svc
 
 
@@ -69,10 +73,11 @@ class TestResendTenantUserSetupLink:
         # No credentials yet → user has not completed setup.
         svc._credentials.get_by_user_id = AsyncMock(return_value=None)
 
-        await svc.resend_tenant_user_setup_link(
+        kind = await svc.resend_tenant_user_setup_link(
             _admin(), 1, target.id, MagicMock()
         )
 
+        assert kind == "setup"
         svc._tokens.create_setup_token.assert_called_once()
         svc._verifications.deactivate_all_for_user.assert_awaited_once()
         svc._users.commit.assert_awaited_once()
@@ -140,9 +145,10 @@ class TestResendTenantUserSetupLink:
     async def test_rejects_already_activated_user(self) -> None:
         svc = _service()
         target = _tenant_user()
+        # Activated once, now admin-suspended: no onboarding link applies.
+        target.activated_at = datetime(2026, 10, 1, tzinfo=timezone.utc)
         svc._tenants.get_by_id = AsyncMock(return_value=_tenant())
         svc._users.get_by_id = AsyncMock(return_value=target)
-        # Credentials exist → setup already complete.
         svc._credentials.get_by_user_id = AsyncMock(return_value=MagicMock())
 
         with pytest.raises(ValidationError) as exc:
@@ -151,4 +157,26 @@ class TestResendTenantUserSetupLink:
             )
 
         assert exc.value.code == "USER_ALREADY_ACTIVATED"
+        svc._tokens.create_verify_token.assert_not_called()
         svc._users.commit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unverified_self_signup_gets_verification_link(self) -> None:
+        """Self-registered, password stored at signup, email never verified:
+        listed as Pending Activation, so its "Resend setup link" action must
+        work — re-send the verification link, not a set-password link."""
+        svc = _service()
+        target = _tenant_user()
+        svc._tenants.get_by_id = AsyncMock(return_value=_tenant())
+        svc._users.get_by_id = AsyncMock(return_value=target)
+        svc._credentials.get_by_user_id = AsyncMock(return_value=MagicMock())
+
+        kind = await svc.resend_tenant_user_setup_link(
+            _admin(), 1, target.id, MagicMock()
+        )
+
+        assert kind == "verify"
+        svc._tokens.create_verify_token.assert_called_once()
+        svc._tokens.create_setup_token.assert_not_called()
+        svc._verifications.deactivate_all_for_user.assert_awaited_once()
+        svc._users.commit.assert_awaited_once()

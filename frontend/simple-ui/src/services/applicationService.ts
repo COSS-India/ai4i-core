@@ -6,6 +6,7 @@ import type {
   ApplicationListResult,
   CreateApplicationPayload,
   ListApplicationsParams,
+  ServiceFallbackMap,
   UpdateApplicationPayload,
 } from "../types/application";
 
@@ -27,6 +28,17 @@ function asString(value: unknown): string {
   return value == null ? "" : String(value);
 }
 
+function asFallbackMap(value: unknown): ServiceFallbackMap {
+  const map = asRecord(value) ?? {};
+  const out: ServiceFallbackMap = {};
+  for (const [primary, fallbacks] of Object.entries(map)) {
+    if (!Array.isArray(fallbacks)) continue;
+    const ids = fallbacks.map(asString).filter(Boolean);
+    if (ids.length > 0) out[primary] = ids;
+  }
+  return out;
+}
+
 function normalizeApplication(raw: unknown, fallbackTenantId: string): Application {
   const row = asRecord(raw) ?? {};
   return {
@@ -43,6 +55,7 @@ function normalizeApplication(raw: unknown, fallbackTenantId: string): Applicati
     created_at: asString(row.created_at),
     updated_at: row.updated_at == null ? null : asString(row.updated_at),
     api_key_count: asNumber(row.api_key_count),
+    service_fallbacks: asFallbackMap(row.service_fallbacks),
   };
 }
 
@@ -94,7 +107,8 @@ function normalizeList(payload: unknown, tenantId: string): ApplicationListResul
 export function getApplicationErrorCode(error: unknown): string | null {
   const data = asRecord((error as { response?: { data?: unknown } })?.response?.data);
   const detail = asRecord(data?.detail);
-  const code = detail?.error ?? data?.error ?? data?.code;
+  // Shared handlers send `{ detail: { code, message } }`; older routes use `detail.error`.
+  const code = detail?.error ?? detail?.code ?? data?.error ?? data?.code;
   return code == null ? null : String(code).toUpperCase();
 }
 
@@ -182,3 +196,8 @@ export interface ApplicationApiKeyRow {
 export async function listAllApplicationsForBudget(tenantId: string): Promise<ApplicationListResult> {
   return listApplications(tenantId, { page: 1, size: 500 });
 }
+
+/** Shared RQ cache for the unfiltered applications list (table + allocation summary). */
+export const applicationsAllQueryKey = (tenantId: string) =>
+  ["applications-all", tenantId] as const;
+export const APPLICATIONS_ALL_STALE_MS = 60 * 1000;

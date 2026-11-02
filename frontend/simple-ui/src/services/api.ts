@@ -191,6 +191,8 @@ const getEndpointContext = (rawUrl: string): EndpointContext => {
     url.includes(API_URL_PATH_MARKERS.modelManagement) ||
     url.includes(apiEndpoints.platform.models.base) ||
     url.includes(apiEndpoints.platform.services.base);
+  // Column prefs live under /preferences, not /services — still need JWT + proactive refresh.
+  const isPreferencesEndpoint = url.includes("/preferences/");
   const isMultiTenantEndpoint = url.includes(apiEndpoints.tenants.base);
   const isPolicyServiceEndpoint = url.includes(apiEndpoints.policy.base);
   const isPolicyServiceHealthPath = pathNoQuery.endsWith(
@@ -199,6 +201,7 @@ const getEndpointContext = (rawUrl: string): EndpointContext => {
   const isServiceEndpoint =
     SERVICE_BASE_PATHS.some((base) => url.includes(base)) ||
     isModelManagementEndpoint ||
+    isPreferencesEndpoint ||
     isMultiTenantEndpoint ||
     (isPolicyServiceEndpoint && !isPolicyServiceHealthPath);
   const isTryItPublicEndpoint = isTryItPublicPath(pathNoQuery);

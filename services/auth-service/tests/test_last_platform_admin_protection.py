@@ -10,7 +10,7 @@ from fastapi import HTTPException
 from app.core.exceptions import AppError
 from app.core.constants import RoleName
 from app.models.tenant import Tenant, TenantStatus
-from app.models.user import User
+from app.models.user import CreationType, User
 from app.services.role_service import RoleService
 from app.services.tenant_service import TenantService
 
@@ -350,6 +350,7 @@ class TestRoleServiceAssignRoleLocksAdminRoster:
     async def test_assigning_admin_takes_the_lock_in_default_org(self) -> None:
         svc = _make_role_service()
         target = _admin_user()
+        target.creation_type = CreationType.TENANT
         svc._users.get_by_id = AsyncMock(return_value=target)
         svc._tenants.get_by_id = AsyncMock(return_value=_default_org())
 
@@ -362,6 +363,7 @@ class TestRoleServiceAssignRoleLocksAdminRoster:
     async def test_assigning_admin_outside_default_org_skips_lock(self) -> None:
         svc = _make_role_service()
         target = _admin_user()
+        target.creation_type = CreationType.TENANT
         svc._users.get_by_id = AsyncMock(return_value=target)
         svc._tenants.get_by_id = AsyncMock(return_value=_other_tenant())
 
@@ -376,9 +378,13 @@ class TestRoleServiceAssignRoleLocksAdminRoster:
         svc._roles.get_role_by_name = AsyncMock(
             return_value=MagicMock(id=2, name=RoleName.MODERATOR.value)
         )
-        svc._users.get_by_id = AsyncMock()
+        target = _admin_user()
+        target.creation_type = CreationType.TENANT
+        svc._users.get_by_id = AsyncMock(return_value=target)
+        svc._tenants.get_by_id = AsyncMock()
 
-        await svc.assign_role(uuid4(), RoleName.MODERATOR)
+        await svc.assign_role(target.id, RoleName.MODERATOR)
 
-        svc._users.get_by_id.assert_not_awaited()
+        svc._tenants.get_by_id.assert_not_awaited()
+        svc._roles._db.execute.assert_not_awaited()
         svc._roles.assign_role.assert_awaited_once()

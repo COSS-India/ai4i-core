@@ -189,13 +189,13 @@ function defaultFormData(): TierFormData {
 /**
  * Validate the quota rows of a tier form. Returns a user-facing error message
  * for the first problem found, or null when every row is valid. Enforces that
- * each row has a model task type, a non-empty unit, and a limit the backend's
+ * each row has a task type, a non-empty unit, and a limit the backend's
  * `TierQuotaIn` will accept (see `validateQuotaLimit`).
  */
 function validateQuotas(quotas: TierFormQuota[]): string | null {
   for (const q of quotas) {
     if (!q.modelTaskType) {
-      return "Each quota must have a model task type.";
+      return "Each quota must have a task type.";
     }
     if (!q.unit.trim()) {
       return "Unit is required for each quota.";

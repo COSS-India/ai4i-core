@@ -22,6 +22,7 @@ from app.models.api_key import APIKey
 from app.models.application import Application
 from app.models.role import Permission
 from app.repositories.base import BaseRepository
+from app.repositories.ids import is_int4_id
 
 
 def _live_key_values(rows) -> list[str]:
@@ -41,6 +42,8 @@ class APIKeyRepository(BaseRepository):
         super().__init__(db)
 
     async def get_by_id(self, key_id: int) -> Optional[APIKey]:
+        if not is_int4_id(key_id):
+            return None
         result = await self._db.execute(
             select(APIKey).where(APIKey.id == key_id)
         )
@@ -50,6 +53,8 @@ class APIKeyRepository(BaseRepository):
         """Tenant-scoped lookup (via the key's Application): returns None whether
         the key doesn't exist or its application belongs to a different tenant,
         so a Tenant Admin caller cannot enumerate valid key IDs outside their tenant."""
+        if not (is_int4_id(key_id) and is_int4_id(tenant_id)):
+            return None
         result = await self._db.execute(
             select(APIKey)
             .join(Application, APIKey.application_id == Application.id)
@@ -140,6 +145,7 @@ class APIKeyRepository(BaseRepository):
                 rotated_key=APIKey.api_key,
                 api_key=new_value,
                 rotated_key_expires_at=rotated_key_expires_at,
+                rotated_at=func.now(),
                 # NULL stays NULL: jsonb_set on NULL returns NULL.
                 cached_data=func.jsonb_set(
                     APIKey.cached_data, cast(["api_key"], ARRAY(TEXT)), func.to_jsonb(new_value)
@@ -162,6 +168,29 @@ class APIKeyRepository(BaseRepository):
                 *self._active_key_conditions(),
             )
             .values(rotated_key=None, rotated_key_expires_at=None, updated_by=updated_by)
+        )
+        return result.rowcount == 1
+
+    async def extend_rotation(
+        self, key_id: int, rotated_value: str, new_expires_at: datetime, updated_by: str
+    ) -> bool:
+        """Move rotated_key_expires_at later, only if the row is still active
+        and unexpired, still holds ``rotated_value`` as a live rotated key,
+        ``new_expires_at`` is later than the current end, and the key's own
+        expires_at doesn't come before it. Returns whether the row was
+        updated; False means a concurrent request ended, re-rotated or revoked
+        it, or changed the end or the key's expiry first."""
+        result = await self._db.execute(
+            update(APIKey)
+            .where(
+                APIKey.id == key_id,
+                APIKey.rotated_key == rotated_value,
+                APIKey.rotated_key_expires_at > datetime.now(timezone.utc),
+                APIKey.rotated_key_expires_at < new_expires_at,
+                or_(APIKey.expires_at.is_(None), APIKey.expires_at >= new_expires_at),
+                *self._active_key_conditions(),
+            )
+            .values(rotated_key_expires_at=new_expires_at, updated_by=updated_by)
         )
         return result.rowcount == 1
 

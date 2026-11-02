@@ -3,7 +3,7 @@ Orchestrator for routing inference requests to appropriate TaskServices.
 Handles task routing, service resolution, and request/model span tracing.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 from fastapi import Request
 import logging
 
@@ -16,7 +16,9 @@ from trace.request_span import (
 )
 
 from services.base.task_service import BaseTaskService
+from services.service_fallback import get_fallbacks, log_all_failed, log_failover, log_fallback_skipped
 from inference.inference_server_resolver import InferenceServerResolver
+from utils.failover import AllServicesUnavailableError, UpstreamUnavailableError
 from utils.http_status import http_status_for
 from orchestrator.task_service_registry import TASK_SERVICE_REGISTRY
 
@@ -111,22 +113,17 @@ class Orchestrator:
                 set_metric_labels(request, model_id=service_info.get("model_id") or "")
 
             # Tier entitlement check (API key calls only; JWT has empty X-Tier-ID)
-            if request:
-                tier_id = request.headers.get("X-Tier-ID", "")
-                if tier_id:
-                    allowed_tiers = [str(t) for t in service_info.get("tier_ids", [])]
-                    if allowed_tiers and tier_id not in allowed_tiers:
-                        service_id = (
-                            (payload.get("config") or {}).get("serviceId")
-                            or payload.get("serviceId", "")
-                        )
-                        raise PermissionError(
-                            f"Service '{service_id}' is not available for your quota"
-                        )
+            self._enforce_tier_gate(service_info, request)
 
-            # Instantiate and run the task service with the raw payload
-            task_service = self._get_task_service(service_info)
-            task_response = await task_service.process(payload, service_info)
+            # Run the requested service; when its model is unreachable, the
+            # Application's fallbacks for it in order (none → as before).
+            served_info, task_service, task_response = await self._run_with_fallbacks(
+                payload, service_info, request
+            )
+            if served_info is not service_info:
+                self._apply_fallback_state(attrs, served_info, request)
+            if isinstance(task_response, dict) and isinstance(task_response.get("model"), dict):
+                task_response["model"]["serviceId"] = served_info.get("serviceId", "")
 
             # Mirror the count task_service already computed once onto
             # request.state, so ObservabilityMiddleware can read it instead of
@@ -146,6 +143,91 @@ class Orchestrator:
                 )
 
             return task_response.dict() if hasattr(task_response, 'dict') else task_response
+
+    @staticmethod
+    def _apply_fallback_state(
+        attrs: dict,
+        served_info: Dict[str, Any],
+        request: Optional[Request],
+    ) -> None:
+        attrs["service_id"] = served_info.get("serviceId") or ""
+        if request is not None:
+            request.state.service_id = attrs["service_id"]
+            set_metric_labels(request, model_id=served_info.get("model_id") or "")
+
+    @staticmethod
+    def _enforce_tier_gate(service_info: Dict[str, Any], request: Optional[Request]) -> None:
+        """PermissionError (403) when the caller's Tier may not use this service.
+        Only API-key calls carry X-Tier-ID; a service with no Tier is open."""
+        tier_id = request.headers.get("X-Tier-ID", "") if request else ""
+        allowed_tiers = [str(t) for t in service_info.get("tier_ids", [])]
+        if tier_id and allowed_tiers and tier_id not in allowed_tiers:
+            raise PermissionError(
+                f"Service '{service_info.get('serviceId', '')}' is not available for your quota"
+            )
+
+    async def _run_with_fallbacks(
+        self, payload: Dict[str, Any], service_info: Dict[str, Any], request: Optional[Request]
+    ) -> Tuple[Dict[str, Any], BaseTaskService, Any]:
+        """Run the requested service; if its model is unreachable (timeout,
+        connection error, 5xx — utils/failover.py), the Application's
+        fallbacks for it in order. Returns (served service_info, task_service,
+        response).
+
+        Any other failure is raised unchanged, and so is every failure when no
+        fallback is configured or a group was already answered (per-item
+        tasks: those groups are billed, so the payload must not run twice).
+        A fallback that no longer resolves or fails the Tier gate is skipped;
+        one that rejects the input returns that error to the client.
+        """
+        requested_id = service_info.get("serviceId") or ""
+        task_service = self._get_task_service(service_info)
+        try:
+            return service_info, task_service, await task_service.process(payload, service_info)
+        except UpstreamUnavailableError as exc:
+            answered = getattr(task_service, "completed_groups", 0)
+            fallbacks = [] if answered else await get_fallbacks(requested_id)
+            if not fallbacks:
+                raise
+            reason = type(exc.__cause__ or exc).__name__
+
+        tried = [requested_id]
+        for fallback_id in fallbacks:
+            log_failover(requested_id, fallback_id, reason)
+            tried.append(fallback_id)
+            fb_payload = {**payload, "config": {**(payload.get("config") or {}), "serviceId": fallback_id}}
+            try:
+                fb_info = await self._resolve_service_and_model(fb_payload)
+                self._enforce_tier_gate(fb_info, request)
+            except Exception as exc:
+                log_fallback_skipped(requested_id, fallback_id, type(exc).__name__)
+                continue
+            fb_service = self._get_task_service(fb_info)
+            response, reason, stop = await self._run_fallback_service(fb_service, fb_payload, fb_info)
+            if response is not None:
+                return fb_info, fb_service, response
+            if stop:
+                # This fallback already answered (and billed) part of the
+                # payload; the next one must not bill those groups again.
+                break
+        log_all_failed(requested_id, tried)
+        raise AllServicesUnavailableError(requested_id, tried)
+
+    async def _run_fallback_service(
+        self,
+        fb_service: BaseTaskService,
+        fb_payload: Dict[str, Any],
+        fb_info: Dict[str, Any],
+    ) -> Tuple[Optional[Any], Optional[str], bool]:
+        """Try running a fallback service. Returns (response, reason, stop).
+        response is non-None on success; reason and stop are set on UpstreamUnavailableError.
+        stop=True means the fallback was partly billed — no further fallbacks should run.
+        """
+        try:
+            return await fb_service.process(fb_payload, fb_info), None, False
+        except UpstreamUnavailableError as exc:
+            reason = type(exc.__cause__ or exc).__name__
+            return None, reason, bool(getattr(fb_service, "completed_groups", 0))
 
     def _validate_task_type(self, task_type: str) -> None:
         """Raise ValueError if task_type is not a known task."""

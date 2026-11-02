@@ -10,31 +10,15 @@ import FormSection from "../common/FormSection";
 import ReadOnlyField from "../common/ReadOnlyField";
 import FieldHint from "../common/FieldHint";
 import FieldLabel from "../common/FieldLabel";
-import { formatModelTaskTypeLabel } from "../../config/constants";
+import {
+  TIER_RATE_LIMIT_PLATFORM_DEFAULT,
+  formatModelTaskTypeLabel,
+} from "../../config/constants";
 import { FIELD_HINTS } from "../../config/fieldHints";
+import { formatMonthlyQuota } from "../../utils/valueFormatters";
 import type { TierFormData, TierFormQuota } from "../../types/tierManagement";
 import { QuotaEditor } from "./QuotaEditor";
 import { validateRateLimit } from "./tierFormValidation";
-
-function formatQuotaAmount(
-  limit: number,
-  unit?: string,
-): { boldText: string; suffixText: string } {
-  const trimmedUnit = (unit ?? "").trim();
-  const spaceIdx = trimmedUnit.indexOf(" ");
-  if (spaceIdx === -1) {
-    return {
-      boldText: limit.toLocaleString(),
-      suffixText: trimmedUnit ? `${trimmedUnit.toLowerCase()}/month` : "/month",
-    };
-  }
-  const prefix = trimmedUnit.slice(0, spaceIdx);
-  const rest = trimmedUnit.slice(spaceIdx + 1);
-  return {
-    boldText: `${limit.toLocaleString()}${prefix}`,
-    suffixText: `${rest.toLowerCase()}/month`,
-  };
-}
 
 interface TierFormProps {
   readonly formData: TierFormData;
@@ -74,21 +58,17 @@ export function TierForm({
           <ReadOnlyField label="Rate Limit (per minute)">
             {formData.rateLimit
               ? Number(formData.rateLimit).toLocaleString("en-US")
-              : "Platform default"}
+              : TIER_RATE_LIMIT_PLATFORM_DEFAULT}
           </ReadOnlyField>
           {formData.quotas.length ? (
             formData.quotas.map((q) => {
               const limit = Number(q.limit);
-              const { boldText, suffixText } = formatQuotaAmount(
-                Number.isFinite(limit) ? limit : 0,
-                q.unit,
-              );
               return (
                 <ReadOnlyField
                   key={q.modelTaskType}
                   label={formatModelTaskTypeLabel(q.modelTaskType)}
                 >
-                  {boldText} {suffixText}
+                  {formatMonthlyQuota(Number.isFinite(limit) ? limit : 0, q.unit)}
                 </ReadOnlyField>
               );
             })
@@ -102,9 +82,9 @@ export function TierForm({
 
   return (
     <VStack align="stretch" spacing={0}>
-      <FormSection title="Basic information">
+      <VStack align="stretch" spacing={4}>
       <FormControl isRequired>
-        <FieldLabel>Tier Name</FieldLabel>
+        <FieldLabel hint={FIELD_HINTS.tier.name.tip}>Tier Name</FieldLabel>
         <Input
           value={formData.name}
           onChange={(e) => onChange({ ...formData, name: e.target.value })}
@@ -115,7 +95,7 @@ export function TierForm({
       </FormControl>
 
       <FormControl>
-        <FieldLabel>Description</FieldLabel>
+        <FieldLabel hint={FIELD_HINTS.tier.description.tip}>Description</FieldLabel>
         <Input
           value={formData.description}
           onChange={(e) =>
@@ -123,13 +103,14 @@ export function TierForm({
           }
           placeholder={FIELD_HINTS.tier.description.placeholder}
         />
-        <FieldHint>{FIELD_HINTS.tier.description.helper}</FieldHint>
       </FormControl>
-      </FormSection>
+      </VStack>
 
       <FormSection title="Usage limits">
       <FormControl isInvalid={!!rateLimitError}>
-        <FieldLabel>Rate Limit (per minute)</FieldLabel>
+        <FieldLabel hint={FIELD_HINTS.tier.rateLimit.tip}>
+          Rate Limit (per minute)
+        </FieldLabel>
         <NumberInput
           min={1}
           step={1}
@@ -141,7 +122,6 @@ export function TierForm({
           <NumberInputField placeholder={FIELD_HINTS.tier.rateLimit.placeholder} />
         </NumberInput>
         <FormErrorMessage>{rateLimitError}</FormErrorMessage>
-        <FieldHint show={!rateLimitError}>{FIELD_HINTS.tier.rateLimit.helper}</FieldHint>
       </FormControl>
 
       <QuotaEditor

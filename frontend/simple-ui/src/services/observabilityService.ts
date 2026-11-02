@@ -10,6 +10,7 @@ import {
   traceSchema,
   traceSearchResponseSchema,
   telemetryTraceSearchResponseSchema,
+  telemetryTraceColumnsResponseSchema,
   telemetryTraceDetailSchema,
 } from './dto/schemas/observability';
 import type {
@@ -18,9 +19,11 @@ import type {
   LogSearchResponse,
   Process,
   Span,
+  TelemetryTraceColumnsResponse,
   TelemetryTraceDetail,
   TelemetryTraceRecord,
   TelemetryTraceSearchResponse,
+  TelemetryTraceSortBy,
   Trace,
   TraceSearchResponse,
 } from '../types/observability';
@@ -33,10 +36,13 @@ export type {
   Span,
   TelemetrySpan,
   TelemetrySpanContext,
+  TelemetryTraceColumnDef,
+  TelemetryTraceColumnsResponse,
   TelemetryTraceDetail,
   TelemetryTraceRecord,
   TelemetryTraceSearchAggregations,
   TelemetryTraceSearchResponse,
+  TelemetryTraceSortBy,
   Trace,
   TraceSearchResponse,
 } from '../types/observability';
@@ -50,12 +56,12 @@ export function telemetryTraceIdForApi(traceId: string): string {
   return encodeURIComponent(traceId.trim());
 }
 
-/** Map UI status filter to OpenSearch `attributes.status` values. */
+/** Map UI status filter to OpenSearch `attributes.status` values (success | failure). */
 function mapStatusFilter(level?: string): string | undefined {
   if (!level?.trim()) return undefined;
   const v = level.trim().toLowerCase();
   if (v === 'success') return 'success';
-  if (v === 'fail' || v === 'failure') return 'failure';
+  if (v === 'fail' || v === 'failed' || v === 'failure') return 'failure';
   return v;
 }
 
@@ -239,64 +245,131 @@ export function resolveTelemetryTenantId(params: {
   return authTenant || undefined;
 }
 
+const telemetryErrorMessage = (error: unknown, fallback: string): string => {
+  const err = error as { response?: { data?: { detail?: unknown } }; message?: string };
+  const detail = err?.response?.data?.detail;
+  if (typeof detail === 'string') return detail;
+  if (detail && typeof detail === 'object' && 'message' in detail) {
+    const message = (detail as { message?: unknown }).message;
+    if (typeof message === 'string') return message;
+  }
+  if (detail && typeof detail === 'object') return JSON.stringify(detail);
+  if (err?.message) return err.message;
+  return fallback;
+};
+
+/**
+ * Column catalogue for the Logs Dashboard picker.
+ * GET /api/v1/telemetry/traces/columns
+ */
+export const getTelemetryTraceColumns = async (): Promise<TelemetryTraceColumnsResponse> => {
+  try {
+    const response = await apiService.get(
+      telemetryUrl(apiEndpoints.telemetry.tracesColumns),
+      { timeout: 30000, responseSchema: telemetryTraceColumnsResponseSchema }
+    );
+    return response.data;
+  } catch (error: unknown) {
+    console.error('Failed to get telemetry trace columns:', error);
+    throw new Error(telemetryErrorMessage(error, 'Failed to load column options'));
+  }
+};
+
+type TelemetryTraceSearchParams = {
+  taskType?: string;
+  level?: string;
+  startDate?: string;
+  endDate?: string;
+  page?: number;
+  pageSize?: number;
+  tenant_id?: string;
+  /** Exact end-user ID the caller sent as OpenAI `user`. */
+  user?: string;
+  /** Caller metadata pair; sent only when both are set. */
+  metadataKey?: string;
+  metadataValue?: string;
+  /** Keyword across all spans of a log (1–256 chars). */
+  q?: string;
+  /** Exact service id on the request span. */
+  serviceId?: string;
+  /** Comma-separated status codes (100–599, max 10). */
+  statusCode?: string;
+  /** Per-column contains searches when the backend accepts them. */
+  url?: string;
+  method?: string;
+  model?: string;
+  application?: string;
+  apiKey?: string;
+  error?: string;
+  sortBy?: TelemetryTraceSortBy;
+  sortOrder?: 'asc' | 'desc';
+  /** Comma-separated column keys; omit for default columns. */
+  columns?: string;
+};
+
+function appendIfPresent(
+  queryParams: URLSearchParams,
+  key: string,
+  value: string | undefined,
+): void {
+  if (value) queryParams.append(key, value);
+}
+
+/** Build query string for GET /telemetry/traces/search. */
+function buildTraceSearchQueryParams(
+  params: TelemetryTraceSearchParams,
+): URLSearchParams {
+  const queryParams = new URLSearchParams();
+  appendIfPresent(
+    queryParams,
+    'task_types',
+    params.taskType ? params.taskType.toUpperCase() : undefined,
+  );
+  // Prefer `status` (AI4IDS-3526); `status_filter` remains a BE legacy alias.
+  appendIfPresent(queryParams, 'status', mapStatusFilter(params.level));
+  appendIfPresent(queryParams, 'start_date', params.startDate);
+  appendIfPresent(queryParams, 'end_date', params.endDate);
+  appendIfPresent(queryParams, 'tenant_id', params.tenant_id);
+  appendIfPresent(queryParams, 'user', params.user);
+  if (params.metadataKey && params.metadataValue) {
+    queryParams.append('metadata_key', params.metadataKey);
+    queryParams.append('metadata_value', params.metadataValue);
+  }
+  appendIfPresent(queryParams, 'q', params.q);
+  appendIfPresent(queryParams, 'service_id', params.serviceId);
+  appendIfPresent(queryParams, 'status_code', params.statusCode);
+  appendIfPresent(queryParams, 'url', params.url);
+  appendIfPresent(queryParams, 'method', params.method);
+  appendIfPresent(queryParams, 'model', params.model);
+  appendIfPresent(queryParams, 'application', params.application);
+  appendIfPresent(queryParams, 'api_key', params.apiKey);
+  appendIfPresent(queryParams, 'error', params.error);
+  appendIfPresent(queryParams, 'sort_by', params.sortBy);
+  appendIfPresent(queryParams, 'sort_order', params.sortOrder);
+  appendIfPresent(queryParams, 'columns', params.columns);
+  queryParams.append('page', String(params.page ?? 1));
+  queryParams.append('page_size', String(params.pageSize ?? 15));
+  return queryParams;
+}
+
 /**
  * Search telemetry traces (unified list + aggregations).
  * GET /api/v1/telemetry/traces/search
  */
 export const searchTelemetryTraces = async (
-  params: {
-    taskType?: string;
-    level?: string;
-    startDate?: string;
-    endDate?: string;
-    page?: number;
-    pageSize?: number;
-    tenant_id?: string;
-    /** Exact end-user ID the caller sent as OpenAI `user`. */
-    user?: string;
-    /** Caller metadata pair; sent only when both are set. */
-    metadataKey?: string;
-    metadataValue?: string;
-  }
+  params: TelemetryTraceSearchParams,
 ): Promise<TelemetryTraceSearchResponse> => {
   try {
-    const queryParams = new URLSearchParams();
-    if (params.taskType) queryParams.append('task_types', params.taskType.toUpperCase());
-    const statusFilter = mapStatusFilter(params.level);
-    if (statusFilter) queryParams.append('status_filter', statusFilter);
-    if (params.startDate) queryParams.append('start_date', params.startDate);
-    if (params.endDate) queryParams.append('end_date', params.endDate);
-    if (params.tenant_id) queryParams.append('tenant_id', params.tenant_id);
-    if (params.user) queryParams.append('user', params.user);
-    if (params.metadataKey && params.metadataValue) {
-      queryParams.append('metadata_key', params.metadataKey);
-      queryParams.append('metadata_value', params.metadataValue);
-    }
-    queryParams.append('page', String(params.page ?? 1));
-    queryParams.append('page_size', String(params.pageSize ?? 15));
-
+    const queryParams = buildTraceSearchQueryParams(params);
     const response = await apiService.get(
       telemetryUrl(`${apiEndpoints.telemetry.tracesSearch}?${queryParams.toString()}`),
       { timeout: 30000, responseSchema: telemetryTraceSearchResponseSchema }
     );
 
     return response.data;
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error('Failed to search telemetry traces:', error);
-    let errorMessage = 'Failed to search traces';
-    const detail = error?.response?.data?.detail;
-    if (detail) {
-      if (typeof detail === 'string') {
-        errorMessage = detail;
-      } else if (typeof detail === 'object' && detail.message) {
-        errorMessage = detail.message;
-      } else if (typeof detail === 'object') {
-        errorMessage = JSON.stringify(detail);
-      }
-    } else if (error?.message) {
-      errorMessage = error.message;
-    }
-    throw new Error(errorMessage);
+    throw new Error(telemetryErrorMessage(error, 'Failed to search traces'));
   }
 };
 

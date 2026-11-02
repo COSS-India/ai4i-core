@@ -8,6 +8,10 @@ import {
   isDefaultTenantAssignableRole,
 } from "../../../utils/defaultTenant";
 import { isAdopterAdminUser, isPlatformAdminUser } from "../../../utils/rbac";
+import {
+  isSelfRegisteredUser,
+  SELF_REGISTERED_ROLE_LOCKED_MESSAGE,
+} from "../../../utils/registrationMethod";
 import type { UserSearchablePick } from "../../common/UserSearchableSelect";
 
 export interface UseRolesTabOptions {
@@ -20,6 +24,33 @@ export interface SelectedUserInfo {
   user_id: string;
   email: string;
   username: string;
+}
+
+/**
+ * Removes then assigns roles one at a time so one failure does not abort the rest.
+ * Returns the operations that failed.
+ */
+async function applyRoleChanges(
+  userId: string,
+  toRemove: string[],
+  toAdd: string[],
+): Promise<string[]> {
+  const failedOps: string[] = [];
+  for (const roleName of toRemove) {
+    try {
+      await roleService.removeRole(userId, roleName);
+    } catch {
+      failedOps.push(`remove:${roleName}`);
+    }
+  }
+  for (const roleName of toAdd) {
+    try {
+      await roleService.assignRole(userId, roleName);
+    } catch {
+      failedOps.push(`assign:${roleName}`);
+    }
+  }
+  return failedOps;
 }
 
 export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions) {
@@ -78,6 +109,13 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     }
   };
 
+  /** Self-registered (email / Google) users are unvetted and must stay on USER. */
+  const isSelectedUserSelfRegistered = useMemo(() => {
+    if (!selectedUser) return false;
+    const row = users.find((u) => u.user_id === selectedUser.user_id);
+    return row != null && isSelfRegisteredUser(row);
+  }, [selectedUser, users]);
+
   /** Adopter / Default tenant scope — see DEFAULT_TENANT_ASSIGNABLE_ROLES. */
   const availableRoles = useMemo(() => [...DEFAULT_TENANT_ASSIGNABLE_ROLES], []);
 
@@ -90,6 +128,10 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
       return;
     }
     if (!isAdmin || isModeratorOnly) return;
+    if (isSelectedUserSelfRegistered) {
+      showToast({ type: "info", message: SELF_REGISTERED_ROLE_LOCKED_MESSAGE });
+      return;
+    }
     if (selectedUserRoles.length > 1) {
       showToast({
         type: "info",
@@ -112,29 +154,29 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     return originalPrimary !== draftRole;
   })();
 
+  /** Reason the draft role cannot be saved, or null when it can. */
+  const getManageRolesBlockMessage = (): string | null => {
+    if (isSelectedUserSelfRegistered) return SELF_REGISTERED_ROLE_LOCKED_MESSAGE;
+    if (!draftRole) return "Select a role to assign to this user.";
+    if (!isDefaultTenantAssignableRole(draftRole)) {
+      return `Only ${DEFAULT_TENANT_ASSIGNABLE_ROLES.map(
+        formatDefaultTenantAssignableRoleLabel,
+      ).join(", ")} can be assigned from Role Assignment.`;
+    }
+    return null;
+  };
+
   const saveManageRoles = async () => {
     if (!selectedUser) return;
     if (!isAdmin || isModeratorOnly) return;
-    if (!draftRole) {
-      showToast({
-        type: "warning",
-        message: "Select a role to assign to this user.",
-      });
-      return;
-    }
-    if (!isDefaultTenantAssignableRole(draftRole)) {
-      showToast({
-        type: "warning",
-        message: `Only ${DEFAULT_TENANT_ASSIGNABLE_ROLES.map(
-          formatDefaultTenantAssignableRoleLabel,
-        ).join(", ")} can be assigned from Role Assignment.`,
-      });
+    const blockMessage = getManageRolesBlockMessage();
+    if (blockMessage) {
+      showToast({ type: "warning", message: blockMessage });
       return;
     }
     const originalPrimary = selectedUserRoles[0] ?? "";
     const toRemove = selectedUserRoles.filter((role) => role !== draftRole);
-    const toAdd =
-      draftRole && draftRole !== originalPrimary ? [draftRole] : [];
+    const toAdd = draftRole === originalPrimary ? [] : [draftRole];
 
     if (toAdd.length === 0 && toRemove.length === 0 && selectedUserRoles.length <= 1) {
       showToast({
@@ -146,22 +188,8 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     }
 
     setIsSavingRoles(true);
-    const failedOps: string[] = [];
     try {
-      for (const roleName of toRemove) {
-        try {
-          await roleService.removeRole(selectedUser.user_id, roleName);
-        } catch {
-          failedOps.push(`remove:${roleName}`);
-        }
-      }
-      for (const roleName of toAdd) {
-        try {
-          await roleService.assignRole(selectedUser.user_id, roleName);
-        } catch {
-          failedOps.push(`assign:${roleName}`);
-        }
-      }
+      const failedOps = await applyRoleChanges(selectedUser.user_id, toRemove, toAdd);
 
       const refreshed = await roleService.getUserRoles(selectedUser.user_id);
       setSelectedUserRoles(refreshed.roles);
@@ -196,6 +224,7 @@ export function useRolesTab({ user, users, isLoadingUsers }: UseRolesTabOptions)
     isLoadingUserRoles,
     isAdmin,
     isModeratorOnly,
+    isSelectedUserSelfRegistered,
     isManageRolesOpen,
     draftRole,
     setDraftRole,

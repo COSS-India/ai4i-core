@@ -15,7 +15,7 @@ import {
 import { ChevronDownIcon, SearchIcon } from "@chakra-ui/icons";
 import type { Tier } from "../../types/tierManagement";
 
-export interface TierSelectProps {
+export type TierSelectProps = Readonly<{
   value: string;
   onChange: (tierId: string) => void;
   tierOptions: Tier[];
@@ -25,7 +25,7 @@ export interface TierSelectProps {
   isInvalid?: boolean;
   fallbackName?: string;
   flex?: number | string;
-}
+}>;
 
 function label(
   tier: Pick<Tier, "id" | "name">,

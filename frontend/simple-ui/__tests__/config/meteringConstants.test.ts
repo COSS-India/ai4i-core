@@ -90,7 +90,7 @@ describe('Model Consumption tooltips (AI4IDS-2854, AI4IDS-2957, AI4IDS-3000)', (
   const { TOTAL_MODELS, ACTIVE_MODELS, TOKEN_CONSUMPTION, TASK_TYPE } =
     METERING.SECTIONS.MODEL.TOOLTIPS;
 
-  it('uses Model Registry wording for model task type tooltip (AI4IDS-3000)', () => {
+  it('uses Model Registry wording for task type tooltip (AI4IDS-3000)', () => {
     expect(TASK_TYPE).toContain('Model Registry');
     expect(TASK_TYPE).toContain('task type this model performs');
   });

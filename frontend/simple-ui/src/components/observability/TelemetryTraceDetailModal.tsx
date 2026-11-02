@@ -15,6 +15,7 @@ import StandardModal from "../common/StandardModal";
 import DataTable, { type DataTableColumn } from "../common/table";
 import { getTelemetryTraceById } from "../../services/observabilityService";
 import { INSTITUTION } from "../../config/constants";
+import { toDisplayAttributes } from "../../utils/spanAttributes";
 import type { TelemetrySpan } from "../../types/observability";
 
 export type TelemetryTraceDetailModalProps = {
@@ -40,7 +41,7 @@ function spanStatusColor(span: TelemetrySpan): string {
 
 function formatAttributes(attrs: Record<string, unknown>): string {
   try {
-    return JSON.stringify(attrs, null, 2);
+    return JSON.stringify(toDisplayAttributes(attrs), null, 2);
   } catch {
     return String(attrs);
   }

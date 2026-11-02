@@ -160,6 +160,9 @@ class TenantUpdate(BaseSchema):
     email: Optional[EmailStr] = None
     phone_number: Optional[str] = None
     status: Optional[TenantStatus] = None
+    # "Change contact": user_id of an existing Institution Admin of this
+    # tenant (from GET /auth/tenants/{id}/users). Applied immediately.
+    contact_user_id: Optional[UUID] = None
 
     @field_validator("organisation", "contact_name", mode="before")
     @classmethod
@@ -198,6 +201,23 @@ class TenantStatusUpdate(BaseSchema):
     status: TenantStatus
 
 
+class TierQuotaLimit(BaseSchema):
+    task_type: str
+    unit: str
+    # The quota in effect this month.
+    monthly_quota: Decimal
+    # An edit to the quota, applied to monthly_quota on the 1st of next
+    # month; null when none is scheduled or it would not change the quota.
+    pending_monthly_quota: Optional[Decimal] = None
+
+
+class TierLimits(BaseSchema):
+    # Requests per minute shared across rate-limited inference APIs; null
+    # when the tier doesn't set one.
+    rate_limit: Optional[int] = None
+    quotas: list[TierQuotaLimit] = Field(default_factory=list)
+
+
 class TenantResponse(BaseSchema):
     tenant_id: int = Field(validation_alias="id")
     contact_name: str = Field(validation_alias="name")
@@ -220,6 +240,10 @@ class TenantResponse(BaseSchema):
     # Not a tenants column — resolved from platform-core's ``tiers`` table and
     # filled in by GET /auth/tenants/{tenant_id} only; null everywhere else.
     tier_name: Optional[str] = None
+    # Same as tier_name: read from platform-core's tiers / tier_quotas and
+    # filled in by GET /auth/tenants/{tenant_id} only. Null when no tier is
+    # assigned or it can't be read (tier_name says which).
+    tier_limits: Optional[TierLimits] = None
     allocated_budget: Optional[Decimal] = None
     budget_effective_from: Optional[datetime] = None
     budget_effective_to: Optional[datetime] = None
@@ -333,9 +357,9 @@ class TenantUserResponse(BaseSchema):
     # ``is_active`` is never touched by tenant lifecycle changes, so the frontend
     # combines both flags to render the effective status.
     is_tenant_active: Optional[bool] = None
-    # True once the user has completed setup (a credentials row exists). Lets the
-    # frontend tell an admin-suspended user (activated, is_active=False) apart
-    # from one who never set a password (Pending Activation).
+    # True once the account has been active at least once (``users.activated_at``).
+    # Lets the frontend tell an admin-suspended user (activated, is_active=False)
+    # apart from one who never verified / set a password (Pending Activation).
     is_activated: Optional[bool] = None
     creation_type: Optional[CreationType] = None
     created_at: Optional[datetime] = None
@@ -412,19 +436,20 @@ class TenantBudgetRequest(BaseSchema):
     # Both optional — a pure window edit (e.g. extending budget_effective_to
     # on a lapsed window to reactivate it without touching the ₹ amount)
     # sends neither. When one is given, the other becomes required (see
-    # _validate_action_amount_pair below), since a top-up/top-down without
-    # a direction or size is meaningless.
-    action: Optional[Literal["top-up", "top-down"]] = None
+    # _validate_action_amount_pair below), since a top-up without a size
+    # is meaningless. Top-down is no longer supported.
+    action: Optional[Literal["top-up"]] = None
     amount: Optional[Decimal] = Field(None, gt=0, max_digits=15, decimal_places=2)
     # Both optional here — whether either is actually required depends on
     # tenant state TenantService.revise_tenant_budget alone can see (does
     # this tenant already have a LIVE window?), not something this schema
-    # can express. Omitting both is the common case: a plain amount top-up/
-    # top-down that doesn't touch the window at all (what the shipped UI
+    # can express. Omitting both is the common case: a plain amount top-up
+    # that doesn't touch an active window at all (what the shipped UI
     # already sends). See revise_tenant_budget's own docstring for the full
     # required-ness matrix and the 422s it can raise
     # (effective_from_locked / effective_window_required /
-    # budget_effective_from_invalid / budget_effective_to_invalid) — all
+    # budget_effective_from_invalid / budget_effective_to_invalid /
+    # budget_window_expired) — all
     # semantic, so all live in the service, not as Pydantic constraints
     # here, same reasoning as allocated_budget's own missing `ge=0` above.
     budget_effective_from: Optional[datetime] = Field(
@@ -515,10 +540,16 @@ class GetTenantResponse(SuccessResponse):
     data: TenantResponse
 
 
+class UpdateTenantData(TenantResponse):
+    # True only when a PENDING tenant's email correction re-sent the
+    # activation link; always False for a "Change contact" switch.
+    email_verification_sent: bool = False
+
+
 class UpdateTenantResponse(SuccessResponse):
     """PATCH /auth/tenants/{tenant_id}"""
 
-    data: TenantResponse
+    data: UpdateTenantData
 
 
 class UpdateTenantStatusResponse(SuccessResponse):

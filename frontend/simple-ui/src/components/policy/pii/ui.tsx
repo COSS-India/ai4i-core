@@ -49,10 +49,10 @@ export const POLICY_COL_STATUS = {
   truncate: false as const,
 };
 
+/** Default actions width for 3 icon buttons (edit / test / delete). */
 export const POLICY_COL_ACTIONS = {
-  width: "148px",
-  minWidth: "148px",
-};
+  actionCount: 3,
+} as const;
 
 const VISIBLE_TAGS = 4;
 

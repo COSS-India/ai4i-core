@@ -39,6 +39,13 @@ export function isPickableDay(day: MeteringDayKey, pickable: PickableDays): bool
   return day >= pickable.min && day <= pickable.max;
 }
 
+/** Inclusive IST range of `dayCount` days ending today. */
+export function istRangeEndingToday(dayCount: number, nowMs = Date.now()): MeteringDateRange {
+  const to = istDayKey(nowMs);
+  const fromMs = Date.parse(`${to}T00:00:00.000Z`) - (dayCount - 1) * DAY_MS;
+  return { from: utcMsToDayKey(fromMs), to };
+}
+
 /** `period` query params; `from`/`to` (IST dates) are sent only for "custom". */
 export function buildPeriodParams(period: MeteringPeriod): Record<string, string> {
   if (period.key !== "custom") return { period: period.key };

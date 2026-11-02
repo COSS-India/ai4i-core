@@ -2,6 +2,7 @@ import { Box, HStack, IconButton, Tooltip } from "@chakra-ui/react";
 import { DeleteIcon, DownloadIcon, EditIcon, ViewIcon } from "@chakra-ui/icons";
 import React from "react";
 import type { DataTableColumn } from "./DataTable";
+import { ADMIN_ACTIONS_COLUMN_WIDTH } from "./dataTableUtils";
 
 export type DataTableActionId =
   | "view"
@@ -21,7 +22,8 @@ export type DataTableAction = {
   visible?: boolean;
   disabled?: boolean;
   isLoading?: boolean;
-  tooltip?: string;
+  /** Defaults to `label`. May be rich content, e.g. a title and a status line. */
+  tooltip?: React.ReactNode;
   /** IconButton color when idle. */
   color?: string;
   /** Hover color / background pair. */
@@ -51,6 +53,10 @@ export type DataTableActionsProps = {
   className?: string;
   /** Stop row-click propagation (default true). */
   stopPropagation?: boolean;
+  /**
+   * Pack icons toward the chevron (end) by default — Actions is a right rail.
+   * Prefer `flex-end` unless a call site has a special layout.
+   */
   justify?: "flex-start" | "flex-end" | "center";
 };
 
@@ -63,16 +69,19 @@ export function DataTableActions({
   spacing = 1,
   className = "row-actions",
   stopPropagation = true,
-  justify,
-}: DataTableActionsProps) {
+  justify = "flex-end",
+}: Readonly<DataTableActionsProps>) {
   const visible = actions.filter((a) => a.visible !== false);
-  if (visible.length === 0) return null;
+  if (visible.length === 0) {
+    // Keep vertical rhythm when some rows have no icons (e.g. MODEL PII types).
+    return <Box aria-hidden h="32px" w="100%" />;
+  }
 
   return (
     <HStack
       spacing={spacing}
       justify={justify}
-      w={justify ? "full" : undefined}
+      w="full"
       className={className}
       onClick={stopPropagation ? (e) => e.stopPropagation() : undefined}
     >
@@ -93,6 +102,7 @@ export function DataTableActions({
             size="sm"
             variant="ghost"
             color={color}
+            cursor={action.disabled ? "not-allowed" : "pointer"}
             isDisabled={action.disabled}
             isLoading={action.isLoading}
             _hover={{ color: hoverColor, bg: hoverBg }}
@@ -126,31 +136,92 @@ export function DataTableActions({
   );
 }
 
+/** Compact Actions width under `table-layout: fixed` (fits ~3–4 icon buttons). */
+export const DATA_TABLE_ACTIONS_COLUMN_WIDTH = ADMIN_ACTIONS_COLUMN_WIDTH;
+
+/** sm IconButton + HStack spacing={1}; sizes the column to the action count. */
+const ACTION_BTN_PX = 32;
+const ACTION_GAP_PX = 4;
+const ACTION_CELL_PAD_PX = 16;
+/** Enough for the uppercase "Actions" header — never crush to "A". */
+const ACTIONS_HEADER_MIN_PX = 80;
+
+export type ActionsColumnSize = {
+  width: string;
+  minWidth: string;
+  maxW: string;
+};
+
+/**
+ * Pinned width for an actions column with `count` icon slots.
+ * Always sets maxW so the rail cannot absorb leftover table width.
+ */
+export function actionsColumnSize(count: number): ActionsColumnSize {
+  const n = Math.max(0, Math.floor(count));
+  const content = n <= 0 ? 0 : n * ACTION_BTN_PX + (n - 1) * ACTION_GAP_PX;
+  const px = Math.max(content + ACTION_CELL_PAD_PX, ACTIONS_HEADER_MIN_PX);
+  const width = `${px}px`;
+  return { width, minWidth: width, maxW: width };
+}
+
 export type CreateActionsColumnOptions<T> = {
   header?: React.ReactNode;
   id?: string;
   width?: string;
   minWidth?: string;
+  maxW?: string;
+  /**
+   * Max number of visible action icons in the column. When set (and width /
+   * minWidth are omitted), sizes the column to fit that many buttons.
+   */
+  actionCount?: number;
+  /**
+   * Pack header + icons toward the row chevron. Default `right` — Actions is a
+   * right-pinned rail, not a centered island in leftover space.
+   */
   align?: "left" | "center" | "right";
   getActions: (row: T, index: number) => DataTableAction[];
 };
+
+function resolveActionsJustify(
+  align: "left" | "center" | "right",
+): "flex-start" | "flex-end" | "center" {
+  if (align === "right") return "flex-end";
+  if (align === "center") return "center";
+  return "flex-start";
+}
 
 /** Builds a standard actions column that stops row-click propagation. */
 export function createActionsColumn<T>(
   options: CreateActionsColumnOptions<T>,
 ): DataTableColumn<T> {
-  const align = options.align ?? "left";
-  const justify = align === "right" ? "flex-end" : align === "center" ? "center" : undefined;
+  const align = options.align ?? "right";
+  const justify = resolveActionsJustify(align);
+  const counted =
+    options.actionCount != null && options.width == null && options.minWidth == null
+      ? actionsColumnSize(options.actionCount)
+      : undefined;
+  const width = options.width ?? counted?.width ?? DATA_TABLE_ACTIONS_COLUMN_WIDTH;
+  const minWidth = options.minWidth ?? counted?.minWidth ?? width;
+  const maxW = options.maxW ?? counted?.maxW ?? (width === "1%" ? DATA_TABLE_ACTIONS_COLUMN_WIDTH : width);
   return {
     id: options.id ?? "actions",
     header: options.header ?? "Actions",
     truncate: false,
-    width: options.width,
-    minWidth: options.minWidth ?? "120px",
+    width,
+    minWidth,
+    maxW,
     align,
-    thProps: align !== "left" ? { textAlign: align } : undefined,
+    thProps: {
+      textAlign: align,
+      whiteSpace: "nowrap",
+      px: 2,
+      overflow: "visible",
+    },
     tdProps: {
-      textAlign: align !== "left" ? align : undefined,
+      textAlign: align,
+      whiteSpace: "nowrap",
+      px: 2,
       onClick: (e) => e.stopPropagation(),
     },
     cell: (row, index) => (

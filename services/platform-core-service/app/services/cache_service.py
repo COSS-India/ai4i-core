@@ -26,6 +26,10 @@ which populates it lazily on a cache miss with a 1-hour TTL. This module is not 
 writer, only an invalidator: invalidate_pricing() below deletes the key so the next
 billing event re-reads mm_services instead of a stale rate for up to an hour. Safe to
 delete blind — the consumer's read path always falls back to the DB and re-warms.
+
+  core:user:{user_id}:prefs             — per-user preferences (Redis HASH, use HGET)
+Written and read by app/services/user_preferences/preference_cache.py; see its
+docstring.
 """
 
 import json

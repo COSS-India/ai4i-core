@@ -7,6 +7,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from utils.failover import UpstreamUnavailableError, is_unavailable
+
 # ── Persistent Triton HTTP client (Fix 5) ────────────────────────────────────
 # One shared httpx.AsyncClient reuses TCP connections across Triton calls instead
 # of opening and closing a new connection on every request.
@@ -324,6 +326,10 @@ class BaseTaskService:
         # span, and bills input only), and the non-LLM Prometheus metrics
         # track input units only — so an output instance attr would be dead.
         self.billed_input = 0
+        # Groups already answered — each has an exported, billed ai-inference
+        # span, so a later group's failure must not re-run the payload on a
+        # fallback service (Orchestrator._run_with_fallbacks).
+        self.completed_groups = 0
 
         # Language labels — metric labels, not billed quantities, hence no
         # "billed_" prefix (unlike billed_input above). Read once from the
@@ -374,6 +380,7 @@ class BaseTaskService:
                 # onto an instance attr: nothing downstream reads a non-LLM
                 # output count (Prometheus tracks input units only).
                 span_ctx["output_tokens"] = count_output_tokens(group_response_data, unit_type)
+            self.completed_groups += 1
         return PostProcessFormat(
             payload=payload,
             response_data=response_data,
@@ -460,6 +467,14 @@ class BaseTaskService:
             # message — the exception message can surface in logs ingested
             # to client-visible sinks. The chained `from e` preserves the
             # original exception for server-side debugging only.
+            #
+            # Timeout / unreachable / 5xx are marked UpstreamUnavailableError
+            # (still 502) so the Orchestrator can try the Application's
+            # fallback service. 4xx, incl. the 404 LookupError above, is not.
+            if is_unavailable(e):
+                raise UpstreamUnavailableError(
+                    f"{self.task_name}: Triton inference call failed"
+                ) from e
             raise RuntimeError(
                 f"{self.task_name}: Triton inference call failed"
             ) from e

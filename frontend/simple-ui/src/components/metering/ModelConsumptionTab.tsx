@@ -125,15 +125,15 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
   );
 
   const taskTypeFilterLabel = useMemo(() => {
-    if (allTaskTypesSelected) return "All model task types";
-    if (selectedTaskTypes.size === 0) return "No model task types selected";
+    if (allTaskTypesSelected) return "All task types";
+    if (selectedTaskTypes.size === 0) return "No task types selected";
     if (selectedTaskTypes.size === 1) {
       const only = taskTypeNames.find((taskType) =>
         selectedTaskTypes.has(normalizeModelTaskType(taskType)),
       );
       return only ? formatModelTaskTypeLabel(only) : "1 selected";
     }
-    return `${selectedTaskTypes.size} model task types selected`;
+    return `${selectedTaskTypes.size} task types selected`;
   }, [allTaskTypesSelected, selectedTaskTypes, taskTypeNames]);
 
   const sortAccessors = useMemo(

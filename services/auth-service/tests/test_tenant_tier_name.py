@@ -1,4 +1,4 @@
-"""Unit tests for tier_name on GET /auth/tenants/{tenant_id}.
+"""Unit tests for tier_name and tier_limits on GET /auth/tenants/{tenant_id}.
 
 ``tier_name`` is not a tenants column — ``TenantService.resolve_tier_name``
 reads it from platform-core's ``tiers`` table so the Institution Admin's
@@ -6,6 +6,11 @@ reads it from platform-core's ``tiers`` table so the Institution Admin's
 an assigned tier whose name can't be resolved comes back as "Unknown"
 (shown as-is by the client) rather than failing the GET, and never as
 null, which would read as "no tier assigned".
+
+``tier_limits`` (rate limit + monthly quota per task type) backs the
+read-only "Tier and usage limits" section of the same view. It is read live
+from platform-core's ``tiers`` / ``tier_quotas`` / ``inference_types`` and is
+null when no tier is assigned or the lookup fails.
 """
 
 from datetime import datetime, timezone
@@ -26,6 +31,38 @@ def _db(row) -> MagicMock:
     db = MagicMock()
     db.execute = AsyncMock(return_value=result)
     return db
+
+
+def _tier_db(name="Gold", rate_limit=600, quotas=()) -> MagicMock:
+    """Platform-core session answering each lookup by the table it reads."""
+    tier = SimpleNamespace(name=name, rate_limit=rate_limit)
+    quota_rows = [
+        SimpleNamespace(
+            task_type=t, unit=u, monthly_quota=Decimal(q), pending_monthly_quota=Decimal(p) if p else None
+        )
+        for t, q, u, p in quotas
+    ]
+    calls = []
+
+    async def execute(stmt, params):
+        calls.append(str(stmt))
+        result = MagicMock()
+        if "tier_quotas" in str(stmt):
+            result.all.return_value = quota_rows
+        else:
+            result.first.return_value = tier
+        return result
+
+    db = MagicMock()
+    db.execute = AsyncMock(side_effect=execute)
+    db.sql = calls
+    return db
+
+
+_QUOTAS = (
+    ("llm", "99999999.0000", "tokens", None),
+    ("asr", "99999999.0000", "audio_minutes", "50000.0000"),
+)
 
 
 class TestResolveTierName:
@@ -56,6 +93,71 @@ class TestResolveTierName:
         assert await TenantService.resolve_tier_name(uuid4(), db) == UNKNOWN_TIER_NAME
 
 
+class TestResolveTierLimits:
+    @pytest.mark.asyncio
+    async def test_returns_rate_limit_and_quotas(self) -> None:
+        limits = await TenantService.resolve_tier_limits(uuid4(), _tier_db(quotas=_QUOTAS))
+        assert limits == {
+            "rate_limit": 600,
+            "quotas": [
+                {
+                    "task_type": "llm",
+                    "unit": "tokens",
+                    "monthly_quota": Decimal("99999999.0000"),
+                    "pending_monthly_quota": None,
+                },
+                {
+                    "task_type": "asr",
+                    "unit": "audio_minutes",
+                    "monthly_quota": Decimal("99999999.0000"),
+                    "pending_monthly_quota": Decimal("50000.0000"),
+                },
+            ],
+        }
+
+    @pytest.mark.asyncio
+    async def test_pending_equal_to_current_quota_is_not_a_change(self) -> None:
+        """platform-core writes pending_monthly_quota on every tier save, even
+        when the limit is unchanged, so that must not read as a scheduled change."""
+        db = _tier_db(quotas=(("llm", "1000.0000", "tokens", "1000"),))
+        limits = await TenantService.resolve_tier_limits(uuid4(), db)
+        assert limits["quotas"][0]["pending_monthly_quota"] is None
+        assert limits["quotas"][0]["monthly_quota"] == Decimal("1000")
+
+    @pytest.mark.asyncio
+    async def test_quotas_follow_catalogue_order(self) -> None:
+        db = _tier_db(quotas=_QUOTAS)
+        await TenantService.resolve_tier_limits(uuid4(), db)
+        assert "ORDER BY it.id" in db.sql[-1]
+
+    @pytest.mark.asyncio
+    async def test_tier_without_rate_limit_or_quotas(self) -> None:
+        limits = await TenantService.resolve_tier_limits(uuid4(), _tier_db(rate_limit=None))
+        assert limits == {"rate_limit": None, "quotas": []}
+
+    @pytest.mark.asyncio
+    async def test_no_tier_skips_lookup(self) -> None:
+        db = _tier_db()
+        assert await TenantService.resolve_tier_limits(None, db) is None
+        db.execute.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_missing_tiers_row_returns_none(self) -> None:
+        db = _db(None)
+        assert await TenantService.resolve_tier_limits(uuid4(), db) is None
+        db.execute.assert_awaited_once()  # no quota query for a tier that isn't there
+
+    @pytest.mark.asyncio
+    async def test_platform_core_unconfigured_returns_none(self) -> None:
+        assert await TenantService.resolve_tier_limits(uuid4(), None) is None
+
+    @pytest.mark.asyncio
+    async def test_lookup_error_returns_none(self) -> None:
+        db = MagicMock()
+        db.execute = AsyncMock(side_effect=RuntimeError("platform-core down"))
+        assert await TenantService.resolve_tier_limits(uuid4(), db) is None
+
+
 def _tenant(tier_id=None) -> Tenant:
     return Tenant(
         id=152,
@@ -71,7 +173,8 @@ def _tenant(tier_id=None) -> Tenant:
 
 class TestGetTenantRouteTierName:
     """Through the real GET /auth/tenants/{tenant_id} route, so dropping the
-    tier_name assignment in the route fails a test, not just the helper."""
+    tier_name / tier_limits assignment in the route fails a test, not just
+    the helper."""
 
     @staticmethod
     def _client(tenant: Tenant, platform_core_db):
@@ -88,6 +191,7 @@ class TestGetTenantRouteTierName:
         svc.get_tenant = AsyncMock(return_value=tenant)
         svc.build_tenant_response = TenantService.build_tenant_response
         svc.resolve_tier_name = TenantService.resolve_tier_name
+        svc.resolve_tier_limits = TenantService.resolve_tier_limits
 
         app = FastAPI()
         register_exception_handlers(app)
@@ -99,7 +203,7 @@ class TestGetTenantRouteTierName:
 
     def test_returns_tier_name_for_assigned_tier(self) -> None:
         tier_id = uuid4()
-        client = self._client(_tenant(tier_id), _db(SimpleNamespace(name="Gold")))
+        client = self._client(_tenant(tier_id), _tier_db(quotas=_QUOTAS))
 
         response = client.get("/auth/tenants/152")
 
@@ -109,6 +213,20 @@ class TestGetTenantRouteTierName:
         assert data["tier_name"] == "Gold"
         assert Decimal(data["allocated_budget"]) == Decimal("50000.00")
 
+    def test_returns_tier_limits_for_assigned_tier(self) -> None:
+        client = self._client(_tenant(uuid4()), _tier_db(quotas=_QUOTAS))
+
+        limits = client.get("/auth/tenants/152").json()["data"]["tier_limits"]
+
+        assert limits["rate_limit"] == 600
+        assert [
+            (q["task_type"], q["unit"], Decimal(q["monthly_quota"]), q["pending_monthly_quota"])
+            for q in limits["quotas"]
+        ] == [
+            ("llm", "tokens", Decimal("99999999"), None),
+            ("asr", "audio_minutes", Decimal("99999999"), "50000.0000"),
+        ]
+
     def test_unassigned_tenant_returns_null_tier_name(self) -> None:
         client = self._client(_tenant(None), _db(None))
 
@@ -116,6 +234,7 @@ class TestGetTenantRouteTierName:
 
         assert data["tier_id"] is None
         assert data["tier_name"] is None
+        assert data["tier_limits"] is None
 
     def test_failed_lookup_keeps_get_working_with_tier_id_set(self) -> None:
         # The client shows tier_name as-is, so "Unknown" — never "—".
@@ -128,6 +247,7 @@ class TestGetTenantRouteTierName:
         data = response.json()["data"]
         assert data["tier_id"] == str(tier_id)
         assert data["tier_name"] == UNKNOWN_TIER_NAME
+        assert data["tier_limits"] is None
 
 
 def test_tenant_response_carries_tier_and_budget_fields() -> None:
@@ -145,4 +265,5 @@ def test_tenant_response_carries_tier_and_budget_fields() -> None:
     out = TenantService.build_tenant_response(tenant)
     assert out["tier_id"] == str(tier_id)
     assert out["tier_name"] is None  # filled in by the GET route only
+    assert out["tier_limits"] is None
     assert Decimal(out["allocated_budget"]) == Decimal("50000.00")

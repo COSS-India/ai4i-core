@@ -18,6 +18,13 @@ class ModelMetadata(BaseModel):
 
     modelProvider: Optional[str] = Field(None, description="mm_models.submitter.name")
     modelVersion: Optional[str] = Field(None, description="mm_models.version")
+    serviceId: Optional[str] = Field(
+        None,
+        description=(
+            "The service that answered: one of the Application's configured "
+            "fallbacks when it differs from the requested serviceId."
+        ),
+    )
     language: List[Dict[str, Any]] = Field(
         default_factory=list, description="mm_models.languages"
     )

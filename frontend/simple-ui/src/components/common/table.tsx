@@ -29,6 +29,8 @@ export {
   type DataTableSearchConfig,
   type DataTableFilterDef,
   type DataTableFilterOption,
+  type DataTableColumnFilterConfig,
+  type DataTableColumnFilters,
   type DataTableSortState,
   type DataTableSortDirection,
 } from "./DataTable";
@@ -36,6 +38,7 @@ export {
 export {
   DataTableActions,
   createActionsColumn,
+  actionsColumnSize,
   type DataTableAction,
   type DataTableActionId,
   type DataTableActionsProps,
@@ -52,3 +55,10 @@ export {
   useAdminDataTableServer,
   type UseAdminDataTableServerOptions,
 } from "../../hooks/useAdminDataTable";
+
+export {
+  TruncatingBadge,
+  TruncatingCellContent,
+  distributeColumnWidths,
+  resolveColumnSizingMode,
+} from "./dataTableUtils";

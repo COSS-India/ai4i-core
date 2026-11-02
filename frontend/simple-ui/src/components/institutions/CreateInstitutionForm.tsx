@@ -8,14 +8,14 @@ import FormActions from "../common/FormActions";
 import InstitutionForm from "./InstitutionForm";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 
-type CreateInstitutionFormProps = {
+type CreateInstitutionFormProps = Readonly<{
   tm: ReturnType<typeof useTenantManagement>;
   onCancel?: () => void;
   onCreated?: () => void;
   hideActions?: boolean;
   formId?: string;
   onConsentChange?: (accepted: boolean) => void;
-};
+}>;
 
 const FORM_ID = "create-institution-form";
 

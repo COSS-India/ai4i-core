@@ -1,6 +1,7 @@
 """Tenant + tenant-user CRUD routes — thin handlers; logic in TenantService."""
 
-from typing import Optional
+import logging
+from typing import Annotated, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
@@ -12,7 +13,7 @@ from app.core.responses import to_response
 from app.utils.auth_helper import has_permission_id
 from app.utils.masking import mask_pii_in_dict
 from app.dependencies.auth import get_current_user
-from app.dependencies.services import get_tenant_service
+from app.dependencies.services import get_cache_service, get_tenant_service
 from app.models.tenant import TenantStatus
 from app.models.user import User
 from app.schemas.common import MessageData, error_responses
@@ -47,7 +48,10 @@ from app.schemas.tenant import (
     UpdateTenantUserResponse,
     UpdateTenantUserStatusResponse,
 )
+from app.services.cache_service import CacheService
 from app.services.tenant_service import TenantService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/auth/tenants",
@@ -152,7 +156,9 @@ async def get_tenant(
     svc: TenantService = Depends(get_tenant_service),
     platform_core_db: Optional[AsyncSession] = Depends(get_platform_core_db),
 ):
-    """Return one tenant by id, including its assigned ``tier_name``.
+    """Return one tenant by id, including its assigned ``tier_name`` and
+    ``tier_limits`` (rate limit in requests/min and monthly quota per task
+    type) for the read-only "Tier and usage limits" section.
 
     Tenant admins are limited to their own tenant. Pass `unmask=true` only
     for the edit form (ADMIN / TENANT_ADMIN).
@@ -161,6 +167,7 @@ async def get_tenant(
     tenant = await svc.get_tenant(current_user, tenant_id, unmask=unmask, is_admin=is_admin)
     data = svc.build_tenant_response(tenant, unmask=unmask)
     data["tier_name"] = await svc.resolve_tier_name(tenant.tier_id, platform_core_db)
+    data["tier_limits"] = await svc.resolve_tier_limits(tenant.tier_id, platform_core_db)
     return GetTenantResponse(data=data)
 
 
@@ -180,11 +187,19 @@ async def update_tenant(
 
     Status changes go through PATCH /{tenant_id}/status. Duplicate
     organisation or email returns 409. Returned contact PII is masked.
+
+    Contact change: send ``contact_user_id`` (an active, set-up Institution
+    Admin of this tenant) — ``email`` switches to theirs immediately, no
+    email is sent. 409 CONTACT_NOT_INSTITUTION_ADMIN / CONTACT_NOT_VERIFIED /
+    CONTACT_ALREADY_CURRENT, or TENANT_EMAIL_EDIT_NOT_ALLOWED while
+    PENDING/SUSPENDED/DEACTIVATED, for the Default Organisation, or for a
+    typed email change on a non-PENDING tenant. A PENDING tenant may still correct
+    its email directly (activation link re-sent; ``email_verification_sent``).
     """
-    tenant = await svc.update_tenant(current_user, tenant_id, body, background)
-    return UpdateTenantResponse(
-        data=mask_pii_in_dict(to_response(tenant, TenantResponse))
-    )
+    tenant, link_sent = await svc.update_tenant(current_user, tenant_id, body, background)
+    data = to_response(tenant, TenantResponse)
+    data["email_verification_sent"] = link_sent
+    return UpdateTenantResponse(data=mask_pii_in_dict(data))
 
 
 @router.patch(
@@ -285,14 +300,15 @@ async def revise_tenant_budget(
     svc: TenantService = Depends(get_tenant_service),
     platform_core_db: Optional[AsyncSession] = Depends(get_platform_core_db),
 ):
-    """Top-up or top-down a tenant's budget by an amount, effective immediately. ADMIN-only.
+    """Top-up a tenant's budget by an amount, effective immediately. ADMIN-only.
 
     Replaces platform-core-service's PATCH /pay-per-use/tenant/budget —
     budget now lives on tenants.allocated_budget directly; available_balance
     no longer exists. Response is unwrapped (no success/data envelope),
     matching the endpoint it replaces.
 
-    ``action``/``amount`` are also both optional now — a pure window edit
+    ``action`` only accepts ``"top-up"``. ``action``/``amount`` are both
+    optional — a pure window edit
     (e.g. extending ``budget_effective_to`` to reactivate a lapsed window)
     sends neither; the two are otherwise only ever accepted together (422
     on a schema validation error if only one is given), and at least one of
@@ -300,7 +316,7 @@ async def revise_tenant_budget(
     present.
 
     ``budget_effective_from``/``budget_effective_to`` are both optional —
-    both omitted is a plain amount top-up/top-down that leaves an existing
+    both omitted is a plain amount top-up that leaves an active
     window untouched. Whether either is actually required depends on
     whether this tenant currently has a LIVE window:
       * Active: ``budget_effective_from`` is locked (422
@@ -313,7 +329,9 @@ async def revise_tenant_budget(
         as-is and just extends ``budget_effective_to`` — reactivating the
         SAME window (remaining balance carries over, since
         allocated_budget/spend are never window-scoped) rather than
-        forcing a brand-new one.
+        forcing a brand-new one. A top-up without a new
+        ``budget_effective_to`` is rejected (422 ``budget_window_expired``)
+        while the window stays lapsed.
       * No window on file at all: this is the ONLY case that can ever set
         a new ``budget_effective_from`` — this call IS the assignment and
         both fields become required (422 ``effective_window_required`` if
@@ -327,18 +345,8 @@ async def revise_tenant_budget(
     different share of a different-sized total (``applications_recomputed``
     reports how many actually changed; ``keys_recomputed`` is always 0 —
     no Application's ₹ moving means nothing forces its Keys to react
-    either). A decrease that would leave the new total unable to cover
-    what's already allocated across every Application (nobody auto-shrinks
-    to make room) rejects the WHOLE revision, including the Tenant's own
-    allocated_budget change — see TenantService.revise_tenant_budget /
-    AllocationService.cascade_tenant_budget_revision.
-
-    A top-down is rejected outright (409 budget_below_consumed) if it would
-    drop the budget below this tenant's total spend across its API keys, or
-    refused (503 spend_verification_unavailable) if that spend — or the
-    cascade above — can't be verified/applied right now. Once a revision
-    (either direction) commits, it best-effort recomputes and syncs the
-    cached budget-exhausted flag on this tenant's API keys too (see
+    either). Once a revision commits, it best-effort recomputes and syncs
+    the cached budget-exhausted flag on this tenant's API keys too (see
     TenantService._sync_ppu_wallet_and_exhaustion).
     """
     tenant, applications_recomputed, keys_recomputed, snapshot_write_failed = (
@@ -479,34 +487,45 @@ async def resend_tenant_user_setup_link(
 
     Use this — not /auth/resend-verification — for users created under a tenant,
     who are provisioned passwordless and onboard via a set-password link.
+    A self-registered user still waiting on email verification gets a new
+    verification link instead.
     """
-    await svc.resend_tenant_user_setup_link(
+    link_kind = await svc.resend_tenant_user_setup_link(
         current_user, tenant_id, user_id, background_tasks
     )
-    return ResendTenantUserSetupLinkResponse(
-        data=MessageData(
-            message="A password setup link has been sent to the user's email."
-        )
+    message = (
+        "A verification link has been sent to the user's email."
+        if link_kind == "verify"
+        else "A password setup link has been sent to the user's email."
     )
+    return ResendTenantUserSetupLinkResponse(data=MessageData(message=message))
 
 
 @router.patch(
     "/{tenant_id}/users/{user_id}",
     response_model=UpdateTenantUserResponse,
-    responses=error_responses(403, 404, 409),
+    responses=error_responses(403, 404, 409, 422),
 )
 async def update_tenant_user(
     tenant_id: int,
     user_id: UUID,
     body: TenantUserUpdate,
-    current_user: User = Depends(get_current_user),
-    svc: TenantService = Depends(get_tenant_service),
+    current_user: Annotated[User, Depends(get_current_user)],
+    svc: Annotated[TenantService, Depends(get_tenant_service)],
+    cache_svc: Annotated[CacheService, Depends(get_cache_service)],
 ):
     """Update a tenant user's profile and/or role.
 
     Provide at least one field. Duplicate email/username returns 409.
+    A role change signs the user out: access tokens carry permission_ids,
+    so a token issued under the old role would keep its permissions.
     """
-    target = await svc.update_tenant_user(current_user, tenant_id, user_id, body)
+    target, role_changed = await svc.update_tenant_user(current_user, tenant_id, user_id, body)
+    if role_changed:
+        try:
+            await cache_svc.revoke_all_sessions(str(target.id))
+        except Exception:
+            logger.error("Failed to revoke sessions for user id=%s after role change", target.id)
     return UpdateTenantUserResponse(
         data=await svc.build_tenant_user_response(target)
     )

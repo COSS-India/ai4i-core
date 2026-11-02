@@ -148,7 +148,7 @@ def _setup_exception_handlers(app: FastAPI) -> None:
         # The route never ran, so no "request" span exists: emit one, so the
         # request still gets its (failed) usage_events row.
         from trace.request_span import record_rejected_request
-        record_rejected_request(request, 400)
+        record_rejected_request(request, 400, str(exc))
         return JSONResponse(
             status_code=400,
             content={"detail": str(exc)}

@@ -10,7 +10,7 @@ import { TaskTypeLabel } from "./UsageSpendCells";
 export interface RankedShareRow {
   rank: number;
   label: string;
-  /** Model task type shown as its own column (Model consumption list). */
+  /** Task type shown as its own column (Model consumption list). */
   subtitle?: string;
   /** Raw task type id — renders with TaskTypeLabel when set. */
   taskType?: string;
@@ -28,7 +28,7 @@ interface RankedShareListProps {
   tipTotal?: string;
   tipTaskType?: string;
   tipRight?: string;
-  /** Donut list: Model Name, Model Task Type, Total requests, % of total. */
+  /** Donut list: Model Name, Task Type, Total requests, % of total. */
   variant?: "default" | "modelWithTaskType";
 }
 

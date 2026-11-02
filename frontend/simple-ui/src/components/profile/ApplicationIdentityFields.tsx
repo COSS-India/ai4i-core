@@ -54,7 +54,7 @@ export default function ApplicationIdentityFields({
       ) : null}
       <VStack spacing={4} align="stretch">
         <FormControl isRequired isInvalid={Boolean(errors.name)}>
-          <FieldLabel>Application name</FieldLabel>
+          <FieldLabel hint={FIELD_HINTS.application.name.tip}>Application name</FieldLabel>
           <Input
             value={form.name}
             onChange={(e) => setForm((prev) => ({ ...prev, name: e.target.value }))}
@@ -64,23 +64,21 @@ export default function ApplicationIdentityFields({
           <FieldHint show={!errors.name}>{FIELD_HINTS.application.name.helper}</FieldHint>
         </FormControl>
         <FormControl>
-          <FieldLabel>Description</FieldLabel>
+          <FieldLabel hint={FIELD_HINTS.application.description.tip}>Description</FieldLabel>
           <Textarea
             value={form.description}
             onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))}
             placeholder={FIELD_HINTS.application.description.placeholder}
-            rows={3}
+            rows={2}
           />
-          <FieldHint>{FIELD_HINTS.application.description.helper}</FieldHint>
         </FormControl>
         <FormControl>
-          <FieldLabel>Domain</FieldLabel>
+          <FieldLabel hint={FIELD_HINTS.application.domain.tip}>Domain</FieldLabel>
           <Input
             value={form.domain}
             onChange={(e) => setForm((prev) => ({ ...prev, domain: e.target.value }))}
             placeholder={FIELD_HINTS.application.domain.placeholder}
           />
-          <FieldHint>{FIELD_HINTS.application.domain.helper}</FieldHint>
         </FormControl>
       </VStack>
     </FormSection>

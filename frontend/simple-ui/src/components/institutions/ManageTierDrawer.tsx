@@ -29,7 +29,7 @@ import FieldHint from "../common/FieldHint";
 import FieldLabel from "../common/FieldLabel";
 import TierSelect from "./TierSelect";
 
-type ManageTierDrawerProps = {
+type ManageTierDrawerProps = Readonly<{
   isOpen: boolean;
   onClose: () => void;
   manageTenant: TenantView | null;
@@ -50,8 +50,6 @@ type ManageTierDrawerProps = {
   setManageEffectiveTo: (value: string) => void;
   setWindowError: (value: string | null) => void;
   windowError: string | null;
-  budgetAction: "topup" | "topdown";
-  setBudgetAction: (action: "topup" | "topdown") => void;
   budgetAmount: string;
   setBudgetAmount: (value: string) => void;
   onApplyBudget: () => void;
@@ -61,7 +59,7 @@ type ManageTierDrawerProps = {
   servicesLoading: boolean;
   servicesError: boolean;
   planExpired: boolean;
-};
+}>;
 
 export default function ManageTierDrawer({
   isOpen,
@@ -84,8 +82,6 @@ export default function ManageTierDrawer({
   setManageEffectiveTo,
   setWindowError,
   windowError,
-  budgetAction,
-  setBudgetAction,
   budgetAmount,
   setBudgetAmount,
   onApplyBudget,
@@ -155,7 +151,7 @@ export default function ManageTierDrawer({
                 </Alert>
               )}
               <FormControl>
-                <FieldLabel>Tier</FieldLabel>
+                <FieldLabel hint={FIELD_HINTS.assignTier.tier.tip}>Tier</FieldLabel>
                 {!isEditingTier && originalTierId ? (
                   <HStack>
                     <Input
@@ -199,7 +195,10 @@ export default function ManageTierDrawer({
               </FormControl>
 
               <FormControl>
-                <FieldLabel formLabelProps={{ fontWeight: "semibold", fontSize: "sm" }}>
+                <FieldLabel
+                  hint={FIELD_HINTS.assignTier.currentBudget.tip}
+                  formLabelProps={{ fontWeight: "semibold", fontSize: "sm" }}
+                >
                   Current budget (₹)
                 </FieldLabel>
                 <Input
@@ -213,7 +212,10 @@ export default function ManageTierDrawer({
 
               <HStack spacing={4} align="flex-start">
                 <FormControl>
-                  <FieldLabel formLabelProps={{ fontWeight: "semibold", fontSize: "sm" }}>
+                  <FieldLabel
+                    hint={FIELD_HINTS.assignTier.effectiveFrom.tip}
+                    formLabelProps={{ fontWeight: "semibold", fontSize: "sm" }}
+                  >
                     Budget Effective From
                   </FieldLabel>
                   <Input
@@ -232,7 +234,10 @@ export default function ManageTierDrawer({
                 </FormControl>
 
                 <FormControl>
-                  <FieldLabel formLabelProps={{ fontWeight: "semibold", fontSize: "sm" }}>
+                  <FieldLabel
+                    hint={FIELD_HINTS.assignTier.effectiveTo.tip}
+                    formLabelProps={{ fontWeight: "semibold", fontSize: "sm" }}
+                  >
                     Budget Effective To
                   </FieldLabel>
                   <Input
@@ -264,47 +269,18 @@ export default function ManageTierDrawer({
                   p={3}
                   bg="ink.50"
                 >
-                  <HStack justify="space-between" mb={3}>
-                    <Text
-                      fontSize="sm"
-                      fontWeight="medium"
-                      color={windowNeedsExtension ? "ink.400" : undefined}
-                    >
-                      Adjust Budget
-                    </Text>
-
-                    <HStack spacing={0}>
-                      <Button
-                        size="xs"
-                        variant={
-                          budgetAction === "topup" ? "solid" : "outline"
-                        }
-                        colorScheme="green"
-                        borderRightRadius={0}
-                        isDisabled={windowNeedsExtension}
-                        onClick={() => setBudgetAction("topup")}
-                      >
-                        + Top-up
-                      </Button>
-
-                      <Button
-                        size="xs"
-                        variant={
-                          budgetAction === "topdown" ? "solid" : "outline"
-                        }
-                        colorScheme="red"
-                        borderLeftRadius={0}
-                        isDisabled={windowNeedsExtension}
-                        onClick={() => setBudgetAction("topdown")}
-                      >
-                        - Top-down
-                      </Button>
-                    </HStack>
-                  </HStack>
+                  <Text
+                    fontSize="sm"
+                    fontWeight="medium"
+                    mb={3}
+                    color={windowNeedsExtension ? "ink.400" : undefined}
+                  >
+                    Top-up Budget
+                  </Text>
 
                   <HStack>
                     <Input
-                      placeholder="Amount in ₹"
+                      placeholder="Amount to add in ₹"
                       type="number"
                       value={budgetAmount}
                       isDisabled={windowNeedsExtension}

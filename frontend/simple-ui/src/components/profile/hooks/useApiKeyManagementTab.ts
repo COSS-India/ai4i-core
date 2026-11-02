@@ -29,9 +29,16 @@ import {
 } from "../../../config/constants";
 import {
   formatPermissionLabel,
+  DEFAULT_GRACE_EXTENSION,
+  type GraceExtensionOption,
+  graceExtensionEnd,
+  graceExtensionError,
+  isGraceWithinExpiry,
   isRotationInProgress,
   normalizeApiKeyRecord,
+  ROTATION_GRACE_OPTIONS,
 } from "../../../utils/apiKeyUtils";
+import { getDefaultRotationGraceDays } from "../../../config/runtimeConfig";
 import { useInferenceTypes } from "../../../hooks/useInferenceTypes";
 import {
   API_KEY_CATALOG_STALE_MS,
@@ -44,6 +51,8 @@ import type { InferenceTypeItem } from "../../../services/inferenceTypesService"
 
 export interface ApiKeyTableRow extends APIKeyResponse {
   application_name?: string;
+  /** Set on the Current/Previous key sub-rows the table shows under a rotating key. */
+  subRow?: "current" | "previous";
 }
 
 /** Null until revoke opens. Error must not be rendered as ₹0. */
@@ -129,6 +138,15 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
   /** Key whose previous (pre-rotation) value the admin is about to stop early. */
   const [keyToStopPrevious, setKeyToStopPrevious] = useState<ApiKeyTableRow | null>(null);
   const [isStoppingPrevious, setIsStoppingPrevious] = useState(false);
+  /** Grace period picked in the rotate dialog; null when no option fits before the key's expiry. */
+  const [rotateGraceDays, setRotateGraceDays] = useState<number | null>(null);
+  /** Key whose previous value's window the admin is about to extend. */
+  const [keyToExtend, setKeyToExtend] = useState<ApiKeyTableRow | null>(null);
+  /** Preset added to the current grace end, or "custom" for extendCustomUntil. */
+  const [extendOption, setExtendOption] = useState<GraceExtensionOption>(DEFAULT_GRACE_EXTENSION);
+  /** Custom new grace end as a datetime-local input value. */
+  const [extendCustomUntil, setExtendCustomUntil] = useState("");
+  const [isExtending, setIsExtending] = useState(false);
   /** The new raw key, held only until the admin closes the result dialog. */
   const [rotatedKey, setRotatedKey] = useState<RotateAPIKeyResponse | null>(null);
   const [isUpdating, setIsUpdating] = useState(false);
@@ -455,17 +473,25 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     }
   };
 
-  const handleOpenRotateModal = (key: ApiKeyTableRow) => setKeyToRotate(key);
+  const handleOpenRotateModal = (key: ApiKeyTableRow) => {
+    // Preselect the configured default when it fits, else the longest option that does.
+    const allowed = ROTATION_GRACE_OPTIONS.filter((d) => isGraceWithinExpiry(d, key.expires_at));
+    const preferred = getDefaultRotationGraceDays();
+    setRotateGraceDays(
+      allowed.find((d) => d === preferred) ?? allowed.at(-1) ?? null,
+    );
+    setKeyToRotate(key);
+  };
 
   const handleCloseRotateModal = () => {
     if (!isRotating) setKeyToRotate(null);
   };
 
   const handleRotateApiKey = async () => {
-    if (!keyToRotate) return;
+    if (!keyToRotate || rotateGraceDays === null) return;
     setIsRotating(true);
     try {
-      const result = await authService.rotateApiKey(keyToRotate.id);
+      const result = await authService.rotateApiKey(keyToRotate.id, rotateGraceDays);
       setKeyToRotate(null);
       setRotatedKey(result);
       await handleFetchAllApiKeys();
@@ -494,20 +520,66 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     if (!keyToStopPrevious) return;
     setIsStoppingPrevious(true);
     try {
-      await authService.revokePreviousApiKeyValue(keyToStopPrevious.id);
-      showToast({ type: "success", message: "Previous key value revoked. The current key keeps working." });
+      const result = await authService.revokePreviousApiKeyValue(keyToStopPrevious.id);
+      showToast({ type: "success", message: result.message });
       setKeyToStopPrevious(null);
       await handleFetchAllApiKeys();
     } catch (error) {
       showToast({
         type: "error",
-        message: error instanceof Error ? error.message : "Failed to revoke the previous key value",
+        message: error instanceof Error ? error.message : "Failed to revoke the old key value",
       });
       // A 409 means the window already ended, or the key was revoked elsewhere.
       setKeyToStopPrevious(null);
       void handleFetchAllApiKeys();
     } finally {
       setIsStoppingPrevious(false);
+    }
+  };
+
+  const handleOpenExtendModal = (key: ApiKeyTableRow) => {
+    setExtendOption(DEFAULT_GRACE_EXTENSION);
+    setExtendCustomUntil("");
+    setKeyToExtend(key);
+  };
+
+  const extendNewEnd = keyToExtend
+    ? graceExtensionEnd(keyToExtend.rotated_key_expires_at, extendOption, extendCustomUntil)
+    : null;
+  const extendError = keyToExtend
+    ? graceExtensionError(extendNewEnd, keyToExtend.rotated_key_expires_at, keyToExtend.expires_at)
+    : null;
+
+  const handleCloseExtendModal = () => {
+    if (!isExtending) setKeyToExtend(null);
+  };
+
+  const handleExtendPreviousKeyValue = async () => {
+    if (!keyToExtend) return;
+    if (extendError || !extendNewEnd) {
+      showToast({ type: "error", message: extendError ?? "Choose when the old key should stop working." });
+      return;
+    }
+    const until = extendNewEnd;
+    setIsExtending(true);
+    try {
+      const result = await authService.extendPreviousApiKeyValue(keyToExtend.id, until.toISOString());
+      showToast({
+        type: "success",
+        message: `Old key now works until ${new Date(result.rotated_key_expires_at ?? until).toLocaleString()}.`,
+      });
+      setKeyToExtend(null);
+      await handleFetchAllApiKeys();
+    } catch (error) {
+      showToast({
+        type: "error",
+        message: error instanceof Error ? error.message : "Failed to extend the old key",
+      });
+      // A 409 means the window already ended or the key changed elsewhere; a
+      // 422 is a date the admin can fix, so keep the dialog open for that.
+      void handleFetchAllApiKeys();
+    } finally {
+      setIsExtending(false);
     }
   };
 
@@ -674,6 +746,19 @@ export function useApiKeyManagementTab({ user }: UseApiKeyManagementTabOptions) 
     handleOpenStopPreviousModal,
     handleCloseStopPreviousModal,
     handleStopPreviousKeyValue,
+    rotateGraceDays,
+    setRotateGraceDays,
+    keyToExtend,
+    extendOption,
+    setExtendOption,
+    extendCustomUntil,
+    setExtendCustomUntil,
+    extendNewEnd,
+    extendError,
+    isExtending,
+    handleOpenExtendModal,
+    handleCloseExtendModal,
+    handleExtendPreviousKeyValue,
     isRotationInProgress,
     /** Rotatable when effectively active and its previous value (if any) has stopped working. */
     isKeyRotatable: (key: APIKeyResponse) =>

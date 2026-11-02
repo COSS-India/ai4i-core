@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas.common import MessageMeta, SuccessResponse, SuccessResponseWithMeta
 from app.schemas.policy_management.fields import (
@@ -45,6 +45,31 @@ class CategoryCreate(BaseModel):
         return clean_description(v)
 
 
+class CategoryUpdate(BaseModel):
+    """Partial update: only the fields sent change, and at least one is
+    required. Name is cleaned like on create and can't be null or blank;
+    a null or blank description clears it."""
+
+    name: Optional[str] = Field(None, max_length=NAME_MAX_LEN)
+    description: Optional[str] = Field(None, max_length=DESCRIPTION_MAX_LEN)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def validate_name(cls, v):
+        return clean_name(v, "Category")
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def normalize_description(cls, v):
+        return clean_description(v)
+
+    @model_validator(mode="after")
+    def require_a_field(self):
+        if not self.model_fields_set:
+            raise ValueError("At least one of name or description is required")
+        return self
+
+
 class CategoryStatusUpdate(BaseModel):
     """Enable or disable a category without deleting it. is_active is
     strict, so ``"false"`` or ``0`` is rejected rather than coerced."""
@@ -70,6 +95,13 @@ class CreateCategoryResponse(SuccessResponseWithMeta):
 
 class UpdateCategoryStatusResponse(SuccessResponseWithMeta):
     """PATCH /policies/categories/{category_id}/status"""
+
+    data: CategoryItem
+    meta: MessageMeta
+
+
+class UpdateCategoryResponse(SuccessResponseWithMeta):
+    """PATCH /policies/categories/{category_id}"""
 
     data: CategoryItem
     meta: MessageMeta

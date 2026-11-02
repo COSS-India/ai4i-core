@@ -335,6 +335,37 @@ class TestGetOrCreateSubscriptionRowIsRaceSafe:
         assert len(session.sub_rows) == 1
 
 
+@pytest.mark.asyncio
+class TestNonNumericTenantIdIsRejected:
+    """Staging repro: PUT ...?tenant_id=not-a-number with {"recipients": []}
+    returned 200 and wrote a row keyed by the literal string — the tenant
+    check only ran inside recipient validation, which an empty list skips."""
+
+    async def test_put_with_empty_recipients_is_rejected_and_writes_nothing(self):
+        session = _Session(catalog_rows=[_catalog_row(id=1)], sub_rows=[])
+        with pytest.raises(ValidationError) as exc:
+            await svc.update_subscription_recipients(
+                session, tenant_id="not-a-number", notification_id=1, recipients=[], auth_db=None,
+            )
+        assert exc.value.code == "INVALID_TENANT_ID"
+        assert session.sub_rows == [] and session.commits == 0
+
+    async def test_patch_is_rejected_and_writes_nothing(self):
+        session = _Session(catalog_rows=[_catalog_row(id=1)], sub_rows=[])
+        with pytest.raises(ValidationError) as exc:
+            await svc.update_subscription_state(
+                session, tenant_id="not-a-number", notification_id=1, subscribed=True
+            )
+        assert exc.value.code == "INVALID_TENANT_ID"
+        assert session.sub_rows == [] and session.commits == 0
+
+    async def test_get_is_rejected(self):
+        session = _Session(catalog_rows=[_catalog_row(id=1)])
+        with pytest.raises(ValidationError) as exc:
+            await svc.list_subscriptions(session, tenant_id="not-a-number")
+        assert exc.value.code == "INVALID_TENANT_ID"
+
+
 class TestSubscriptionWritesRefreshTheSharedCache:
     """Every subscription write rebuilds that tenant's value in Redis and
     publishes SUBSCRIPTION (cache_refresh.after_subscription_write), so

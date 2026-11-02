@@ -4,6 +4,7 @@ User ORM model.
 
 import enum
 import uuid
+from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, Column, DateTime, Enum, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
@@ -20,6 +21,9 @@ class CreationType(str, enum.Enum):
     DEFAULT = "default" # for normal users
     GOOGLE = "google" # for google users
     TENANT = "tenant" # for tenant users
+
+
+SELF_REGISTERED_CREATION_TYPES = frozenset({CreationType.DEFAULT, CreationType.GOOGLE})
 
 
 class User(Base):
@@ -39,6 +43,12 @@ class User(Base):
         index=True,
     )
     last_login = Column(DateTime(timezone=True), nullable=True)
+    # First time the account became active (email verified, password set,
+    # OAuth signup or admin activation). Never cleared, so an inactive user
+    # with it set was suspended; without it they are Pending Activation.
+    # A credentials row can't tell these apart: self-signup stores the
+    # password before the email is verified.
+    activated_at = Column(DateTime(timezone=True), nullable=True)
     avatar_url = Column(String(500), nullable=True)
     phone_number = Column(EncryptedPhone(), nullable=True)
     timezone = Column(String(50), server_default="UTC")
@@ -66,9 +76,28 @@ class User(Base):
     credentials = relationship("UserCredentials", back_populates="user", uselist=False, cascade="all, delete-orphan")
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
 
+    def is_self_registered(self) -> bool:
+        """Signed up on their own (email or Google), so locked to the USER role.
+
+        Exactly ``default``/``google`` — the same set the role-reset migration
+        (a7c3e9f15b28) and the frontend's ``isSelfRegisteredUser`` use. Any
+        other value, including NULL, is not self-registered.
+        """
+        return self.creation_type in SELF_REGISTERED_CREATION_TYPES
+
     def is_accessible(self) -> bool:
         """Account can be logged into: active and not soft-deleted."""
         return bool(self.is_active and not self.is_delete)
+
+    def is_activated(self) -> bool:
+        """Has been active at least once (see ``activated_at``)."""
+        return self.activated_at is not None
+
+    def mark_activated(self) -> None:
+        """Set ``is_active`` and stamp ``activated_at`` on the first activation."""
+        self.is_active = True
+        if self.activated_at is None:
+            self.activated_at = datetime.now(timezone.utc)
 
     def soft_delete(self) -> None:
         self.is_delete = True

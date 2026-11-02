@@ -189,7 +189,7 @@ class InferenceAPIEndPoint(BaseSchema):
         None,
         min_length=5,
         max_length=100,
-        description="Required on create. Details about the model's hosted infrastructure.",
+        description="Optional. Details about the model's hosted infrastructure.",
     )
     inferenceModelId: Optional[str] = Field(
         None,
@@ -301,13 +301,11 @@ DESCRIPTION_MAX_LEN = 1000
 
 def _resolve_and_check_description(
     description: Optional[str], legacy_service_description: Optional[str]
-) -> str:
+) -> Optional[str]:
+    """Optional on create; the 25-1000 char rule applies only when supplied."""
     resolved = description if description is not None else legacy_service_description
     if resolved is None:
-        raise ValueError(
-            "description is required (25-1000 characters, ULCA alignment). "
-            "`serviceDescription` is accepted as a deprecated alias."
-        )
+        return None
     if not (_DESCRIPTION_MIN_LEN <= len(resolved) <= DESCRIPTION_MAX_LEN):
         raise ValueError(
             f"description must be {_DESCRIPTION_MIN_LEN}-{DESCRIPTION_MAX_LEN} characters."
@@ -392,7 +390,7 @@ class ServiceCreateRequest(BaseSchema):
     description: Optional[str] = Field(
         None,
         description=(
-            "Required (ULCA). Brief description of the service. "
+            "Optional. Brief description of the service. When supplied, "
             f"{_DESCRIPTION_MIN_LEN}-{DESCRIPTION_MAX_LEN} characters. "
             "`serviceDescription` is accepted as a deprecated alias."
         ),
@@ -512,14 +510,15 @@ class ServiceCreateRequest(BaseSchema):
         (`taskType`, `endpoint`, `hardwareDescription`, `api_key`,
         `serviceDescription`) into the ULCA-shaped `task`/`inferenceEndPoint`/
         `description` fields (or vice versa, whichever the caller used), and
-        enforces ULCA's "required" rule on the merged result. Runs before
+        enforces ULCA's "required" rule on the merged result. `description`
+        and `infraDescription` are optional — validated only when supplied. Runs before
         `_require_billing_fields_on_substantive_edit`-equivalent checks don't
         apply here (create requires costPerUnit/unitSize/tierIds
         unconditionally already).
 
         Note: `inferenceEndPoint.schema` requiredness is NOT enforced here.
-        Unlike callbackUrl/infraDescription (genuinely deployment-specific,
-        nothing else could supply them), `schema` describes the underlying
+        Unlike callbackUrl (genuinely deployment-specific, nothing else
+        could supply it), `schema` describes the underlying
         model's request/response contract — a property of the Model, not
         the deployment — so ServiceService.create_service derives it from
         the linked Model's own `schema` when the caller omits it, and only
@@ -545,14 +544,10 @@ class ServiceCreateRequest(BaseSchema):
         if inference_api_key is None and self.api_key:
             inference_api_key = InferenceApiKey(value=self.api_key)
 
-        missing = []
         if not callback_url:
-            missing.append("inferenceEndPoint.callbackUrl (or deprecated `endpoint`)")
-        if not infra_description:
-            missing.append("inferenceEndPoint.infraDescription (or deprecated `hardwareDescription`)")
-        if missing:
             raise ValueError(
-                "inferenceEndPoint is required and missing: " + ", ".join(missing)
+                "inferenceEndPoint is required and missing: "
+                "inferenceEndPoint.callbackUrl (or deprecated `endpoint`)"
             )
 
         # Fail fast when the caller DID supply a schema — no point waiting
@@ -983,11 +978,12 @@ class ServiceResponse(BaseSchema):
     # validate_expected_response_schema's docstring) — there is no fixed
     # field set to name here, unlike the fields above.
     expectedResponseSchema: Optional[Dict[str, Any]] = None
-    # service_to_dict() also emits these two — added here to match; without
-    # them FastAPI would silently strip both from every response (createdAt
+    # service_to_dict() also emits these three — added here to match; without
+    # them FastAPI would silently strip them from every response (createdAt
     # is read by the frontend's Services table, ServicesManagement.tsx).
     deletedAt: Optional[str] = None
     createdAt: Optional[str] = None
+    updatedAt: Optional[str] = None
     createdBy: Optional[str] = None
     updatedBy: Optional[str] = None
 
@@ -995,8 +991,13 @@ class ServiceResponse(BaseSchema):
 class ServiceListItem(ServiceResponse):
     """List response item — augmented with the inline model snippet."""
 
+    # Required on ServiceResponse, optional here: GET /services?columns=...
+    # leaves out every field the selected columns don't need.
+    modelId: Optional[str] = None
+    modelVersion: Optional[str] = None
     languages: List[LanguagePairLenient] = Field(default_factory=list)
     versionStatus: Optional[str] = None
+    modelName: Optional[str] = None
 
 
 class ServiceListResponse(BaseSchema):
@@ -1103,3 +1104,36 @@ class DeleteServiceResponse(SuccessResponseWithMeta):
 
     data: DeleteServiceData
     meta: MessageMeta
+
+
+class ServiceColumnFilterOption(BaseSchema):
+    value: str
+    label: str
+
+
+class ServiceColumnFilter(BaseSchema):
+    """Filter metadata for a column. ``options`` is null for text/date_range."""
+
+    type: str
+    params: List[str]
+    options: Optional[List[ServiceColumnFilterOption]] = None
+
+
+class ServiceColumnDefinition(BaseSchema):
+    id: str
+    label: str
+    mandatory: bool
+    defaultVisible: bool
+    sortable: bool
+    filterable: bool
+    filter: Optional[ServiceColumnFilter] = None
+
+
+class ServiceColumnsData(BaseSchema):
+    columns: List[ServiceColumnDefinition]
+
+
+class ServiceColumnsResponse(SuccessResponse):
+    """GET /services/columns"""
+
+    data: ServiceColumnsData

@@ -4,6 +4,7 @@ import {
   Badge,
   Box,
   HStack,
+  Skeleton,
   Switch,
   Text,
   useDisclosure,
@@ -22,11 +23,12 @@ import ModelExtraDetails from "../components/model-management/ModelDetails";
 import ModelForm from "../components/model-management/ModelForm";
 import { validateModelData } from "../components/model-management/modelJsonValidation";
 import {
-  fetchAllModelsMatchingFilters,
   createModel,
+  getAllModels,
   getModelById,
   updateModel,
   MODELS_ALL_QUERY_KEY,
+  MODELS_ALL_STALE_MS,
 } from "../services/modelManagementService";
 import type { ModelCreateRequest, ModelDetails } from "../types/platform";
 import {
@@ -38,15 +40,17 @@ import { useAuth } from "../hooks/useAuth";
 import { isRegistryReadOnlyUser, userHasRole } from "../utils/rbac";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
 import { parseError, showError } from "../utils/errorHandler";
-import { SAMPLE_MODEL_JSON } from "../utils/sampleModelJson";
+import { MODEL_SAMPLES, type ModelSampleKind } from "../utils/sampleModelJson";
 import { stripJsonComments } from "../utils/stripJsonComments";
 import { showToast } from "../utils/toast";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import ConfirmDialog from "../components/common/ConfirmDialog";
 import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
+  actionsColumnSize,
   type DataTableColumn,
 } from "../components/common/table";
+import { FIELD_HINTS } from "../config/fieldHints";
 import { useDeferredColumnSort } from "../utils/tableSort";
 import {
   MODEL_VERSION,
@@ -76,8 +80,6 @@ type Model = ModelDetails & {
 };
 
 const ModelManagementPage: React.FC = () => {
-  const [models, setModels] = useState<Model[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [selectedModel, setSelectedModel] = useState<Model | null>(null);
   const [isViewingModel, setIsViewingModel] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -94,8 +96,6 @@ const ModelManagementPage: React.FC = () => {
   const [filterVersionStatus, setFilterVersionStatus] = useState<string>("");
   const [filterTaskType, setFilterTaskType] = useState<string>("");
   const { taskTypeNames, isLoading: isLoadingTaskTypes } = useInferenceTypes();
-  const enabledTaskTypesParam =
-    taskTypeNames.length > 0 ? taskTypeNames.join(",") : undefined;
   const didInitTaskTypeFilter = useRef(false);
   const [taskTypeFilterReady, setTaskTypeFilterReady] = useState(false);
   useEffect(() => {
@@ -207,44 +207,116 @@ const ModelManagementPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router.query.modelId]);
 
-  // Fetch all models for current task/status filters (paginated API walk) for client search + pagination
-  const fetchModels = useCallback(async () => {
-    setIsLoading(true);
-    try {
-      const result = await fetchAllModelsMatchingFilters({
-        taskType: filterTaskType || undefined,
-        taskTypes: enabledTaskTypesParam,
-        versionStatus: filterVersionStatus || undefined,
-      });
-      setModels(result.items as unknown as Model[]);
-    } catch (error: any) {
-      console.error("Failed to fetch models:", error);
-      showError(error);
-      setModels([]);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [filterTaskType, filterVersionStatus, enabledTaskTypesParam]);
+  // Shared catalogue with Services Management. Filters apply client-side.
+  const modelsQuery = useQuery({
+    queryKey: MODELS_ALL_QUERY_KEY,
+    queryFn: getAllModels,
+    staleTime: MODELS_ALL_STALE_MS,
+    enabled: taskTypeFilterReady,
+  });
+  const refreshModels = useCallback(async () => {
+    await queryClient.invalidateQueries({ queryKey: MODELS_ALL_QUERY_KEY });
+  }, [queryClient]);
 
-  useEffect(() => {
-    if (!taskTypeFilterReady) return;
-    fetchModels();
-  }, [fetchModels, taskTypeFilterReady]);
+  const models = useMemo((): Model[] => {
+    const enabledTasks = new Set(
+      taskTypeNames.map((name) => name.toLowerCase()),
+    );
+    const wantTask = filterTaskType.trim().toLowerCase();
+    const wantStatus = filterVersionStatus.trim().toLowerCase();
+    return ((modelsQuery.data ?? []) as unknown as Model[]).filter((model) => {
+      const task = resolveTaskType(model).toLowerCase();
+      if (enabledTasks.size > 0 && task && !enabledTasks.has(task)) return false;
+      if (wantTask && task !== wantTask) return false;
+      if (wantStatus) {
+        const status = (model.versionStatus ?? "").toLowerCase();
+        if (wantStatus === "active") {
+          if (status && status !== "active") return false;
+        } else if (status !== wantStatus) {
+          return false;
+        }
+      }
+      return true;
+    });
+  }, [
+    modelsQuery.data,
+    taskTypeNames,
+    filterTaskType,
+    filterVersionStatus,
+  ]);
+  const isLoading = modelsQuery.isPending;
 
-  const { data: allServices } = useQuery({
+  const {
+    data: allServices,
+    isPending: isServicesPending,
+    isError: isServicesError,
+  } = useQuery({
     queryKey: SERVICES_ALL_QUERY_KEY,
     queryFn: listServicesForModels,
     staleTime: SERVICES_ALL_STALE_MS,
   });
+  /** Counts are unknown, not zero, until the services list resolves. */
+  const isServiceCountLoading = isServicesPending;
+  const hasServiceCountError = isServicesError;
+
+  /** Service counts per model from the existing services list (FE-owned). */
+  const serviceCountByModelId = useMemo(() => {
+    const counts = new Map<string, number>();
+    (allServices || []).forEach(
+      (s: { modelId?: string; model_id?: string }) => {
+        const id = s.modelId ?? s.model_id;
+        if (!id) return;
+        const key = String(id);
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+      },
+    );
+    return counts;
+  }, [allServices]);
+
+  /** Models that have at least one published service (BE rejects deprecate with 409). */
   const modelIdsWithPublishedService = useMemo(() => {
     const ids = new Set<string>();
-    (allServices || []).forEach((s: { modelId?: string; model_id?: string; isPublished?: boolean; is_published?: boolean }) => {
-      const id = s.modelId ?? s.model_id;
-      const published = s.isPublished === true || s.is_published === true;
-      if (id && published) ids.add(String(id));
-    });
+    (allServices || []).forEach(
+      (s: {
+        modelId?: string;
+        model_id?: string;
+        isPublished?: boolean;
+        is_published?: boolean;
+      }) => {
+        const id = s.modelId ?? s.model_id;
+        const published = s.isPublished === true || s.is_published === true;
+        if (id && published) ids.add(String(id));
+      },
+    );
     return ids;
   }, [allServices]);
+
+  const getServiceCount = useCallback(
+    (model: Model): number => serviceCountByModelId.get(model.modelId) ?? 0,
+    [serviceCountByModelId],
+  );
+
+  const hasLinkedServices = useCallback(
+    (model: Model) => getServiceCount(model) > 0,
+    [getServiceCount],
+  );
+
+  const hasPublishedService = useCallback(
+    (model: Model) => modelIdsWithPublishedService.has(model.modelId),
+    [modelIdsWithPublishedService],
+  );
+
+  const isModelActive = useCallback((model: Model) => {
+    return (
+      model.versionStatus?.toLowerCase() === "active" || !model.versionStatus
+    );
+  }, []);
+
+  const isModelDeprecated = useCallback((model: Model) => {
+    return Boolean(
+      model.versionStatus && model.versionStatus.toLowerCase() !== "active",
+    );
+  }, []);
 
   const registryTableItems = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
@@ -288,12 +360,13 @@ const ModelManagementPage: React.FC = () => {
     onCreateOpen();
   };
 
-  const handleDownloadSample = () => {
-    const blob = new Blob([SAMPLE_MODEL_JSON], { type: "application/json" });
+  const handleDownloadSample = (kind: ModelSampleKind) => {
+    const sample = MODEL_SAMPLES[kind];
+    const blob = new Blob([sample.json], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = "sample-model.json";
+    link.download = sample.fileName;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -336,8 +409,7 @@ const ModelManagementPage: React.FC = () => {
       });
 
       // Refresh models list
-      await fetchModels();
-      void queryClient.invalidateQueries({ queryKey: MODELS_ALL_QUERY_KEY });
+      await refreshModels();
 
       // Reset file input
       if (fileInputRef.current) {
@@ -486,8 +558,7 @@ const ModelManagementPage: React.FC = () => {
       });
 
       // Refresh models list and selected model
-      await fetchModels();
-      void queryClient.invalidateQueries({ queryKey: MODELS_ALL_QUERY_KEY });
+      await refreshModels();
       if (selectedModel && selectedModel.modelId === model.modelId) {
         const updatedModel = await getModelById(model.modelId);
         setSelectedModel(updatedModel as unknown as Model);
@@ -526,8 +597,7 @@ const ModelManagementPage: React.FC = () => {
       });
 
       // Refresh models list and selected model
-      await fetchModels();
-      void queryClient.invalidateQueries({ queryKey: MODELS_ALL_QUERY_KEY });
+      await refreshModels();
       if (selectedModel && selectedModel.modelId === model.modelId) {
         const updatedModel = await getModelById(model.modelId);
         setSelectedModel(updatedModel as unknown as Model);
@@ -590,6 +660,7 @@ const ModelManagementPage: React.FC = () => {
       {
         id: "status",
         header: "Status",
+        hint: FIELD_HINTS.model.col.status,
         cell: (model) => (
           <Badge
             colorScheme={isModelVersionStatusActive(model.versionStatus) ? "green" : "gray"}
@@ -602,6 +673,7 @@ const ModelManagementPage: React.FC = () => {
       {
         id: "task",
         header: "Task Type",
+        hint: FIELD_HINTS.model.col.task,
         cell: (model) => {
           const taskType = resolveTaskType(model);
           return (
@@ -635,46 +707,136 @@ const ModelManagementPage: React.FC = () => {
         },
       },
       {
+        id: "serviceCount",
+        header: "No. of Services",
+        hint: FIELD_HINTS.model.col.services,
+        cell: (model) => {
+          if (isServiceCountLoading) {
+            return <Skeleton height="20px" width="28px" borderRadius="md" />;
+          }
+          if (hasServiceCountError) {
+            return (
+              <Tooltip label="Could not load services" placement="top" hasArrow>
+                <Text fontSize="sm" color="gray.400">
+                  —
+                </Text>
+              </Tooltip>
+            );
+          }
+          const count = getServiceCount(model);
+          return (
+            <Text fontSize="sm" color="ink.600">
+              {count > 0 ? count : "-"}
+            </Text>
+          );
+        },
+      },
+      {
         id: "actions",
         header: "Actions",
-        tdProps: { onClick: (e) => e.stopPropagation() },
-        cell: (model) => (
-          <HStack spacing={3} align="center">
-            {!isRegistryReadOnly &&
-              ((model.versionStatus?.toLowerCase() === "active" || !model.versionStatus) &&
-              !modelIdsWithPublishedService.has(model.modelId) ? (
-                <Tooltip label="Deprecate model" placement="top" hasArrow>
-                  <Box as="span" display="inline-flex" alignItems="center">
-                    <Switch
-                      size="md"
-                      colorScheme="green"
-                      isChecked={true}
-                      onChange={() => openConfirmDialog("deprecate", model)}
-                      isDisabled={updatingModelId !== null}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  </Box>
-                </Tooltip>
-              ) : model.versionStatus?.toLowerCase() !== "active" && model.versionStatus ? (
-                <Tooltip label="Activate model" placement="top" hasArrow>
-                  <Box as="span" display="inline-flex" alignItems="center">
-                    <Switch
-                      size="md"
-                      colorScheme="green"
-                      isChecked={false}
-                      onChange={() => openConfirmDialog("activate", model)}
-                      isDisabled={updatingModelId !== null}
-                      onClick={(e) => e.stopPropagation()}
-                    />
-                  </Box>
-                </Tooltip>
-              ) : null)}
-          </HStack>
-        ),
+        align: "right" as const,
+        truncate: false,
+        ...actionsColumnSize(1),
+        thProps: { textAlign: "right", whiteSpace: "nowrap", px: 2, overflow: "visible" },
+        tdProps: {
+          onClick: (e) => e.stopPropagation(),
+          textAlign: "right",
+          px: 2,
+        },
+        cell: (model) => {
+          const rail = (child: React.ReactNode) => (
+            <Box display="flex" justifyContent="flex-end" alignItems="center" w="100%" minH="32px">
+              {child}
+            </Box>
+          );
+          if (isServiceCountLoading) {
+            return rail(<Skeleton height="20px" width="36px" borderRadius="md" />);
+          }
+          if (hasServiceCountError) {
+            return rail(
+              <Tooltip label="Could not load services" placement="top" hasArrow>
+                <Text fontSize="sm" color="gray.400">
+                  —
+                </Text>
+              </Tooltip>,
+            );
+          }
+
+          // Deprecated models must stay activatable even with 0 services
+          // (Create Service is hidden for deprecated models).
+          if (!isRegistryReadOnly && isModelDeprecated(model)) {
+            return rail(
+              <Tooltip label="Activate model" placement="top" hasArrow>
+                <Box as="span" display="inline-flex" alignItems="center">
+                  <Switch
+                    size="md"
+                    colorScheme="green"
+                    isChecked={false}
+                    cursor="pointer"
+                    onChange={() => openConfirmDialog("activate", model)}
+                    isDisabled={updatingModelId !== null}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                </Box>
+              </Tooltip>,
+            );
+          }
+
+          if (isModelActive(model) && !hasLinkedServices(model)) {
+            return rail(
+              <Text fontSize="sm" color="ink.600">
+                NA
+              </Text>,
+            );
+          }
+
+          if (isRegistryReadOnly || !isModelActive(model)) {
+            return rail(null);
+          }
+
+          const blockedByPublished = hasPublishedService(model);
+          return rail(
+            <Tooltip
+              label={
+                blockedByPublished
+                  ? "Unpublish its services to deprecate"
+                  : "Deprecate model"
+              }
+              placement="top"
+              hasArrow
+            >
+              <Box as="span" display="inline-flex" alignItems="center">
+                <Switch
+                  size="md"
+                  colorScheme="green"
+                  isChecked={true}
+                  cursor="pointer"
+                  onChange={() => {
+                    if (blockedByPublished) return;
+                    openConfirmDialog("deprecate", model);
+                  }}
+                  isDisabled={updatingModelId !== null || blockedByPublished}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              </Box>
+            </Tooltip>,
+          );
+        },
       },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelSort, modelIdsWithPublishedService, updatingModelId, isRegistryReadOnly]);
+  }, [
+    modelSort,
+    getServiceCount,
+    hasLinkedServices,
+    hasPublishedService,
+    isModelActive,
+    isModelDeprecated,
+    isServiceCountLoading,
+    hasServiceCountError,
+    updatingModelId,
+    isRegistryReadOnly,
+  ]);
 
   return (
     <>
@@ -789,19 +951,9 @@ const ModelManagementPage: React.FC = () => {
                   </CreateButton>
                 )}
                 {!isRegistryReadOnly &&
-                (selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && !modelIdsWithPublishedService.has(selectedModel.modelId) ? (
-                  <Tooltip label="Deprecate model" placement="top" hasArrow>
-                    <Box as="span" display="inline-flex" alignItems="center">
-                      <Switch
-                        size="md"
-                        colorScheme="green"
-                        isChecked={true}
-                        onChange={() => openConfirmDialog("deprecate", selectedModel)}
-                        isDisabled={updatingModelId !== null}
-                      />
-                    </Box>
-                  </Tooltip>
-                ) : (selectedModel.versionStatus?.toLowerCase() !== "active" && selectedModel.versionStatus) ? (
+                !isServiceCountLoading &&
+                !hasServiceCountError &&
+                isModelDeprecated(selectedModel) ? (
                   <Tooltip label="Activate model" placement="top" hasArrow>
                     <Box as="span" display="inline-flex" alignItems="center">
                       <Switch
@@ -810,6 +962,36 @@ const ModelManagementPage: React.FC = () => {
                         isChecked={false}
                         onChange={() => openConfirmDialog("activate", selectedModel)}
                         isDisabled={updatingModelId !== null}
+                      />
+                    </Box>
+                  </Tooltip>
+                ) : !isRegistryReadOnly &&
+                  !isServiceCountLoading &&
+                  !hasServiceCountError &&
+                  isModelActive(selectedModel) &&
+                  hasLinkedServices(selectedModel) ? (
+                  <Tooltip
+                    label={
+                      hasPublishedService(selectedModel)
+                        ? "Unpublish its services to deprecate"
+                        : "Deprecate model"
+                    }
+                    placement="top"
+                    hasArrow
+                  >
+                    <Box as="span" display="inline-flex" alignItems="center">
+                      <Switch
+                        size="md"
+                        colorScheme="green"
+                        isChecked={true}
+                        onChange={() => {
+                          if (hasPublishedService(selectedModel)) return;
+                          openConfirmDialog("deprecate", selectedModel);
+                        }}
+                        isDisabled={
+                          updatingModelId !== null ||
+                          hasPublishedService(selectedModel)
+                        }
                       />
                     </Box>
                   </Tooltip>

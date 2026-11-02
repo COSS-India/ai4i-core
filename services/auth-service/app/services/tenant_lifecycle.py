@@ -4,8 +4,9 @@ from typing import Optional
 from uuid import UUID
 
 from app.core.config import settings
-from app.core.exceptions import EntityNotFoundError, ValidationError
+from app.core.exceptions import AppError, EntityNotFoundError, ValidationError
 from app.models.tenant import Tenant, TenantStatus
+from app.models.user import User
 from app.repositories.tenant_repository import TenantRepository
 from app.repositories.user_repository import UserRepository
 
@@ -102,3 +103,67 @@ async def sync_tenant_users_for_status(
         )
     elif status in (TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED):
         await user_repo.lock_tenant_users_for_status(tenant_id, updated_by=updated_by)
+
+
+# ── Institution contact changes ──────────────────────────────────────
+
+#: Contact changes are refused for these statuses; other fields stay editable.
+EMAIL_LOCKED_STATUSES: frozenset[TenantStatus] = frozenset(
+    {TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED}
+)
+
+
+def assert_tenant_email_editable(tenant: Tenant) -> None:
+    """409 TENANT_EMAIL_EDIT_NOT_ALLOWED while SUSPENDED/DEACTIVATED, and for
+    the Default Organisation (its contact is the seeded platform admin)."""
+    if tenant.status in EMAIL_LOCKED_STATUSES:
+        message = (
+            "The contact cannot be changed while the institution "
+            f"is {tenant.status.value.lower()}."
+        )
+    elif is_default_tenant(tenant):
+        message = "The Default Organisation's contact cannot be changed."
+    else:
+        return
+    raise AppError(message=message, code="TENANT_EMAIL_EDIT_NOT_ALLOWED", status_code=409)
+
+
+async def assert_email_available(
+    tenant_repo: TenantRepository,
+    user_repo: UserRepository,
+    email: str,
+    tenant_id: int,
+    admin: Optional[User],
+) -> None:
+    """Single, admin-aware email-uniqueness check. Consolidates what
+    PR #828 added (cross-tenant tenant+user collision) with the
+    reissue-time check this PR needed (any non-admin user collision),
+    so there is exactly one query per table and one place that owns
+    email uniqueness for tenant email changes.
+    """
+    existing_tenant = await tenant_repo.get_by_email(email)
+    if existing_tenant and existing_tenant.id != tenant_id:
+        raise AppError(
+            message="A tenant with this email already exists.",
+            code="DUPLICATE_TENANT_EMAIL",
+            status_code=409,
+        )
+    existing_user = await user_repo.get_by_email(email)
+    if existing_user is None:
+        return
+    if admin is not None:
+        # ``admin.email`` will become ``email``. Any other holder — same-tenant
+        # or cross-tenant — breaks the users.email UNIQUE constraint at flush
+        # time, so only the admin themselves is an allowed match.
+        collides = existing_user.id != admin.id
+    else:
+        # No user re-aligned: tenant.email is independent of users.email, so
+        # a same-tenant user happening to share the address is harmless.
+        # Only reject cross-tenant.
+        collides = existing_user.tenant_id != tenant_id
+    if collides:
+        raise AppError(
+            message="This email is already in use.",
+            code="DUPLICATE_EMAIL",
+            status_code=409,
+        )

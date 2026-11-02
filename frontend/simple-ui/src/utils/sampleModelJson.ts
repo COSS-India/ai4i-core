@@ -1,18 +1,206 @@
 /**
- * Sample model registration file offered by the "Download Sample JSON" action.
+ * Sample model registration files offered by the "Download sample" action on the NLP and
+ * LLM cards of the Create Model drawer. NLP (ULCA) and LLM (OpenAI) models are defined
+ * with different structures, so each kind gets its own sample.
  *
- * Held as raw text rather than an object literal so the explanatory comments survive into
+ * Held as raw text rather than object literals so the explanatory comments survive into
  * the downloaded file — `JSON.stringify` would drop them, since they are only source
  * comments once an object is parsed. Users keep the comments while editing; the upload path
  * strips them again via `stripJsonComments` before parsing.
  *
- * Comments in this file are written for someone filling in the form who has no knowledge of
- * how the platform is built internally — plain language, no code/file references, no
- * internal class or function names.
+ * Comments in these files are written for someone filling in the form who has no knowledge
+ * of how the platform is built internally — plain language, no code/file references, no
+ * internal function names.
  */
-export const SAMPLE_MODEL_JSON = `{
-  // Sample registration for a chat/LLM model. Comments starting with // are ignored
-  // on upload, so you can leave them in.
+
+export type ModelSampleKind = "nlp" | "llm";
+
+export const SAMPLE_NLP_MODEL_JSON = `{
+  // Sample registration for an NLP model (translation, speech, OCR, ...), following the
+  // ULCA model specification. Comments starting with // are ignored on upload, so you
+  // can leave them in. Change "name" or "version" before uploading — the same pair
+  // cannot be registered twice.
+
+  "version": "v6",
+  // Required. Version for the model, 1–20 characters. Example: "v1", "v2.0"
+
+  "name": "indictrans",
+  // Required. Name shown for this model, 5–100 characters.
+  // Letters, numbers, hyphens (-) and forward slashes (/) only — no spaces.
+
+  "description": "IndicTrans NMT model supporting multiple Indic languages.",
+  // Required. What this model does, 25–1000 characters.
+
+  "task": {
+    "type": "nmt"
+    // Required. One of: nmt | tts | asr | transliteration | language-detection |
+    //   speaker-diarization | audio-lang-detection | language-diarization | ocr | ner
+    // Must be the same as "taskType" inside "schema" below.
+  },
+
+  "classInstance": "NMTTaskService",
+  // Required for NLP models. Tells the platform how to run this model. Use the value
+  // that matches "task" -> "type":
+  //   nmt                  -> NMTTaskService
+  //   asr                  -> ASRTaskService
+  //   tts                  -> TTSTaskService
+  //   transliteration      -> TransliterationTaskService
+  //   language-detection   -> LanguageDetectionTaskService
+  //   audio-lang-detection -> AudioLanguageDetectionTaskService
+  //   speaker-diarization  -> SpeakerDiarizationTaskService
+  //   language-diarization -> LanguageDiarizationTaskService
+  //   ocr                  -> OCRTaskService
+  //   ner                  -> NERTaskService
+
+  "languages": [
+    {
+      "sourceLanguage": "en",
+      "sourceLanguageName": "English",
+      "sourceScriptCode": "Latn",
+      "targetLanguage": "hi",
+      "targetLanguageName": "Hindi",
+      "targetScriptCode": "Deva"
+      // Language codes: en | hi | mr | ta | te | kn | gu | pa | bn | ml | as | ...
+      // Script codes: Beng | Deva | Thaa | Gujr | Aran | Orya | Guru | Arab |
+      //   Sinh | Knda | Mlym | Taml | Telu | Mtei | Olck | Latn
+      // For nmt and transliteration, every field in this block is required.
+    }
+  ],
+
+  "license": "mit",
+  // Required. One of: cc-by-4.0 | cc-by-sa-4.0 | cc-by-nd-2.0 | cc-by-nd-4.0 |
+  //   cc-by-nc-3.0 | cc-by-nc-4.0 | cc-by-nc-sa-4.0 | cc0 | mit | gpl-3.0 |
+  //   bsd-3-clause | private-commercial | unknown-license | custom-license
+
+  "domain": ["general"],
+  // Required. One or more of: general | news | education | legal |
+  //   government-press-release | healthcare | agriculture | automobile | tourism |
+  //   financial | movies | subtitles | sports | technology | lifestyle | entertainment |
+  //   parliamentary | art-and-culture | economy | history | philosophy | religion |
+  //   national-security-and-defence | literature | geography
+
+  "adapterConfig": {
+    // How requests are turned into the model's inputs and how its outputs are read back.
+    // "version", at least one "inputs" entry and at least one "outputs" entry are required.
+    // Each input needs "tensor", "dtype", "shape" and a "value_path" (where in the request
+    // the value comes from). Each output needs "tensor", "dtype" and "maps_to".
+    // "tensor" names must match the names the model is served with.
+    // For tts, one output must use the tensor "OUTPUT_GENERATED_AUDIO".
+    // For ner, the output that maps to "target" must also have "transform": "json_parse".
+    "version": "6.0",
+    "model_name": "nmt",
+    "inputs": [
+      {
+        "tensor": "INPUT_TEXT",
+        "dtype": "BYTES",
+        "shape": [-1, 1],
+        "value_path": "input.source"
+      },
+      {
+        "tensor": "INPUT_LANGUAGE_ID",
+        "dtype": "BYTES",
+        "shape": [-1, 1],
+        "value_path": "request.config.language.source_language"
+      },
+      {
+        "tensor": "OUTPUT_LANGUAGE_ID",
+        "dtype": "BYTES",
+        "shape": [-1, 1],
+        "value_path": "request.config.language.target_language"
+      }
+    ],
+    "outputs": [
+      {
+        "tensor": "OUTPUT_TEXT",
+        "dtype": "BYTES",
+        "maps_to": "target"
+      }
+    ]
+  },
+
+  "schema": {
+    // A real example request and the response it returned. Used to test the model.
+    // "taskType", "model_name", "request" and "response" are all required.
+    // "taskType" must be the same as "task" -> "type" above.
+    "taskType": "nmt",
+    "model_name": "nmt",
+    "request": {
+      "input": [
+        {
+          "source": "Hello, how are you?"
+        }
+      ],
+      "config": {
+        "language": {
+          "sourceLanguage": "en",
+          "targetLanguage": "hi"
+        }
+      }
+    },
+    "response": {
+      // The raw Triton request used to test the model's endpoint.
+      // "inputs" must match the tensors in "adapterConfig" above.
+      "triton": {
+        "inputs": [
+          {
+            "data": [
+              "Hello, how are you?"
+            ],
+            "name": "INPUT_TEXT",
+            "shape": [
+              1,
+              1
+            ],
+            "datatype": "BYTES"
+          },
+          {
+            "data": [
+              "en"
+            ],
+            "name": "INPUT_LANGUAGE_ID",
+            "shape": [
+              1,
+              1
+            ],
+            "datatype": "BYTES"
+          },
+          {
+            "data": [
+              "hi"
+            ],
+            "name": "OUTPUT_LANGUAGE_ID",
+            "shape": [
+              1,
+              1
+            ],
+            "datatype": "BYTES"
+          }
+        ],
+        "outputs": [
+          {
+            "name": "OUTPUT_TEXT"
+          }
+        ]
+      }
+    }
+  },
+
+  "trainingDataset": {
+    "description": "Sample training dataset description for the example NMT model registration."
+    // Required. The data this model was trained on.
+  },
+
+  "submitter": {
+    "name": "Example Org"
+    // Required. Person or organization submitting the model, 3–50 characters.
+  }
+}
+`;
+
+export const SAMPLE_LLM_MODEL_JSON = `{
+  // Sample registration for a chat/LLM model, following the OpenAI specification.
+  // Comments starting with // are ignored on upload, so you can leave them in.
+  // Change "name" or "version" before uploading — the same pair cannot be registered twice.
 
   "version": "v1",
   // Required. Version for the model, 1–20 characters. Example: "v1", "v2.0"
@@ -26,8 +214,7 @@ export const SAMPLE_MODEL_JSON = `{
 
   "task": {
     "type": "llm"
-    // Required. One of: nmt | tts | asr | llm | transliteration | language-detection |
-    //   speaker-diarization | audio-lang-detection | language-diarization | ocr | ner | pipeline
+    // Required. Always "llm" for chat/LLM models.
     // Must be the same as "taskType" inside "schema" below.
   },
 
@@ -149,3 +336,9 @@ export const SAMPLE_MODEL_JSON = `{
   }
 }
 `;
+
+/** Download payload per model kind, keyed by the card the admin downloads it from. */
+export const MODEL_SAMPLES: Record<ModelSampleKind, { json: string; fileName: string }> = {
+  nlp: { json: SAMPLE_NLP_MODEL_JSON, fileName: "sample-nlp-model.json" },
+  llm: { json: SAMPLE_LLM_MODEL_JSON, fileName: "sample-llm-model.json" },
+};

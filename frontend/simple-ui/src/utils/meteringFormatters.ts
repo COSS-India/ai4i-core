@@ -297,7 +297,7 @@ export interface ServiceChartSlice {
   pct: number;
 }
 
-/** Stable palette color per model task type (shared across donut, list, and drill-down). */
+/** Stable palette color per task type (shared across donut, list, and drill-down). */
 export function modelConsumptionTaskTypeColor(
   taskType: string | null | undefined,
   index: number,

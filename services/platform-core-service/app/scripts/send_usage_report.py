@@ -56,7 +56,7 @@ def _parse_args(argv: Optional[list[str]]) -> argparse.Namespace:
                    help="send nothing; write the PDF and email to --out-dir")
     p.add_argument("--out-dir", default=".", help="where --dry-run writes its files (default: .)")
     p.add_argument("--allow-partial", action="store_true",
-                   help="send even if some figures failed to load (they show as N/A)")
+                   help="send even if some figures failed to load (they show as 'Not available')")
     p.add_argument("--scheduled", action="store_true",
                    help="run the scheduled send (latest complete period, to every Usage Viewer)")
     p.add_argument("--frequency", metavar="FREQ",
@@ -150,7 +150,7 @@ async def run(args: argparse.Namespace) -> int:
         await close_database()
 
     if data.failed:
-        logger.warning("Figures that failed to load (shown as N/A): %s", ", ".join(data.failed))
+        logger.warning("Figures that failed to load (shown as 'Not available'): %s", ", ".join(data.failed))
     pdf = render_report_pdf(data)
 
     if args.dry_run:
@@ -158,7 +158,7 @@ async def run(args: argparse.Namespace) -> int:
         return EXIT_OK
     if data.failed and not args.allow_partial:
         logger.error("Not sending: some figures failed to load. Fix the cause and re-run, "
-                     "or pass --allow-partial to send with them as N/A.")
+                     "or pass --allow-partial to send with them as 'Not available'.")
         return EXIT_FAILED
     if not recipients:
         logger.error("No active Usage Viewer has an email address; nothing sent")

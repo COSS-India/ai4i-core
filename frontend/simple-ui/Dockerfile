@@ -63,6 +63,7 @@ ENV HOSTNAME=0.0.0.0
 # Default llm so Service Management / Usage Dashboard stay LLM-only when the
 # ConfigMap omits the key.
 ENV ENABLED_TASK_TYPES=llm
+ENV ROTATED_API_KEY_DEFAULT_GRACE_DAYS=7
 ENV PLATFORM_NAME="AI4I Orchestrate"
 # ENV API_URL=
 # ENV TELEMETRY_SERVICE_URL=

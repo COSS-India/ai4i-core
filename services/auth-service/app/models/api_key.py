@@ -51,6 +51,8 @@ class APIKey(Base):
     # rotated_key_expires_at, or until the whole key is revoked.
     rotated_key = Column(String(32), nullable=True)
     rotated_key_expires_at = Column(DateTime(timezone=True), nullable=True)
+    # When api_key last got a new value, i.e. when the current value was issued.
+    rotated_at = Column(DateTime(timezone=True), nullable=True)
 
     application = relationship("Application", back_populates="api_keys")
 

@@ -52,6 +52,12 @@ export const policySubCategoryCreateResponseSchema = z.object({
   meta: policyWriteMetaSchema,
 });
 
+/** PATCH /policies/categories/{id} */
+export const policyCategoryUpdateResponseSchema = policyCategoryCreateResponseSchema;
+
+/** PATCH /policies/sub-categories/{id} */
+export const policySubCategoryUpdateResponseSchema = policySubCategoryCreateResponseSchema;
+
 /** PATCH /policies/categories/{id}/status */
 export const policyCategoryStatusResponseSchema = z.object({
   success: z.boolean(),

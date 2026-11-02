@@ -41,7 +41,10 @@ from app.core.exceptions import (
 )
 from app.models.model_management.service import Service
 from app.repositories.model_management.model_repository import ModelRepository
-from app.repositories.model_management.service_repository import ServiceRepository
+from app.repositories.model_management.service_repository import (
+    ServiceListFilters,
+    ServiceRepository,
+)
 from app.schemas.model_management.service import (
     DESCRIPTION_MAX_LEN,
     LLM_TASK_TYPE,
@@ -209,6 +212,10 @@ class ServiceService:
         created_by: Optional[str] = None,
         offset: int = 0,
         limit: Optional[int] = None,
+        filters: Optional[ServiceListFilters] = None,
+        sort_by: Optional[str] = None,
+        sort_order: str = "asc",
+        include_tier_names: bool = True,
     ) -> Tuple[List[Dict[str, Any]], int]:
         rows = await self._services.list_services(
             task_types=task_types,
@@ -216,15 +223,23 @@ class ServiceService:
             created_by=created_by,
             offset=offset,
             limit=limit,
+            filters=filters,
+            sort_by=sort_by,
+            sort_order=sort_order,
         )
-        all_tier_ids = list({tid for svc, _ in rows for tid in (svc.tier_ids or [])})
-        tier_name_map = await self._services.get_tier_names_by_ids(all_tier_ids)
+        tier_name_map = None
+        if include_tier_names:
+            all_tier_ids = list({tid for svc, _ in rows for tid in (svc.tier_ids or [])})
+            tier_name_map = await self._services.get_tier_names_by_ids(all_tier_ids)
         items = [
             service_to_dict(
                 service,
                 model=model,
                 include_task_languages=True,
-                tier_names=[tier_name_map.get(tid) for tid in service.tier_ids] if service.tier_ids else None,
+                tier_names=(
+                    [tier_name_map.get(tid) for tid in service.tier_ids]
+                    if tier_name_map is not None and service.tier_ids else None
+                ),
             )
             for service, model in rows
         ]
@@ -233,6 +248,7 @@ class ServiceService:
                 task_types=task_types,
                 is_published=is_published,
                 created_by=created_by,
+                filters=filters,
             )
         else:
             total = len(items)

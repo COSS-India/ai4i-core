@@ -157,6 +157,8 @@ const customTheme = extendTheme({
         fontWeight: "600",
         borderRadius: "md",
         letterSpacing: "-0.01em",
+        cursor: "pointer",
+        _disabled: { cursor: "not-allowed" },
       },
       variants: {
         solid: (props: { colorScheme?: string }) => buttonSolid(props.colorScheme),

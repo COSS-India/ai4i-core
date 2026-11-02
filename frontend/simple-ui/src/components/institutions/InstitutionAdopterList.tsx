@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Badge, Center, HStack, Text, Tooltip } from "@chakra-ui/react";
 import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
+  actionsColumnSize,
   type DataTableColumn,
   type DataTableSortState,
 } from "../common/table";
@@ -19,26 +20,18 @@ import { dash, fmtDate } from "../../utils/valueFormatters";
 import type { TenantView } from "../../types/tenant";
 import type { TenantTierAssignment } from "../../services/tierManagementService";
 import { useTenantManagement } from "./hooks/useTenantManagement";
+import { renderInstitutionEmailTableCell } from "./InstitutionContactEmail";
 import {
   getTenantAvatarBg,
   getTenantInitials,
   resolveTenantTierName,
   type TierOption,
 } from "./institutionDisplay";
+import { FIELD_HINTS } from "../../config/fieldHints";
 
 type TenantManagement = ReturnType<typeof useTenantManagement>;
 
-export function InstitutionAdopterList({
-  tm,
-  sortedTenants,
-  tenantSort,
-  isAdmin,
-  tierOptions,
-  tenantTierAssignmentsById,
-  tierFilterOptions,
-  handleTierFilterChange,
-  openTenantPlan,
-}: {
+type InstitutionAdopterListProps = Readonly<{
   tm: TenantManagement;
   sortedTenants: TenantView[];
   tenantSort: {
@@ -51,14 +44,24 @@ export function InstitutionAdopterList({
   tierFilterOptions: TierOption[];
   handleTierFilterChange: (next: string) => void;
   openTenantPlan: (tenant: TenantView) => void;
-}) {
+}>;
+
+export function InstitutionAdopterList({
+  tm,
+  sortedTenants,
+  tenantSort,
+  isAdmin,
+  tierOptions,
+  tenantTierAssignmentsById,
+  tierFilterOptions,
+  handleTierFilterChange,
+  openTenantPlan,
+}: InstitutionAdopterListProps) {
   const tenantColumns = useMemo((): DataTableColumn<TenantView>[] => {
     return [
       {
         id: "organisation",
         header: INSTITUTION,
-        thProps: { w: "420px", maxW: "420px" },
-        tdProps: { maxW: "420px" },
         sortable: true,
         sortAccessor: (t) => t.organisation ?? "",
         cell: (t) => (
@@ -81,7 +84,7 @@ export function InstitutionAdopterList({
               hasArrow
               openDelay={300}
             >
-              <HStack spacing={2} minW={0} maxW="340px">
+              <HStack spacing={2} minW={0}>
                 <Text fontWeight="medium" fontSize="sm" isTruncated>
                   {t.organisation}
                 </Text>
@@ -103,8 +106,8 @@ export function InstitutionAdopterList({
       {
         id: "contact",
         header: "Contact",
-        thProps: { w: "280px", maxW: "280px" },
-        tdProps: { maxW: "280px" },
+        thProps: { w: "180px", maxW: "180px" },
+        tdProps: { maxW: "180px" },
         sortable: true,
         sortAccessor: (t) => t.contact_name ?? "",
         cell: (t) => (
@@ -114,7 +117,7 @@ export function InstitutionAdopterList({
             hasArrow
             openDelay={300}
           >
-            <Text fontSize="sm" isTruncated maxW="260px">
+            <Text fontSize="sm" isTruncated maxW="160px">
               {dash(t.contact_name)}
             </Text>
           </Tooltip>
@@ -123,13 +126,16 @@ export function InstitutionAdopterList({
       {
         id: "email",
         header: "Email",
+        truncate: false,
         sortable: true,
         sortAccessor: (t) => t.email ?? "",
-        cell: (t) => dash(t.email),
+        cell: renderInstitutionEmailTableCell,
       },
       {
         id: "status",
         header: "Status",
+        hint: FIELD_HINTS.tenantCol.status,
+        thProps: { w: "120px" },
         cell: (t) => (
           <Badge colorScheme={getTenantStatusColorScheme(t.status)}>
             {formatTenantStatusLabel(t.status)}
@@ -143,6 +149,7 @@ export function InstitutionAdopterList({
             {
               id: "tier",
               header: "Tier",
+              hint: FIELD_HINTS.tenantCol.tier,
               thProps: { w: "180px", maxW: "180px" },
               tdProps: { maxW: "180px" },
               sortable: true,
@@ -187,6 +194,7 @@ export function InstitutionAdopterList({
       {
         id: "created",
         header: "Onboarded",
+        hint: FIELD_HINTS.tenantCol.onboarded,
         sortable: true,
         sortAccessor: (t) =>
           t.created_at ? new Date(t.created_at).getTime() : 0,
@@ -195,7 +203,16 @@ export function InstitutionAdopterList({
       {
         id: "actions",
         header: "Actions",
-        tdProps: { onClick: (e) => e.stopPropagation() },
+        align: "right" as const,
+        truncate: false,
+        ...actionsColumnSize(3),
+        thProps: { textAlign: "right", whiteSpace: "nowrap", px: 2, overflow: "visible" },
+        tdProps: {
+          onClick: (e) => e.stopPropagation(),
+          whiteSpace: "nowrap",
+          textAlign: "right",
+          px: 2,
+        },
         cell: (t) => (
           <InstitutionTenantRowActions
             tm={tm}

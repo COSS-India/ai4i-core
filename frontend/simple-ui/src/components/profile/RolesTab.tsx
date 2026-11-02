@@ -14,6 +14,7 @@ import {
   Button,
   Badge,
   Select,
+  Tooltip,
   Wrap,
   WrapItem,
 } from "@chakra-ui/react";
@@ -24,7 +25,6 @@ import StandardModal from "../common/StandardModal";
 import { formatDefaultTenantAssignableRoleLabel } from "../../utils/defaultTenant";
 import { INSTITUTION } from "../../config/constants";
 import { FIELD_HINTS } from "../../config/fieldHints";
-import FieldHint from "../common/FieldHint";
 import FieldLabel from "../common/FieldLabel";
 
 export interface RolesTabProps {
@@ -58,20 +58,36 @@ export default function RolesTab({ users, isLoadingUsers, defaultTenantId }: Rol
           <Text fontSize="sm" color="ink.600">
             Manage user roles and permissions
           </Text>
-            <Button
-              size="sm"
-              colorScheme="blue"
-              onClick={rt.openManageRoles}
-              isDisabled={!rt.selectedUser || !rt.isAdmin || rt.isModeratorOnly || rt.isLoadingUserRoles}
+            <Tooltip
+              label={FIELD_HINTS.tenantUser.selfRegisteredRoleLocked}
+              placement="top"
+              hasArrow
+              openDelay={300}
+              isDisabled={!rt.isSelectedUserSelfRegistered}
             >
-              Manage Roles
-            </Button>
+              <Box as="span" tabIndex={rt.isSelectedUserSelfRegistered ? 0 : undefined} display="inline-flex">
+                <Button
+                  size="sm"
+                  colorScheme="blue"
+                  onClick={rt.openManageRoles}
+                  isDisabled={
+                    !rt.selectedUser ||
+                    !rt.isAdmin ||
+                    rt.isModeratorOnly ||
+                    rt.isLoadingUserRoles ||
+                    rt.isSelectedUserSelfRegistered
+                  }
+                >
+                  Manage Roles
+                </Button>
+              </Box>
+            </Tooltip>
           </HStack>
 
           <Box>
 
             <FormControl>
-              <FieldLabel>User</FieldLabel>
+              <FieldLabel hint={FIELD_HINTS.profile.roleUser.tip}>User</FieldLabel>
               <UserSearchableSelect
                 key={`${defaultTenantId ?? "pending"}-${users.length}`}
                 variant="pick"
@@ -91,7 +107,6 @@ export default function RolesTab({ users, isLoadingUsers, defaultTenantId }: Rol
                 selectedPreview={rt.selectedUser}
                 allowClear
               />
-              <FieldHint>{FIELD_HINTS.profile.roleUser.helper}</FieldHint>
             </FormControl>
           </Box>
 

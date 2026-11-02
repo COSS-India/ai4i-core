@@ -1304,21 +1304,37 @@ class APIKeyService:
             status_code=503,
         )
 
-    async def rotate_by_obj(self, db_key: APIKey, actor_user_id: UUID) -> tuple[str, APIKey]:
+    async def _application_and_tenant(
+        self, db_key: APIKey
+    ) -> tuple[Optional[Application], Optional[Tenant]]:
+        """The key's Application and its Tenant's operational fields, for
+        effective_is_active and the cache payload; None where unavailable."""
+        application = (
+            await self._applications.get_by_id(db_key.application_id)
+            if self._applications is not None
+            else None
+        )
+        tenant = (
+            await self._tenants.get_operational_fields(application.tenant_id)
+            if application is not None and self._tenants is not None
+            else None
+        )
+        return application, tenant
+
+    async def rotate_by_obj(
+        self, db_key: APIKey, actor_user_id: UUID, grace_days: int
+    ) -> tuple[str, APIKey]:
         """Issue a new value for a key already fetched and scope-verified by
         the caller. The old value moves to rotated_key and keeps working as
         the same row (same id, budget, permissions) until
-        rotated_key_expires_at — ROTATED_API_KEY_EXPIRE_DAYS from now, capped
-        at the key's own expires_at — or until the whole key is revoked.
+        rotated_key_expires_at — ``grace_days`` from now — or until it or the
+        whole key is revoked. The key's own expires_at is unchanged.
 
-        409 when the key isn't active, or its previous value is still live.
-        Returns the new raw value (shown once) and the refreshed row."""
-        application = None
-        tenant = None
-        if self._applications is not None:
-            application = await self._applications.get_by_id(db_key.application_id)
-        if application is not None and self._tenants is not None:
-            tenant = await self._tenants.get_operational_fields(application.tenant_id)
+        409 when the key isn't active, or its previous value is still live;
+        422 INVALID_GRACE_PERIOD when the grace period would run past the
+        key's expiry. Returns the new raw value (shown once) and the
+        refreshed row."""
+        application, tenant = await self._application_and_tenant(db_key)
         if application is None or not self.effective_is_active(db_key, application, tenant):
             raise AppError(
                 message="Only an active API key can be rotated.",
@@ -1335,13 +1351,16 @@ class APIKeyService:
                 status_code=409,
             )
 
+        rotated_key_expires_at = datetime.now(timezone.utc) + timedelta(days=grace_days)
+        if db_key.expires_at is not None and rotated_key_expires_at > db_key.expires_at:
+            raise ValidationError(
+                message="Grace period can't go beyond the API key's expiry "
+                f"({db_key.expires_at.isoformat()}).",
+                code="INVALID_GRACE_PERIOD",
+            )
+
         new_value = await self._generate_unused_key()
         old_value = db_key.api_key
-        rotated_key_expires_at = datetime.now(timezone.utc) + timedelta(
-            days=settings.rotated_api_key_expire_days
-        )
-        if db_key.expires_at is not None and db_key.expires_at < rotated_key_expires_at:
-            rotated_key_expires_at = db_key.expires_at
         rotated = await self._repo.rotate(
             db_key.id, old_value, new_value, rotated_key_expires_at, str(actor_user_id)
         )
@@ -1366,12 +1385,7 @@ class APIKeyService:
             # while the entries were being written must win: re-check and
             # drop them, so a revoked key can't keep working from Redis.
             await self._repo.refresh(db_key)
-            application = await self._applications.get_by_id(db_key.application_id)
-            tenant = (
-                await self._tenants.get_operational_fields(application.tenant_id)
-                if application is not None and self._tenants is not None
-                else None
-            )
+            application, tenant = await self._application_and_tenant(db_key)
             if application is None or not self.effective_is_active(db_key, application, tenant):
                 await self._delete_key_caches(db_key)
         except Exception:
@@ -1432,6 +1446,64 @@ class APIKeyService:
         logger.info(
             "API key previous value revoked early: id=%s application=%s",
             db_key.id, db_key.application_id,
+        )
+        return db_key
+
+    async def extend_rotation_by_obj(
+        self, db_key: APIKey, new_expires_at: datetime, actor_user_id: UUID
+    ) -> APIKey:
+        """Move a live previous value's rotated_key_expires_at later. Never
+        revives one: 409 NO_ROTATION_IN_PROGRESS when no previous value is
+        live (window ended, revoked, or the key is revoked or expired), or a
+        concurrent request changed it first. 422 INVALID_GRACE_EXTENSION when
+        ``new_expires_at`` isn't later than the current end, or is past the
+        key's own expires_at. Rewrites the previous value's Redis entry with
+        the new TTL; if that fails, the entry ends early and the next request
+        rebuilds it from the row."""
+        old_value = db_key.live_rotated_key() if db_key.live_rotated_key_expires_at() else None
+        if old_value is None:
+            raise AppError(
+                message="This key has no previous value in its rotation window.",
+                code="NO_ROTATION_IN_PROGRESS",
+                status_code=409,
+            )
+        if new_expires_at <= db_key.rotated_key_expires_at:
+            raise ValidationError(
+                message="The new end must be later than the current one "
+                f"({db_key.rotated_key_expires_at.isoformat()}).",
+                code="INVALID_GRACE_EXTENSION",
+            )
+        if db_key.expires_at is not None and new_expires_at > db_key.expires_at:
+            raise ValidationError(
+                message="The previous value can't outlive the key "
+                f"(expires {db_key.expires_at.isoformat()}).",
+                code="INVALID_GRACE_EXTENSION",
+            )
+        if not await self._repo.extend_rotation(
+            db_key.id, old_value, new_expires_at, str(actor_user_id)
+        ):
+            raise AppError(
+                message="This key's previous value or expiry was changed by another request.",
+                code="NO_ROTATION_IN_PROGRESS",
+                status_code=409,
+            )
+        await self._repo.commit()
+        await self._repo.refresh(db_key)
+        try:
+            application, tenant = await self._application_and_tenant(db_key)
+            if application is not None and self.effective_is_active(db_key, application, tenant):
+                await self._refresh_redis_cache(
+                    db_key, str(application.tenant_id), tenant.budget_effective_to if tenant else None
+                )
+        except Exception:
+            logger.exception(
+                "API key rotation extend: Redis update failed for api_key_id=%s; the previous "
+                "value's entry ends at its old TTL and is rebuilt from the row",
+                db_key.id,
+            )
+        logger.info(
+            "API key rotation window extended: id=%s application=%s rotated_key_expires_at=%s",
+            db_key.id, db_key.application_id, db_key.rotated_key_expires_at,
         )
         return db_key
 

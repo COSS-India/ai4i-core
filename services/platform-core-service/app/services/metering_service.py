@@ -1930,24 +1930,31 @@ class MeteringService:
         range — the population active_tenants() counts, as ids, so two
         periods can be compared (dormant institutions).
 
-        Rows with no tenant_id (series from before the label existed) are
-        dropped: there is no id to compare them by."""
+        "At least one request" is the rounded count, as inference_request_total
+        rounds: increase() can extrapolate a fraction of a request for a
+        tenant with none, which must not make it active in a period whose
+        total is 0. Rows with no tenant_id (series from before the label
+        existed) are dropped: there is no id to compare them by."""
         metric = f"{_METRIC}{build_base_selectors(inference_only=True, auth_type=API_KEY_AUTH_TYPE)}"
         rows = await self._client.query(self._by_tenant_promql(metric, time_range, filter_zero=True))
         valid_ids = await self._fetch_valid_tenant_ids()
-        ids = {m["tenant_id"] for m in self._merge_tenant_rows(rows) if m["tenant_id"]}
+        ids = {
+            m["tenant_id"] for m in self._merge_tenant_rows(rows)
+            if m["tenant_id"] and round(m["value"]) >= 1
+        }
         return ids if valid_ids is None else ids & valid_ids
 
     async def active_application_count(self, time_range: TimeRange) -> int:
-        """Applications with at least one request in the range. application_id
-        is empty for JWT traffic and pre-cutover series, which are skipped."""
+        """Applications with at least one request (rounded, as in
+        active_tenant_ids) in the range. application_id is empty for JWT
+        traffic and pre-cutover series, which are skipped."""
         sel = build_base_selectors(
             inference_only=True, extra=['application_id!=""'], auth_type=API_KEY_AUTH_TYPE
         )
         rows = await self._client.query(
             f"{sum_over_window_by(f'{_METRIC}{sel}', 'application_id', time_range)} > 0"
         )
-        return len(rows)
+        return sum(1 for r in rows if round(float(r["value"][1])) >= 1)
 
     async def tenant_task_usage(self, time_range: TimeRange) -> dict:
         """Requests per tenant per task type in the range, ranked by total.

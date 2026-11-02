@@ -416,7 +416,7 @@ class AllocationService:
         platform_core_db: Optional[AsyncSession],
         tenant_name: str = "This Institution",
     ) -> tuple[int, int, dict[int, Decimal]]:
-        """A Tenant budget revision (top-up/top-down) never moves an
+        """A Tenant budget revision (top-up only) never moves an
         Application's own ₹ — Applications are this event's "siblings" in
         the same sense every other rebalancing edge now follows: the
         Tenant's total is what's changing, but no Application is forced to
@@ -429,11 +429,12 @@ class AllocationService:
           - A top-up always fits (the growth becomes additional
             unallocated headroom) — the MAX_TENANT_BUDGET ceiling is
             revise_tenant_budget's own separate check.
-          - A top-down is rejected outright (ALLOCATION_TOTAL_EXCEEDED) if
-            the sum of every Application's CURRENT allocated_budget would
-            no longer fit inside the new, smaller total — nothing
-            auto-shrinks to make room; the caller must free room via the
-            rebalancing endpoints first, or top down by less.
+          - The total can no longer be reduced (top-down was removed), but
+            the feasibility gate below is kept as a safety check: if what's
+            already allocated (ALLOCATION_TOTAL_EXCEEDED) or spent
+            (BUDGET_OVERCOMMITTED) across Applications exceeds the new
+            total anyway, the revision is rejected — nothing auto-shrinks
+            to make room.
           - No Application's own Keys are touched either — since no
             Application's ₹ moves here, there's nothing forcing its Keys
             to react.
@@ -472,8 +473,8 @@ class AllocationService:
         # Application — see update_tenant_application_allocations's own
         # comment on lock_tenant_applications for why. Filtered to ACTIVE
         # only, same reasoning as that method's own filter: an INACTIVE
-        # Application's allocated_budget must not permanently block room
-        # a top-down needs to free (see _active_applications).
+        # Application's allocated_budget must not count toward the
+        # feasibility gate below (see _active_applications).
         applications = self._active_applications(
             await self._applications.lock_tenant_applications(tenant_id)
         )

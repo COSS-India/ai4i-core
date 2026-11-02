@@ -41,10 +41,12 @@ def _request(*, is_admin: bool = True) -> MagicMock:
     return request
 
 
-def _session(row=None, parent=None) -> MagicMock:
-    """AsyncSession stub: ``get`` returns ``row``, then ``parent``."""
+def _session(*gets) -> MagicMock:
+    """AsyncSession stub: each ``get`` returns the next of ``gets``. A
+    sub-category toggle reads the row, locks its parent, then re-reads the
+    row under its own lock, so it takes ``(row, parent, row)``."""
     session = MagicMock()
-    session.get = AsyncMock(side_effect=[row, parent])
+    session.get = AsyncMock(side_effect=list(gets) or [None])
     session.execute = AsyncMock()
     session.commit = AsyncMock()
     session.rollback = AsyncMock()
@@ -128,7 +130,7 @@ class TestUpdateSubCategoryStatusService:
     @pytest.mark.parametrize("before,after", [(True, False), (False, True)])
     async def test_flips_the_flag_in_place(self, before, after):
         row = _sub_category(is_active=before)
-        session = _session(row, _category(is_active=True))
+        session = _session(row, _category(is_active=True), row)
         item = await sub_category_service.update_sub_category_status(
             session, 3, SubCategoryStatusUpdate(is_active=after), updated_by="42"
         )
@@ -144,7 +146,7 @@ class TestUpdateSubCategoryStatusService:
 
     async def test_cannot_enable_under_a_disabled_category(self):
         row = _sub_category(is_active=False)
-        session = _session(row, _category(is_active=False))
+        session = _session(row, _category(is_active=False), row)
         with pytest.raises(AppError) as exc:
             await sub_category_service.update_sub_category_status(
                 session, 3, SubCategoryStatusUpdate(is_active=True)
@@ -157,7 +159,7 @@ class TestUpdateSubCategoryStatusService:
 
     async def test_can_disable_under_a_disabled_category(self):
         row = _sub_category(is_active=True)
-        session = _session(row, _category(is_active=False))
+        session = _session(row, _category(is_active=False), row)
         await sub_category_service.update_sub_category_status(
             session, 3, SubCategoryStatusUpdate(is_active=False)
         )
@@ -166,7 +168,8 @@ class TestUpdateSubCategoryStatusService:
 
     @pytest.mark.parametrize("is_active", [True, False])
     async def test_locks_the_parent_category(self, is_active):
-        session = _session(_sub_category(is_active=not is_active), _category(is_active=True))
+        row = _sub_category(is_active=not is_active)
+        session = _session(row, _category(is_active=True), row)
         await sub_category_service.update_sub_category_status(
             session, 3, SubCategoryStatusUpdate(is_active=is_active)
         )
@@ -175,28 +178,49 @@ class TestUpdateSubCategoryStatusService:
     async def test_rereads_the_row_after_taking_the_lock(self):
         """A toggle that committed while we waited for the lock must be seen,
         or a disable could take the no-op path on a stale is_active."""
-        row = _sub_category(is_active=False)
-        session = _session(row, _category(is_active=True))
-        calls = MagicMock()
-        calls.attach_mock(session.get, "get")
-
-        async def refresh(obj):
-            if not calls.refresh.called:
-                row.is_active = True  # committed by the other toggle while we waited
-            calls.refresh(obj)
-
-        session.refresh.side_effect = refresh
+        stale = _sub_category(is_active=False)
+        fresh = _sub_category(is_active=True)  # committed by the other toggle while we waited
+        session = _session(stale, _category(is_active=True), fresh)
         item = await sub_category_service.update_sub_category_status(
             session, 3, SubCategoryStatusUpdate(is_active=False)
         )
-        assert [c[0] for c in calls.mock_calls[:3]] == ["get", "get", "refresh"]
+        assert session.get.await_args_list == [
+            call(SubCategory, 3),
+            call(Category, 1, with_for_update=True),
+            call(SubCategory, 3, with_for_update=True, populate_existing=True),
+        ]
         assert item.is_active is False
         session.commit.assert_awaited_once()
+
+    async def test_relocks_when_a_move_changed_the_parent_meanwhile(self):
+        """A move to a disabled category that committed before the lock was
+        held must not let an enable through under the old, enabled parent."""
+        row = _sub_category(is_active=False)
+        moved = SubCategory(id=3, name="PII Guardrails", category_id=2, is_active=False)
+        disabled = Category(id=2, name="Safety", is_active=False)
+        session = _session(row, _category(is_active=True), moved, disabled, moved)
+        with pytest.raises(AppError) as exc:
+            await sub_category_service.update_sub_category_status(
+                session, 3, SubCategoryStatusUpdate(is_active=True)
+            )
+        assert (exc.value.status_code, exc.value.code) == (409, "CATEGORY_DISABLED")
+        assert session.get.await_args_list[3] == call(Category, 2, with_for_update=True)
+        session.rollback.assert_awaited_once()  # released the old parent's lock
+        session.commit.assert_not_awaited()
+
+    async def test_deleted_while_waiting_for_the_lock_is_not_found(self):
+        session = _session(_sub_category(), _category(), None)
+        with pytest.raises(EntityNotFoundError, match="Sub-category 3"):
+            await sub_category_service.update_sub_category_status(
+                session, 3, SubCategoryStatusUpdate(is_active=False)
+            )
+        session.rollback.assert_awaited_once()
+        session.commit.assert_not_awaited()
 
     @pytest.mark.parametrize("is_active", [True, False])
     async def test_same_state_changes_nothing(self, is_active):
         row = _sub_category(is_active=is_active)
-        session = _session(row, _category(is_active=True))
+        session = _session(row, _category(is_active=True), row)
         item = await sub_category_service.update_sub_category_status(
             session, 3, SubCategoryStatusUpdate(is_active=is_active), updated_by="42"
         )
@@ -227,7 +251,7 @@ class TestUpdateCategoryStatusRoute:
             payload=payload, request=_request(), category_id=1, session=MagicMock()
         )
         assert stub.await_args.args[1:] == (1, payload)
-        assert stub.await_args.kwargs == {"updated_by": "42"}
+        assert stub.await_args.kwargs["updated_by"] == "42"
         assert resp.data == item
         assert resp.meta.message == f"Category 'Safety' {word}."
 
@@ -270,7 +294,7 @@ class TestUpdateSubCategoryStatusRoute:
             payload=payload, request=_request(), sub_category_id=3, session=MagicMock()
         )
         assert stub.await_args.args[1:] == (3, payload)
-        assert stub.await_args.kwargs == {"updated_by": "42"}
+        assert stub.await_args.kwargs["updated_by"] == "42"
         assert resp.data == item
         assert resp.meta.message == f"Sub-category 'Toxicity' {word}."
 

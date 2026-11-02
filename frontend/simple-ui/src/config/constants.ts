@@ -1030,7 +1030,7 @@ export const TENANT_USER_STATUS_LIST: readonly TenantUserStatusValue[] = [
 export type TenantUserStatusSource = {
   is_active: boolean;
   is_tenant_active?: boolean | null;
-  /** True once the user completed setup (set a password). */
+  /** True once the account has been active (verified email / set password / OAuth). */
   is_activated?: boolean | null;
 };
 
@@ -1047,7 +1047,7 @@ export function isTenantLifecycleBlockingUsers(
 /**
  * Derive tenant-user display status for UI badges and action menus.
  *
- * A user who never completed setup (no credentials → ``is_activated`` falsy and
+ * A user who never completed setup (never activated → ``is_activated`` falsy and
  * ``is_active`` false) is always Pending Activation, even while the tenant is
  * SUSPENDED/DEACTIVATED. Suspended implies a previously active account was
  * blocked, which is semantically wrong for an unactivated user; treating them
@@ -1072,7 +1072,7 @@ export function resolveTenantUserDisplayStatus(
   if (user.is_active && (user.is_tenant_active ?? true)) {
     return TENANT.USER_STATUS.ACTIVE;
   }
-  // Inactive with credentials → admin-suspended (per-user Suspend) or locked by
+  // Inactive but previously activated → admin-suspended (per-user Suspend) or locked by
   // the tenant lifecycle cascade (``is_tenant_active`` false).
   return TENANT.USER_STATUS.SUSPENDED;
 }
@@ -1467,7 +1467,7 @@ export const MODEL_FIELD_LIMITS = {
 
 /**
  * Tier filter sentinels for the Service Registry; every other value is a tier
- * UUID. ALL is "", matching the Status / Model Task Type filters beside it.
+ * UUID. ALL is "", matching the Status / Task Type filters beside it.
  */
 export const SERVICE_TIER = {
   FILTER: {
@@ -1475,6 +1475,10 @@ export const SERVICE_TIER = {
     NONE: "none",
   },
 } as const;
+
+/** Shown for a tier with no rate limit — a null rate limit means the platform default applies. */
+export const TIER_RATE_LIMIT_PLATFORM_DEFAULT = "Platform default";
+
 
 /** Service publish state (services-management). */
 export const SERVICE_PUBLISH = {

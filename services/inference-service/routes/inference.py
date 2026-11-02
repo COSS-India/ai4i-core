@@ -25,6 +25,7 @@ from models.common import ChatCompletionResponse, GenericInferenceResponse
 from orchestrator import Orchestrator
 from services.llm_service import OpenAIProxyService
 from trace.request_span import traced_span, get_context_attributes
+from utils.failover import AllServicesUnavailableError
 from utils.http_status import http_status_for
 from trace.request_tags import strip_caller_tags, validate_request_tags
 
@@ -74,6 +75,13 @@ def _http_error_for(exc: Exception, task_type: str) -> HTTPException:
             if (type(cause) is LookupError) if status_code == 404 else isinstance(cause, decisive[status_code]):
                 return HTTPException(status_code=status_code, detail=str(cause))
             cause = cause.__cause__
+    if status_code == 503:
+        # The requested service and every configured fallback failed; the
+        # message names only service ids, never upstream endpoints.
+        cause = exc
+        while cause is not None and not isinstance(cause, AllServicesUnavailableError):
+            cause = cause.__cause__
+        return HTTPException(status_code=503, detail=str(cause))
     if status_code == 502:
         return HTTPException(status_code=502, detail=f"{task_type}: upstream inference dependency failed")
     return HTTPException(status_code=500, detail=f"{task_type}: internal error")
@@ -527,6 +535,20 @@ def _seed_llm_request_attrs(req_attrs: dict, request: Request) -> None:
     req_attrs["task_type"] = "llm"
 
 
+def _llm_error_description(status_code: int, body: Any) -> str:
+    """Extract a safe error description for the OTel span status from an upstream error response."""
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict) and error.get("message"):
+            return str(error["message"])
+        detail = body.get("detail")
+        if detail:
+            if isinstance(detail, dict) and detail.get("message"):
+                return str(detail["message"])
+            return str(detail)
+    return f"LLM upstream error {status_code}"
+
+
 async def _run_llm_chat_consolidated(request: Request, payload: Dict[str, Any], path: str) -> JSONResponse:
     with traced_span("request", root=True, classify_status=True) as req_attrs:
         _seed_llm_request_attrs(req_attrs, request)
@@ -534,6 +556,10 @@ async def _run_llm_chat_consolidated(request: Request, payload: Dict[str, Any], 
         status_code, body = await OpenAIProxyService().proxy_traced(
             path=path, payload=payload, request=request,
         )
+        # A configured fallback may have answered (request.state.service_id
+        # is updated by proxy_traced): the request span names the service
+        # that actually served it, like the Triton path.
+        req_attrs["service_id"] = getattr(request.state, "service_id", "") or req_attrs["service_id"]
         # Same values llm_service.py already read from the vLLM `usage` block
         # onto the ai-inference span (via ai4i_core.context) — bridged here so
         # ObservabilityMiddleware reads one shared count instead of re-parsing
@@ -543,6 +569,7 @@ async def _run_llm_chat_consolidated(request: Request, payload: Dict[str, Any], 
         if status_code >= 400:
             req_attrs["status"] = "failure"
             req_attrs["status_code"] = status_code
+            req_attrs["_error_description"] = _llm_error_description(status_code, body)
 
     return JSONResponse(status_code=status_code, content=body)
 
@@ -571,6 +598,7 @@ async def _run_llm_chat_stream(
             _seed_llm_request_attrs(req_attrs, request)
             req_attrs["status"] = "failure"
             req_attrs["status_code"] = status_code
+            req_attrs["_error_description"] = _llm_error_description(status_code, result)
             # Built here, inside "request" (now the active OTel context),
             # instead of inside proxy_traced_stream() — which returns before
             # this span exists, so a "model" span opened there would have no
@@ -595,7 +623,9 @@ async def _run_llm_chat_stream(
         return JSONResponse(status_code=status_code, content=result)
 
     async def gen():
-        with traced_span("request", root=True, classify_status=True) as req_attrs:
+        with traced_span(
+            "request", root=True, classify_status=True, start_time=(model_ctx or {}).get("started_at"),
+        ) as req_attrs:
             _seed_llm_request_attrs(req_attrs, request)
             async for chunk in result:
                 yield chunk
@@ -649,6 +679,7 @@ async def _run_llm_chat(request: Request, payload: Dict[str, Any], path: str) ->
             _seed_llm_request_attrs(req_attrs, request)
             req_attrs["status"] = "failure"
             req_attrs["status_code"] = 400
+            req_attrs["_error_description"] = message
             with traced_span("model") as model_attrs:
                 OpenAIProxyService._seed_model_attrs(
                     model_attrs, service_id, failure_status_code=400,

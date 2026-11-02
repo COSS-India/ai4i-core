@@ -157,6 +157,18 @@ class CacheService(_BaseCacheService):
         except Exception as exc:
             logger.warning("Failed to set app policy_ids for app_id=%s: %s", app_id, exc)
 
+    async def set_app_service_fallbacks(self, app_id: int, service_fallbacks: dict) -> None:
+        """Persist the application's service_fallbacks map
+        ({service_id: [fallback service_id, ...]}) for inference-service.
+        No TTL — written on application create/update, same as policy_ids."""
+        try:
+            await self._redis.set(
+                f"{REDIS_APP_POLICY_PREFIX}{app_id}:service_fallbacks",
+                json.dumps(service_fallbacks or {}),
+            )
+        except Exception as exc:
+            logger.warning("Failed to set app service_fallbacks for app_id=%s: %s", app_id, exc)
+
     async def get_app_policy_ids(self, app_id: int) -> Optional[list]:
         """Return the cached policy_id list for an application, or None on miss."""
         try:

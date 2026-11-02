@@ -91,7 +91,7 @@ export function HierarchyNameForm({
         <FormControl>
           <FieldLabel>Description</FieldLabel>
           <Textarea
-            rows={4}
+            rows={2}
             value={description}
             maxLength={DESCRIPTION_MAX}
             placeholder={descriptionPlaceholder}

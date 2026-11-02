@@ -53,13 +53,21 @@ def summary_lines(data: ReportData) -> list[str]:
     requests_change = (
         f" ({fmt.signed_pct(data.requests_change_pct)})" if data.requests_change_pct is not None else ""
     )
-    return [
-        f"Model portfolio: {fmt.count(data.total_models)} Models; "
-        f"{fmt.count(data.active_models)} were used {data.period.in_phrase}.",
-        f"Adoption: {fmt.count(data.active_institutions)} of {fmt.count(data.total_institutions)} "
-        f"Institutions were live{live_change}. {fmt.count(data.total_requests)} requests were "
-        f"served{requests_change}.",
-    ]
+    models = (
+        f"{fmt.count(data.total_models)} Models; {fmt.count(data.active_models)} were used {data.period.in_phrase}."
+        if data.total_models is not None and data.active_models is not None else f"{fmt.NA}."
+    )
+    live = (
+        f"{fmt.count(data.active_institutions)} of {fmt.count(data.total_institutions)} "
+        f"Institutions were live{live_change}."
+        if data.active_institutions is not None and data.total_institutions is not None
+        else f"Live Institutions: {fmt.NA}."
+    )
+    served = (
+        f"{fmt.count(data.total_requests)} requests were served{requests_change}."
+        if data.total_requests is not None else f"Requests served: {fmt.NA}."
+    )
+    return [f"Model portfolio: {models}", f"Adoption: {live} {served}"]
 
 
 @dataclass(frozen=True)

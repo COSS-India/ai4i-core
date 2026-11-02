@@ -150,7 +150,7 @@ export interface AdjustTenantBudgetPayload {
    * pair for a pure window edit — e.g. extending budget_effective_to without
    * touching the ₹ amount.
    */
-  action?: "top-up" | "top-down";
+  action?: "top-up";
   amount?: number;
   /** ISO 8601, UTC. */
   budget_effective_from?: string;

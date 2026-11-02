@@ -63,7 +63,7 @@ async def list_roles(
 @router.post(
     "/assign",
     response_model=AssignRoleResponse,
-    responses=error_responses(403, 404)
+    responses=error_responses(403, 404, 422)
 )
 async def assign_role(
     request: Request,
@@ -74,8 +74,9 @@ async def assign_role(
 ):
     """Assign a role to a user. Existing roles are kept (additive).
 
-    Tenant admins may only act on users in their own tenant. Requires ADMIN
-    or TENANT_ADMIN.
+    Tenant admins may only act on users in their own tenant. Self-registered
+    users (email/Google signup) can only hold USER — any other role returns
+    422 ``SELF_REGISTERED_ROLE_RESTRICTED``. Requires ADMIN or TENANT_ADMIN.
     """
     await enforce_target_user_same_tenant(
         request, admin, body.user_id, db, bypass_roles=(RoleName.ADMIN, RoleName.MODERATOR)
@@ -96,7 +97,7 @@ async def assign_role(
 @router.post(
     "/remove",
     response_model=RemoveRoleResponse,
-    responses=error_responses(403, 404)
+    responses=error_responses(403, 404, 422)
 )
 async def remove_role(
     request: Request,
@@ -108,7 +109,9 @@ async def remove_role(
     """Remove a role from a user.
 
     Tenant admins may only act on users in their own tenant. Requires ADMIN
-    or TENANT_ADMIN. Returns 404 if the user does not have that role.
+    or TENANT_ADMIN. Returns 404 if the user does not have that role, and
+    422 ``SELF_REGISTERED_ROLE_RESTRICTED`` when removing USER from a
+    self-registered user.
     """
     await enforce_target_user_same_tenant(
         request, _admin, body.user_id, db, bypass_roles=(RoleName.ADMIN, RoleName.MODERATOR)

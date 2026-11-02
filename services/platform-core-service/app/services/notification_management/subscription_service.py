@@ -81,12 +81,22 @@ def _to_subscription_item(
     )
 
 
+def _validate_tenant_id(tenant_id: str) -> None:
+    """Tenant ids are auth's numeric tenants.id. Checked up front on every
+    entry point, not only when recipients are validated — otherwise an
+    empty-recipients PUT (or any PATCH) would write a row keyed by the
+    garbage value."""
+    if not tenant_id.isdigit():
+        raise ValidationError(message=f"Invalid tenant_id '{tenant_id}'.", code="INVALID_TENANT_ID")
+
+
 async def list_subscriptions(
     session: AsyncSession,
     *,
     tenant_id: str,
     catalog_type: Optional[NotificationType] = None,
 ) -> List[SubscriptionItem]:
+    _validate_tenant_id(tenant_id)
     # MONITORING rows are platform-level (no tenant, no subscription) — never
     # on the institution surface, with or without ?type=.
     query = (
@@ -168,6 +178,7 @@ async def update_subscription_state(
     rows only. A GLOBAL-scope row has no unsubscribe option (it's always
     subscribed for every institution), so toggling it is a 409, not a
     silent no-op."""
+    _validate_tenant_id(tenant_id)
     catalog_row = await _get_catalog_row(session, notification_id)
     if catalog_row.scope == NotificationScope.GLOBAL.value:
         raise AppError(
@@ -194,8 +205,6 @@ async def update_subscription_state(
 async def _validate_recipients_belong_to_tenant(
     auth_db: Optional[AsyncSession], tenant_id: str, recipients: List[str]
 ) -> None:
-    if not tenant_id.isdigit():
-        raise ValidationError(message=f"Invalid tenant_id '{tenant_id}'.", code="INVALID_TENANT_ID")
     if auth_db is None:
         raise AppError(
             message="Cannot validate recipients — auth database is not configured.",
@@ -238,6 +247,7 @@ async def update_subscription_recipients(
     auth_db is the cross-database session onto ai4iplatform_auth (see
     app.core.database.get_auth_db_optional); recipients can't be validated
     from platform-core-service's own database."""
+    _validate_tenant_id(tenant_id)
     catalog_row = await _get_catalog_row(session, notification_id)
 
     if recipients:

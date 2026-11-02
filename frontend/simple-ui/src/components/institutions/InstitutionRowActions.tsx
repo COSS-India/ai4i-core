@@ -53,6 +53,7 @@ function renderOverflowActionMenu(
         size="sm"
         variant="ghost"
         colorScheme="gray"
+        cursor="pointer"
         _hover={{ bg: "ink.100" }}
         onClick={stopRowClick}
       />
@@ -88,11 +89,11 @@ function renderOverflowActionMenu(
   );
 }
 
-type InstitutionTenantRowActionsProps = {
+type InstitutionTenantRowActionsProps = Readonly<{
   tm: TenantManagement;
   tenant: TenantView;
   onOpenPlan: (tenant: TenantView) => void;
-};
+}>;
 
 export function InstitutionTenantRowActions({
   tm,
@@ -198,12 +199,13 @@ export function InstitutionTenantRowActions({
   })();
 
   return (
-    <HStack spacing={2}>
+    <HStack spacing={1} justify="flex-end" w="full">
       <IconButton
         aria-label={`Edit ${INSTITUTION.toLowerCase()}`}
         icon={<EditIcon />}
         size="sm"
         variant="ghost"
+        cursor="pointer"
         onClick={(e) => {
           stopRowClick(e);
           tm.handleOpenEditTenant(t);
@@ -227,6 +229,7 @@ export function InstitutionTenantRowActions({
           variant="ghost"
           colorScheme="gray"
           borderRadius="full"
+          cursor="pointer"
           _hover={{ bg: "ink.100" }}
           onClick={(e) => {
             stopRowClick(e);
@@ -240,11 +243,11 @@ export function InstitutionTenantRowActions({
   );
 }
 
-type InstitutionUserRowActionsProps = {
+type InstitutionUserRowActionsProps = Readonly<{
   tm: TenantManagement;
   user: TenantUserView;
   resolveUserDisplayStatus: (user: TenantUserView) => TenantUserStatusValue;
-};
+}>;
 
 export function InstitutionUserRowActions({
   tm,
@@ -324,12 +327,13 @@ export function InstitutionUserRowActions({
   })();
 
   return (
-    <HStack spacing={2}>
+    <HStack spacing={1} justify="flex-end" w="full">
       <IconButton
         aria-label="Edit user"
         icon={<EditIcon />}
         size="sm"
         variant="ghost"
+        cursor="pointer"
         onClick={(e) => {
           stopRowClick(e);
           tm.handleOpenEditUser(u);

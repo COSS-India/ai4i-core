@@ -21,7 +21,7 @@ import type { ServiceMappingsStatus } from "../profile/types";
 import type { Tier } from "../../types/tierManagement";
 import type { TenantView } from "../../types/tenant";
 
-export interface AssignTierModalProps {
+export type AssignTierModalProps = Readonly<{
   isOpen: boolean;
   onClose: () => void;
   tenant: TenantView | null;
@@ -31,7 +31,7 @@ export interface AssignTierModalProps {
   serviceMappingsStatus: ServiceMappingsStatus;
   noServicesMessage: string;
   onAssigned: (tenantId: string) => Promise<void> | void;
-}
+}>;
 
 export default function AssignTierModal({
   isOpen,
@@ -95,7 +95,7 @@ export default function AssignTierModal({
         )}
 
         <FormControl isRequired isInvalid={tierInvalid}>
-          <FieldLabel>Tier</FieldLabel>
+          <FieldLabel hint={FIELD_HINTS.assignTier.tier.tip}>Tier</FieldLabel>
           <TierSelect
             value={values.tierId}
             onChange={form.setTierId}
@@ -111,7 +111,7 @@ export default function AssignTierModal({
         </FormControl>
 
         <FormControl isRequired isInvalid={!!errors.budget}>
-          <FieldLabel>Budget</FieldLabel>
+          <FieldLabel hint={FIELD_HINTS.assignTier.budget.tip}>Budget</FieldLabel>
           <InputGroup size="sm">
             <InputLeftAddon>₹</InputLeftAddon>
             <Input
@@ -130,7 +130,9 @@ export default function AssignTierModal({
 
         <HStack spacing={4} align="flex-start">
           <FormControl isRequired isInvalid={!!errors.effectiveFrom}>
-            <FieldLabel>Budget Effective From</FieldLabel>
+            <FieldLabel hint={FIELD_HINTS.assignTier.effectiveFrom.tip}>
+              Budget Effective From
+            </FieldLabel>
             <Input
               type="date"
               size="sm"
@@ -142,13 +144,12 @@ export default function AssignTierModal({
             <FormErrorMessage fontSize="xs">
               {errors.effectiveFrom}
             </FormErrorMessage>
-            <FieldHint show={!errors.effectiveFrom}>
-              {FIELD_HINTS.assignTier.effectiveFrom.helper}
-            </FieldHint>
           </FormControl>
 
           <FormControl isRequired isInvalid={!!errors.effectiveTo}>
-            <FieldLabel>Budget Effective To</FieldLabel>
+            <FieldLabel hint={FIELD_HINTS.assignTier.effectiveTo.tip}>
+              Budget Effective To
+            </FieldLabel>
             <Input
               type="date"
               size="sm"
@@ -160,9 +161,6 @@ export default function AssignTierModal({
             <FormErrorMessage fontSize="xs">
               {errors.effectiveTo}
             </FormErrorMessage>
-            <FieldHint show={!errors.effectiveTo}>
-              {FIELD_HINTS.assignTier.effectiveTo.helper}
-            </FieldHint>
           </FormControl>
         </HStack>
       </VStack>

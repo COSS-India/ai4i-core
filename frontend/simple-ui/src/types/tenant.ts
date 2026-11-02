@@ -4,19 +4,54 @@ import type { TenantStatusValue, TenantUserStatusValue } from '../config/constan
 
 export type TenantStatus = TenantStatusValue;
 export type TenantUserStatus = TenantUserStatusValue;
-export type CreationType = 'direct' | 'google' | 'tenant';
+/** auth-service `users.creation_type`: default = email sign-up, google = OAuth, tenant = admin-created. */
+export type CreationType = 'default' | 'google' | 'tenant';
+
+/** One task type's monthly quota in a tier, e.g. llm — 1000 tokens. */
+export interface TierQuotaLimit {
+  task_type: string;
+  unit: string;
+  /** The quota in effect this month. */
+  monthly_quota: number;
+  /** An edit applied on the 1st of next month; null when none is scheduled. */
+  pending_monthly_quota?: number | null;
+}
+
+/** Rate limit and quotas of the assigned tier, read live from platform-core. */
+export interface TierLimits {
+  /** Requests per minute; null when the tier doesn't set one. */
+  rate_limit: number | null;
+  quotas: TierQuotaLimit[];
+}
 
 export interface TenantView {
   tenant_id: string; // UUID
   contact_name: string;
   organisation: string;
   email: string;
+  /**
+   * New contact email awaiting verification (legacy; removed from auth-service
+   * after #1858 — kept optional for older payloads).
+   */
+  pending_email?: string | null;
+  /**
+   * Current contact's user id when BE returns it (AI4IDS-3401 / #1858).
+   * Used to exclude them from the Change contact picker.
+   */
+  contact_user_id?: string | null;
+  /**
+   * Present on PATCH /tenants/{id} when an email change was requested.
+   * True when a verification/activation email was sent to the new address.
+   */
+  email_verification_sent?: boolean;
   phone_number?: string | null;
   status: TenantStatus;
   /** Client-side flag for PENDING → Deactivate soft deletes (terminal). */
   onboarding_completed?: boolean;
   tier_id?: string | null;
   tier_name?: string | null;
+  /** Filled in by GET /tenants/{id} only; null when no tier or it can't be read. */
+  tier_limits?: TierLimits | null;
   allocated_budget?: number | null;
   budget_effective_from?: string | null;
   budget_effective_to?: string | null;
@@ -39,7 +74,8 @@ export interface TenantUserView {
   full_name?: string | null;
   is_active: boolean;
   is_tenant_active?: boolean | null;
-  /** True once the user completed setup (set a password). Distinguishes a
+  /** True once the account has been active (verified email / set password /
+   * OAuth signup). Distinguishes a
    * suspended user (is_active=false, activated) from one pending activation. */
   is_activated?: boolean;
   creation_type?: CreationType | null;
@@ -104,6 +140,8 @@ export interface TenantUpdateRequest {
   organisation?: string;
   email?: string;
   phone_number?: string;
+  /** Switch the contact to this Institution Admin. Applies immediately. */
+  contact_user_id?: string;
 }
 export type TenantUpdateResponse = TenantView;
 

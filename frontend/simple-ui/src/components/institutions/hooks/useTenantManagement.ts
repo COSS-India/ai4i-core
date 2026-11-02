@@ -7,11 +7,21 @@ import { showToast } from "../../../utils/toast";
 import authService from "../../../services/authService";
 import * as tenantService from "../../../services/tenantService";
 import { showError } from "../../../utils/errorHandler";
+import { FIELD_HINTS } from "../../../config/fieldHints";
+import {
+  contactChangeBlockedMessage,
+  listOtherActiveInstitutionAdmins,
+  type InstitutionContactAdminOption,
+} from "../../../utils/institutionContactChange";
+import { buildTenantEditPatch } from "../../../utils/tenantEditPatch";
 import { refreshUntil } from "../../../utils/postMutationRefresh";
 import {
   collectTenantContactEmails,
   collectUserEmails,
+  isTenantContactEmailEditable,
+  mapTenantEmailConflictToFieldError,
   normalizeEmail,
+  resolveTenantEmailUpdateFeedback,
   validateEmailFormatOnly,
 } from "../../../utils/tenantEmailValidation";
 import { useEmailAvailabilityField } from "./useEmailAvailabilityField";
@@ -80,6 +90,11 @@ import {
   enrichDefaultOrgTenantUser,
   syncDefaultOrgUserRole,
 } from "../../../utils/defaultOrgUserRoles";
+import {
+  isSelfRegisteredUser,
+  resolveRegistrationMethod,
+  SELF_REGISTERED_ROLE_LOCKED_MESSAGE,
+} from "../../../utils/registrationMethod";
 import type { TenantAssignableRole } from "../../../types/tenant";
 import type { TenantUserFormRole } from "../../profile/types";
 import {
@@ -140,6 +155,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const [tenantSearch, setTenantSearch] = useState("");
   const [userFilterStatus, setUserFilterStatus] = useState<string>("all");
   const [userFilterRole, setUserFilterRole] = useState<string>("all");
+  const [userFilterRegistration, setUserFilterRegistration] =
+    useState<string>("all");
   const [userSearch, setUserSearch] = useState("");
 
   // Create tenant modal
@@ -204,7 +221,16 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     Record<string, string>
   >({});
   const [isSubmittingEditTenant, setIsSubmittingEditTenant] = useState(false);
-
+  const [contactAdmins, setContactAdmins] = useState<InstitutionContactAdminOption[]>(
+    [],
+  );
+  const [contactAdminsLoading, setContactAdminsLoading] = useState(false);
+  const [contactAdminsError, setContactAdminsError] = useState(false);
+  const [contactChangeOpen, setContactChangeOpen] = useState(false);
+  const [selectedContactUserId, setSelectedContactUserId] = useState("");
+  /** Opt-in typed email correction for PENDING tenants (not sent until open). */
+  const [emailEditOpen, setEmailEditOpen] = useState(false);
+  const contactAdminLoadGen = useRef(0);
   // Status update confirmation
   const [statusUpdateTarget, setStatusUpdateTarget] =
     useState<StatusUpdateTargetUnion | null>(null);
@@ -240,6 +266,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   const [editUserInitialFormRole, setEditUserInitialFormRole] = useState("");
   /** True if the user being edited is the only Admin in the default org. */
   const [isEditUserOnlyAdmin, setIsEditUserOnlyAdmin] = useState(false);
+  /** True if the default-org user being edited self-registered (role locked to USER). */
+  const [isEditUserSelfRegistered, setIsEditUserSelfRegistered] =
+    useState(false);
 
   // Delete user confirmation
   const [deleteUserTarget, setDeleteUserTarget] =
@@ -287,6 +316,12 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         if (userFilterRole !== "all" && !tenantUserHasRole(u, userFilterRole)) {
           return false;
         }
+        if (
+          userFilterRegistration !== "all" &&
+          resolveRegistrationMethod(u) !== userFilterRegistration
+        ) {
+          return false;
+        }
         if (!tenantUserMatchesSearch(u, userSearch)) {
           return false;
         }
@@ -296,6 +331,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       tenantUsers,
       userFilterStatus,
       userFilterRole,
+      userFilterRegistration,
       userSearch,
       activeUserListTenant?.status,
     ],
@@ -316,6 +352,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   useEffect(() => {
     setUserFilterRole("all");
+    setUserFilterRegistration("all");
   }, [activeUserListTenant?.tenant_id]);
 
   useEffect(() => {
@@ -480,12 +517,14 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setTenantSearch("");
     setUserFilterStatus("all");
     setUserFilterRole("all");
+    setUserFilterRegistration("all");
     setUserSearch("");
   };
 
   const handleResetUserFilters = () => {
     setUserFilterStatus("all");
     setUserFilterRole("all");
+    setUserFilterRegistration("all");
     setUserSearch("");
   };
 
@@ -614,6 +653,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         excludeTenantEmail: editTenantRow?.email,
         excludeUserEmail: editTenantRow?.email,
       },
+      // User collisions are decided by PATCH — listUsers emails stay masked.
+      skipUserCollision: true,
       skipRemoteCheck: unchanged,
     };
   }, [
@@ -639,21 +680,28 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     recheckKey: isUserModalOpen ? knownEmailRecheckKey : undefined,
   });
 
-  /** Contact email is editable only while the tenant is PENDING (pending verification). */
-  const isEditTenantEmailEditable = useMemo(
-    () => isTenantStatus(editTenantRow?.status, TENANT.STATUS.PENDING),
-    [editTenantRow?.status],
+  /** Typed email for PENDING only; ACTIVE uses Change contact (AI4IDS-3401 / #1858). */
+  const isEditTenantEmailEditable = isTenantContactEmailEditable(
+    editTenantRow?.status,
+    {
+      isDefaultOrganisation:
+        editTenantRow != null && isDefaultTenant(editTenantRow),
+    },
   );
+  /** Email is only validated / PATCHed after Correct email is opened. */
+  const isEditTenantEmailEditActive =
+    isEditTenantEmailEditable && emailEditOpen;
+
+  const editTenantEmailRecheckKey = isEditTenantModalOpen
+    ? knownEmailRecheckKey
+    : undefined;
 
   const editTenantEmailAvailability = useEmailAvailabilityField({
-    enabled: isEditTenantModalOpen && isEditTenantEmailEditable,
+    enabled: isEditTenantModalOpen && isEditTenantEmailEditActive,
     email: editTenantForm.email ?? "",
     patchError: patchEditTenantFormError,
     getCheckOptions: getEditTenantEmailCheckOptions,
-    recheckKey:
-      isEditTenantModalOpen && isEditTenantEmailEditable
-        ? knownEmailRecheckKey
-        : undefined,
+    recheckKey: editTenantEmailRecheckKey,
   });
 
   // ----- Create tenant -----
@@ -1002,7 +1050,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   ) => {
     if (!email.trim()) return false;
     if (validateEmailFormatOnly(email)) return false;
-    return status === "available";
+    // `unchecked` = edit flow deferred user check to PATCH (no "available" hint).
+    return status === "available" || status === "unchecked";
   };
 
   const canSubmitTenantForm = useMemo(() => {
@@ -1101,6 +1150,52 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setIsViewUserModalOpen(true);
   };
 
+  const resetContactChange = () => {
+    contactAdminLoadGen.current += 1;
+    setContactAdmins([]);
+    setContactAdminsLoading(false);
+    setContactAdminsError(false);
+    setContactChangeOpen(false);
+    setSelectedContactUserId("");
+    setEmailEditOpen(false);
+  };
+
+  const cancelEmailEdit = () => {
+    setEmailEditOpen(false);
+    setEditTenantForm((prev) => ({
+      ...prev,
+      email: editTenantRow?.email ?? prev.email,
+    }));
+    editTenantEmailAvailability.clear();
+    setEditTenantFormErrors((prev) => {
+      if (!prev.email) return prev;
+      const next = { ...prev };
+      delete next.email;
+      return next;
+    });
+  };
+
+  const loadContactAdmins = async (
+    tenantId: string,
+    options?: { excludeUserId?: string | null },
+  ) => {
+    const gen = ++contactAdminLoadGen.current;
+    setContactAdmins([]);
+    setContactAdminsError(false);
+    setContactAdminsLoading(true);
+    try {
+      const { users } = await tenantService.listAllUsers(tenantId);
+      if (gen !== contactAdminLoadGen.current) return;
+      setContactAdmins(listOtherActiveInstitutionAdmins(users, options));
+    } catch (err) {
+      console.error("Failed to load Institution Admins for contact change:", err);
+      if (gen !== contactAdminLoadGen.current) return;
+      setContactAdminsError(true);
+    } finally {
+      if (gen === contactAdminLoadGen.current) setContactAdminsLoading(false);
+    }
+  };
+
   // ----- Edit tenant -----
   const handleOpenEditTenant = async (t: TenantView) => {
     try {
@@ -1117,17 +1212,70 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         phone_number: unmasked.phone_number ?? "",
       });
       setEditTenantFormErrors({});
+      resetContactChange();
       editTenantEmailAvailability.clear();
       setIsEditTenantModalOpen(true);
       void refreshKnownAccountEmails();
+      if (
+        !contactChangeBlockedMessage(unmasked.status, {
+          isDefaultOrganisation: isDefaultTenant(unmasked),
+        })
+      ) {
+        // Exclude by id only when BE returns it. Masked-email fallback collides
+        // across users; CONTACT_ALREADY_CURRENT covers picking the current contact.
+        void loadContactAdmins(unmasked.tenant_id, {
+          excludeUserId: unmasked.contact_user_id,
+        });
+      }
     } catch (err) {
       console.error("Failed to load tenant for edit:", err);
       showError(err);
     }
   };
 
+  const buildEditTenantLocalPatch = (
+    patch: {
+      organisation?: string;
+      contact_name?: string;
+      phone_number?: string;
+      email?: string;
+      contact_user_id?: string;
+    },
+    updated: TenantView,
+    emailChanged: boolean,
+  ): Partial<TenantView> => {
+    const localPatch: Partial<TenantView> = {};
+    if (patch.organisation !== undefined) {
+      localPatch.organisation = patch.organisation;
+    }
+    if (patch.contact_name !== undefined) {
+      localPatch.contact_name = patch.contact_name;
+    }
+    if (patch.phone_number !== undefined) {
+      localPatch.phone_number = patch.phone_number;
+    }
+    if (emailChanged) {
+      const feedback = resolveTenantEmailUpdateFeedback(
+        updated,
+        editTenantRow?.email,
+      );
+      localPatch.email = feedback.email;
+      localPatch.pending_email = feedback.pending_email;
+      showToast({ type: feedback.toastType, message: feedback.message });
+      return localPatch;
+    }
+    if (updated.pending_email !== undefined) {
+      localPatch.pending_email = updated.pending_email;
+    }
+    if (updated.email) {
+      localPatch.email = updated.email;
+    }
+    showToast({ type: "success", message: `${INSTITUTION} updated.` });
+    return localPatch;
+  };
+
   const handleSaveEditTenant = async () => {
-    if (!editTenantForm.tenant_id) return;
+    if (!editTenantForm.tenant_id || !editTenantRow) return;
     const errors = collectEditTenantErrors({
       organisation: editTenantForm.organisation,
       contact_name: editTenantForm.contact_name,
@@ -1135,71 +1283,69 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       phone_number: editTenantForm.phone_number,
       tenant_id: editTenantForm.tenant_id,
       tenants,
-      isEditTenantEmailEditable,
+      isEditTenantEmailEditable: isEditTenantEmailEditActive,
       knownTenantEmails,
-      knownUserEmails,
-      editTenantEmail: editTenantRow?.email,
+      editTenantEmail: editTenantRow.email,
     });
-    if (isEditTenantEmailEditable) {
-      delete errors.email;
-      const emailOk = await editTenantEmailAvailability.verifyNow();
-      if (!emailOk) return;
-    }
-    if (Object.keys(errors).length > 0) {
-      setEditTenantFormErrors(errors);
-      return;
-    }
-    setEditTenantFormErrors({});
-    const emailChanged =
-      isEditTenantEmailEditable &&
-      normalizeEmail(editTenantForm.email ?? "") !==
-        normalizeEmail(editTenantRow?.email ?? "");
-
+    // Lock the form before the async email check so the field can't change
+    // while verifyNow awaits (avoids validating an older value than PATCH sends).
     setIsSubmittingEditTenant(true);
     try {
-      const patch = {
-        tenant_id: editTenantForm.tenant_id,
-        organisation: editTenantForm.organisation,
-        contact_name: editTenantForm.contact_name,
-        phone_number: editTenantForm.phone_number,
-        ...(isEditTenantEmailEditable
-          ? { email: editTenantForm.email }
-          : {}),
-      };
-      await tenantService.updateTenant(patch);
-
-      patchTenantLocal(patch.tenant_id, {
-        organisation: patch.organisation,
-        contact_name: patch.contact_name,
-        phone_number: patch.phone_number,
-        ...(isEditTenantEmailEditable && !emailChanged
-          ? { email: patch.email }
-          : {}),
-      });
-
-      if (emailChanged) {
-        showToast({
-          type: "info",
-          message:
-            `A verification link was sent to the new contact email. The ${INSTITUTION.toLowerCase()} contact email will update after it is verified.`,
-        });
-      } else {
-        showToast({ type: "success", message: `${INSTITUTION} updated` });
+      const patch = buildTenantEditPatch(
+        editTenantForm.tenant_id,
+        editTenantRow,
+        editTenantForm,
+        {
+          emailEditOpen: isEditTenantEmailEditActive,
+          selectedContactUserId: selectedContactUserId || undefined,
+        },
+      );
+      if (!patch) {
+        setIsEditTenantModalOpen(false);
+        setEditTenantRow(null);
+        resetContactChange();
+        return;
       }
+
+      const emailChanged = Boolean(patch.email || patch.contact_user_id);
+      if (emailChanged && patch.email) {
+        delete errors.email;
+        const emailOk = await editTenantEmailAvailability.verifyNow();
+        if (!emailOk) return;
+      }
+      if (Object.keys(errors).length > 0) {
+        setEditTenantFormErrors(errors);
+        return;
+      }
+      setEditTenantFormErrors({});
+
+      const updated = await tenantService.updateTenant(patch);
+      const localPatch = buildEditTenantLocalPatch(patch, updated, emailChanged);
+      patchTenantLocal(patch.tenant_id, localPatch);
+
       setIsEditTenantModalOpen(false);
       setEditTenantRow(null);
-      const expectedOrg = patch.organisation;
-      const expectedContact = patch.contact_name;
+      resetContactChange();
+      const expectedOrg =
+        patch.organisation ?? editTenantForm.organisation;
+      const expectedContact =
+        patch.contact_name ?? editTenantForm.contact_name;
       await refreshTenantAndUserLists(editTenantForm.tenant_id, (rows) =>
         rows.some(
           (t) =>
             t.tenant_id === editTenantForm.tenant_id &&
-            t.organisation === expectedOrg &&
-            t.contact_name === expectedContact,
+            (expectedOrg === undefined || t.organisation === expectedOrg) &&
+            (expectedContact === undefined ||
+              t.contact_name === expectedContact),
         ),
       );
     } catch (err) {
       console.error("Failed to update tenant:", err);
+      const emailConflict = mapTenantEmailConflictToFieldError(err);
+      if (emailConflict) {
+        setEditTenantFormErrors((prev) => ({ ...prev, email: emailConflict }));
+        return;
+      }
       showError(err);
     } finally {
       setIsSubmittingEditTenant(false);
@@ -1208,22 +1354,89 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
 
   const closeEditTenantModal = () => {
     editTenantEmailAvailability.clear();
+    resetContactChange();
     setIsEditTenantModalOpen(false);
     setEditTenantRow(null);
     setEditTenantFormErrors({});
   };
 
+  const isDefaultEditTenant =
+    editTenantRow != null && isDefaultTenant(editTenantRow);
+  const contactChangeStatusMessage = contactChangeBlockedMessage(
+    editTenantRow?.status,
+    { isDefaultOrganisation: isDefaultEditTenant },
+  );
+  const contactChangeMessage =
+    contactChangeStatusMessage ??
+    (contactAdminsError ? FIELD_HINTS.tenant.contactChangeLoadFailed : null) ??
+    (!contactAdminsLoading && contactAdmins.length === 0
+      ? FIELD_HINTS.tenant.contactChangeNone
+      : null);
+  const contactChangeDisabled =
+    Boolean(contactChangeMessage) ||
+    contactAdminsLoading ||
+    isSubmittingEditTenant;
+  const contactChange = {
+    disabled: contactChangeDisabled,
+    helper:
+      contactChangeMessage ??
+      (contactAdminsLoading ? FIELD_HINTS.tenant.contactChangeLoading : null) ??
+      (contactChangeOpen ? FIELD_HINTS.tenant.contactChangeHint : null),
+    open: contactChangeOpen,
+    admins: contactAdmins,
+    selectedUserId: selectedContactUserId,
+    onOpen: () => {
+      if (contactChangeDisabled) return;
+      setContactChangeOpen(true);
+    },
+    onSelect: (userId: string) => setSelectedContactUserId(userId),
+    onCancel: () => {
+      setContactChangeOpen(false);
+      setSelectedContactUserId("");
+    },
+  };
+
+  const emailEdit = {
+    open: emailEditOpen,
+    onOpen: () => {
+      if (!isEditTenantEmailEditable || isSubmittingEditTenant) return;
+      setEmailEditOpen(true);
+    },
+    onCancel: cancelEmailEdit,
+  };
+
+  const editTenantPatchPreview = useMemo(() => {
+    if (!editTenantForm.tenant_id || !editTenantRow) return null;
+    return buildTenantEditPatch(
+      editTenantForm.tenant_id,
+      editTenantRow,
+      editTenantForm,
+      {
+        emailEditOpen: isEditTenantEmailEditActive,
+        selectedContactUserId: selectedContactUserId || undefined,
+      },
+    );
+  }, [
+    editTenantForm,
+    editTenantRow,
+    isEditTenantEmailEditActive,
+    selectedContactUserId,
+  ]);
+
   const canSubmitEditTenantForm = useMemo(() => {
     if (isSubmittingEditTenant) return false;
-    if (isEditTenantEmailEditable) {
+    if (!editTenantPatchPreview) return false;
+    if (isEditTenantEmailEditActive) {
       if (isLoadingKnownEmails) return false;
       if (editTenantEmailAvailability.status === "checking") return false;
-      const email = editTenantForm.email ?? "";
-      if (
-        email.trim() &&
-        !emailAvailabilityConfirmed(email, editTenantEmailAvailability.status)
-      ) {
-        return false;
+      if (editTenantPatchPreview.email) {
+        const email = editTenantForm.email ?? "";
+        if (
+          email.trim() &&
+          !emailAvailabilityConfirmed(email, editTenantEmailAvailability.status)
+        ) {
+          return false;
+        }
       }
     }
     return (
@@ -1235,17 +1448,17 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
           phone_number: editTenantForm.phone_number,
           tenant_id: editTenantForm.tenant_id,
           tenants,
-          isEditTenantEmailEditable,
+          isEditTenantEmailEditable: isEditTenantEmailEditActive,
           knownTenantEmails,
-          knownUserEmails,
           editTenantEmail: editTenantRow?.email,
         }),
       ).length === 0
     );
   }, [
     isSubmittingEditTenant,
+    editTenantPatchPreview,
     isLoadingKnownEmails,
-    isEditTenantEmailEditable,
+    isEditTenantEmailEditActive,
     editTenantEmailAvailability.status,
     editTenantForm.organisation,
     editTenantForm.contact_name,
@@ -1254,7 +1467,6 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     editTenantForm.tenant_id,
     editTenantRow?.email,
     knownTenantEmails,
-    knownUserEmails,
     tenants,
   ]);
 
@@ -1531,6 +1743,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       setEditUserRolesLoaded(rolesLoaded);
       setEditUserInitialFormRole(role);
       setIsEditUserOnlyAdmin(isOnlyAdmin);
+      setIsEditUserSelfRegistered(
+        editingDefaultOrg && isSelfRegisteredUser(unmasked),
+      );
       setEditUserForm({
         tenant_id: tenantId,
         user_id: unmasked.user_id,
@@ -1573,6 +1788,70 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     editUserForm.role.trim().toUpperCase() !==
     editUserInitialFormRole.trim().toUpperCase();
 
+  /** Default-org rule that blocks the edit, or null when the save may proceed. */
+  const getDefaultOrgEditUserBlockMessage = (): string | null => {
+    if (
+      editUserForm.role !== "GUEST" &&
+      !isDefaultOrgUserRole(editUserForm.role)
+    ) {
+      return "Default Organisation users may only be User, Moderator, Usage Viewer, or Admin.";
+    }
+    // Last-admin guard: if editing self as the only Admin, cannot change role.
+    if (isEditingSelfUser && isEditUserOnlyAdmin && isEditUserRoleChanged()) {
+      return "You are the only Admin in the default organisation and cannot change your role";
+    }
+    // Self-registered users are unvetted and must stay on the USER role.
+    if (isEditUserSelfRegistered && isEditUserRoleChanged()) {
+      return SELF_REGISTERED_ROLE_LOCKED_MESSAGE;
+    }
+    return null;
+  };
+
+  const buildEditUserProfilePayload = () => ({
+    tenant_id: editUserForm.tenant_id,
+    user_id: editUserForm.user_id,
+    username: (editUserForm.username ?? "").trim(),
+    full_name: editUserForm.full_name?.trim(),
+    phone_number: editUserForm.phone_number?.trim(),
+  });
+
+  /**
+   * Saves profile fields, then syncs the default-org role when it changed.
+   * Returns the role that was synced, or null when no role was written.
+   */
+  const saveDefaultOrgEditUser = async (): Promise<string | null> => {
+    await tenantService.updateUser(buildEditUserProfilePayload());
+    // Sync only when the operator changed the role and we trust the loaded roles.
+    // Avoids silent demotion on profile-only edits after a failed roles fetch.
+    const initialRole = resolveDefaultOrgFormRole(editUserRow?.roles);
+    const nextRole = editUserForm.role.trim().toUpperCase();
+    if (!isDefaultOrgUserRole(nextRole) || nextRole === initialRole) return null;
+    if (!editUserRolesLoaded) {
+      showToast({
+        type: "warning",
+        message:
+          "Role was not updated because current roles could not be loaded. Other changes were saved.",
+      });
+      return null;
+    }
+    await syncDefaultOrgUserRole(
+      editUserForm.user_id,
+      nextRole,
+      editUserRow?.roles,
+    );
+    return nextRole;
+  };
+
+  const saveTenantEditUser = async () => {
+    await tenantService.updateUser({
+      ...buildEditUserProfilePayload(),
+      role:
+        editUserForm.role === "TENANT ADMIN"
+          ? "TENANT ADMIN"
+          : DEFAULT_TENANT_USER_ROLE,
+    });
+  };
+
   const handleSaveEditUser = async () => {
     if (!editUserForm.tenant_id || !editUserForm.user_id) return;
     const errors = collectEditUserErrors({
@@ -1586,77 +1865,18 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     }
     const tenant = resolveTenantById(editUserForm.tenant_id);
     const isDefaultOrg = tenant != null && isDefaultTenant(tenant);
-    if (
-      isDefaultOrg &&
-      editUserForm.role !== "GUEST" &&
-      !isDefaultOrgUserRole(editUserForm.role)
-    ) {
-      showToast({
-        type: "warning",
-        message:
-          "Default Organisation users may only be User, Moderator, Usage Viewer, or Admin.",
-      });
-      return;
-    }
-    // Last-admin guard: if editing self as the only Admin, cannot change role.
-    if (
-      isDefaultOrg &&
-      isEditingSelfUser &&
-      isEditUserOnlyAdmin &&
-      isEditUserRoleChanged()
-    ) {
-      showToast({
-        type: "warning",
-        message:
-          "You are the only Admin in the default organisation and cannot change your role",
-      });
+    const blockMessage = isDefaultOrg ? getDefaultOrgEditUserBlockMessage() : null;
+    if (blockMessage) {
+      showToast({ type: "warning", message: blockMessage });
       return;
     }
     setIsSubmittingEditUser(true);
     try {
-      let didSyncDefaultOrgRole = false;
       let syncedDefaultOrgRole: string | null = null;
       if (isDefaultOrg) {
-        await tenantService.updateUser({
-          tenant_id: editUserForm.tenant_id,
-          user_id: editUserForm.user_id,
-          username: (editUserForm.username ?? "").trim(),
-          full_name: editUserForm.full_name?.trim(),
-          phone_number: editUserForm.phone_number?.trim(),
-        });
-        // Sync only when the operator changed the role and we trust the loaded roles.
-        // Avoids silent demotion on profile-only edits after a failed roles fetch.
-        const initialRole = resolveDefaultOrgFormRole(editUserRow?.roles);
-        const nextRole = editUserForm.role.trim().toUpperCase();
-        if (isDefaultOrgUserRole(nextRole) && nextRole !== initialRole) {
-          if (!editUserRolesLoaded) {
-            showToast({
-              type: "warning",
-              message:
-                "Role was not updated because current roles could not be loaded. Other changes were saved.",
-            });
-          } else {
-            await syncDefaultOrgUserRole(
-              editUserForm.user_id,
-              nextRole,
-              editUserRow?.roles,
-            );
-            didSyncDefaultOrgRole = true;
-            syncedDefaultOrgRole = nextRole;
-          }
-        }
+        syncedDefaultOrgRole = await saveDefaultOrgEditUser();
       } else {
-        await tenantService.updateUser({
-          tenant_id: editUserForm.tenant_id,
-          user_id: editUserForm.user_id,
-          username: (editUserForm.username ?? "").trim(),
-          full_name: editUserForm.full_name?.trim(),
-          phone_number: editUserForm.phone_number?.trim(),
-          role:
-            editUserForm.role === "TENANT ADMIN"
-              ? "TENANT ADMIN"
-              : DEFAULT_TENANT_USER_ROLE,
-        });
+        await saveTenantEditUser();
       }
       showToast({ type: "success", message: "User updated" });
       setIsEditUserModalOpen(false);
@@ -1667,7 +1887,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       await refreshTenantAndUserLists(editedTenantId);
       // List users API collapses MODERATOR/GUEST → USER; re-apply the role we
       // just wrote so the Role column matches View/Edit.
-      if (didSyncDefaultOrgRole && syncedDefaultOrgRole) {
+      if (syncedDefaultOrgRole) {
         const roleToShow = syncedDefaultOrgRole;
         rememberDefaultOrgRoleOverride(editedUserId, roleToShow);
         patchTenantUserLocal(editedUserId, (row) =>
@@ -1689,6 +1909,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setEditUserRolesLoaded(true);
     setEditUserInitialFormRole("");
     setIsEditUserOnlyAdmin(false);
+    setIsEditUserSelfRegistered(false);
   };
 
   // ----- Delete tenant user -----
@@ -1752,6 +1973,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setUserFilterStatus,
     userFilterRole,
     setUserFilterRole,
+    userFilterRegistration,
+    setUserFilterRegistration,
     userSearch,
     setUserSearch,
     handleResetTenantFilters,
@@ -1827,6 +2050,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     handleEditTenantEmailChange,
     handleEditTenantPhoneChange,
     isEditTenantEmailEditable,
+    emailEdit,
+    contactChange,
     editTenantEmailStatus: editTenantEmailAvailability.status,
     canSubmitEditTenantForm,
     closeEditTenantModal,
@@ -1862,6 +2087,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     closeEditUserModal,
     isEditingSelfUser,
     isEditUserOnlyAdmin,
+    isEditUserSelfRegistered,
     // Delete user
     deleteUserTarget,
     isDeleteUserDialogOpen,

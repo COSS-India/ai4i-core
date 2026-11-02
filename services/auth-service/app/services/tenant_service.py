@@ -22,6 +22,7 @@ from fastapi import BackgroundTasks, HTTPException, status
 from app.core.config import settings
 from app.core.constants import USERNAME_MAX_LENGTH
 from app.core.exceptions import (
+    AppError,
     DuplicateEntityError,
     EntityNotFoundError,
     ValidationError,
@@ -61,10 +62,16 @@ from app.schemas.tenant import (
 from app.schemas.user import UserListResponse
 from app.services.allocation_service import AllocationService
 from app.services.api_key_service import APIKeyService
-from app.services.auth_email_templates import render_account_deleted, render_setup_link, render_verify_email
+from app.services.auth_email_templates import (
+    render_account_deleted,
+    render_setup_link,
+    render_verify_email,
+)
 from app.services.tenant_lifecycle import (
     TENANT_ONBOARDING_STATUSES,
     assert_default_tenant_not_targeted,
+    assert_email_available,
+    assert_tenant_email_editable,
     assert_valid_tenant_status_transition,
     is_default_tenant,
     sync_tenant_users_for_status,
@@ -73,6 +80,7 @@ from app.services.email_helpers import (
     enqueue_email,
     persist_token_verification,
     reissue_setup_token,
+    reissue_verify_token,
     resolve_tenant_id,
     setup_token_expires_at,
 )
@@ -159,6 +167,137 @@ def _validate_new_effective_to_not_in_past(budget_effective_to: datetime) -> Non
                 ),
             },
         )
+
+
+def _resolve_revised_window(
+    tenant: Tenant,
+    action: Optional[str],
+    budget_effective_from: Optional[datetime],
+    budget_effective_to: Optional[datetime],
+) -> tuple[datetime, Optional[datetime]]:
+    """The (From, To) a revise_tenant_budget call leaves on the tenant — see
+    that method's docstring for the full required-ness matrix."""
+    if tenant.budget_effective_from is not None:
+        return _resolve_existing_window(tenant, action, budget_effective_from, budget_effective_to)
+    if budget_effective_from is not None:
+        return _resolve_first_window(budget_effective_from, budget_effective_to)
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={
+            "error": "effective_window_required",
+            "message": (
+                "This tenant has never had a budget window assigned — "
+                "budget_effective_from and budget_effective_to are both "
+                "required to assign one."
+            ),
+        },
+    )
+
+
+def _resolve_existing_window(
+    tenant: Tenant,
+    action: Optional[str],
+    budget_effective_from: Optional[datetime],
+    budget_effective_to: Optional[datetime],
+) -> tuple[datetime, Optional[datetime]]:
+    # AI4IDS-2995: budget_effective_from is locked once a window is
+    # on file at all — active OR lapsed. It never moves again after
+    # the tenant's first assignment.
+    if budget_effective_from is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "effective_from_locked",
+                "message": (
+                    "budget_effective_from is locked once a budget window has "
+                    f"been assigned ({tenant.budget_effective_from} to "
+                    f"{tenant.budget_effective_to}), whether that window is "
+                    "still active or has since lapsed — omit it, or extend "
+                    "budget_effective_to instead."
+                ),
+            },
+        )
+    stored_from = tenant.budget_effective_from
+    window_active = tenant.budget_effective_to is not None and not is_budget_window_expired(
+        tenant.budget_effective_to
+    )
+
+    if budget_effective_to is None:
+        # A top-up that leaves the window lapsed would only grow a balance
+        # nobody can spend until it's reopened, so it must come with (or
+        # after) a new budget_effective_to. A NULL To is open-ended, not
+        # lapsed (see is_budget_window_expired), so it isn't refused here.
+        if action is not None and not window_active and tenant.budget_effective_to is not None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={
+                    "error": "budget_window_expired",
+                    "message": (
+                        "This tenant's budget window ended on "
+                        f"{as_utc_date(tenant.budget_effective_to).isoformat()} — "
+                        "give a new budget_effective_to with this top-up, or "
+                        "extend it first."
+                    ),
+                },
+            )
+        return stored_from, tenant.budget_effective_to
+
+    _validate_effective_to_after_from(stored_from, budget_effective_to)
+    if not window_active:
+        # Reactivating/extending a LAPSED window without moving its
+        # original start date — e.g. Sep 1-16 expired on Sep 17, caller
+        # now sends a later budget_effective_to (Sep 20) to reopen it.
+        # allocated_budget and spend are never window-scoped (see
+        # revise_tenant_budget's docstring), so the tenant's remaining
+        # balance carries over untouched.
+        _validate_new_effective_to_not_in_past(budget_effective_to)
+    return stored_from, budget_effective_to
+
+
+def _resolve_first_window(
+    budget_effective_from: datetime, budget_effective_to: Optional[datetime]
+) -> tuple[datetime, datetime]:
+    # Explicit fresh founding — only reachable when this tenant has
+    # never had a window on file before.
+    if budget_effective_to is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "effective_window_required",
+                "message": (
+                    "budget_effective_to is required when supplying a new "
+                    "budget_effective_from."
+                ),
+            },
+        )
+    _validate_new_effective_from(budget_effective_from)
+    _validate_effective_to_after_from(budget_effective_from, budget_effective_to)
+    return budget_effective_from, budget_effective_to
+
+
+def _revised_budget(
+    tenant: Tenant, action: Optional[str], amount: Optional[Decimal]
+) -> tuple[Decimal, Decimal]:
+    """(current, new) allocated_budget for a revise_tenant_budget call."""
+    current_budget = tenant.allocated_budget or Decimal("0")
+    if action is None:
+        # Pure window edit (e.g. reactivating a lapsed window) — the
+        # schema's own _validate_action_amount_pair guarantees amount is
+        # also None here, since the two are only ever given together.
+        return current_budget, current_budget
+    new_budget = current_budget + amount
+    if new_budget > MAX_TENANT_BUDGET:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "budget_limit_exceeded",
+                "message": (
+                    f"Top-up would raise the budget to {new_budget}, exceeding "
+                    f"the maximum allowed ({MAX_TENANT_BUDGET})"
+                ),
+            },
+        )
+    return current_budget, new_budget
 
 
 async def _seed_notification_subscriptions_for_new_tenant(
@@ -367,7 +506,9 @@ class TenantService:
             },
         )
 
-    async def _assert_not_last_tenant_admin(self, target: User, tenant: Tenant) -> None:
+    async def _assert_not_last_tenant_admin(
+        self, target: User, tenant: Tenant, *, action: str = "delete user"
+    ) -> None:
         """Raise 422 if the target is the sole active TENANT ADMIN for their tenant.
 
         Prevents a tenant from becoming unmanageable by blocking deletion of
@@ -388,7 +529,7 @@ class TenantService:
                 detail={
                     "code": "LAST_TENANT_ADMIN",
                     "message": (
-                        f"Cannot delete user: {tenant.name} must retain at least one active Tenant Admin."
+                        f"Cannot {action}: {tenant.name} must retain at least one active Tenant Admin."
                     ),
                 },
             )
@@ -426,23 +567,63 @@ class TenantService:
                 },
             )
 
+    async def _assert_tenant_admin_demotable(self, target: User, tenant: Tenant) -> None:
+        """Block removing TENANT ADMIN from the tenant's last admin or its contact.
+
+        Same invariant ``delete_tenant_user`` enforces, plus the contact: "Change
+        contact" only accepts an Institution Admin, so the contact must stay one.
+        """
+        roles = await self._roles.get_user_roles(target.id)
+        if RoleName.TENANT_ADMIN.value not in roles:
+            return
+        if (target.email or "").lower().strip() == (tenant.email or "").lower().strip():
+            raise AppError(
+                message=(
+                    "This Tenant Admin is the institution's contact. "
+                    "Change the institution's contact before changing their role."
+                ),
+                code="CONTACT_ROLE_LOCKED",
+                status_code=409,
+            )
+        if not target.is_active:
+            # Inactive admins aren't counted, so demoting one can't drop the
+            # active-admin count (mirrors _assert_not_last_platform_admin).
+            return
+        await self._assert_not_last_tenant_admin(
+            target, tenant, action="remove the Tenant Admin role"
+        )
+
     async def _set_tenant_user_role(
         self,
         user_id: UUID,
         role: TenantUserRole | RoleName | str,
         *,
-        commit: bool = True,
         created_by: Optional[UUID] = None,
-    ) -> None:
+    ) -> bool:
+        """Replace the user's tenant role with ``role``; flush only, caller commits.
+
+        ``RoleService.assign_role`` is additive, so any other tenant-assignable
+        role the user holds is removed. Roles outside ``TenantUserRole`` (e.g.
+        USAGE VIEWER granted elsewhere) are left untouched. Returns True when
+        the user's roles actually changed.
+        """
         target = role.value if isinstance(role, TenantUserRole) else role_name_to_str(role)
-        await self._roles.assign_role(user_id, target, commit=commit, created_by=created_by)
+        tenant_roles = {r.value for r in TenantUserRole}
+        current = await self._roles.get_user_roles(user_id)
+        changed = target not in current
+        await self._roles.assign_role(user_id, target, commit=False, created_by=created_by)
+        for existing in current:
+            if existing in tenant_roles and existing != target:
+                await self._roles.remove_role(user_id, existing, commit=False)
+                changed = True
+        return changed
 
     async def build_tenant_user_response(
         self, user: User, *, unmask_phone: bool = False
     ) -> dict:
         # Delegate to the batched builder so the payload shape is defined in
-        # one place; the credentials/roles lookups handle a one-element list
-        # at no extra cost.
+        # one place; the roles lookup handles a one-element list at no extra
+        # cost.
         responses = await self.build_tenant_user_responses(
             [user], unmask_phone=unmask_phone
         )
@@ -461,7 +642,6 @@ class TenantService:
             return []
         user_ids = [u.id for u in users]
         roles_by_user = await self._roles.get_roles_for_users(user_ids)
-        activated_ids = await self._credentials.user_ids_with_credentials(user_ids)
         responses: list[dict] = []
         for user in users:
             # role = self.resolve_tenant_user_role(roles_by_user.get(user.id, []))
@@ -472,7 +652,7 @@ class TenantService:
                         **base,
                         roles=roles_by_user.get(user.id, []),
                         is_tenant_active=user.is_tenant_active,
-                        is_activated=user.id in activated_ids,
+                        is_activated=user.is_activated(),
                     ).model_dump(mode="json", by_alias=True),
                     mask_phones=not unmask_phone,
                 )
@@ -486,7 +666,7 @@ class TenantService:
         full_name: Optional[str] = None,
         phone_number: Optional[str] = None,
         tenant_id: Optional[int | str] = None,
-        creation_type: str = "default",
+        creation_type: CreationType | str = CreationType.TENANT,
         role_name: str = RoleName.USER,
         background_tasks: Optional[BackgroundTasks] = None,
         email_kind: Literal["setup", "verify", "none"] = "setup",
@@ -505,17 +685,18 @@ class TenantService:
         (create_tenant's own first-admin provisioning, create_tenant_user)
         are admin-triggered and always have one; left None only for a
         hypothetical future self-service caller with no admin actor.
+
+        ``creation_type`` defaults to TENANT and an unknown value raises
+        ``ValueError`` instead of falling back to DEFAULT: DEFAULT marks the
+        user as self-registered, which locks them to the USER role.
         """
+        creation = CreationType(creation_type)
         if await self._users.email_exists(email):
             raise DuplicateEntityError("User", "email")
         if await self._users.get_by_username(username):
             raise DuplicateEntityError("User", "username")
 
         parsed_tenant_id = await resolve_tenant_id(tenant_id, self._tenants)
-        try:
-            creation = CreationType(creation_type)
-        except ValueError:
-            creation = CreationType.DEFAULT
 
         user = User(
             email=email,
@@ -807,6 +988,57 @@ class TenantService:
         return row.name
 
     @staticmethod
+    async def resolve_tier_limits(
+        tier_id: Optional[UUID], platform_core_db: Optional[AsyncSession]
+    ) -> Optional[dict]:
+        """Rate limit and per-task-type monthly quotas of ``tier_id``, read
+        live from platform-core so a tier edit or reassignment shows up on
+        the next GET. Quotas are listed in task-type catalogue order.
+        ``monthly_quota`` is the one in effect now; an edit waiting for the
+        1st-of-month promotion is returned as ``pending_monthly_quota``, which
+        is None when nothing is scheduled or it equals ``monthly_quota``.
+        Fails soft like resolve_tier_name: None when no tier is
+        assigned or the tier can't be read — in that last case tier_name is
+        already UNKNOWN_TIER_NAME, so the client can tell the two apart."""
+        if tier_id is None or platform_core_db is None:
+            return None
+        try:
+            tier = (
+                await platform_core_db.execute(text("SELECT rate_limit FROM tiers WHERE id = :tid"), {"tid": tier_id})
+            ).first()
+            if tier is None:
+                return None
+            quotas = (
+                await platform_core_db.execute(
+                    text(
+                        "SELECT it.name AS task_type, it.unit, tq.monthly_quota, tq.pending_monthly_quota "
+                        "FROM tier_quotas tq JOIN inference_types it ON it.id = tq.inference_type_id "
+                        "WHERE tq.tier_id = :tid ORDER BY it.id"
+                    ),
+                    {"tid": tier_id},
+                )
+            ).all()
+        except Exception:
+            logger.exception("tier_limits lookup failed for tier %s", tier_id)
+            return None
+        return {
+            "rate_limit": tier.rate_limit,
+            "quotas": [
+                {
+                    "task_type": q.task_type,
+                    "unit": q.unit,
+                    "monthly_quota": q.monthly_quota,
+                    # platform-core stores the submitted limit on every tier save,
+                    # even an unchanged one, so equal means nothing is scheduled.
+                    "pending_monthly_quota": (
+                        None if q.pending_monthly_quota == q.monthly_quota else q.pending_monthly_quota
+                    ),
+                }
+                for q in quotas
+            ],
+        }
+
+    @staticmethod
     def build_tenant_response(tenant: Tenant, *, unmask: bool = False) -> dict:
         """Shape a tenant into its API dict, applying the PII-masking policy.
 
@@ -850,6 +1082,13 @@ class TenantService:
                 },
             )
 
+    async def _is_institution_admin(self, user: User, tenant_id: int) -> bool:
+        # Deactivated admins don't count — contact mail must reach a live account.
+        if user.tenant_id != tenant_id or not user.is_active:
+            return False
+        roles = await self._roles.get_user_roles(user.id)
+        return RoleName.TENANT_ADMIN.value in roles
+
     async def _resolve_pending_email_admin(
         self, tenant: Tenant, data: dict
     ) -> tuple[str, str, Optional[User]]:
@@ -890,48 +1129,59 @@ class TenantService:
             )
         return old_email, new_email, admin
 
-    async def _assert_email_available(
-        self, data: dict, tenant_id: int, admin: Optional[User]
-    ) -> None:
-        """Single, admin-aware email-uniqueness check. Consolidates what
-        PR #828 added (cross-tenant tenant+user collision) with the
-        reissue-time check this PR needed (any non-admin user collision),
-        so there is exactly one query per table and one place that owns
-        email uniqueness for this endpoint.
-        """
-        if "email" not in data:
-            return
-        existing_tenant = await self._tenants.get_by_email(data["email"])
-        if existing_tenant and existing_tenant.id != tenant_id:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "DUPLICATE_TENANT_EMAIL",
-                    "message": "A tenant with this email already exists.",
-                },
+    async def _resolve_new_contact_email(self, tenant: Tenant, contact_user_id: UUID) -> str:
+        """Email of the Institution Admin chosen by "Change contact". The
+        tenant must be ACTIVE, and the user an active, set-up Institution
+        Admin of it who is not already its contact; the change then applies
+        immediately (they are already verified, so no email is sent)."""
+        assert_tenant_email_editable(tenant)
+        if tenant.status == TenantStatus.PENDING:
+            # Activation fires when the contact sets their password; a picked
+            # admin may already have one, leaving the tenant PENDING for good.
+            # A PENDING tenant corrects its contact by email instead.
+            raise AppError(
+                message=(
+                    "The contact can't be changed until the institution is active. "
+                    "Correct the contact email instead."
+                ),
+                code="TENANT_EMAIL_EDIT_NOT_ALLOWED",
+                status_code=409,
             )
-        existing_user = await self._users.get_by_email(data["email"])
-        if existing_user is None:
-            return
-        if admin is not None:
-            # Reissue flow will assign ``admin.email = new_email``. Any other
-            # holder — same-tenant or cross-tenant — breaks the users.email
-            # UNIQUE constraint at flush time, so only the admin themselves
-            # is an allowed match.
-            collides = existing_user.id != admin.id
-        else:
-            # No reissue planned: tenant.email is independent of users.email,
-            # so a same-tenant user happening to share the address is
-            # harmless. Only reject cross-tenant.
-            collides = existing_user.tenant_id != tenant_id
-        if collides:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "DUPLICATE_EMAIL",
-                    "message": "This email is already in use.",
-                },
+        user = await self._users.get_by_id(contact_user_id)
+        if user is None or not await self._is_institution_admin(user, tenant.id):
+            raise AppError(
+                message="The new contact must be an active Institution Admin of this institution.",
+                code="CONTACT_NOT_INSTITUTION_ADMIN",
+                status_code=409,
             )
+        if await self._credentials.get_by_user_id(user.id) is None:
+            raise AppError(
+                message="The new contact has not finished setting up their account.",
+                code="CONTACT_NOT_VERIFIED",
+                status_code=409,
+            )
+        if (user.email or "").lower().strip() == (tenant.email or "").lower().strip():
+            raise AppError(
+                message="This Institution Admin is already the institution's contact.",
+                code="CONTACT_ALREADY_CURRENT",
+                status_code=409,
+            )
+        return user.email
+
+    @staticmethod
+    def _assert_typed_email_allowed(tenant: Tenant, old_email: str, new_email: str) -> None:
+        """A typed email may only correct a PENDING tenant's contact; any
+        other tenant changes its contact via ``contact_user_id``."""
+        if not new_email or new_email == old_email or tenant.status == TenantStatus.PENDING:
+            return
+        raise AppError(
+            message=(
+                "The contact email can't be edited directly. Use Change contact "
+                "to pick an Institution Admin of this institution."
+            ),
+            code="TENANT_EMAIL_EDIT_NOT_ALLOWED",
+            status_code=409,
+        )
 
     async def update_tenant(
         self,
@@ -939,21 +1189,26 @@ class TenantService:
         tenant_id: int,
         body: TenantUpdate,
         background_tasks: Optional[BackgroundTasks] = None,
-    ) -> Tenant:
-        """Patch a tenant's editable fields.
+    ) -> tuple[Tenant, bool]:
+        """Patch a tenant's editable fields. Returns ``(tenant, link_sent)``.
 
         When the tenant is ``PENDING`` and the email changes, the
         auto-provisioned admin user's email is updated to match, their
         outstanding SETUP tokens are deactivated, and a fresh activation
         email is enqueued to the new address.
 
+        Any other tenant changes its contact only via ``contact_user_id``
+        (an existing, set-up Institution Admin), applied immediately with no
+        email; a typed email change is refused. Contact changes are refused
+        while PENDING/SUSPENDED/DEACTIVATED and for the Default Organisation.
+
         Transactional contract: every write — tenant column update, admin's
         ``users.email``, token deactivation, new ``token_verification`` row
         — flushes against the SAME ``AsyncSession`` and is committed once
         at the end. Any pre-commit failure (409 on duplicate email, admin
-        not found, helper raise) aborts the whole change. The activation
-        email is enqueued **after** commit, so a rolled-back transaction
-        can never leak a delivered email whose token no longer exists.
+        not found, helper raise) aborts the whole change. Emails are
+        enqueued **after** commit, so a rolled-back transaction can never
+        leak a delivered email whose token no longer exists.
         """
         # TENANT ADMIN now holds tenant.update (perm 42), which the gateway
         # shares between this profile endpoint and the status endpoint. Without
@@ -977,8 +1232,17 @@ class TenantService:
         # so the tenant.email change is never committed without the matching
         # admin-email update + token invalidation.
         await self._assert_organisation_available(data, tenant_id)
-        old_email, new_email, admin = await self._resolve_pending_email_admin(tenant, data)
-        await self._assert_email_available(data, tenant_id, admin)
+        contact_user_id = data.pop("contact_user_id", None)
+        if contact_user_id is not None:
+            # "Change contact": the picked admin's email replaces any email
+            # the client echoed back.
+            data["email"] = await self._resolve_new_contact_email(tenant, contact_user_id)
+            old_email, new_email, admin = "", "", None
+        else:
+            old_email, new_email, admin = await self._resolve_pending_email_admin(tenant, data)
+            self._assert_typed_email_allowed(tenant, old_email, new_email)
+        if "email" in data:
+            await assert_email_available(self._tenants, self._users, data["email"], tenant_id, admin)
 
         # ── Stage writes against the open session (flush only, no commit).
         data["updated_by"] = current_user.id
@@ -1017,7 +1281,7 @@ class TenantService:
                 self._email,
                 lambda: render_setup_link(admin, new_setup_token),
             )
-        return tenant
+        return tenant, new_setup_token is not None
 
     async def update_tenant_status(
         self,
@@ -1270,8 +1534,8 @@ class TenantService:
         result onto this tenant's cached API keys — the write-through the
         old revise_budget endpoint did via its budget-exhausted webhook to
         auth-service. Without this, a top-up moves tenants.allocated_budget
-        but a key already flagged budget-exhausted=1 from a prior top-down
-        has no path back to 0.
+        but a key already flagged budget-exhausted=1 (e.g. after its spend
+        caught up with the tenant's budget) has no path back to 0.
 
         Asymmetric on purpose, NOT a blanket set-or-clear of every key:
           * Tenant pool genuinely depleted (exhausted=True) -> every key
@@ -1340,13 +1604,13 @@ class TenantService:
         self,
         current_user: User,
         tenant_id: int,
-        action: Optional[Literal["top-up", "top-down"]],
+        action: Optional[Literal["top-up"]],
         amount: Optional[Decimal],
         budget_effective_from: Optional[datetime] = None,
         budget_effective_to: Optional[datetime] = None,
         platform_core_db: Optional[AsyncSession] = None,
     ) -> tuple[Tenant, int, int, bool]:
-        """Top-up or top-down a tenant's budget — PATCH /auth/tenants/{id}/budget.
+        """Top-up a tenant's budget — PATCH /auth/tenants/{id}/budget.
 
         Restricted to ADMIN, same as assign_tenant_tier. Unlike the old
         platform-core endpoint this replaces, there is no available_balance
@@ -1363,7 +1627,7 @@ class TenantService:
             can never move once the window it belongs to is live, so
             supplying it here raises 422 ``effective_from_locked``.
             ``budget_effective_to`` is optional: omitted means "leave
-            unchanged" (a plain amount top-up/top-down untouches the
+            unchanged" (a plain amount top-up untouches the
             window entirely — this is what the shipped UI already does,
             since it only ever sends action+amount); given, it's validated
             against the *stored* From (never a client-supplied one, since
@@ -1386,8 +1650,10 @@ class TenantService:
             20 — nothing resets. ``action``/``amount`` are independent of
             this and may be omitted entirely for a pure window edit (both
             are optional; the two are only ever required together — see
-            ``TenantBudgetRequest``), or given alongside it to top-up/
-            top-down at the same time.
+            ``TenantBudgetRequest``), or given alongside it to top-up at
+            the same time. A top-up WITHOUT a new ``budget_effective_to``
+            is rejected (422 ``budget_window_expired``) — it would only
+            grow a balance that can't be spent while the window is over.
           * No window on file at all (``tenants.budget_effective_from`` is
             None — never assigned before): both ``budget_effective_from``
             and ``budget_effective_to`` become REQUIRED (422
@@ -1419,25 +1685,10 @@ class TenantService:
         ₹ didn't move. This is genuinely atomic with the Tenant's own row
         change: the cascade is resolved and staged (not committed) BEFORE
         ``self._tenants.update`` below, and everything commits together in
-        one transaction — a top-down that would leave the new total unable
-        to cover what's already allocated across every Application (nobody
-        auto-shrinks to make room any more) raises ALLOCATION_TOTAL_EXCEEDED
-        before anything here is persisted, and the session rollback on that
-        exception undoes the Tenant's own allocated_budget change too. A
-        top-up can never fail this way — it only ever grows what's
-        available, becoming additional unallocated headroom.
+        one transaction. Top-down is no longer offered — a revision only
+        ever grows the budget, so the new headroom simply becomes
+        additional unallocated budget.
 
-        A top-down is REJECTED even earlier than that (409
-        budget_below_consumed) when it would drop the budget below this
-        tenant's total spend to date (restores the check the old
-        platform-core endpoint had, which this rebuild had dropped for lack
-        of a spend figure to check against; see budget_usage) — this
-        catches the aggregate case cheaply before the per-Application/
-        per-Key cascade even runs. This needs platform_core_db to verify: a
-        top-down is refused outright (503 spend_verification_unavailable)
-        rather than allowed unverified, unlike _sync_ppu_wallet_and_exhaustion's
-        own read below, which is best-effort because ITS write already
-        happened by the time it runs — this check gates the write itself.
         No optimistic-locking (expected_version) either — deemed
         unnecessary for this release.
 
@@ -1478,166 +1729,15 @@ class TenantService:
 
         tenant = await self._load_tenant_for_update_or_404(tenant_id)
 
-        window_active = tenant.budget_effective_to is not None and not is_budget_window_expired(
-            tenant.budget_effective_to
+        new_effective_from, new_effective_to = _resolve_revised_window(
+            tenant, action, budget_effective_from, budget_effective_to
         )
-        has_existing_window = tenant.budget_effective_from is not None
-        if has_existing_window:
-            # AI4IDS-2995: budget_effective_from is locked once a window is
-            # on file at all — active OR lapsed. It never moves again after
-            # the tenant's first assignment.
-            if budget_effective_from is not None:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail={
-                        "error": "effective_from_locked",
-                        "message": (
-                            "budget_effective_from is locked once a budget window has "
-                            f"been assigned ({tenant.budget_effective_from} to "
-                            f"{tenant.budget_effective_to}), whether that window is "
-                            "still active or has since lapsed — omit it, or extend "
-                            "budget_effective_to instead."
-                        ),
-                    },
-                )
-            new_effective_from = tenant.budget_effective_from
-            if window_active:
-                new_effective_to = (
-                    budget_effective_to if budget_effective_to is not None else tenant.budget_effective_to
-                )
-                if budget_effective_to is not None:
-                    _validate_effective_to_after_from(new_effective_from, new_effective_to)
-            else:
-                # Reactivating/extending a LAPSED window without moving its
-                # original start date — e.g. Sep 1-16 expired on Sep 17,
-                # caller now sends only a later budget_effective_to (Sep 20)
-                # to reopen it. allocated_budget and spend are never
-                # window-scoped (see this method's own docstring), so the
-                # tenant's remaining balance carries over untouched; this
-                # branch only ever changes budget_effective_to, not the ₹.
-                if budget_effective_to is not None:
-                    _validate_effective_to_after_from(new_effective_from, budget_effective_to)
-                    _validate_new_effective_to_not_in_past(budget_effective_to)
-                    new_effective_to = budget_effective_to
-                else:
-                    # No window change requested — a plain amount top-up/
-                    # top-down on a tenant whose window is still lapsed; it
-                    # stays lapsed (still blocked) until effective_to is
-                    # given.
-                    new_effective_to = tenant.budget_effective_to
-        elif budget_effective_from is not None:
-            # Explicit fresh founding — only reachable when this tenant has
-            # never had a window on file before.
-            if budget_effective_to is None:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail={
-                        "error": "effective_window_required",
-                        "message": (
-                            "budget_effective_to is required when supplying a new "
-                            "budget_effective_from."
-                        ),
-                    },
-                )
-            _validate_new_effective_from(budget_effective_from)
-            _validate_effective_to_after_from(budget_effective_from, budget_effective_to)
-            new_effective_from = budget_effective_from
-            new_effective_to = budget_effective_to
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={
-                    "error": "effective_window_required",
-                    "message": (
-                        "This tenant has never had a budget window assigned — "
-                        "budget_effective_from and budget_effective_to are both "
-                        "required to assign one."
-                    ),
-                },
-            )
+        current_budget, new_budget = _revised_budget(tenant, action, amount)
 
-        current_budget = tenant.allocated_budget or Decimal("0")
-        if action is None:
-            # Pure window edit (e.g. reactivating a lapsed window) — the
-            # schema's own _validate_action_amount_pair guarantees amount is
-            # also None here, since the two are only ever given together.
-            new_budget = current_budget
-        else:
-            delta = amount if action == "top-up" else -amount
-            new_budget = current_budget + delta
-
-        if action == "top-up" and new_budget > MAX_TENANT_BUDGET:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={
-                    "error": "budget_limit_exceeded",
-                    "message": (
-                        f"Top-up would raise the budget to {new_budget}, exceeding "
-                        f"the maximum allowed ({MAX_TENANT_BUDGET})"
-                    ),
-                },
-            )
-        if action == "top-down" and new_budget < 0:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail={
-                    "error": "budget_negative",
-                    "message": f"Top-down amount exceeds the current budget ({current_budget})",
-                },
-            )
-
-        if action == "top-down":
-            # Cheaper, purely-local checks (above) run first; only reach for
-            # platform-core once a top-down has already passed those.
-            if self._api_keys is None or platform_core_db is None:
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail={
-                        "error": "spend_verification_unavailable",
-                        "message": "Cannot verify this tenant's current spend right now — "
-                        "refusing an unverified top-down rather than risking pushing it "
-                        "below what's already been spent.",
-                    },
-                )
-            try:
-                key_ids = await self._api_keys.list_key_ids_for_tenant(tenant_id)
-                usage = await fetch_budget_usage(key_ids, platform_core_db, raise_on_error=True)
-            except Exception:
-                logger.exception(
-                    "Failed to verify spend for tenant_id=%s ahead of a top-down; refusing it.",
-                    tenant_id,
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail={
-                        "error": "spend_verification_unavailable",
-                        "message": "Cannot verify this tenant's current spend right now — "
-                        "refusing an unverified top-down rather than risking pushing it "
-                        "below what's already been spent.",
-                    },
-                )
-            total_spent = sum((used for used, _snap in usage.values()), Decimal("0"))
-            if new_budget < total_spent:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail={
-                        "error": "budget_below_consumed",
-                        "message": (
-                            f"Top-down would drop the budget to {new_budget}, below this "
-                            f"tenant's total spend to date ({total_spent}) across its API keys."
-                        ),
-                    },
-                )
-
-        applications_recomputed = 0
-        keys_recomputed = 0
-        snapshot_writes: dict[int, Decimal] = {}
         if self._allocations is None:
-            # Fail closed, same reasoning as the top-down spend gate above:
-            # an unverified/un-cascaded revision could silently leave
-            # Applications or Keys out of sync with the Tenant's new total,
-            # or (on a decrease) leave one of them over-committed relative
-            # to what it's actually allowed now. Refuse rather than guess.
+            # Fail closed: an un-cascaded revision could silently leave
+            # Applications or Keys out of sync with the Tenant's new total.
+            # Refuse rather than guess.
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={
@@ -1668,7 +1768,7 @@ class TenantService:
         await self._tenants.commit()
         await self._tenants.refresh(tenant)
 
-        # A top-up or top-down (not a pure window-date edit) is the budget
+        # A top-up (not a pure window-date edit) is the budget
         # change BUDGET_ASSIGNED / BUDGET_UPDATED report.
         if action is not None:
             publish_budget_event(
@@ -1679,6 +1779,21 @@ class TenantService:
                 revised_at=tenant.updated_at,
             )
 
+        snapshot_write_failed = await self._after_budget_revision(
+            tenant_id, new_budget, snapshot_writes, platform_core_db
+        )
+        return tenant, applications_recomputed, keys_recomputed, snapshot_write_failed
+
+    async def _after_budget_revision(
+        self,
+        tenant_id: int,
+        new_budget: Decimal,
+        snapshot_writes: dict[int, Decimal],
+        platform_core_db: Optional[AsyncSession],
+    ) -> bool:
+        """Best-effort follow-ups once revise_tenant_budget has committed —
+        none of them roll the revision back. Returns snapshot_write_failed
+        (see revise_tenant_budget's docstring)."""
         snapshot_write_failed = not await write_budget_snapshot(snapshot_writes, platform_core_db)
         if snapshot_write_failed:
             # budget_usage.api_key_budget_snap is now stale for these keys —
@@ -1711,7 +1826,7 @@ class TenantService:
                 "revision; tenants.budget_effective_to/_from were still updated.",
                 tenant_id,
             )
-        return tenant, applications_recomputed, keys_recomputed, snapshot_write_failed
+        return snapshot_write_failed
 
     async def list_tenant_tiers(
         self,
@@ -1858,7 +1973,8 @@ class TenantService:
         tenant_id: int,
         user_id: UUID,
         body: TenantUserUpdate,
-    ) -> User:
+    ) -> tuple[User, bool]:
+        """Returns the updated user and whether their roles changed."""
         await self.enforce_scope(current_user, tenant_id)
         await self._deny_moderator(current_user)
         tenant = await self._load_tenant_or_404(tenant_id)
@@ -1870,15 +1986,18 @@ class TenantService:
         role_update = payload.pop("role", None)
         if role_update == TenantUserRole.TENANT_ADMIN.value:
             assert_default_tenant_not_targeted(tenant)
+        elif role_update == TenantUserRole.USER.value:
+            await self._assert_tenant_admin_demotable(target, tenant)
         payload["updated_by"] = current_user.id
         await self._users.update(target, payload)
+        role_changed = False
         if role_update is not None:
             # Single commit via save_and_refresh — role repo shares this session.
-            await self._set_tenant_user_role(
-                target.id, role_update, commit=False, created_by=current_user.id
+            role_changed = await self._set_tenant_user_role(
+                target.id, role_update, created_by=current_user.id
             )
         await self._users.save_and_refresh(target)
-        return target
+        return target, role_changed
 
     async def update_tenant_user_status(
         self,
@@ -1904,6 +2023,10 @@ class TenantService:
         if body.is_active is False:
             await self._assert_not_last_platform_admin(target, tenant, action="suspend")
         payload = {"is_active": body.is_active, "updated_by": current_user.id}
+        if body.is_active and not target.is_activated():
+            # An admin activating a never-activated user counts as activation,
+            # so a later Suspend shows Suspended, not Pending Activation.
+            payload["activated_at"] = datetime.now(timezone.utc)
         _assert_tenant_active_for_user_deactivation(tenant, payload)
 
         await self._users.update(target, payload)
@@ -1919,8 +2042,8 @@ class TenantService:
         tenant_id: int,
         user_id: UUID,
         background_tasks: BackgroundTasks,
-    ) -> None:
-        """Re-send the set-password (SETUP) email for a not-yet-activated tenant user.
+    ) -> Literal["setup", "verify"]:
+        """Re-send the onboarding email for a not-yet-activated tenant user.
 
         Tenant users are provisioned passwordless (``email_kind="setup"``), so
         the onboarding email is a set-password link — NOT an email-verification
@@ -1929,6 +2052,10 @@ class TenantService:
         by ``user_id`` (already unmasked in the tenant-user list) avoids the
         masked-email / PENDING-tenant limits of ``/auth/resend-setup-link``,
         which only targets the tenant contact admin.
+
+        A self-registered user still waiting on email verification already has
+        a password, so they get a fresh verification link instead. Returns
+        which kind of link was sent.
         """
         await self.enforce_scope(current_user, tenant_id)
         await self._deny_moderator(current_user)
@@ -1953,6 +2080,26 @@ class TenantService:
                 message="This user's access is suspended; reactivate before resending.",
                 code="USER_SUSPENDED",
             )
+
+        verify_token = await reissue_verify_token(
+            target,
+            credentials_repo=self._credentials,
+            verifications_repo=self._verifications,
+            token_service=self._tokens,
+        )
+        if verify_token is not None:
+            await self._users.commit()
+            logger.info(
+                "Verification link resent for tenant user id=%s (tenant %s)",
+                target.id,
+                tenant_id,
+            )
+            enqueue_email(
+                background_tasks,
+                self._email,
+                lambda: render_verify_email(target, verify_token),
+            )
+            return "verify"
 
         setup_token = await reissue_setup_token(
             target,
@@ -1980,6 +2127,7 @@ class TenantService:
             self._email,
             lambda: render_setup_link(target, setup_token),
         )
+        return "setup"
 
     async def delete_tenant_user(
         self, current_user: User, tenant_id: int, user_id: UUID, background_tasks: BackgroundTasks

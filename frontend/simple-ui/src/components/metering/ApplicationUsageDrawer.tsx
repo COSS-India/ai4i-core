@@ -72,9 +72,6 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
             <Text fontWeight="bold" fontSize="13.5px" color="gray.800">
               {key.keyName}
             </Text>
-            <Text fontFamily="mono" fontSize="11px" color="gray.500" mt="2px">
-              •••• {key.maskedKey}
-            </Text>
             <ApiKeyStatusBadge isActive={key.isActive} />
           </>
         ),

@@ -332,13 +332,15 @@ export function TableFilterToolbar({
   children,
   hasActiveFilters,
   onClear,
-  clearLabel = "Clear all",
+  clearLabel = "Reset",
   rightContent,
   spacing = 3,
   align = "flex-start",
   justify = "flex-start",
   alignActionsToInputs = true,
-}: {
+  flexWrap = "wrap",
+  pinRightContent = true,
+}: Readonly<{
   children: React.ReactNode;
   hasActiveFilters?: boolean;
   onClear?: () => void;
@@ -349,36 +351,44 @@ export function TableFilterToolbar({
   justify?: string;
   /** Offset actions by a form-label height. Turn off when every control hides its label. */
   alignActionsToInputs?: boolean;
-}) {
-  const actions =
-    (hasActiveFilters && onClear) || rightContent ? (
-      <HStack
-        spacing={2}
-        pt={alignActionsToInputs ? FORM_LABEL_TO_INPUT_PT : 0}
-        align="center"
-        flexShrink={0}
-        ml={rightContent ? "auto" : undefined}
-      >
-        {hasActiveFilters && onClear ? (
-          <Button size="sm" variant="outline" onClick={onClear}>
-            {clearLabel}
-          </Button>
-        ) : null}
-        {rightContent}
-      </HStack>
-    ) : null;
+  flexWrap?: React.ComponentProps<typeof HStack>["flexWrap"];
+  /**
+   * Push `rightContent` to the end of the row.
+   * Reset stays beside the filters either way.
+   */
+  pinRightContent?: boolean;
+}>) {
+  const labelOffset = alignActionsToInputs ? FORM_LABEL_TO_INPUT_PT : 0;
 
   return (
     <HStack
       spacing={spacing}
       align={align}
       justify={justify}
-      flexWrap="wrap"
+      flexWrap={flexWrap}
       rowGap={3}
       w="100%"
     >
       {children}
-      {actions}
+      {hasActiveFilters && onClear ? (
+        <Box pt={labelOffset} flexShrink={0}>
+          <Button size="sm" variant="outline" onClick={onClear}>
+            {clearLabel}
+          </Button>
+        </Box>
+      ) : null}
+      {/*
+        Growable spacer (not margin-left:auto) so when rightContent wraps it
+        starts at the left of the next row instead of leaving a blank strip.
+      */}
+      {rightContent && pinRightContent ? (
+        <Box flex="1 1 0" minW={0} h="1px" aria-hidden />
+      ) : null}
+      {rightContent ? (
+        <HStack spacing={2} pt={labelOffset} align="center" flexShrink={0}>
+          {rightContent}
+        </HStack>
+      ) : null}
     </HStack>
   );
 }

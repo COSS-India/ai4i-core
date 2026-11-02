@@ -8,7 +8,6 @@ import {
 } from "@chakra-ui/react";
 import { showToast } from "../../utils/toast";
 import StandardModal from "../common/StandardModal";
-import DataTableActions from "../common/DataTableActions";
 import DataTable, {
   useAdminTableSurface,
   type DataTableColumn,
@@ -197,24 +196,8 @@ export function AuditPanel() {
       tdProps: { whiteSpace: "nowrap" },
       cell: (row) => formatDt(row.created_at),
     },
-    {
-      id: "detail",
-      header: "Detail",
-      tdProps: { onClick: (e) => e.stopPropagation() },
-      cell: (row) => (
-        <DataTableActions
-          actions={[
-            {
-              id: "view",
-              label: "View JSON detail",
-              "aria-label": "View audit log JSON",
-              onClick: () => void openDetail(row.pii_audit_id),
-            },
-          ]}
-        />
-      ),
-    },
-  ], [openDetail]);
+    // Row click + chevron open the JSON detail; no separate View action.
+  ], []);
 
   return (
     <Box>

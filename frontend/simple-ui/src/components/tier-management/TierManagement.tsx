@@ -61,13 +61,11 @@ const TIER_REMOVAL_ENABLED = false;
 const TIER_NAME_COLUMN: DataTableColumn<Tier> = {
   id: "name",
   header: "Tier Name",
-  thProps: { w: "500px", maxW: "500px" },
-  tdProps: { maxW: "500px" },
   sortable: true,
   sortAccessor: (tier) => tier.name ?? "",
   cell: (tier) => (
     <Tooltip label={tier.name} placement="top" hasArrow openDelay={300}>
-      <Text fontSize="sm" fontWeight="medium" isTruncated maxW="510px">
+      <Text fontSize="sm" fontWeight="medium" isTruncated>
         {tier.name}
       </Text>
     </Tooltip>
@@ -98,7 +96,7 @@ const TIER_FILTER_STATUSES: TierStatus[] = [
 const TIER_STATUS_COLUMN: DataTableColumn<Tier> = {
   id: "status",
   header: "Status",
-  thProps: { w: "240px" },
+  thProps: { w: "120px" },
   cell: (tier) => {
     const badge = TIER_STATUS_BADGE[effectiveTierStatus(tier)];
     return (
@@ -131,7 +129,10 @@ const TIER_TASK_TYPES_VISIBLE_COUNT = 4;
 
 const TIER_TASK_TYPES_COLUMN: DataTableColumn<Tier> = {
   id: "taskTypes",
-  header: "Model Task Types",
+  header: "Task Types",
+  thProps: { w: "220px", maxW: "280px" },
+  tdProps: { maxW: "280px" },
+  truncate: false,
   cell: (tier) => (
     <HStack spacing={1} flexWrap="wrap">
       {(tier.quotas ?? []).slice(0, TIER_TASK_TYPES_VISIBLE_COUNT).map((q) => (
@@ -236,6 +237,7 @@ function makeTierActionsColumn(
   onStatusChange: (tier: Tier) => void,
 ): DataTableColumn<Tier> {
   return createActionsColumn<Tier>({
+    actionCount: 3,
     getActions: (tier) => {
       const statusAction = getTierStatusAction(tier.status);
       const canDelete = tier.status === "DEACTIVATED";
@@ -543,7 +545,7 @@ const TierManagement: React.FC = () => {
       size="wide"
       lockDismiss={isSubmitting}
       title="Create Tier"
-      description={`Configure access and usage limits for ${INSTITUTIONS.toLowerCase()}.`}
+      description="Define the rate limit and quotas for this tier."
       footer={
         <FormActions
           cancelLabel="Cancel"
@@ -618,7 +620,7 @@ const TierManagement: React.FC = () => {
         filterDefs={[
           {
             id: "taskType",
-            label: "Model Task Type",
+            label: "Task Type",
             type: "select",
             param: "model_task_type",
             value: filterTaskType,
@@ -659,6 +661,7 @@ const TierManagement: React.FC = () => {
         size="wide"
         lockDismiss={isSubmitting}
         title={editingTier?.name ? `Edit Tier: ${editingTier.name}` : "Edit Tier"}
+        description="Define the rate limit and quotas for this tier."
         footer={
           <FormActions
             submitLabel="Save Changes"

@@ -1,6 +1,11 @@
 /// <reference types="jest" />
 
-import { SAMPLE_MODEL_JSON } from "../../src/utils/sampleModelJson";
+import { validateModelData } from "../../src/components/model-management/modelJsonValidation";
+import {
+  MODEL_SAMPLES,
+  SAMPLE_LLM_MODEL_JSON,
+  SAMPLE_NLP_MODEL_JSON,
+} from "../../src/utils/sampleModelJson";
 import { stripJsonComments } from "../../src/utils/stripJsonComments";
 
 const parse = (jsonc: string) => JSON.parse(stripJsonComments(jsonc));
@@ -122,18 +127,18 @@ describe("stripJsonComments", () => {
 
 });
 
-describe("SAMPLE_MODEL_JSON", () => {
+describe("SAMPLE_LLM_MODEL_JSON", () => {
   it("still carries its explanatory comments for the downloaded file", () => {
-    expect(SAMPLE_MODEL_JSON).toContain("// Required. Version for the model.");
-    expect(SAMPLE_MODEL_JSON.split("\n").filter((line) => line.includes("//")).length).toBeGreaterThan(20);
+    expect(SAMPLE_LLM_MODEL_JSON).toContain("// Required. Version for the model, 1–20 characters.");
+    expect(SAMPLE_LLM_MODEL_JSON.split("\n").filter((line) => line.includes("//")).length).toBeGreaterThan(20);
   });
 
   it("parses once the comments are stripped", () => {
-    expect(() => parse(SAMPLE_MODEL_JSON)).not.toThrow();
+    expect(() => parse(SAMPLE_LLM_MODEL_JSON)).not.toThrow();
   });
 
   it("exposes the top-level fields the registration API expects", () => {
-    expect(Object.keys(parse(SAMPLE_MODEL_JSON))).toEqual([
+    expect(Object.keys(parse(SAMPLE_LLM_MODEL_JSON))).toEqual([
       "version",
       "name",
       "description",
@@ -149,7 +154,7 @@ describe("SAMPLE_MODEL_JSON", () => {
   });
 
   it("keeps nested structures intact through the strip", () => {
-    const sample = parse(SAMPLE_MODEL_JSON);
+    const sample = parse(SAMPLE_LLM_MODEL_JSON);
 
     expect(sample.task).toEqual({ type: "llm" });
     expect(sample.schema.taskType).toBe(sample.task.type);
@@ -162,5 +167,70 @@ describe("SAMPLE_MODEL_JSON", () => {
     });
     expect(sample.schema.response.choices[0].message.content).toBe("Hello!");
     expect(sample.submitter).toEqual({ name: "Example Org" });
+  });
+
+  it("is labelled for LLM models only", () => {
+    expect(SAMPLE_LLM_MODEL_JSON).toContain("OpenAI specification");
+    expect(SAMPLE_LLM_MODEL_JSON).not.toContain("classInstance");
+  });
+});
+
+describe("SAMPLE_NLP_MODEL_JSON", () => {
+  it("still carries its explanatory comments for the downloaded file", () => {
+    expect(SAMPLE_NLP_MODEL_JSON).toContain("ULCA model specification");
+    expect(SAMPLE_NLP_MODEL_JSON).toContain("// Required for NLP models.");
+    expect(SAMPLE_NLP_MODEL_JSON.split("\n").filter((line) => line.includes("//")).length).toBeGreaterThan(20);
+  });
+
+  it("exposes the top-level fields an NLP registration needs, including classInstance", () => {
+    expect(Object.keys(parse(SAMPLE_NLP_MODEL_JSON))).toEqual([
+      "version",
+      "name",
+      "description",
+      "task",
+      "classInstance",
+      "languages",
+      "license",
+      "domain",
+      "adapterConfig",
+      "schema",
+      "trainingDataset",
+      "submitter",
+    ]);
+  });
+
+  it("keeps the NMT structure consistent across task, languages and schema", () => {
+    const sample = parse(SAMPLE_NLP_MODEL_JSON);
+
+    expect(sample.task).toEqual({ type: "nmt" });
+    expect(sample.classInstance).toBe("NMTTaskService");
+    expect(sample.schema.taskType).toBe(sample.task.type);
+    expect(sample.schema.request.config.language).toEqual({
+      sourceLanguage: sample.languages[0].sourceLanguage,
+      targetLanguage: sample.languages[0].targetLanguage,
+    });
+    expect(sample.adapterConfig.inputs.map((input: { tensor: string }) => input.tensor)).toEqual([
+      "INPUT_TEXT",
+      "INPUT_LANGUAGE_ID",
+      "OUTPUT_LANGUAGE_ID",
+    ]);
+    for (const input of sample.adapterConfig.inputs) {
+      expect(input.value_path).toBeTruthy();
+    }
+    expect(sample.adapterConfig.outputs).toEqual([
+      { tensor: "OUTPUT_TEXT", dtype: "BYTES", maps_to: "target" },
+    ]);
+    expect(sample.schema.response.triton.outputs[0].name).toBe("OUTPUT_TEXT");
+  });
+});
+
+describe("MODEL_SAMPLES", () => {
+  it("offers a separately named download per model kind", () => {
+    expect(MODEL_SAMPLES.nlp).toEqual({ json: SAMPLE_NLP_MODEL_JSON, fileName: "sample-nlp-model.json" });
+    expect(MODEL_SAMPLES.llm).toEqual({ json: SAMPLE_LLM_MODEL_JSON, fileName: "sample-llm-model.json" });
+  });
+
+  it.each(Object.entries(MODEL_SAMPLES))("%s sample passes upload validation unedited", (_kind, sample) => {
+    expect(validateModelData(parse(sample.json))).toEqual([]);
   });
 });

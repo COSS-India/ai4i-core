@@ -1,6 +1,7 @@
 # Usage Dashboard backfill (one-off)
 
-Copies Prometheus' daily **LLM** totals for the days **before `usage_events` began** into
+Copies Prometheus' daily **LLM** totals for the days **without recorded data** (before the
+nightly rollup has rows for them, typically before `usage_events` began) into
 `daily_usage`, as estimated rows (`source = 'backfill'`). Recorded data (`source = 'rollup'`,
 from `usage_events`) is never touched. Run it **once per environment**, by hand: it is not a
 scheduled job.
@@ -11,7 +12,11 @@ scheduled job.
 2. Prometheus still holds every day from `BACKFILL_FROM` on, including its start (it drops its
    oldest day every day, so run this sooner rather than later). A day whose start Prometheus no
    longer has would count every counter's lifetime total as that day's usage.
-3. `BACKFILL_TO` is before the day `usage_events` begins (the job refuses otherwise).
+3. No day in `BACKFILL_FROM`..`BACKFILL_TO` has recorded rows in `daily_usage` (`source = 'rollup'`),
+   and none is within the nightly rollup's reach: yesterday and `USAGE_ROLLUP_LOOKBACK_DAYS` (2)
+   before it. The job refuses otherwise. A day with `usage_events` but no rollup rows, like the day
+   recording started (its events cover only part of it), can be backfilled: past days are read
+   from `daily_usage`, so its events no longer show once it's backfilled.
 4. The dashboard shows the rows where platform-core has `USAGE_DAILY_ROLLUP_ENABLED=true`.
 
 ## Run
@@ -30,7 +35,8 @@ database variable**: one left out (or commented out) can still be taken from
 |---|---|
 | `PROMETHEUS_URL` | Prometheus to read from. Required. |
 | `BACKFILL_FROM` | First IST day to backfill (`YYYY-MM-DD`), inclusive. Required. |
-| `BACKFILL_TO` | Last IST day to backfill (`YYYY-MM-DD`), inclusive. Required; a past day before `usage_events` begins. |
+| `BACKFILL_TO` | Last IST day to backfill (`YYYY-MM-DD`), inclusive. Required; before the rollup's reach, with no rollup rows in the range. |
+| `USAGE_ROLLUP_LOOKBACK_DAYS` | The nightly rollup's lookback (default 2); same value as the `daily_usage_consolidation` job. |
 | `PROMETHEUS_API_PATH_LABEL` | Label carrying the request path: `exported_endpoint` on k8s (default), `endpoint` on local docker-compose. |
 | `PROMETHEUS_TIMEOUT_SECONDS` | Per-query timeout (default 60). |
 
@@ -41,7 +47,9 @@ open, so these are the ones used.
 
 ## What it does
 
-1. Checks the dates, and that `usage_events` has no rows before the end of `BACKFILL_TO`.
+1. Checks the dates; that no day has recorded (`rollup`) rows in `daily_usage` or is within the
+   nightly rollup's reach. It logs a warning for each day that has `usage_events` rows: the
+   backfill replaces them on the dashboard, and non-LLM events there won't show (LLM only).
 2. Loads into memory, once, what the rows need: institutions (name, budget, current tier),
    applications, single-key applications, tiers, LLM services with their model and prices, and
    the LLM inference type.

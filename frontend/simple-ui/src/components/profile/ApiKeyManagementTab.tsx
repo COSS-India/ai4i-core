@@ -15,6 +15,8 @@ import {
   Tooltip,
   Badge,
   Button,
+  ButtonGroup,
+  IconButton,
 } from "@chakra-ui/react";
 import { useAuth } from "../../hooks/useAuth";
 import { useApiKeyManagementTab, type ApiKeyTableRow } from "./hooks/useApiKeyManagementTab";
@@ -24,8 +26,23 @@ import ApiKeyBulkBudgetModal from "./ApiKeyBulkBudgetModal";
 import ApiKeyBudgetModal from "./ApiKeyBudgetModal";
 import { RevokeBudgetBreakdown } from "./budgetVisuals";
 import { formatSpendMoney } from "../../utils/usageSpendHelpers";
-import { FiRefreshCw, FiSlash, FiSliders, FiStopCircle } from "react-icons/fi";
-import { CopyIcon, EditIcon, ViewIcon } from "@chakra-ui/icons";
+import {
+  FiCalendar,
+  FiCheck,
+  FiClock,
+  FiCornerDownRight,
+  FiRefreshCw,
+  FiSlash,
+  FiSliders,
+} from "react-icons/fi";
+import {
+  formatExtension,
+  formatTimeUntil,
+  GRACE_EXTENSION_OPTIONS,
+  isGraceWithinExpiry,
+  ROTATION_GRACE_OPTIONS,
+} from "../../utils/apiKeyUtils";
+import { ChevronDownIcon, ChevronRightIcon, CopyIcon, EditIcon } from "@chakra-ui/icons";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import StandardModal from "../common/StandardModal";
 import {
@@ -37,13 +54,15 @@ import {
   StatusDot,
 } from "./applicationSurface";
 import DataTable, {
-  DataTableActions,
+  createActionsColumn,
   DEFAULT_PAGE_SIZE_OPTIONS,
   FieldLabel,
+  type DataTableAction,
   type DataTableColumn,
 } from "../common/table";
 import { useDeferredColumnSort } from "../../utils/tableSort";
 import ConfirmDialog from "../common/ConfirmDialog";
+import ApiKeyRotationDialogs from "./ApiKeyRotationDialogs";
 import FormActions from "../common/FormActions";
 import FormDrawer from "../common/FormDrawer";
 import FormSection from "../common/FormSection";
@@ -52,8 +71,10 @@ import FieldHint from "../common/FieldHint";
 import {
   API_KEY,
   API_KEY_FILTER_STATUS_LIST,
+  type ApiKeyDisplayStatusValue,
   formatApiKeyDisplayStatusLabel,
   formatApiKeyFilterStatusLabel,
+  isApiKeyExpired,
 } from "../../config/constants";
 import { FIELD_HINTS } from "../../config/fieldHints";
 
@@ -83,12 +104,520 @@ export interface ApiKeyManagementTabProps {
 }
 
 /**
- * API key rotation is live in the backend (POST /api-keys/{id}/rotate,
- * DELETE /api-keys/{id}/rotated-key) but not yet exposed to users: the
- * rotate and revoke-previous-value actions stay hidden until the frontend
- * story for rotation (AI4IDS-3446) lands. Flip to true to show them.
+ * Shows the rotation actions: rotate, extend the previous key, and revoke the
+ * previous key. Set to false to hide them.
  */
-const SHOW_API_KEY_ROTATION_ACTIONS = false;
+const SHOW_API_KEY_ROTATION_ACTIONS = true;
+
+/** Tooltip for an action that needs an effectively active key. */
+function inactiveKeyTooltip(
+  isActive: boolean,
+  isRevocable: boolean,
+  activeText: string,
+  inactiveText: string,
+  revokedText: string,
+): string {
+  if (isActive) return activeText;
+  return isRevocable ? inactiveText : revokedText;
+}
+
+/** Why a key can or can't be rotated right now. */
+function rotateTooltip(key: ApiKeyTableRow, isRotatable: boolean, rotating: boolean): string {
+  if (isRotatable) return "Rotate key";
+  if (rotating && key.rotated_key_expires_at) {
+    return `The old key works until ${new Date(key.rotated_key_expires_at).toLocaleString()}; rotate again after that, or revoke it.`;
+  }
+  if (isApiKeyExpired(key.expires_at)) return "This API key has expired; create a new API key instead.";
+  return "Only effectively active API keys can be rotated.";
+}
+
+function formatApiKeyTableDate(value?: string): string {
+  return value ? new Date(value).toLocaleDateString() : "—";
+}
+
+function formatApiKeyTableDateTime(value?: string): string {
+  return value ? new Date(value).toLocaleString() : "—";
+}
+
+function formatPermissionCount(count: number): string {
+  if (count === 0) return "—";
+  if (count === 1) return "1 permission";
+  return `${count} permissions`;
+}
+
+function ApiKeyPermissionsCell({ count }: Readonly<{ count: number }>) {
+  return (
+    <Text fontSize="sm" color="ink.600">
+      {formatPermissionCount(count)}
+    </Text>
+  );
+}
+
+function ApiKeyAllocationCell({
+  keyRow,
+  pctLabel,
+}: Readonly<{
+  keyRow: ApiKeyTableRow;
+  pctLabel: string;
+}>) {
+  if (keyRow.subRow) {
+    return (
+      <Text fontSize="sm" color="ink.600">
+        Shared
+      </Text>
+    );
+  }
+  if (pctLabel === "—") {
+    return (
+      <Text fontSize="sm" color="ink.500">
+        —
+      </Text>
+    );
+  }
+  return (
+    <Box>
+      <Text fontSize="sm" fontWeight="700" color="ink.800">
+        {pctLabel}
+      </Text>
+      {typeof keyRow.allocated_budget === "number" ? (
+        <Text fontSize="xs" color="ink.500">
+          {formatSpendMoney(keyRow.allocated_budget, "INR")}
+        </Text>
+      ) : null}
+    </Box>
+  );
+}
+
+function ApiKeyStatusCell({
+  status,
+  reason,
+}: Readonly<{
+  status: ApiKeyDisplayStatusValue;
+  reason: string | null;
+}>) {
+  const indicator = (
+    <StatusDot label={formatApiKeyDisplayStatusLabel(status)} tone={apiKeyStatusTone(status)} />
+  );
+  if (!reason) return indicator;
+  return (
+    <Tooltip label={reason} placement="top" hasArrow openDelay={300}>
+      <Box as="span" tabIndex={0} display="inline-flex">
+        {indicator}
+      </Box>
+    </Tooltip>
+  );
+}
+
+function renderApiKeyCreatedCell(key: ApiKeyTableRow): React.ReactNode {
+  const value = key.subRow === "current" ? key.rotated_at ?? key.created_at : key.created_at;
+  return (
+    <Text fontSize="sm" color="ink.600">
+      {formatApiKeyTableDate(value)}
+    </Text>
+  );
+}
+
+function renderApiKeyExpiryCell(key: ApiKeyTableRow): React.ReactNode {
+  if (key.subRow === "previous") {
+    return (
+      <VStack align="start" spacing={0}>
+        <Text fontSize="sm" color="ink.600">
+          {formatApiKeyTableDateTime(key.rotated_key_expires_at)}
+        </Text>
+        <Text fontSize="xs" color="ink.500">
+          Grace period ends
+        </Text>
+      </VStack>
+    );
+  }
+  return (
+    <Text fontSize="sm" color="ink.600">
+      {key.expires_at ? formatApiKeyTableDate(key.expires_at) : "Never"}
+    </Text>
+  );
+}
+
+function renderApiKeyApplicationCell(key: ApiKeyTableRow): React.ReactNode {
+  const label = key.application_name ?? key.application_id ?? "—";
+  return (
+    <Tooltip label={label} placement="top" hasArrow openDelay={300}>
+      <Text fontSize="sm" isTruncated maxW="180px">
+        {label}
+      </Text>
+    </Tooltip>
+  );
+}
+
+type ApiKeyColumnContext = {
+  getPermissionCount: (key: ApiKeyTableRow) => number;
+  formatBudgetPct: (key: ApiKeyTableRow) => string;
+  resolveDisplayStatus: (key: ApiKeyTableRow) => ApiKeyDisplayStatusValue;
+  getStatusReason: (key: ApiKeyTableRow) => string | null;
+  isRotationInProgress: (key: ApiKeyTableRow) => boolean;
+  isKeyEffectivelyActive: (key: ApiKeyTableRow) => boolean;
+  isKeyRevocable: (key: ApiKeyTableRow) => boolean;
+  isKeyRotatable: (key: ApiKeyTableRow) => boolean;
+  collapsedKeyIds: ReadonlySet<number>;
+  toggleKeyExpanded: (keyId: number) => void;
+  openUpdate: (key: ApiKeyTableRow) => void;
+  openRotate: (key: ApiKeyTableRow) => void;
+  openRevoke: (key: ApiKeyTableRow) => void;
+  openExtend: (key: ApiKeyTableRow) => void;
+  openStopPrevious: (key: ApiKeyTableRow) => void;
+  openSingleKeyBudget: (
+    applicationId: string,
+    keyId: number,
+    keyName: string,
+  ) => void;
+};
+
+const REVOKE_ACTION_STYLE = {
+  color: "red.500",
+  hoverColor: "red.600",
+  hoverBg: "red.50",
+} as const;
+
+function renderApiKeyNameCell(
+  key: ApiKeyTableRow,
+  ctx: ApiKeyColumnContext,
+): React.ReactNode {
+  if (key.subRow) {
+    return (
+      <HStack spacing={2} pl={6}>
+        <Box as={FiCornerDownRight} color="ink.400" flexShrink={0} />
+        <EntityIdentity
+          name={key.subRow === "current" ? "New Key" : "Old Key"}
+          meta={key.subRow === "current" ? key.api_key : key.rotated_key}
+        />
+      </HStack>
+    );
+  }
+  const rotating =
+    SHOW_API_KEY_ROTATION_ACTIONS && ctx.isRotationInProgress(key);
+  const collapsed = ctx.collapsedKeyIds.has(key.id);
+  return (
+    <HStack spacing={1}>
+      {rotating ? (
+        <IconButton
+          aria-label={collapsed ? "Show new and old key" : "Hide new and old key"}
+          icon={collapsed ? <ChevronRightIcon /> : <ChevronDownIcon />}
+          size="xs"
+          variant="ghost"
+          onClick={(e) => {
+            e.stopPropagation();
+            ctx.toggleKeyExpanded(key.id);
+          }}
+        />
+      ) : (
+        <Box w={6} flexShrink={0} />
+      )}
+      <EntityIdentity
+        name={key.key_name || "API key"}
+        meta={rotating ? undefined : key.api_key}
+      />
+    </HStack>
+  );
+}
+
+function renderApiKeyPermissionsColumnCell(
+  key: ApiKeyTableRow,
+  ctx: ApiKeyColumnContext,
+): React.ReactNode {
+  return <ApiKeyPermissionsCell count={ctx.getPermissionCount(key)} />;
+}
+
+function renderApiKeyAllocationColumnCell(
+  key: ApiKeyTableRow,
+  ctx: ApiKeyColumnContext,
+): React.ReactNode {
+  return (
+    <ApiKeyAllocationCell keyRow={key} pctLabel={ctx.formatBudgetPct(key)} />
+  );
+}
+
+function renderApiKeyStatusColumnCell(
+  key: ApiKeyTableRow,
+  ctx: ApiKeyColumnContext,
+): React.ReactNode {
+  return (
+    <ApiKeyStatusCell
+      status={ctx.resolveDisplayStatus(key)}
+      reason={ctx.getStatusReason(key)}
+    />
+  );
+}
+
+function buildApiKeyParentActions(
+  key: ApiKeyTableRow,
+  ctx: ApiKeyColumnContext,
+): DataTableAction[] {
+  const rotating =
+    SHOW_API_KEY_ROTATION_ACTIONS && ctx.isRotationInProgress(key);
+  const actions: DataTableAction[] = [
+    {
+      id: "edit",
+      label: "Update API key",
+      tooltip: inactiveKeyTooltip(
+        ctx.isKeyEffectivelyActive(key),
+        ctx.isKeyRevocable(key),
+        "Update key",
+        "Only effectively active API keys can be updated.",
+        "This API key has been revoked and cannot be updated.",
+      ),
+      icon: <EditIcon />,
+      disabled: !ctx.isKeyEffectivelyActive(key),
+      onClick: () => ctx.openUpdate(key),
+    },
+    {
+      id: "budget",
+      label: "Edit budget",
+      tooltip: key.application_id
+        ? inactiveKeyTooltip(
+            ctx.isKeyEffectivelyActive(key),
+            ctx.isKeyRevocable(key),
+            BUDGET_COPY.editBudget,
+            "Only effectively active API keys can have their budget edited.",
+            "This API key has been revoked and cannot have its budget edited.",
+          )
+        : BUDGET_COPY.keyHasNoApplication,
+      "aria-label": editBudgetForKey(key.key_name),
+      icon: <FiSliders />,
+      disabled: !key.application_id || !ctx.isKeyEffectivelyActive(key),
+      onClick: () => {
+        if (key.application_id) {
+          ctx.openSingleKeyBudget(key.application_id, key.id, key.key_name);
+        }
+      },
+    },
+  ];
+  if (SHOW_API_KEY_ROTATION_ACTIONS) {
+    actions.push({
+      id: "rotate",
+      label: "Rotate API key",
+      tooltip: rotateTooltip(key, ctx.isKeyRotatable(key), rotating),
+      icon: <FiRefreshCw />,
+      disabled: !ctx.isKeyRotatable(key),
+      onClick: () => ctx.openRotate(key),
+    });
+  }
+  if (!rotating) {
+    actions.push({
+      id: "revoke",
+      label: "Revoke API key",
+      tooltip: ctx.isKeyRevocable(key) ? "Revoke key" : "Already revoked",
+      icon: <FiSlash />,
+      ...REVOKE_ACTION_STYLE,
+      disabled: !ctx.isKeyRevocable(key),
+      onClick: () => ctx.openRevoke(key),
+    });
+  }
+  return actions;
+}
+
+function buildApiKeyColumns(
+  ctx: ApiKeyColumnContext,
+): DataTableColumn<ApiKeyTableRow>[] {
+  const subRowActions: Record<
+    "current" | "previous",
+    (key: ApiKeyTableRow) => DataTableAction[]
+  > = {
+    current: (key) => [
+      {
+        id: "revoke",
+        label: "Revoke API key",
+        tooltip: "Revoke the API key; the new and old keys both stop",
+        icon: <FiSlash />,
+        ...REVOKE_ACTION_STYLE,
+        onClick: () => ctx.openRevoke(key),
+      },
+    ],
+    previous: (key) => [
+      {
+        id: "extend-previous",
+        label: "Extend grace period",
+        tooltip: "Extend grace period",
+        icon: <FiClock />,
+        onClick: () => ctx.openExtend(key),
+      },
+      {
+        id: "stop-previous",
+        label: "Revoke old key",
+        tooltip: "Revoke the old key now; the new key keeps working",
+        icon: <FiSlash />,
+        ...REVOKE_ACTION_STYLE,
+        onClick: () => ctx.openStopPrevious(key),
+      },
+    ],
+  };
+
+  return [
+    {
+      id: "key_name",
+      header: "Key",
+      sortable: true,
+      sortAccessor: (key) => key.key_name ?? "",
+      cell: (key) => renderApiKeyNameCell(key, ctx),
+    },
+    {
+      id: "application",
+      header: "Application",
+      thProps: { maxW: "200px" },
+      tdProps: { maxW: "200px" },
+      sortable: true,
+      sortAccessor: (key) => key.application_name ?? key.application_id ?? "",
+      cell: renderApiKeyApplicationCell,
+    },
+    {
+      id: "permissions",
+      header: "Permissions",
+      hint: FIELD_HINTS.apiKey.col.permissions,
+      thProps: { display: { base: "none", xl: "table-cell" } },
+      tdProps: { display: { base: "none", xl: "table-cell" } },
+      cell: (key) => renderApiKeyPermissionsColumnCell(key, ctx),
+    },
+    {
+      id: "budget",
+      header: "Allocation",
+      hint: FIELD_HINTS.apiKey.col.allocation,
+      sortable: true,
+      sortAccessor: (key) =>
+        key.allocated_percentage ?? key.allocated_budget ?? -1,
+      cell: (key) => renderApiKeyAllocationColumnCell(key, ctx),
+    },
+    {
+      id: "status",
+      header: "Status",
+      hint: FIELD_HINTS.apiKey.col.status,
+      cell: (key) => renderApiKeyStatusColumnCell(key, ctx),
+    },
+    {
+      id: "created",
+      header: "Created Date",
+      sortable: true,
+      sortAccessor: (key) => {
+        const value =
+          key.subRow === "current" ? key.rotated_at ?? key.created_at : key.created_at;
+        return value ? new Date(value).getTime() : 0;
+      },
+      cell: renderApiKeyCreatedCell,
+    },
+    {
+      id: "expires",
+      header: "Expiry Date",
+      hint: FIELD_HINTS.apiKey.col.expiry,
+      sortable: true,
+      sortAccessor: (key) => {
+        const value =
+          key.subRow === "previous" ? key.rotated_key_expires_at : key.expires_at;
+        return value ? new Date(value).getTime() : Number.POSITIVE_INFINITY;
+      },
+      cell: renderApiKeyExpiryCell,
+    },
+    createActionsColumn<ApiKeyTableRow>({
+      actionCount: SHOW_API_KEY_ROTATION_ACTIONS ? 4 : 3,
+      getActions: (key) =>
+        key.subRow
+          ? subRowActions[key.subRow](key)
+          : buildApiKeyParentActions(key, ctx),
+    }),
+  ];
+}
+
+type ApiKeyManagement = ReturnType<typeof useApiKeyManagementTab>;
+
+/** Read-only details of one key, shown in the view drawer. */
+function ApiKeyDetails({
+  mgmt,
+  viewKey,
+}: {
+  mgmt: ApiKeyManagement;
+  viewKey: NonNullable<ApiKeyManagement["selectedKeyForView"]>;
+}) {
+  return (
+    <>
+        <FormSection title="API Key">
+          <ReadOnlyField label="Key Name">{viewKey.key_name}</ReadOnlyField>
+          <ReadOnlyField label={viewKey.rotated_key ? "New Key" : "API Key"}>
+            <Text fontSize="sm" fontFamily="mono" color="ink.700" wordBreak="break-all">
+              {mgmt.formatKeyId(viewKey)}
+            </Text>
+          </ReadOnlyField>
+          {mgmt.isRotationInProgress(viewKey) && viewKey.rotated_key ? (
+            <ReadOnlyField label="Old Key">
+              <Text fontSize="sm" fontFamily="mono" color="ink.700" wordBreak="break-all">
+                {viewKey.rotated_key}
+              </Text>
+              {viewKey.rotated_key_expires_at ? (
+                <Text fontSize="xs" color="ink.500" mt={1}>
+                  Works until {new Date(viewKey.rotated_key_expires_at).toLocaleString()}
+                </Text>
+              ) : null}
+            </ReadOnlyField>
+          ) : null}
+          <ReadOnlyField label="Application">
+            {viewKey.application_name ?? viewKey.application_id ?? "—"}
+          </ReadOnlyField>
+          <ReadOnlyField label="Permissions" fullWidth>
+            {(() => {
+              const visiblePerms = mgmt.visiblePermissionsForKey(viewKey);
+              return visiblePerms.length > 0 ? (
+                <HStack flexWrap="wrap" spacing={2}>
+                  {visiblePerms.map((perm) => (
+                    <Badge key={String(perm)} colorScheme="gray" fontSize="xs" px={2} py={0.5}>
+                      {mgmt.formatPermission(perm)}
+                    </Badge>
+                  ))}
+                </HStack>
+              ) : (
+                <Text fontSize="sm" color="ink.500">
+                  No permissions assigned
+                </Text>
+              );
+            })()}
+          </ReadOnlyField>
+        </FormSection>
+        <FormSection title="Record">
+          <ReadOnlyField label="Budget">
+            <Text fontSize="sm" color="ink.800">
+              {mgmt.formatBudgetPct(viewKey)}
+            </Text>
+            {viewKey.allocated_budget != null &&
+              mgmt.formatBudgetPct(viewKey) !== "—" && (
+                <Text fontSize="sm" color="ink.500">
+                  {formatSpendMoney(viewKey.allocated_budget, "INR")}
+                </Text>
+              )}
+          </ReadOnlyField>
+          <ReadOnlyField label="Status">
+            <StatusDot
+              label={formatApiKeyDisplayStatusLabel(mgmt.resolveKeyDisplayStatus(viewKey))}
+              tone={apiKeyStatusTone(mgmt.resolveKeyDisplayStatus(viewKey))}
+            />
+            {(mgmt.getKeyInactiveReason(viewKey) ?? mgmt.getKeyRevokedReason(viewKey)) && (
+              <Text fontSize="xs" color="ink.500" mt={2}>
+                {mgmt.getKeyInactiveReason(viewKey) ?? mgmt.getKeyRevokedReason(viewKey)}
+              </Text>
+            )}
+          </ReadOnlyField>
+          <ReadOnlyField label="Created At">
+            {viewKey.created_at
+              ? new Date(viewKey.created_at).toLocaleString()
+              : "—"}
+          </ReadOnlyField>
+          {viewKey.expires_at ? (
+            <ReadOnlyField label="Expires At">
+              {new Date(viewKey.expires_at).toLocaleString()}
+            </ReadOnlyField>
+          ) : null}
+          {viewKey.last_used ? (
+            <ReadOnlyField label="Last Used">
+              {new Date(viewKey.last_used).toLocaleString()}
+            </ReadOnlyField>
+          ) : null}
+        </FormSection>
+    </>
+  );
+}
 
 export default function ApiKeyManagementTab({
   isActive = false,
@@ -97,9 +626,6 @@ export default function ApiKeyManagementTab({
   onBindPageActions,
 }: ApiKeyManagementTabProps) {
   const cancelRef = useRef<HTMLButtonElement>(null);
-  const rotateCancelRef = useRef<HTMLButtonElement>(null);
-  const stopPreviousCancelRef = useRef<HTMLButtonElement>(null);
-  const { copy } = useCopyToClipboard();
   const { user } = useAuth();
 
   const mgmt = useApiKeyManagementTab({
@@ -152,208 +678,50 @@ export default function ApiKeyManagementTab({
   const apiKeyApplicationCount = mgmt.applications.length;
   const apiKeysRefreshing = mgmt.isLoadingAllApiKeys;
 
-  const apiKeyColumns = useMemo((): DataTableColumn<ApiKeyTableRow>[] => {
-    return [
-      {
-        id: "key_name",
-        header: "Key",
-        sortable: true,
-        sortAccessor: (key) => key.key_name ?? "",
-        cell: (key) => (
-          <EntityIdentity name={key.key_name || "API key"} meta={key.api_key} />
-        ),
-      },
-      {
-        id: "application",
-        header: "Application",
-        sortable: true,
-        sortAccessor: (key) => key.application_name ?? key.application_id ?? "",
-        cell: (key) => (
-          <Text fontSize="sm">{key.application_name ?? key.application_id ?? "—"}</Text>
-        ),
-      },
-      {
-        id: "permissions",
-        header: "Permissions",
-        thProps: { display: { base: "none", xl: "table-cell" } },
-        tdProps: { display: { base: "none", xl: "table-cell" } },
-        cell: (key) => {
-          const count = mgmt.visiblePermissionsForKey(key).length;
-          return (
-            <Text fontSize="sm" color="ink.600">
-              {count === 0 ? "—" : `${count} ${count === 1 ? "permission" : "permissions"}`}
-            </Text>
-          );
-        },
-      },
-      {
-        id: "budget",
-        header: "Allocation",
-        sortable: true,
-        sortAccessor: (key) =>
-          key.allocated_percentage ?? key.allocated_budget ?? -1,
-        cell: (key) => {
-          const pctLabel = mgmt.formatBudgetPct(key);
-          if (pctLabel === "—") {
-            return <Text fontSize="sm" color="ink.500">—</Text>;
-          }
-          return (
-            <Box>
-              <Text fontSize="sm" fontWeight="700" color="ink.800">
-                {pctLabel}
-              </Text>
-              {key.allocated_budget != null && (
-                <Text fontSize="xs" color="ink.500">
-                  {formatSpendMoney(key.allocated_budget, "INR")}
-                </Text>
-              )}
-            </Box>
-          );
-        },
-      },
-      {
-        id: "status",
-        header: "Status",
-        cell: (key) => {
-          const displayStatus = mgmt.resolveKeyDisplayStatus(key);
-          const reason = mgmt.getKeyInactiveReason(key) ?? mgmt.getKeyRevokedReason(key);
-          const indicator = (
-            <StatusDot
-              label={formatApiKeyDisplayStatusLabel(displayStatus)}
-              tone={apiKeyStatusTone(displayStatus)}
-            />
-          );
-          return reason ? (
-            <Tooltip label={reason} placement="top" hasArrow openDelay={300}>
-              <Box as="span" tabIndex={0} display="inline-flex">
-                {indicator}
-              </Box>
-            </Tooltip>
-          ) : (
-            indicator
-          );
-        },
-      },
-      {
-        id: "created",
-        header: "Created",
-        thProps: { display: { base: "none", xl: "table-cell" } },
-        tdProps: { display: { base: "none", xl: "table-cell" } },
-        sortable: true,
-        sortAccessor: (key) =>
-          key.created_at ? new Date(key.created_at).getTime() : 0,
-        cell: (key) => (
-          <Text fontSize="sm">
-            {key.created_at ? new Date(key.created_at).toLocaleDateString() : "—"}
-          </Text>
-        ),
-      },
-      {
-        id: "expires",
-        header: "Expiry",
-        sortable: true,
-        sortAccessor: (key) =>
-          key.expires_at
-            ? new Date(key.expires_at).getTime()
-            : Number.POSITIVE_INFINITY,
-        cell: (key) => (
-          <Text fontSize="sm">
-            {key.expires_at ? new Date(key.expires_at).toLocaleDateString() : "Never"}
-          </Text>
-        ),
-      },
-      {
-        id: "actions",
-        header: "Actions",
-        align: "right",
-        width: SHOW_API_KEY_ROTATION_ACTIONS ? "248px" : "176px",
-        minWidth: SHOW_API_KEY_ROTATION_ACTIONS ? "248px" : "176px",
-        tdProps: { onClick: (e) => e.stopPropagation() },
-        cell: (key) => (
-          <DataTableActions
-            justify="flex-end"
-            actions={[
-              {
-                id: "view",
-                label: "View API key",
-                tooltip: "View",
-                icon: <ViewIcon />,
-                onClick: () => mgmt.handleOpenViewModal(key),
-              },
-              {
-                id: "edit",
-                label: "Update API key",
-                tooltip: mgmt.isKeyEffectivelyActive(key)
-                  ? "Update key"
-                  : mgmt.isKeyRevocable(key)
-                    ? "Only effectively active API keys can be updated."
-                    : "This API key has been revoked and cannot be updated.",
-                icon: <EditIcon />,
-                disabled: !mgmt.isKeyEffectivelyActive(key),
-                onClick: () => mgmt.handleOpenUpdateModal(key),
-              },
-              {
-                id: "budget",
-                label: "Edit budget",
-                tooltip: !key.application_id
-                  ? BUDGET_COPY.keyHasNoApplication
-                  : mgmt.isKeyEffectivelyActive(key)
-                    ? BUDGET_COPY.editBudget
-                    : mgmt.isKeyRevocable(key)
-                      ? "Only effectively active API keys can have their budget edited."
-                      : "This API key has been revoked and cannot have its budget edited.",
-                "aria-label": editBudgetForKey(key.key_name),
-                icon: <FiSliders />,
-                disabled: !key.application_id || !mgmt.isKeyEffectivelyActive(key),
-                onClick: () => {
-                  if (key.application_id) {
-                    openSingleKeyBudget(key.application_id, key.id, key.key_name);
-                  }
-                },
-              },
-              ...(SHOW_API_KEY_ROTATION_ACTIONS
-                ? [
-                    {
-                      id: "rotate",
-                      label: "Rotate API key",
-                      tooltip: mgmt.isKeyRotatable(key)
-                        ? "Rotate key"
-                        : mgmt.isRotationInProgress(key) && key.rotated_key_expires_at
-                          ? `The previous key works until ${new Date(key.rotated_key_expires_at).toLocaleString()}; rotate again after that.`
-                          : "Only effectively active API keys can be rotated.",
-                      icon: <FiRefreshCw />,
-                      disabled: !mgmt.isKeyRotatable(key),
-                      onClick: () => mgmt.handleOpenRotateModal(key),
-                    },
-                    {
-                      id: "stop-previous",
-                      label: "Revoke previous key value",
-                      tooltip: mgmt.isRotationInProgress(key)
-                        ? "Stop the previous key value now; the current key keeps working"
-                        : "No previous key value is active for this key.",
-                      icon: <FiStopCircle />,
-                      disabled: !mgmt.isRotationInProgress(key),
-                      onClick: () => mgmt.handleOpenStopPreviousModal(key),
-                    },
-                  ]
-                : []),
-              {
-                id: "revoke",
-                label: "Revoke API key",
-                tooltip: mgmt.isKeyRevocable(key) ? "Revoke key" : "Already revoked",
-                icon: <FiSlash />,
-                color: "red.500",
-                hoverColor: "red.600",
-                hoverBg: "red.50",
-                disabled: !mgmt.isKeyRevocable(key),
-                onClick: () => mgmt.handleOpenRevokeModal(key),
-              },
-            ]}
-          />
-        ),
-      },
-    ];
-  }, [mgmt, openSingleKeyBudget]);
+  /** Rotating keys show Current/Previous key sub-rows; ids here are collapsed. */
+  const [collapsedKeyIds, setCollapsedKeyIds] = useState<ReadonlySet<number>>(new Set());
+  const toggleKeyExpanded = (keyId: number) =>
+    setCollapsedKeyIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(keyId)) next.delete(keyId);
+      else next.add(keyId);
+      return next;
+    });
+  const rotationSubRows = (key: ApiKeyTableRow): ApiKeyTableRow[] =>
+    !SHOW_API_KEY_ROTATION_ACTIONS ||
+    key.subRow ||
+    !mgmt.isRotationInProgress(key) ||
+    collapsedKeyIds.has(key.id)
+      ? []
+      : [
+          { ...key, subRow: "current" },
+          { ...key, subRow: "previous" },
+        ];
+
+  const apiKeyColumns = useMemo(
+    (): DataTableColumn<ApiKeyTableRow>[] =>
+      buildApiKeyColumns({
+        getPermissionCount: (key) => mgmt.visiblePermissionsForKey(key).length,
+        formatBudgetPct: mgmt.formatBudgetPct,
+        resolveDisplayStatus: mgmt.resolveKeyDisplayStatus,
+        getStatusReason: (key) =>
+          mgmt.getKeyInactiveReason(key) ?? mgmt.getKeyRevokedReason(key),
+        isRotationInProgress: mgmt.isRotationInProgress,
+        isKeyEffectivelyActive: mgmt.isKeyEffectivelyActive,
+        isKeyRevocable: mgmt.isKeyRevocable,
+        isKeyRotatable: mgmt.isKeyRotatable,
+        collapsedKeyIds,
+        toggleKeyExpanded,
+        openUpdate: mgmt.handleOpenUpdateModal,
+        openRotate: mgmt.handleOpenRotateModal,
+        openRevoke: mgmt.handleOpenRevokeModal,
+        openExtend: mgmt.handleOpenExtendModal,
+        openStopPrevious: mgmt.handleOpenStopPreviousModal,
+        openSingleKeyBudget,
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- toggleKeyExpanded only closes over the setter
+    [mgmt, openSingleKeyBudget, collapsedKeyIds],
+  );
 
   useEffect(() => {
     onRegisterRefresh?.(mgmt.handleFetchAllApiKeys);
@@ -381,6 +749,7 @@ export default function ApiKeyManagementTab({
   }, [isActive, mgmt.handleFetchAllApiKeys]);
 
   const viewKey = mgmt.selectedKeyForView;
+  const readyRevokeBudget = mgmt.revokeBudget?.status === "ready" ? mgmt.revokeBudget : undefined;
 
   return (
     <>
@@ -398,83 +767,7 @@ export default function ApiKeyManagementTab({
           />
         }
       >
-        {viewKey ? (
-          <>
-      <FormSection title="API Key">
-        <ReadOnlyField label="Key Name">{viewKey.key_name}</ReadOnlyField>
-        <ReadOnlyField label="Key ID">
-          <Text fontSize="sm" fontFamily="mono" color="ink.700" wordBreak="break-all">
-            {mgmt.formatKeyId(viewKey)}
-          </Text>
-        </ReadOnlyField>
-        <ReadOnlyField label="Application">
-          {viewKey.application_name ?? viewKey.application_id ?? "—"}
-        </ReadOnlyField>
-        <ReadOnlyField label="Permissions" fullWidth>
-          {(() => {
-            const visiblePerms = mgmt.visiblePermissionsForKey(viewKey);
-            return visiblePerms.length > 0 ? (
-              <HStack flexWrap="wrap" spacing={2}>
-                {visiblePerms.map((perm) => (
-                  <Badge key={String(perm)} colorScheme="gray" fontSize="xs" px={2} py={0.5}>
-                    {mgmt.formatPermission(perm)}
-                  </Badge>
-                ))}
-              </HStack>
-            ) : (
-              <Text fontSize="sm" color="ink.500">
-                No permissions assigned
-              </Text>
-            );
-          })()}
-        </ReadOnlyField>
-      </FormSection>
-      <FormSection title="Record">
-        <ReadOnlyField label="Budget">
-          <Text fontSize="sm" color="ink.800">
-            {mgmt.formatBudgetPct(viewKey)}
-          </Text>
-          {viewKey.allocated_budget != null &&
-            mgmt.formatBudgetPct(viewKey) !== "—" && (
-              <Text fontSize="sm" color="ink.500">
-                {formatSpendMoney(viewKey.allocated_budget, "INR")}
-              </Text>
-            )}
-        </ReadOnlyField>
-        <ReadOnlyField label="Status">
-          <StatusDot
-            label={formatApiKeyDisplayStatusLabel(mgmt.resolveKeyDisplayStatus(viewKey))}
-            tone={apiKeyStatusTone(mgmt.resolveKeyDisplayStatus(viewKey))}
-          />
-          {(mgmt.getKeyInactiveReason(viewKey) ?? mgmt.getKeyRevokedReason(viewKey)) && (
-            <Text fontSize="xs" color="ink.500" mt={2}>
-              {mgmt.getKeyInactiveReason(viewKey) ?? mgmt.getKeyRevokedReason(viewKey)}
-            </Text>
-          )}
-        </ReadOnlyField>
-        <ReadOnlyField label="Created At">
-          {viewKey.created_at
-            ? new Date(viewKey.created_at).toLocaleString()
-            : "—"}
-        </ReadOnlyField>
-        {viewKey.expires_at ? (
-          <ReadOnlyField label="Expires At">
-            {new Date(viewKey.expires_at).toLocaleString()}
-          </ReadOnlyField>
-        ) : null}
-        {mgmt.isRotationInProgress(viewKey) && viewKey.rotated_key_expires_at ? (
-          <ReadOnlyField label="Previous Key Works Until">
-            {new Date(viewKey.rotated_key_expires_at).toLocaleString()}
-          </ReadOnlyField>
-        ) : null}
-        {viewKey.last_used ? (
-          <ReadOnlyField label="Last Used">
-            {new Date(viewKey.last_used).toLocaleString()}
-          </ReadOnlyField>
-        ) : null}
-      </FormSection>
-          </>
-        ) : null}
+        {viewKey ? <ApiKeyDetails mgmt={mgmt} viewKey={viewKey} /> : null}
       </FormDrawer>
       <VStack align="stretch" spacing={5}>
         {mgmt.isLoadingAllApiKeys && mgmt.allApiKeys.length === 0 ? (
@@ -512,12 +805,12 @@ export default function ApiKeyManagementTab({
       <DataTable
             layout="admin"
             toolbarAttached
-            showRowChevron={false}
             items={sortedApiKeys}
             columns={apiKeyColumns}
             getRowKey={(key) =>
-              key.api_key ?? `id-${key.id ?? ""}-${key.application_id ?? ""}-${key.key_name}`
+              `${key.api_key ?? `id-${key.id ?? ""}-${key.application_id ?? ""}-${key.key_name}`}${key.subRow ? `:${key.subRow}` : ""}`
             }
+            getSubRows={rotationSubRows}
             onRowClick={mgmt.handleOpenViewModal}
             isLoading={mgmt.isLoadingAllApiKeys && mgmt.allApiKeys.length === 0}
             loadingMessage="Loading API keys..."
@@ -632,7 +925,7 @@ export default function ApiKeyManagementTab({
       >
         <VStack spacing={4} align="stretch">
               <FormControl isRequired>
-                <FieldLabel>Key Name</FieldLabel>
+                <FieldLabel hint={FIELD_HINTS.apiKey.keyName.tip}>Key Name</FieldLabel>
                 <Input
                   value={mgmt.updateFormData.key_name || ""}
                   onChange={(e) =>
@@ -642,7 +935,7 @@ export default function ApiKeyManagementTab({
                 />
               </FormControl>
               <FormControl isRequired>
-                <FieldLabel>Permissions</FieldLabel>
+                <FieldLabel hint={FIELD_HINTS.apiKey.permissions.tip}>Permissions</FieldLabel>
                 {mgmt.permissionFilterOptions.length > 0 ? (
                   <Box
                     borderWidth="1px"
@@ -679,7 +972,6 @@ export default function ApiKeyManagementTab({
                     </AlertDescription>
                   </Alert>
                 )}
-                <FieldHint>{FIELD_HINTS.apiKey.permissions.helper}</FieldHint>
               </FormControl>
               {mgmt.selectedKeyForUpdate?.api_key && (
                 <Text fontSize="xs" color="ink.500">
@@ -702,25 +994,18 @@ export default function ApiKeyManagementTab({
         body={
           <VStack align="stretch" spacing={4}>
             <Text fontSize="sm" color="ink.700" lineHeight="1.5">
-              Revoking <Text as="b">{mgmt.keyToRevoke?.key_name}</Text> stops it from working
+              Revoking <Text as="b">{mgmt.keyToRevoke?.key_name}</Text> stops{" "}
+              {mgmt.keyToRevoke && mgmt.isRotationInProgress(mgmt.keyToRevoke)
+                ? "both its new and old keys"
+                : "it from working"}{" "}
               immediately. This can&apos;t be undone.
             </Text>
             <RevokeBudgetBreakdown
               status={mgmt.revokeBudget?.status ?? "loading"}
-              allocated={
-                mgmt.revokeBudget?.status === "ready" ? mgmt.revokeBudget.allocated : undefined
-              }
-              consumed={
-                mgmt.revokeBudget?.status === "ready" ? mgmt.revokeBudget.consumed : undefined
-              }
-              unused={
-                mgmt.revokeBudget?.status === "ready" ? mgmt.revokeBudget.unused : undefined
-              }
-              applicationName={
-                mgmt.revokeBudget?.status === "ready"
-                  ? mgmt.revokeBudget.applicationName
-                  : undefined
-              }
+              allocated={readyRevokeBudget?.allocated}
+              consumed={readyRevokeBudget?.consumed}
+              unused={readyRevokeBudget?.unused}
+              applicationName={readyRevokeBudget?.applicationName}
             />
           </VStack>
         }
@@ -733,102 +1018,7 @@ export default function ApiKeyManagementTab({
         leastDestructiveRef={cancelRef}
       />
 
-      <ConfirmDialog
-        isOpen={Boolean(mgmt.keyToRotate)}
-        onClose={mgmt.handleCloseRotateModal}
-        onConfirm={mgmt.handleRotateApiKey}
-        title={
-          mgmt.keyToRotate?.key_name
-            ? `Rotate ${mgmt.keyToRotate.key_name}`
-            : "Rotate API Key"
-        }
-        body={
-          <Text fontSize="sm" color="ink.700" lineHeight="1.5">
-            A new key is issued for <Text as="b">{mgmt.keyToRotate?.key_name}</Text> and shown
-            once. The current key keeps working for a limited time so you can switch your
-            applications over, then stops. Budget, permissions and expiry stay the same.
-          </Text>
-        }
-        confirmLabel="Rotate API Key"
-        cancelLabel="Cancel"
-        isConfirmLoading={mgmt.isRotating}
-        confirmLoadingText="Rotating..."
-        leastDestructiveRef={rotateCancelRef}
-      />
-
-      <ConfirmDialog
-        isOpen={Boolean(mgmt.keyToStopPrevious)}
-        onClose={mgmt.handleCloseStopPreviousModal}
-        onConfirm={mgmt.handleStopPreviousKeyValue}
-        title={
-          mgmt.keyToStopPrevious?.key_name
-            ? `Revoke previous value of ${mgmt.keyToStopPrevious.key_name}`
-            : "Revoke previous key value"
-        }
-        body={
-          <Text fontSize="sm" color="ink.700" lineHeight="1.5">
-            The value <Text as="b">{mgmt.keyToStopPrevious?.key_name}</Text> had before its last
-            rotation stops working immediately, instead of on{" "}
-            {mgmt.keyToStopPrevious?.rotated_key_expires_at
-              ? new Date(mgmt.keyToStopPrevious.rotated_key_expires_at).toLocaleString()
-              : "its scheduled date"}
-            . The current key value keeps working.
-          </Text>
-        }
-        confirmLabel="Revoke Previous Value"
-        cancelLabel="Cancel"
-        isConfirmLoading={mgmt.isStoppingPrevious}
-        confirmLoadingText="Revoking..."
-        leastDestructiveRef={stopPreviousCancelRef}
-      />
-
-      <StandardModal
-        isOpen={Boolean(mgmt.rotatedKey)}
-        onClose={mgmt.handleCloseRotatedKey}
-        title="API Key Rotated"
-        lockDismiss
-        footer={
-          <Button colorScheme="blue" onClick={mgmt.handleCloseRotatedKey}>
-            I&apos;ve saved the new key
-          </Button>
-        }
-      >
-        {mgmt.rotatedKey ? (
-          <VStack align="stretch" spacing={4}>
-            <Alert status="warning" borderRadius="md" variant="left-accent">
-              <AlertIcon />
-              <AlertDescription fontSize="sm">
-                Copy the new key now. It will not be shown again.
-              </AlertDescription>
-            </Alert>
-            <HStack align="stretch" spacing={2}>
-              <Input
-                value={mgmt.rotatedKey.api_key}
-                isReadOnly
-                fontFamily="mono"
-                fontSize="xs"
-                aria-label="New API key"
-              />
-              <Button
-                size="sm"
-                flexShrink={0}
-                leftIcon={<CopyIcon />}
-                onClick={() => {
-                  void copy(mgmt.rotatedKey!.api_key, "API key copied to clipboard");
-                }}
-              >
-                Copy
-              </Button>
-            </HStack>
-            <Text fontSize="sm" color="ink.700">
-              The previous key for <Text as="b">{mgmt.rotatedKey.key_name}</Text> keeps working
-              until{" "}
-              <Text as="b">{new Date(mgmt.rotatedKey.rotated_key_expires_at).toLocaleString()}</Text>
-              . Revoking the key stops both immediately.
-            </Text>
-          </VStack>
-        ) : null}
-      </StandardModal>
+      <ApiKeyRotationDialogs mgmt={mgmt} />
 
       <ApiKeyBudgetModal
         isOpen={singleBudget.isOpen}

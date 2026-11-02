@@ -68,7 +68,7 @@ export const apiEndpoints = {
     tierList: `${API_V1}/auth/tenants/tier/list`,
     /** PATCH assign or change a tenant's tier. DELETE removes it. */
     tenantTier: (tenantId: string) => `${API_V1}/auth/tenants/${tenantId}/tier`,
-    /** PATCH — top-up / top-down tenant budget (delta, not edit total). */
+    /** PATCH — top-up tenant budget (delta, not edit total). */
     tenantBudget: (tenantId: string) => `${API_V1}/auth/tenants/${tenantId}/budget`,
     /** PUT — rebalance Application budget allocations under a tenant. */
     budgetAllocation: (tenantId: string) =>
@@ -118,10 +118,14 @@ export const apiEndpoints = {
     },
     services: {
       base: `${API_V1}/services`,
+      columns: `${API_V1}/services/columns`,
       byId: (serviceId: string) => `${API_V1}/services/${serviceId}`,
       /** Public (no JWT required) — absent from api_permissions.json, so validate allows anonymous. */
       tryItList: `${API_V1}/services/try-it-service-list`,
     },
+    /** Per-user column selection. View name for the service registry is `service-list`. */
+    columnPreferences: (view: string) =>
+      `${API_V1}/preferences/columns/${encodeURIComponent(view)}`,
     tryIt: {
       /** @deprecated Prefer nmt.tryIt — kept for NMT callers */
       execute: `${API_V1}/nmt/try-it`,
@@ -136,6 +140,7 @@ export const apiEndpoints = {
     logsAggregate: `${API_V1}/telemetry/logs/aggregate`,
     logsServices: `${API_V1}/telemetry/logs/services`,
     tracesSearch: `${API_V1}/telemetry/traces/search`,
+    tracesColumns: `${API_V1}/telemetry/traces/columns`,
     traceById: (traceId: string) => `${API_V1}/telemetry/traces/${traceId}`,
     tracesServices: `${API_V1}/telemetry/traces/services`,
     traceServiceOperations: (serviceName: string) =>
@@ -252,9 +257,13 @@ export const apiEndpoints = {
   },
   /** Platform-core policy hierarchy. */
   policyHierarchy: {
+    /** GET list, POST, PATCH by id, DELETE by id. */
     categories: `${API_V1}/policies/categories`,
+    categoryById: (id: number) => `${API_V1}/policies/categories/${id}`,
     categoryStatus: (id: number) => `${API_V1}/policies/categories/${id}/status`,
+    /** GET list, POST, PATCH by id, DELETE by id. */
     subCategories: `${API_V1}/policies/sub-categories`,
+    subCategoryById: (id: number) => `${API_V1}/policies/sub-categories/${id}`,
     subCategoryStatus: (id: number) => `${API_V1}/policies/sub-categories/${id}/status`,
     /** PII definitions. GET list, GET by id, POST, PUT (id in the body), DELETE. */
     policyTypes: `${API_V1}/policies/policy-types`,

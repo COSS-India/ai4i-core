@@ -17,10 +17,10 @@ import { useTenantManagement } from "./hooks/useTenantManagement";
 import type { TenantUserView } from "../../types/tenant";
 import InstitutionUserForm from "./InstitutionUserForm";
 
-type InstitutionUserModalProps = {
+type InstitutionUserModalProps = Readonly<{
   tm: ReturnType<typeof useTenantManagement>;
   resolveUserDisplayStatus: (user: TenantUserView) => TenantUserStatusValue;
-};
+}>;
 
 /** One host for add, edit, and view. The fields live in InstitutionUserForm. */
 export default function InstitutionUserModal({

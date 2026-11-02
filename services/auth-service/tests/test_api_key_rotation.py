@@ -3,8 +3,8 @@
 POST /auth/api-keys/{id}/rotate moves api_key to rotated_key and issues a new
 api_key on the same row, so budget, quota, permissions and billing (all keyed
 by api_key.id) carry over unchanged. The old value keeps working until
-rotated_key_expires_at (ROTATED_API_KEY_EXPIRE_DAYS, capped at the key's own
-expiry) or until the whole key is revoked. Until then every Redis write for
+rotated_key_expires_at (the caller's grace_days, rejected with 422 when it
+would run past the key's own expiry) or until the whole key is revoked. Until then every Redis write for
 the row must reach both values' entries, and the validate DB fallback must
 accept the old value.
 """
@@ -16,7 +16,6 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from app.core.config import settings
 from app.core.exceptions import AppError
 from app.models.api_key import APIKey
 from app.models.application import Application, ApplicationStatus
@@ -111,12 +110,12 @@ class TestRotate:
         key = _key()
         svc, repo, cache = _service(key)
 
-        new_value, row = await svc.rotate_by_obj(key, actor_user_id="u-1")
+        new_value, row = await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=7)
 
         assert new_value == _NEW
         _id, current, new, rotated_expires_at, updated_by = repo.rotate.await_args.args
         assert (current, new, updated_by) == (_OLD, _NEW, "u-1")
-        expected = datetime.now(timezone.utc) + timedelta(days=settings.rotated_api_key_expire_days)
+        expected = datetime.now(timezone.utc) + timedelta(days=7)
         assert abs((rotated_expires_at - expected).total_seconds()) < 5
         repo.commit.assert_awaited()
         repo.refresh.assert_awaited_with(key)
@@ -165,7 +164,7 @@ class TestRotate:
 
         repo.refresh = AsyncMock(side_effect=_refresh)
 
-        await svc.rotate_by_obj(key, actor_user_id="u-1")
+        await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=7)
 
         assert set(_set_values(cache)) == {_NEW, _OLD}
         cache.delete_api_key_cache.assert_has_awaits([call(_NEW), call(_OLD)], any_order=True)
@@ -176,7 +175,7 @@ class TestRotate:
         key = _key()
         svc, _repo, cache = _service(key)
 
-        await svc.rotate_by_obj(key, actor_user_id="u-1")
+        await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=7)
 
         ttls = _set_values(cache)
         assert set(ttls) == {_NEW, _OLD}
@@ -184,19 +183,8 @@ class TestRotate:
         assert payloads[_NEW] == payloads[_OLD]
         assert payloads[_NEW]["budget-exhausted"] == "1"
         # Old value's entry ends with its rotation window, not the key's expiry.
-        assert ttls[_OLD] <= settings.rotated_api_key_expire_days * 86400
+        assert ttls[_OLD] <= 7 * 86400
         assert ttls[_NEW] > ttls[_OLD]
-
-    @pytest.mark.asyncio
-    async def test_rotation_window_never_outlives_the_key(self, monkeypatch) -> None:
-        monkeypatch.setattr(APIKeyService, "generate_api_key", staticmethod(lambda: _NEW))
-        expires_at = datetime.now(timezone.utc) + timedelta(days=2)
-        key = _key(expires_at=expires_at)
-        svc, repo, _cache = _service(key)
-
-        await svc.rotate_by_obj(key, actor_user_id="u-1")
-
-        assert repo.rotate.await_args.args[3] == expires_at
 
     @pytest.mark.asyncio
     async def test_live_previous_value_is_409(self) -> None:
@@ -204,7 +192,7 @@ class TestRotate:
         svc, repo, _cache = _service(key)
 
         with pytest.raises(AppError) as exc:
-            await svc.rotate_by_obj(key, actor_user_id="u-1")
+            await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=7)
 
         assert exc.value.status_code == 409
         assert exc.value.code == "ROTATION_IN_PROGRESS"
@@ -216,7 +204,7 @@ class TestRotate:
         key = _rotated_key(days_left=-1)
         svc, repo, _cache = _service(key)
 
-        new_value, _row = await svc.rotate_by_obj(key, actor_user_id="u-1")
+        new_value, _row = await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=7)
 
         assert new_value == "c" * 32
         repo.rotate.assert_awaited_once()
@@ -228,7 +216,7 @@ class TestRotate:
         repo.rotate = AsyncMock(return_value=False)
 
         with pytest.raises(AppError) as exc:
-            await svc.rotate_by_obj(key, actor_user_id="u-1")
+            await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=7)
 
         assert exc.value.status_code == 409
         repo.commit.assert_not_awaited()
@@ -248,7 +236,7 @@ class TestRotate:
         svc, repo, _cache = _service(key, **service_kwargs)
 
         with pytest.raises(AppError) as exc:
-            await svc.rotate_by_obj(key, actor_user_id="u-1")
+            await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=7)
 
         assert (exc.value.status_code, exc.value.code) == (409, "API_KEY_NOT_ROTATABLE")
         repo.rotate.assert_not_awaited()
@@ -261,7 +249,7 @@ class TestRotate:
         svc, repo, _cache = _service(key)
         repo.key_value_in_use = AsyncMock(side_effect=[True, False])
 
-        new_value, _row = await svc.rotate_by_obj(key, actor_user_id="u-1")
+        new_value, _row = await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=7)
 
         assert new_value == _NEW
 
@@ -272,7 +260,7 @@ class TestRotate:
         svc, _repo, cache = _service(key)
         cache.set_api_key_cache = AsyncMock(side_effect=ConnectionError("redis down"))
 
-        new_value, _row = await svc.rotate_by_obj(key, actor_user_id="u-1")
+        new_value, _row = await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=7)
 
         assert new_value == _NEW
         cache.delete_api_key_cache.assert_has_awaits([call(_NEW), call(_OLD)], any_order=True)
@@ -280,11 +268,10 @@ class TestRotate:
     @pytest.mark.asyncio
     async def test_zero_day_window_stops_the_old_value_now(self, monkeypatch) -> None:
         monkeypatch.setattr(APIKeyService, "generate_api_key", staticmethod(lambda: _NEW))
-        monkeypatch.setattr(settings, "rotated_api_key_expire_days", 0)
         key = _key()
         svc, _repo, cache = _service(key)
 
-        await svc.rotate_by_obj(key, actor_user_id="u-1")
+        await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=0)
 
         assert set(_set_values(cache)) == {_NEW}
         cache.delete_api_key_cache.assert_awaited_with(_OLD)
@@ -676,9 +663,246 @@ class TestResponsesShowThePreviousValueMasked:
         svc.rotate_by_obj = AsyncMock(return_value=(_NEW, key))
         request = MagicMock()
         request.state.user_roles = ["ADMIN"]
+        from app.schemas.api_key import RotateAPIKeyRequest
+
         response = await rotate_api_key(
-            key_id=key.id, request=request, current_user=SimpleNamespace(id=uuid4(), tenant_id=None), svc=svc,
+            key_id=key.id, request=request, body=RotateAPIKeyRequest(grace_days=7),
+            current_user=SimpleNamespace(id=uuid4(), tenant_id=None), svc=svc,
         )
+        assert svc.rotate_by_obj.await_args.kwargs["grace_days"] == 7
         assert response.data.api_key == _NEW
         assert response.data.rotated_key == mask_api_key(_OLD)
         assert response.data.rotated_key_expires_at == key.rotated_key_expires_at
+
+
+# ── Grace period on rotate, extending it, and revoking the current value alone ──
+
+
+def _sql(stmt) -> str:
+    from sqlalchemy.dialects import postgresql
+
+    return str(stmt.compile(dialect=postgresql.dialect()))
+
+
+def _capturing_db(rowcount: int = 1):
+    captured = {}
+
+    async def _execute(stmt):
+        captured["sql"] = _sql(stmt)
+        return SimpleNamespace(rowcount=rowcount)
+
+    db = AsyncMock()
+    db.execute = AsyncMock(side_effect=_execute)
+    return db, captured
+
+
+class TestRotateGraceDays:
+    @pytest.mark.asyncio
+    async def test_grace_days_sets_the_window(self, monkeypatch) -> None:
+        monkeypatch.setattr(APIKeyService, "generate_api_key", staticmethod(lambda: _NEW))
+        key = _key()
+        svc, repo, cache = _service(key)
+        await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=30)
+        rotated_expires_at = repo.rotate.await_args.args[3]
+        expected = datetime.now(timezone.utc) + timedelta(days=30)
+        assert abs((rotated_expires_at - expected).total_seconds()) < 5
+
+    @pytest.mark.asyncio
+    async def test_grace_period_past_the_key_expiry_is_422(self) -> None:
+        key = _key(expires_at=datetime.now(timezone.utc) + timedelta(days=3))
+        svc, repo, cache = _service(key)
+        with pytest.raises(AppError) as exc:
+            await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=7)
+        assert (exc.value.status_code, exc.value.code) == (422, "INVALID_GRACE_PERIOD")
+        repo.rotate.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_grace_period_within_the_key_expiry_is_allowed(self, monkeypatch) -> None:
+        monkeypatch.setattr(APIKeyService, "generate_api_key", staticmethod(lambda: _NEW))
+        key = _key(expires_at=datetime.now(timezone.utc) + timedelta(days=3))
+        svc, repo, cache = _service(key)
+        await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=1)
+        repo.rotate.assert_awaited_once()
+
+    @pytest.mark.parametrize("grace_days", [-1, 36501])
+    def test_grace_days_out_of_range_is_rejected(self, grace_days) -> None:
+        from pydantic import ValidationError as PydanticValidationError
+
+        from app.schemas.api_key import RotateAPIKeyRequest
+
+        with pytest.raises(PydanticValidationError):
+            RotateAPIKeyRequest(grace_days=grace_days)
+
+    def test_grace_days_is_required(self) -> None:
+        from pydantic import ValidationError as PydanticValidationError
+
+        from app.schemas.api_key import RotateAPIKeyRequest
+
+        with pytest.raises(PydanticValidationError):
+            RotateAPIKeyRequest()
+
+
+@pytest.mark.asyncio
+class TestExtendRotation:
+    """PATCH /auth/api-keys/{id}/rotated-key moves a live previous value's end
+    later, never past the key's expiry, and never revives it."""
+
+    def _extend_mock(self, key):
+        async def _extend(key_id, rotated_value, new_expires_at, updated_by):
+            key.rotated_key_expires_at = new_expires_at
+            return True
+
+        return AsyncMock(side_effect=_extend)
+
+    async def test_window_moves_and_the_old_value_entry_gets_the_new_ttl(self) -> None:
+        key = _rotated_key(days_left=1)
+        svc, repo, cache = _service(key)
+        repo.extend_rotation = self._extend_mock(key)
+        new_end = datetime.now(timezone.utc) + timedelta(days=10)
+
+        result = await svc.extend_rotation_by_obj(key, new_end, "admin")
+
+        repo.extend_rotation.assert_awaited_once_with(7, _OLD, new_end, "admin")
+        repo.commit.assert_awaited()          # the window, then the cached_data snapshot
+        assert result.rotated_key_expires_at == new_end
+        ttls = _set_values(cache)
+        assert set(ttls) == {_NEW, _OLD}
+        assert 9 * 86400 < ttls[_OLD] <= 10 * 86400
+
+    @pytest.mark.parametrize(
+        "key",
+        [_key(), _rotated_key(days_left=-1), _key(rotated_key=_OLD, is_active=False,
+                                                   rotated_key_expires_at=datetime.now(timezone.utc) + timedelta(days=3))],
+        ids=["never rotated", "window ended", "key revoked"],
+    )
+    async def test_no_live_previous_value_is_409_and_nothing_is_revived(self, key) -> None:
+        svc, repo, cache = _service(key)
+        with pytest.raises(AppError) as exc:
+            await svc.extend_rotation_by_obj(key, datetime.now(timezone.utc) + timedelta(days=9), "admin")
+        assert (exc.value.status_code, exc.value.code) == (409, "NO_ROTATION_IN_PROGRESS")
+        repo.extend_rotation.assert_not_called()
+
+    async def test_new_end_not_later_than_the_current_one_is_422(self) -> None:
+        key = _rotated_key(days_left=5)
+        svc, repo, cache = _service(key)
+        with pytest.raises(AppError) as exc:
+            await svc.extend_rotation_by_obj(key, key.rotated_key_expires_at - timedelta(hours=1), "admin")
+        assert (exc.value.status_code, exc.value.code) == (422, "INVALID_GRACE_EXTENSION")
+        repo.extend_rotation.assert_not_called()
+
+    async def test_new_end_past_the_key_expiry_is_422(self) -> None:
+        key = _rotated_key(days_left=1)
+        svc, repo, cache = _service(key)
+        with pytest.raises(AppError) as exc:
+            await svc.extend_rotation_by_obj(key, key.expires_at + timedelta(seconds=1), "admin")
+        assert (exc.value.status_code, exc.value.code) == (422, "INVALID_GRACE_EXTENSION")
+
+    async def test_end_equal_to_the_key_expiry_is_allowed(self) -> None:
+        key = _rotated_key(days_left=1)
+        svc, repo, cache = _service(key)
+        repo.extend_rotation = self._extend_mock(key)
+        await svc.extend_rotation_by_obj(key, key.expires_at, "admin")
+        repo.extend_rotation.assert_awaited_once()
+
+    async def test_losing_a_concurrent_change_is_409(self) -> None:
+        key = _rotated_key(days_left=1)
+        svc, repo, cache = _service(key)
+        repo.extend_rotation = AsyncMock(return_value=False)
+        with pytest.raises(AppError) as exc:
+            await svc.extend_rotation_by_obj(key, datetime.now(timezone.utc) + timedelta(days=3), "admin")
+        assert exc.value.status_code == 409
+        repo.commit.assert_not_called()
+
+    async def test_redis_failure_after_commit_does_not_fail_the_request(self) -> None:
+        key = _rotated_key(days_left=1)
+        svc, repo, cache = _service(key)
+        repo.extend_rotation = self._extend_mock(key)
+        cache.set_api_key_cache = AsyncMock(side_effect=RuntimeError("redis down"))
+        await svc.extend_rotation_by_obj(key, datetime.now(timezone.utc) + timedelta(days=3), "admin")
+        repo.commit.assert_awaited_once()
+
+    async def test_update_guards_the_whole_condition_in_sql(self) -> None:
+        db, captured = _capturing_db(rowcount=0)
+        new_end = datetime.now(timezone.utc) + timedelta(days=3)
+        assert await APIKeyRepository(db).extend_rotation(7, _OLD, new_end, "admin") is False
+        sql = captured["sql"]
+        assert "api_key.rotated_key = " in sql
+        assert "api_key.rotated_key_expires_at > " in sql          # still live: no revive
+        assert "api_key.rotated_key_expires_at < " in sql          # later than the current end
+        assert "api_key.expires_at IS NULL OR api_key.expires_at >= " in sql
+        assert "api_key.is_active IS true" in sql
+
+    def test_request_requires_a_timezone(self) -> None:
+        from pydantic import ValidationError as PydanticValidationError
+
+        from app.schemas.api_key import ExtendRotationRequest
+
+        with pytest.raises(PydanticValidationError):
+            ExtendRotationRequest(rotated_key_expires_at=datetime(2030, 1, 1))
+
+
+class TestNewEndpointPermissions:
+    """The gateway maps every rotation endpoint to revoke's permission (33)."""
+
+    @pytest.mark.parametrize(
+        "method, path",
+        [
+            ("POST", "/api/v1/auth/api-keys/7/rotate"),
+            ("PATCH", "/api/v1/auth/api-keys/7/rotated-key"),
+            ("DELETE", "/api/v1/auth/api-keys/7/rotated-key"),
+        ],
+    )
+    def test_maps_to_the_revoke_permission(self, method, path) -> None:
+        import json
+        import pathlib
+
+        from app.core.permission_checker import PermissionChecker
+
+        payload = json.loads((pathlib.Path(__file__).parent.parent / "api_permissions.json").read_text())
+        checker = PermissionChecker()
+        checker._api_permission_map = {
+            m["endpoint"]: int(m["permissionRequired"]) for m in payload["apiMappings"]
+        }
+        assert checker.get_required_permission(method, path) == 33
+
+
+@pytest.mark.asyncio
+class TestNewRoutes:
+    def _request(self):
+        request = MagicMock()
+        request.state.user_roles = ["ADMIN"]
+        return request
+
+    async def test_extend_returns_the_key_with_its_new_window(self) -> None:
+        from uuid import uuid4
+
+        from app.routes.api_key import extend_previous_api_key_value
+        from app.schemas.api_key import ExtendRotationRequest
+        from app.utils.masking import mask_api_key
+
+        key = _rotated_key(days_left=9)
+        svc = AsyncMock()
+        svc.get_by_id_for_scope = AsyncMock(return_value=key)
+        svc.extend_rotation_by_obj = AsyncMock(return_value=key)
+        svc.permission_name_map_for_keys = AsyncMock(return_value={1: "nmt.inference"})
+        body = ExtendRotationRequest(rotated_key_expires_at=key.rotated_key_expires_at)
+        response = await extend_previous_api_key_value(
+            key_id=7, body=body, request=self._request(),
+            current_user=SimpleNamespace(id=uuid4(), tenant_id=None), svc=svc,
+        )
+        assert response.data.rotated_key == mask_api_key(_OLD)
+        assert response.data.rotated_key_expires_at == key.rotated_key_expires_at
+
+class TestRotatedAt:
+    @pytest.mark.asyncio
+    async def test_rotate_stamps_rotated_at_in_the_same_update(self) -> None:
+        db, captured = _capturing_db()
+        await APIKeyRepository(db).rotate(7, _OLD, _NEW, datetime.now(timezone.utc), "u-1")
+        assert "rotated_at=now()" in captured["sql"]
+
+    def test_list_item_carries_rotated_at(self) -> None:
+        from app.routes.api_key import _key_item
+
+        key = _rotated_key()
+        key.rotated_at = datetime.now(timezone.utc) - timedelta(days=1)
+        assert _key_item(key, permission_names=[]).rotated_at == key.rotated_at

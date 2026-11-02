@@ -1,5 +1,8 @@
 export type ApplicationStatus = "ACTIVE" | "INACTIVE";
 
+/** Requested service id → ordered fallback service ids. A missing key means no fallback. */
+export type ServiceFallbackMap = Record<string, string[]>;
+
 export interface Application {
   application_id: string;
   tenant_id: string;
@@ -17,6 +20,8 @@ export interface Application {
   updated_at?: string | null;
   /** Active, unexpired API keys, filled from the API keys list. Null until that load finishes. */
   api_key_count?: number | null;
+  /** {} when none are configured. */
+  service_fallbacks: ServiceFallbackMap;
 }
 
 export interface ApplicationListResult {
@@ -51,6 +56,8 @@ export interface UpdateApplicationPayload {
   description?: string;
   domain?: string;
   status?: ApplicationStatus;
+  /** Replaces the whole map; {} clears it. Omit to leave it unchanged. */
+  service_fallbacks?: ServiceFallbackMap;
 }
 
 export interface AllocationUpdate {

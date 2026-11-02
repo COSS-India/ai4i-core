@@ -1,4 +1,4 @@
-import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, EditIcon } from "@chakra-ui/icons";
+import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, DeleteIcon, EditIcon } from "@chakra-ui/icons";
 import {
   Alert,
   AlertIcon,
@@ -56,7 +56,7 @@ import {
   type ConfirmState,
   type PiiTab,
 } from "./PiiPoliciesProvider";
-import { FlaskIcon, POLICY_COL_ACTIONS, POLICY_COL_STATUS, StatusToggle } from "./ui";
+import { FlaskIcon, POLICY_COL_STATUS, StatusToggle } from "./ui";
 
 const ADOPTER_TABS: { id: PiiTab; label: string }[] = [
   { id: "policies", label: "Policies" },
@@ -203,12 +203,14 @@ function SubcategoryTable({
   policiesBySubcategory,
   onView,
   onEdit,
+  onDelete,
 }: {
   category: PolicyCategory;
   subcategories: PolicySubcategory[];
   policiesBySubcategory: Map<string, Policy[]>;
   onView: (sub: PolicySubcategory) => void;
   onEdit: (sub: PolicySubcategory) => void;
+  onDelete: (sub: PolicySubcategory) => Promise<boolean>;
 }) {
   const { categories, role, askConfirm, setSubcategoryStatus, showSubcategoryPolicies } = usePiiPolicies();
   const canManage = role === "adopter";
@@ -313,10 +315,26 @@ function SubcategoryTable({
           ),
       },
       createActionsColumn<PolicySubcategory>({
-        ...POLICY_COL_ACTIONS,
+        actionCount: canManage ? 3 : 1,
         getActions: (sub) => [
           ...(canManage
-            ? [{ id: "edit" as const, label: "Edit", icon: <EditIcon />, onClick: () => onEdit(sub) }]
+            ? [
+                { id: "edit" as const, label: "Edit", icon: <EditIcon />, onClick: () => onEdit(sub) },
+                {
+                  id: "delete" as const,
+                  label: "Delete",
+                  onClick: () =>
+                    askConfirm({
+                      title: `Delete "${sub.name}"?`,
+                      body: "This permanently deletes the sub-category. Delete its policies first.",
+                      confirmLabel: "Delete",
+                      confirmColorScheme: "red",
+                      onConfirm: () => {
+                        void onDelete(sub);
+                      },
+                    }),
+                },
+              ]
             : []),
           {
             id: "view-policies",
@@ -339,6 +357,7 @@ function SubcategoryTable({
       setSubcategoryStatus,
       showSubcategoryPolicies,
       onEdit,
+      onDelete,
     ],
   );
 
@@ -354,7 +373,6 @@ function SubcategoryTable({
       asyncStateHeight="64px"
       onRowClick={onView}
       rowAriaLabel={(sub) => `View ${sub.name}`}
-      showRowChevron={false}
       renderAfterRow={(sub) =>
         expanded.has(sub.id) ? (
           <Tr>
@@ -385,6 +403,8 @@ function CategoriesPanel({
     createSubCategory,
     updateCategory,
     updateSubCategory,
+    deleteCategory,
+    deleteSubCategory,
     askConfirm,
     setCategoryStatus,
     showCategoryPolicies,
@@ -545,6 +565,38 @@ function CategoriesPanel({
                     onClick={() => setEditCategory(cat)}
                   />
                 ) : null}
+                {canManage ? (
+                  <IconButton
+                    aria-label={`Delete ${cat.name}`}
+                    icon={<DeleteIcon />}
+                    size="sm"
+                    variant="ghost"
+                    color="ink.600"
+                    _hover={{ color: "red.500", bg: "red.50" }}
+                    onClick={() =>
+                      askConfirm({
+                        title: `Delete "${cat.name}"?`,
+                        body: "This permanently deletes the category. Delete its sub-categories first.",
+                        confirmLabel: "Delete",
+                        confirmColorScheme: "red",
+                        onConfirm: () => {
+                          void deleteCategory(cat.id).then((deleted) => {
+                            if (!deleted) return;
+                            setViewCategory((current) => (current?.id === cat.id ? null : current));
+                            setEditCategory((current) => (current?.id === cat.id ? null : current));
+                            setViewSubcategory((current) =>
+                              current?.categoryId === cat.id ? null : current,
+                            );
+                            setEditSubcategory((current) =>
+                              current?.categoryId === cat.id ? null : current,
+                            );
+                            setSubcategoryFormFor((current) => (current?.id === cat.id ? null : current));
+                          });
+                        },
+                      })
+                    }
+                  />
+                ) : null}
                 <IconButton
                   aria-label={isOpen ? `Collapse ${cat.name}` : `Expand ${cat.name}`}
                   aria-expanded={isOpen}
@@ -564,6 +616,13 @@ function CategoriesPanel({
                   policiesBySubcategory={policiesBySubcategory}
                   onView={setViewSubcategory}
                   onEdit={setEditSubcategory}
+                  onDelete={async (sub) => {
+                    const deleted = await deleteSubCategory(sub.id);
+                    if (!deleted) return false;
+                    setViewSubcategory((current) => (current?.id === sub.id ? null : current));
+                    setEditSubcategory((current) => (current?.id === sub.id ? null : current));
+                    return true;
+                  }}
                 />
               </Stack>
             </Collapse>

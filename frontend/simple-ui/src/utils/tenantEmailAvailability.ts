@@ -12,7 +12,15 @@ import {
   type EmailUniquenessExclusions,
 } from "./tenantEmailValidation";
 
-export type EmailAvailabilityStatus = "idle" | "checking" | "available";
+/**
+ * `unchecked` = format/tenant checks passed, user uniqueness deferred to PATCH
+ * (edit contact email — listUsers emails stay masked).
+ */
+export type EmailAvailabilityStatus =
+  | "idle"
+  | "checking"
+  | "available"
+  | "unchecked";
 
 export const EMAIL_CHECK_DEBOUNCE_MS = 400;
 
@@ -25,6 +33,12 @@ export interface RunEmailAvailabilityCheckOptions {
   userEmails: Set<string>;
   exclusions?: EmailUniquenessExclusions;
   skipRemoteCheck?: boolean;
+  /**
+   * Skip /auth/check-email and known-user collision (AI4IDS-3401 edit flow).
+   * listUsers emails stay masked even with unmask=true, so FE cannot tell
+   * Institution Admin vs other users — PATCH owns that decision.
+   */
+  skipUserCollision?: boolean;
 }
 
 export interface EmailAvailabilityResult {
@@ -55,7 +69,15 @@ function clientCollisionError(
 export async function runEmailAvailabilityCheck(
   options: RunEmailAvailabilityCheckOptions
 ): Promise<EmailAvailabilityResult> {
-  const { email, mode, tenantEmails, userEmails, exclusions, skipRemoteCheck } = options;
+  const {
+    email,
+    mode,
+    tenantEmails,
+    userEmails,
+    exclusions,
+    skipRemoteCheck,
+    skipUserCollision = false,
+  } = options;
 
   const formatError = validateEmailFormatOnly(email);
   if (formatError) {
@@ -71,6 +93,10 @@ export async function runEmailAvailabilityCheck(
     return { error: tenantTakenError, status: "idle" };
   }
 
+  if (skipUserCollision) {
+    return { status: "unchecked" };
+  }
+
   if (skipRemoteCheck) {
     const clientError = clientCollisionError(
       email,
@@ -83,15 +109,15 @@ export async function runEmailAvailabilityCheck(
     return { status: "available" };
   }
 
+  const lower = normalizeEmail(email);
+  const skipExcludedUser =
+    Boolean(exclusions?.excludeUserEmail) &&
+    lower === normalizeEmail(exclusions?.excludeUserEmail ?? "");
+
   try {
     const exists = await authService.checkEmailExists(email);
-    if (exists) {
-      const skip = exclusions
-        ? normalizeEmail(email) === normalizeEmail(exclusions.excludeUserEmail ?? "")
-        : false;
-      if (!skip) {
-        return { error: userExistsMessage(mode), status: "idle" };
-      }
+    if (exists && !skipExcludedUser) {
+      return { error: userExistsMessage(mode), status: "idle" };
     }
   } catch {
     const clientError = clientCollisionError(
@@ -104,11 +130,7 @@ export async function runEmailAvailabilityCheck(
     if (clientError) return { error: clientError, status: "idle" };
   }
 
-  const lower = normalizeEmail(email);
-  const skipUser =
-    exclusions?.excludeUserEmail &&
-    lower === normalizeEmail(exclusions.excludeUserEmail);
-  if (userEmails.has(lower) && !skipUser) {
+  if (userEmails.has(lower) && !skipExcludedUser) {
     return { error: userExistsMessage(mode), status: "idle" };
   }
 

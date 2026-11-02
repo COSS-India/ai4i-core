@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { Badge, Text } from "@chakra-ui/react";
 import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
+  actionsColumnSize,
   type DataTableColumn,
   type DataTableSortState,
 } from "../common/table";
@@ -16,16 +17,38 @@ import {
 } from "../../config/constants";
 import { dash, fmtDate } from "../../utils/valueFormatters";
 import type { TenantUserView } from "../../types/tenant";
+import {
+  getRegistrationMethodOption,
+  REGISTRATION_METHOD_OPTIONS,
+  resolveRegistrationMethod,
+} from "../../utils/registrationMethod";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 
 type TenantManagement = ReturnType<typeof useTenantManagement>;
 
-export function InstitutionUsersTable({
-  tm,
-  sortedTenantUsers,
-  userSort,
-  resolveUserDisplayStatus,
-}: {
+function RegistrationMethodBadge({ user }: Readonly<{ user: TenantUserView }>) {
+  const option = getRegistrationMethodOption(resolveRegistrationMethod(user));
+  if (!option) return <>{dash(null)}</>;
+  return (
+    <Badge colorScheme={option.colorScheme} textTransform="none">
+      {option.label}
+    </Badge>
+  );
+}
+
+const rolesColumn: DataTableColumn<TenantUserView> = {
+  id: "roles",
+  header: "Roles",
+  cell: (u) => <TenantUserRoleBadges roles={u.roles} />,
+};
+
+const registrationColumn: DataTableColumn<TenantUserView> = {
+  id: "registration_method",
+  header: "Registration Method",
+  cell: (u) => <RegistrationMethodBadge user={u} />,
+};
+
+type InstitutionUsersTableProps = Readonly<{
   tm: TenantManagement;
   sortedTenantUsers: TenantUserView[];
   userSort: {
@@ -33,7 +56,18 @@ export function InstitutionUsersTable({
     onSortChange: (next: DataTableSortState) => void;
   };
   resolveUserDisplayStatus: (user: TenantUserView) => TenantUserStatusValue;
-}) {
+}>;
+
+export function InstitutionUsersTable({
+  tm,
+  sortedTenantUsers,
+  userSort,
+  resolveUserDisplayStatus,
+}: InstitutionUsersTableProps) {
+  // Registration Method only applies to the Default Institution: every user in
+  // other institutions is admin-created.
+  const showRegistrationMethod = tm.isDefaultTenantUsersView;
+
   const userColumns = useMemo((): DataTableColumn<TenantUserView>[] => {
     return [
       {
@@ -61,11 +95,8 @@ export function InstitutionUsersTable({
         sortAccessor: (u) => u.full_name ?? "",
         cell: (u) => dash(u.full_name),
       },
-      {
-        id: "roles",
-        header: "Roles",
-        cell: (u) => <TenantUserRoleBadges role={u.role} roles={u.roles} />,
-      },
+      rolesColumn,
+      ...(showRegistrationMethod ? [registrationColumn] : []),
       {
         id: "status",
         header: "Status",
@@ -91,8 +122,17 @@ export function InstitutionUsersTable({
       },
       {
         id: "actions",
-        header: "",
-        tdProps: { onClick: (e) => e.stopPropagation() },
+        header: "Actions",
+        align: "right" as const,
+        truncate: false,
+        ...actionsColumnSize(2),
+        thProps: { textAlign: "right", whiteSpace: "nowrap", px: 2, overflow: "visible" },
+        tdProps: {
+          onClick: (e) => e.stopPropagation(),
+          whiteSpace: "nowrap",
+          textAlign: "right",
+          px: 2,
+        },
         cell: (u) => (
           <InstitutionUserRowActions
             tm={tm}
@@ -103,7 +143,7 @@ export function InstitutionUsersTable({
       },
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tm]);
+  }, [tm, showRegistrationMethod]);
 
   return (
       <DataTable
@@ -122,6 +162,7 @@ export function InstitutionUsersTable({
         hasActiveFilters={
           tm.userFilterStatus !== "all" ||
           tm.userFilterRole !== "all" ||
+          tm.userFilterRegistration !== "all" ||
           tm.userSearch.trim() !== ""
         }
         onClearFilters={tm.handleResetUserFilters}
@@ -167,6 +208,26 @@ export function InstitutionUsersTable({
               })),
             ],
           },
+          ...(showRegistrationMethod
+            ? [
+                {
+                  id: "registration_method",
+                  label: "Registration Method",
+                  type: "select" as const,
+                  param: "registration_method",
+                  value: tm.userFilterRegistration,
+                  onChange: tm.setUserFilterRegistration,
+                  width: { base: "full", sm: "200px" },
+                  options: [
+                    { label: "All", value: "all" },
+                    ...REGISTRATION_METHOD_OPTIONS.map((opt) => ({
+                      label: opt.label,
+                      value: opt.value,
+                    })),
+                  ],
+                },
+              ]
+            : []),
         ]}
       />
     );

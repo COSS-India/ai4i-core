@@ -40,6 +40,61 @@ class TestHealthEndpoints:
         assert "/health" in paths or any("/health" in str(r.path) for r in router.routes)
 
 
+class TestReadinessEndpoint:
+    """The /ready endpoint uses auth-service's get_redis_client (not the bootstrap default)
+    and returns 200 only when both DB and Redis checks pass."""
+
+    def _build_app(self, redis_client):
+        from fastapi import FastAPI
+        from unittest.mock import AsyncMock
+        from ai4i_core.bootstrap.health import create_health_router
+        from ai4i_core.bootstrap.database import get_db
+
+        async def _stub_db():
+            session = AsyncMock()
+            yield session
+
+        router = create_health_router(
+            service_name="auth-service",
+            version="2.0.0",
+            get_redis_client=lambda: redis_client,
+        )
+        app = FastAPI()
+        app.include_router(router)
+        app.dependency_overrides[get_db] = _stub_db
+        return app
+
+    def test_returns_200_when_both_checks_pass(self):
+        from fastapi.testclient import TestClient
+        from unittest.mock import AsyncMock
+
+        rc = AsyncMock()
+        rc.ping = AsyncMock(return_value=True)
+
+        resp = TestClient(self._build_app(rc)).get("/ready")
+
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["ready"] is True
+        assert data["checks"]["database"] == "ok"
+        assert data["checks"]["redis"] == "ok"
+
+    def test_returns_503_when_redis_ping_raises(self):
+        from fastapi.testclient import TestClient
+        from unittest.mock import AsyncMock
+
+        rc = AsyncMock()
+        rc.ping = AsyncMock(side_effect=ConnectionError("Redis down"))
+
+        resp = TestClient(self._build_app(rc)).get("/ready")
+
+        assert resp.status_code == 503
+        data = resp.json()["data"]
+        assert data["ready"] is False
+        assert data["checks"]["redis"] == "unavailable"
+        assert data["checks"]["database"] == "ok"
+
+
 class TestAuthSchemas:
     """Schema validation tests."""
 
