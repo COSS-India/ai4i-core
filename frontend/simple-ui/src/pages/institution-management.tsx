@@ -12,6 +12,7 @@ import { INSTITUTION, INSTITUTIONS } from "../config/constants";
 import { getPlatformName } from "../config/runtimeConfig";
 import {
   canAccessInstitutionManagement,
+  isAdopterInstitutionManager,
   isPlatformAdminUser,
 } from "../utils/rbac";
 
@@ -23,6 +24,10 @@ const InstitutionManagementPage: React.FC = () => {
 
   const showInstitutionManagement = canAccessInstitutionManagement(user?.roles);
   const isAdmin = isPlatformAdminUser(user?.roles);
+  // Only the institution list fills the card; the detail view and the
+  // tenant-admin home are long pages that should scroll the card as before.
+  const isInstitutionList =
+    isAdopterInstitutionManager(user?.roles) && !isInstitutionDetail;
 
   React.useEffect(() => {
     if (!authLoading && (!isAuthenticated || !showInstitutionManagement)) {
@@ -57,7 +62,7 @@ const InstitutionManagementPage: React.FC = () => {
         <meta name="description" content={`Manage ${INSTITUTIONS.toLowerCase()} and ${INSTITUTION.toLowerCase()} users`} />
       </Head>
 
-      <ContentLayout>
+      <ContentLayout fillHeight={isInstitutionList}>
         {!isInstitutionDetail ? (
           <ManagementPageHeader
             crumbs={false}

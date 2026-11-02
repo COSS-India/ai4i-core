@@ -735,9 +735,13 @@ export default function TenantManagementTab({
   };
 
 
+  const showAdopterList = isAdopterManager && !tm.tenantDetailView;
+
   return (
-    <Box>
-      {isAdopterManager && !tm.tenantDetailView && (
+    // The adopter list's table fills the card (`ContentLayout fillHeight`);
+    // the other views keep normal block flow.
+    <Box {...(showAdopterList ? { display: "flex", flexDirection: "column", minH: 0 } : {})}>
+      {showAdopterList && (
         <InstitutionAdopterList
           tm={tm}
           sortedTenants={sortedTenants}

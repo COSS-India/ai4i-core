@@ -29,6 +29,7 @@ import CreateButton from "../../common/CreateButton";
 import LoadingSpinner from "../../common/LoadingSpinner";
 import ManagementPageHeader from "../../common/ManagementPageHeader";
 import DataTable, {
+  FILL_HEIGHT_COLUMN_PROPS,
   TableSearchField,
   TableSelectField,
   createActionsColumn,
@@ -775,9 +776,13 @@ function ExperienceBody() {
     }
     return undefined;
   })();
+  // The Policy list and Configuration tables fill the card (`ContentLayout
+  // fillHeight`); Categories and Playground keep normal flow so the card scrolls them.
+  const fillProps =
+    tab === "policies" || tab === "configuration" ? FILL_HEIGHT_COLUMN_PROPS : {};
 
   return (
-    <Box>
+    <Box {...fillProps}>
       <ManagementPageHeader
         title="Policy Management"
         description={
@@ -815,6 +820,7 @@ function ExperienceBody() {
             const next = tabs[index];
             if (next) setTab(next.id);
           }}
+          {...fillProps}
         >
           <Flex
             align="flex-end"
@@ -842,8 +848,8 @@ function ExperienceBody() {
             ) : null}
           </Flex>
           {canManage ? (
-            <TabPanels>
-              <TabPanel px={0} pt={6}>
+            <TabPanels {...fillProps}>
+              <TabPanel px={0} pt={6} {...fillProps}>
                 <PolicyList />
               </TabPanel>
               <TabPanel px={0} pt={6}>
@@ -853,7 +859,7 @@ function ExperienceBody() {
                   onClearFilters={clearCategoryFilters}
                 />
               </TabPanel>
-              <TabPanel px={0} pt={6}>
+              <TabPanel px={0} pt={6} {...fillProps}>
                 <ConfigurationPanel />
               </TabPanel>
               <TabPanel px={0} pt={6}>
@@ -861,8 +867,8 @@ function ExperienceBody() {
               </TabPanel>
             </TabPanels>
           ) : (
-            <TabPanels>
-              <TabPanel px={0} pt={6}>
+            <TabPanels {...fillProps}>
+              <TabPanel px={0} pt={6} {...fillProps}>
                 <PolicyList />
               </TabPanel>
             </TabPanels>

@@ -581,9 +581,9 @@ const TierManagement: React.FC = () => {
   );
 
   return (
-    <Box>
+    <Box display="flex" flexDirection="column" minH={0}>
       {formPage}
-      <Box>
+      <Box display="flex" flexDirection="column" minH={0}>
           <ManagementPageHeader
             crumbs={false}
             title="Tier Management"
@@ -594,6 +594,7 @@ const TierManagement: React.FC = () => {
           />
           <DataTable
         layout="admin"
+        fillHeight
         items={sortedTiers}
         columns={columns}
         getRowKey={(tier) => tier.id}

@@ -183,6 +183,7 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
   return (
     <DataTable
       layout="admin"
+      fillHeight
       key={tableKey}
       items={items}
       columns={columns}

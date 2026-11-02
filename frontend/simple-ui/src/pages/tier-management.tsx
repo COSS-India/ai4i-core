@@ -71,7 +71,7 @@ const TierManagementPage: React.FC = () => {
         <meta name="description" content={`Configure tiers for ${INSTITUTION.toLowerCase()} access`} />
       </Head>
 
-      <ContentLayout>
+      <ContentLayout fillHeight>
         <TierManagement />
       </ContentLayout>
     </>

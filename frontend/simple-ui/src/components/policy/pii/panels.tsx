@@ -24,6 +24,7 @@ import LoadingSpinner from "../../common/LoadingSpinner";
 import FieldLabel from "../../common/FieldLabel";
 import { FIELD_HINTS } from "../../../config/fieldHints";
 import DataTable, {
+  FILL_HEIGHT_COLUMN_PROPS,
   createActionsColumn,
   type DataTableColumn,
 } from "../../common/table";
@@ -274,7 +275,7 @@ export function PolicyList() {
   );
 
   return (
-    <Box>
+    <Box {...FILL_HEIGHT_COLUMN_PROPS}>
       {policiesStatus === "error" ? (
         <Alert status="error" borderRadius="md" mb={4}>
           <AlertIcon />
@@ -293,6 +294,7 @@ export function PolicyList() {
       ) : (
       <DataTable
         layout="admin"
+        fillHeight
         items={sortedPolicies}
         columns={columns}
         getRowKey={(row) => row.id}
@@ -375,16 +377,17 @@ export function ConfigurationPanel() {
       colorScheme="blue"
       index={configTab === "domain" ? 1 : 0}
       onChange={(index) => setConfigTab(index === 1 ? "domain" : "types")}
+      {...FILL_HEIGHT_COLUMN_PROPS}
     >
       <TabList>
         <Tab fontWeight="semibold">PII Types</Tab>
         <Tab fontWeight="semibold">Domain</Tab>
       </TabList>
-      <TabPanels>
-        <TabPanel px={0} pt={4}>
+      <TabPanels {...FILL_HEIGHT_COLUMN_PROPS}>
+        <TabPanel px={0} pt={4} {...FILL_HEIGHT_COLUMN_PROPS}>
           <TypeLibrary />
         </TabPanel>
-        <TabPanel px={0} pt={4}>
+        <TabPanel px={0} pt={4} {...FILL_HEIGHT_COLUMN_PROPS}>
           <DomainTable />
         </TabPanel>
       </TabPanels>
@@ -554,7 +557,7 @@ function TypeLibrary() {
   }, [openDrawer, askConfirm, deleteType, updateType]);
 
   return (
-    <Box>
+    <Box {...FILL_HEIGHT_COLUMN_PROPS}>
       {typesStatus === "error" ? (
         <Alert status="error" borderRadius="md" mb={4}>
           <AlertIcon />
@@ -573,6 +576,7 @@ function TypeLibrary() {
       ) : (
     <DataTable
       layout="admin"
+      fillHeight
       items={sortedRows}
       columns={columns}
       getRowKey={(row) => row.key}
@@ -705,7 +709,7 @@ function DomainTable() {
   }
 
   return (
-    <Box>
+    <Box {...FILL_HEIGHT_COLUMN_PROPS}>
       {domainsError ? (
         <Alert status={domainsStatus === "error" ? "error" : "warning"} borderRadius="md" mb={4}>
           <AlertIcon />
@@ -719,6 +723,7 @@ function DomainTable() {
       ) : null}
     <DataTable
       layout="admin"
+      fillHeight
       items={sortedDomains}
       columns={columns}
       getRowKey={(row) => row.id}
