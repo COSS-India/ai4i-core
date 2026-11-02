@@ -275,7 +275,7 @@ export function PolicyList() {
   );
 
   return (
-    <Box>
+    <Box {...FILL_HEIGHT_COLUMN_PROPS}>
       {policiesStatus === "error" ? (
         <Alert status="error" borderRadius="md" mb={4}>
           <AlertIcon />
@@ -294,6 +294,7 @@ export function PolicyList() {
       ) : (
       <DataTable
         layout="admin"
+        fillHeight
         items={sortedPolicies}
         columns={columns}
         getRowKey={(row) => row.id}

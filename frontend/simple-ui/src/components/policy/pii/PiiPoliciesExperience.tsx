@@ -776,9 +776,10 @@ function ExperienceBody() {
     }
     return undefined;
   })();
-  // Configuration's tables fill the card (`ContentLayout fillHeight`); the other
-  // tabs keep normal flow so the card scrolls them as before.
-  const fillProps = tab === "configuration" ? FILL_HEIGHT_COLUMN_PROPS : {};
+  // The Policy list and Configuration tables fill the card (`ContentLayout
+  // fillHeight`); Categories and Playground keep normal flow so the card scrolls them.
+  const fillProps =
+    tab === "policies" || tab === "configuration" ? FILL_HEIGHT_COLUMN_PROPS : {};
 
   return (
     <Box {...fillProps}>
@@ -848,7 +849,7 @@ function ExperienceBody() {
           </Flex>
           {canManage ? (
             <TabPanels {...fillProps}>
-              <TabPanel px={0} pt={6}>
+              <TabPanel px={0} pt={6} {...fillProps}>
                 <PolicyList />
               </TabPanel>
               <TabPanel px={0} pt={6}>
@@ -866,8 +867,8 @@ function ExperienceBody() {
               </TabPanel>
             </TabPanels>
           ) : (
-            <TabPanels>
-              <TabPanel px={0} pt={6}>
+            <TabPanels {...fillProps}>
+              <TabPanel px={0} pt={6} {...fillProps}>
                 <PolicyList />
               </TabPanel>
             </TabPanels>

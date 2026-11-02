@@ -292,7 +292,8 @@ export interface DataTableAdminProps<T> extends DataTableSharedProps<T> {
    * Shrink to the height left in a flex-column parent (e.g. `ContentLayout
    * fillHeight`) instead of capping rows at `maxHeight`, so only the rows scroll
    * and pagination stays in view. Every ancestor up to that parent must be a
-   * flex column with `minH={0}`.
+   * flex column with `minH={0}`. On very short windows the rows area can shrink
+   * to a sliver rather than pushing pagination out of view.
    */
   fillHeight?: boolean;
   tableContainerProps?: Omit<TableContainerProps, "children">;
@@ -2045,8 +2046,6 @@ export const FILL_HEIGHT_COLUMN_PROPS = {
   minH: 0,
 } as const;
 
-const ADMIN_FILL_MIN_TABLE_HEIGHT = "160px";
-
 function AdminTableSurface({
   toolbarAttached,
   fillHeight,
@@ -2405,9 +2404,9 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
     <TableContainer
       ref={tableContainerRef}
       maxH={containerMaxH ?? (fillHeight ? undefined : maxHeight)}
-      // Keep a couple of rows visible on very short windows (the card scrolls
-      // instead); skipped for a single row so it isn't padded with blank space.
-      minH={fillHeight && displayItems.length > 1 ? ADMIN_FILL_MIN_TABLE_HEIGHT : undefined}
+      // Shrink below the rows' height so pagination stays in view on short
+      // windows; a floor here would let the surface's overflow="hidden" clip it.
+      minH={fillHeight ? 0 : undefined}
       overflowY="auto"
       overflowX="auto"
       bg="white"

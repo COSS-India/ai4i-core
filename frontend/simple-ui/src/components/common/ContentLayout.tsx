@@ -30,8 +30,8 @@ const ContentLayout: React.FC<ContentLayoutProps> = ({ children, fillHeight = fa
     >
       <Box
         pt={5}
-        // The card doesn't scroll under `fillHeight`, so its bottom padding is
-        // always on screen; keep it tight so the table sits near the edge.
+        // Under `fillHeight` the table scrolls rather than the card, so this padding
+        // is normally on screen; keep it tight so the table sits near the edge.
         pb={fillHeight ? 3 : 5}
         px={{ base: 4, md: 6 }}
         bg={bgColor}
@@ -42,6 +42,8 @@ const ContentLayout: React.FC<ContentLayoutProps> = ({ children, fillHeight = fa
         flex="1"
         minH={0}
         minW={0}
+        // Kept under `fillHeight` as a fallback: if the header, filters or panels
+        // alone outgrow the card (e.g. wrapped on a phone), the card still scrolls.
         overflow="auto"
         w="100%"
         {...(fillHeight ? { display: 'flex', flexDirection: 'column' } : {})}
