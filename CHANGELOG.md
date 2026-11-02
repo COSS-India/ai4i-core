@@ -51,17 +51,16 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 ### Removed
 - The `top-down` action on the tenant budget API (AI4IDS-3398, AI4IDS-3543)
 - The API Key column from the Logs Dashboard and its trace responses (AI4IDS-3506)
-- `api_key_revoked_at` from API key responses, and `ROTATED_API_KEY_EXPIRE_DAYS` from auth-service (AI4IDS-3463)
-- `pending_email` and `pending_email_expires_at` from institutions. The contact is changed by picking an Institution Admin instead (AI4IDS-3401)
+- `ROTATED_API_KEY_EXPIRE_DAYS` from auth-service. The grace period is chosen per rotation (AI4IDS-3463)
 
 ### Upgrade notes
 - Shared library `ai4i-core` 1.0.52 to 1.0.54. auth-service, platform-core and inference pin 1.0.54; kafka-consumers and pyjob stay on 1.0.52. 1.0.53 on PyPI was built from an older branch and must not be used
-- 12 migrations: nine on the auth database and three on the core database. Data-changing ones: `e7a1b2c3d4f5` re-labels admin-created users stored as self-registered, `a7c3e9f15b28` leaves non-privileged self-registered users with USER only, `ba0818f032cd` backfills `users.activated_at`, `b8a1957cd6a3` revokes keys whose current value alone was revoked and deletes their Redis entries, and `8fbe729b1331` renames the seeded domain PII definitions to `PII`
-- The auth migrations need a short maintenance window for auth-service. `b8a1957cd6a3` and `d5e6f7a8b9c1` drop columns the 2.9 auth-service reads, while `7a28dca07e9d` and `ba0818f032cd` add columns the 2.10 auth-service reads. Stop auth-service, run `./scripts/migrate.sh ai4iplatform_auth upgrade`, then start the 2.10 image
+- 12 migrations: nine on the auth database and three on the core database. Data-changing ones: `e7a1b2c3d4f5` re-labels admin-created users stored as self-registered, `a7c3e9f15b28` leaves non-privileged self-registered users with USER only, `ba0818f032cd` backfills `users.activated_at`, and `8fbe729b1331` renames the seeded domain PII definitions to `PII`. Net schema change from v2.9: three added columns (`api_key.rotated_at`, `applications.service_fallbacks` with default `{}`, nullable `users.activated_at`) and one new core table (`user_table_preferences`). The `api_key_revoked_at` and `tenants.pending_email` columns are added and dropped within the same run
+- No downtime is needed from v2.9. The migrations only add nullable or defaulted columns, so 2.9 pods keep working against the migrated schema. Run the core and auth migrations first, then roll out the 2.10 services. Keep the gap before the auth-service rollout short: `ba0818f032cd` backfills `users.activated_at` when it runs, so a user who activates on a 2.9 pod afterwards shows as Pending Activation in 2.10 until that backfill is re-run
 - OpenSearch `max_result_window` must be raised to 20001 on `traces-*` for keyword search: `PUT /traces-*/_settings {"index": {"max_result_window": 20001}}`
 - New gateway routes: `PATCH /api/v1/auth/api-keys/{key_id}/rotated-key`, `GET /api/v1/services/columns`, `GET /api/v1/telemetry/traces/columns`, `GET|PUT|DELETE /api/v1/preferences/columns/{view_key}`, and `PATCH|DELETE` on policy categories and sub-categories. Their permissions are in `services/auth-service/api_permissions.json`
-- Breaking API changes: rotation requires `grace_days` and returns 422 `INVALID_GRACE_PERIOD` past the key's expiry; the budget API rejects `top-down` with 422; institution responses drop `pending_email`, and a typed email change on a non-PENDING institution returns 409 `TENANT_EMAIL_EDIT_NOT_ALLOWED`; a status filter on trace search now pages over traces resolved by their request status, and the summary cards stay global
-- The frontend reads `ROTATED_API_KEY_DEFAULT_GRACE_DAYS` (default 7) at build time
+- Breaking API changes: rotation requires `grace_days` and returns 422 `INVALID_GRACE_PERIOD` past the key's expiry; the budget API rejects `top-down` with 422; a typed email change on a non-PENDING institution returns 409 `TENANT_EMAIL_EDIT_NOT_ALLOWED`; a status filter on trace search now pages over traces resolved by their request status, and the summary cards stay global
+- simple-ui reads `ROTATED_API_KEY_DEFAULT_GRACE_DAYS` (default 7) at runtime from its ConfigMap, so it can be changed without rebuilding the image
 - Users who already hold both USER and TENANT ADMIN from the old additive role change keep both until their role is saved again
 
 ---
