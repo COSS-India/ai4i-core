@@ -25,19 +25,19 @@ export type ListContactAdminOptions = {
  */
 export function maskEmailForCompare(value: string): string {
   const email = normalizeEmail(value);
-  if (!email || !email.includes("@")) return email;
+  if (!email?.includes("@")) return email;
   const at = email.indexOf("@");
   const local = email.slice(0, at);
   const domain = email.slice(at + 1);
-  const maskedLocal = local ? `${local[0]}***` : "***";
+  const maskedLocal = local[0] != null ? `${local[0]}***` : "***";
   if (!domain.includes(".")) {
-    const maskedDomain = domain ? `${domain[0]}***` : "***";
+    const maskedDomain = domain[0] != null ? `${domain[0]}***` : "***";
     return `${maskedLocal}@${maskedDomain}`;
   }
   const dot = domain.indexOf(".");
   const name = domain.slice(0, dot);
   const rest = domain.slice(dot + 1);
-  const maskedName = name ? `${name[0]}***` : "***";
+  const maskedName = name[0] != null ? `${name[0]}***` : "***";
   return `${maskedLocal}@${maskedName}.${rest}`;
 }
 
