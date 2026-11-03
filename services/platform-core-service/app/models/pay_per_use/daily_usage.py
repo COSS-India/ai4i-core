@@ -49,6 +49,11 @@ class DailyUsage(Base):
 
     tenant_id, application_id and api_key_id are rows in the auth DB, so they
     have no foreign key.
+
+    fallback_count and total_response_time_ms are rolled up from request rows
+    (migration ea3961c258e4). fallback_count is part of request_count. Average
+    response time is total_response_time_ms / request_count; P95 is not
+    additive, so it is read from usage_events.
     """
 
     __tablename__ = "daily_usage"
@@ -99,6 +104,8 @@ class DailyUsage(Base):
     request_count = Column(BigInteger, nullable=False, default=0, server_default="0")
     success_count = Column(BigInteger, nullable=False, default=0, server_default="0")
     failed_count = Column(BigInteger, nullable=False, default=0, server_default="0")
+    fallback_count = Column(BigInteger, nullable=False, default=0, server_default="0")
+    total_response_time_ms = Column(BigInteger, nullable=False, default=0, server_default="0")
 
     total_units = Column(UNITS, nullable=False, default=0, server_default="0")
     cached_input_units = Column(UNITS, nullable=False, default=0, server_default="0")
