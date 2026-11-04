@@ -258,6 +258,8 @@ def build_day_rows(day: date, results: dict[str, list[dict]], lookups: Lookups) 
             "fallback_count": 0,
             "server_error_count": server_errors,
             "total_response_time_ms": int(_whole(t["duration"] * 1000)),
+            # Prometheus times every request it counts; no duration, no timed requests.
+            "response_time_count": requests if t["duration"] else 0,
             "total_units": prompt + completion,
             "cached_input_units": Decimal(0),
             "output_units": completion,
@@ -273,7 +275,7 @@ _COLUMNS = (
     "application_id", "application_name", "api_key_id", "tier_id", "tier_name",
     "service_id", "service_name", "model_name", "inference_type_id", "task_type", "unit",
     "request_count", "success_count", "failed_count",
-    "fallback_count", "server_error_count", "total_response_time_ms",
+    "fallback_count", "server_error_count", "total_response_time_ms", "response_time_count",
     "total_units", "cached_input_units", "output_units",
     "input_units_cost", "cached_input_units_cost", "output_units_cost",
 )

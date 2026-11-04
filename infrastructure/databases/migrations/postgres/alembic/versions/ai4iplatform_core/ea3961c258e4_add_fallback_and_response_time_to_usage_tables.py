@@ -15,7 +15,7 @@ down_revision: Union[str, None] = "8fbe729b1331"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-DAILY_USAGE_COLUMNS = ("fallback_count", "total_response_time_ms", "server_error_count")
+DAILY_USAGE_COLUMNS = ("fallback_count", "total_response_time_ms", "response_time_count", "server_error_count")
 
 
 def upgrade() -> None:

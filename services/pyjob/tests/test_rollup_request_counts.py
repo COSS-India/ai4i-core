@@ -115,10 +115,13 @@ async def test_request_counts_in_its_own_group_only(conn):
 
 
 async def _health(conn) -> dict:
-    """{tier_id: (server_error_count, fallback_count, total_response_time_ms)} for the test tenant."""
+    """{tier_id: (server_error_count, fallback_count, total_response_time_ms, response_time_count)}
+    for the test tenant."""
     rows = (await conn.execute(_AGGREGATE, {"start": _START, "end": _START + timedelta(days=1)})).mappings().all()
     return {
-        str(r["tier_id"]): (r["server_error_count"], r["fallback_count"], r["total_response_time_ms"])
+        str(r["tier_id"]): (
+            r["server_error_count"], r["fallback_count"], r["total_response_time_ms"], r["response_time_count"],
+        )
         for r in rows if r["tenant_id"] == _TENANT
     }
 
@@ -131,14 +134,14 @@ async def test_server_errors_fallbacks_and_response_time_from_request_rows(conn)
     await _row(conn, "rollup-h4", 3, status=200)                    # no response time recorded
     await _row(conn, "rollup-h1", -1, units=100)                    # h1's usage row: adds nothing here
     assert await _groups(conn) == {_TIER_A: (4, 2, 2, 100)}
-    assert await _health(conn) == {_TIER_A: (1, 1, 4135)}
+    assert await _health(conn) == {_TIER_A: (1, 1, 4135, 3)}   # h4 has no time: not in the divisor
 
 
 @pytest.mark.asyncio
 async def test_pre_cutover_server_errors_count_once_per_correlation_id(conn):
     await _row(conn, "rollup-old-5xx", 0, status=503, units=40)
     await _row(conn, "rollup-old-5xx", 2, status=503, units=60)
-    assert await _health(conn) == {_TIER_A: (1, 0, 0)}
+    assert await _health(conn) == {_TIER_A: (1, 0, 0, 0)}
 
 
 async def _daily_usage_row(conn, tenant_id, source):
