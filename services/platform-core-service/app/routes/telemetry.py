@@ -13,7 +13,6 @@ from app.schemas.telemetry import (
 from app.utils.opensearch_client import OpenSearchTraceClient
 from app.utils.telemetry_params import (
     DEFAULT_COLUMN_KEYS,
-    SORT_FIELD_MAP,
     VALID_COLUMN_KEYS,
     parse_columns,
     parse_status_codes,
@@ -135,16 +134,22 @@ async def search_traces_opensearch(
     sort_by: Optional[str] = Query(None, description="Sort field: timestamp, url, latency, status_code"),
     sort_order: Optional[str] = Query(None, description="Sort direction: desc (default) or asc"),
     method: Annotated[Optional[str], Query(
-        max_length=16, description="Exact match on HTTP method (e.g. GET, POST)",
+        max_length=16, description="Contains match on HTTP method (e.g. GET, POST)",
     )] = None,
     model: Annotated[Optional[str], Query(
-        max_length=256, description="Exact match on model name",
+        max_length=256, description="Contains match on model name",
     )] = None,
     error: Annotated[Optional[str], Query(
         max_length=512, description="Phrase match on error/status description",
     )] = None,
     service: Annotated[Optional[str], Query(
         max_length=256, description="Phrase match on service name",
+    )] = None,
+    url: Annotated[Optional[str], Query(
+        max_length=512, description="Contains match on request URL",
+    )] = None,
+    application: Annotated[Optional[str], Query(
+        max_length=256, description="Contains match on application ID",
     )] = None,
     columns: Annotated[Optional[str], Query(
         description=(
@@ -181,7 +186,8 @@ async def search_traces_opensearch(
         logger.info(
             f"Searching traces - task_types={task_types}, status={effective_status}, "
             f"tenant={tenant_filter}, service_id={service_id}, status_code={status_code}, "
-            f"method={method}, model={model}, error={'set' if error else None}, service={service}, "
+            f"method={method}, model={model}, url={url}, application={application}, "
+            f"error={'set' if error else None}, service={service}, "
             f"q={'set' if q else None}, sort_by={sort_by}, sort_order={sort_order}, "
             f"user_filter={user is not None}, metadata_filter={metadata_key is not None}"
         )
@@ -209,6 +215,8 @@ async def search_traces_opensearch(
             model=model,
             error=error,
             service=service,
+            url=url,
+            application=application,
         )
 
         summary = SearchTraceSummary(

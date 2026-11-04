@@ -13,6 +13,20 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+# Load schemas first — the service imports from it.
+_SCHEMAS_PATH = Path(__file__).resolve().parents[1] / "app" / "schemas" / "telemetry.py"
+_schemas_spec = importlib.util.spec_from_file_location("app.schemas.telemetry", _SCHEMAS_PATH)
+_schemas = importlib.util.module_from_spec(_schemas_spec)
+sys.modules["app.schemas.telemetry"] = _schemas
+_schemas_spec.loader.exec_module(_schemas)
+
+# Load the service next — the route imports from it, and _MAX_KEYWORD_TRACE_IDS moved here.
+_TELEMETRY_SERVICE_PATH = Path(__file__).resolve().parents[1] / "app" / "services" / "telemetry_service.py"
+_svc_spec = importlib.util.spec_from_file_location("app.services.telemetry_service", _TELEMETRY_SERVICE_PATH)
+_telemetry_svc = importlib.util.module_from_spec(_svc_spec)
+sys.modules["app.services.telemetry_service"] = _telemetry_svc
+_svc_spec.loader.exec_module(_telemetry_svc)
+
 _TELEMETRY_ROUTE_PATH = Path(__file__).resolve().parents[1] / "app" / "routes" / "telemetry.py"
 _spec = importlib.util.spec_from_file_location("app.routes.telemetry", _TELEMETRY_ROUTE_PATH)
 _telemetry = importlib.util.module_from_spec(_spec)
@@ -20,7 +34,7 @@ sys.modules["app.routes.telemetry"] = _telemetry
 _spec.loader.exec_module(_telemetry)
 
 search_traces_opensearch = _telemetry.search_traces_opensearch
-_MAX_KEYWORD_TRACE_IDS = _telemetry._MAX_KEYWORD_TRACE_IDS
+_MAX_KEYWORD_TRACE_IDS = _telemetry_svc._MAX_KEYWORD_TRACE_IDS
 
 ADMIN = "1"
 TENANT_ADMIN = "5"

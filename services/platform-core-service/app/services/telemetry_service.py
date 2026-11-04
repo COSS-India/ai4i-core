@@ -7,7 +7,13 @@ from typing import Optional
 from fastapi import HTTPException, status
 
 from app.utils.opensearch_client import OpenSearchTraceClient
-from app.utils.telemetry_params import SORT_FIELD_MAP
+
+SORT_FIELD_MAP = {
+    "timestamp": "@timestamp",
+    "url": "attributes.url.keyword",
+    "latency": "attributes.total_time_ms",
+    "status_code": "attributes.status_code",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -143,21 +149,42 @@ def _exact_attribute_match(attribute: str, value: str) -> dict:
     return {"term": {f"{field}.keyword": {"value": value, "case_insensitive": True}}}
 
 
+def _contains_attribute_match(attribute: str, value: str) -> dict:
+    """Wildcard contains-match on one span attribute (case-insensitive).
+
+    Uses .keyword with leading+trailing wildcards so partial input (e.g. 'ald'
+    finds 'emerald-model') honours the 'contains…' UX label. Falls back to
+    match_phrase for values that exceed the keyword index cap.
+    """
+    field = f"attributes.{attribute}"
+    if len(value) > _KEYWORD_IGNORE_ABOVE:
+        return {"match_phrase": {field: value}}
+    return {"wildcard": {f"{field}.keyword": {"value": f"*{value}*", "case_insensitive": True}}}
+
+
+# Maps span name → {entry_key: attribute_key}.
+# Single source of truth for which fields live exclusively on which span type.
+# _apply_span_to_trace reads this for trace assembly; _span_owner reads it for
+# cross-span filter conflict detection. Add new span-exclusive fields here only.
+_SPAN_FIELD_MAP: dict[str, dict[str, str]] = {
+    "model":   {"task_type": "task_type",    "model_name": "model_name"},
+    "request": {"url":       "url",           "latency":    "total_time_ms",
+                "status_code": "status_code", "method":     "method"},
+}
+
+
+def _span_owner(entry_key: str) -> Optional[str]:
+    """Return the span type that exclusively carries this field, or None if shared."""
+    for span_name, fields in _SPAN_FIELD_MAP.items():
+        if entry_key in fields:
+            return span_name
+    return None
+
+
 def _apply_span_to_trace(entry: dict, span_name: str, attrs: dict) -> None:
-    if span_name == "model":
-        if not entry["task_type"]:
-            entry["task_type"] = attrs.get("task_type")
-        if entry["model_name"] is None:
-            entry["model_name"] = attrs.get("model_name")
-    if span_name == "request":
-        if not entry["url"]:
-            entry["url"] = attrs.get("url")
-        if entry.get("latency") is None:
-            entry["latency"] = attrs.get("total_time_ms")
-        if entry.get("status_code") is None:
-            entry["status_code"] = attrs.get("status_code")
-        if entry["method"] is None:
-            entry["method"] = attrs.get("method")
+    for entry_key, attr_key in _SPAN_FIELD_MAP.get(span_name, {}).items():
+        if not entry.get(entry_key):
+            entry[entry_key] = attrs.get(attr_key)
     # Extract status: the request span is authoritative for the overall trace
     # outcome — it reflects the HTTP response and is always present. Always
     # override with its status so a model span arriving earlier in the sorted
@@ -409,6 +436,45 @@ def _run_keyword_prequery(
     return keyword_trace_ids
 
 
+def _intersect_trace_id_gates(a: Optional[list], b: Optional[list]) -> Optional[list]:
+    """Intersect two optional trace-ID gate lists.
+    None means no gate (all traces pass); empty list means nothing matched."""
+    if a is None:
+        return b
+    if b is None:
+        return a
+    b_set = set(b)
+    return [x for x in a if x in b_set]
+
+
+def _resolve_cross_span_filters(
+    opensearch_client: OpenSearchTraceClient,
+    base_filter_clauses: list,
+    span_groups: dict,
+) -> Optional[list]:
+    """Resolve a cross-span conflict into a trace-ID intersection.
+
+    span_groups comes from _build_search_filter_clauses: span_owner → [(attr, value)].
+    Runs one pre-query per span group and returns the intersection of their trace IDs.
+    Returns None when there is no conflict (single or empty span_groups).
+    """
+    if len(span_groups) <= 1:
+        return None
+
+    gating: Optional[list] = None
+    for span_name, filters in span_groups.items():
+        anchor = [{"term": {"name": span_name}}] if span_name == "request" else []
+        clauses = base_filter_clauses + anchor + [
+            _contains_attribute_match(attr, val) for attr, val in filters
+        ]
+        ids = _collect_all_trace_ids(
+            opensearch_client, {"bool": {"filter": clauses}}, limit=_MAX_KEYWORD_TRACE_IDS + 1
+        )
+        gating = _intersect_trace_id_gates(gating, ids)
+
+    return gating
+
+
 def _build_search_filter_clauses(
     base_filter_clauses: list,
     task_types: Optional[str],
@@ -424,8 +490,26 @@ def _build_search_filter_clauses(
     model: Optional[str] = None,
     error: Optional[str] = None,
     service: Optional[str] = None,
-) -> list:
+    url: Optional[str] = None,
+    application: Optional[str] = None,
+) -> tuple[list, dict]:
+    """Returns (filter_clauses, span_groups).
+
+    span_groups maps span_owner → [(attr_name, value)] for filters whose attributes
+    are exclusive to one span type (per _SPAN_FIELD_MAP). When span_groups has more
+    than one key, the caller must resolve the cross-span conflict via pre-queries
+    rather than ANDing the filters in a single bool.must.
+    """
     filter_clauses = list(base_filter_clauses)
+    span_groups: dict[str, list] = {}
+
+    def _add(attr_name: str, value: str) -> None:
+        owner = _span_owner(attr_name)
+        if owner:
+            span_groups.setdefault(owner, []).append((attr_name, value))
+        else:
+            filter_clauses.append(_exact_attribute_match(attr_name, value))
+
     if task_types:
         types_list = [t.strip() for t in task_types.split(",") if t.strip()]
         if len(types_list) == 1:
@@ -450,9 +534,13 @@ def _build_search_filter_clauses(
     if status_code_list:
         filter_clauses.append({"terms": {"attributes.status_code": status_code_list}})
     if method:
-        filter_clauses.append(_exact_attribute_match("method", method))
+        _add("method", method)
     if model:
-        filter_clauses.append(_exact_attribute_match("model_name", model))
+        _add("model_name", model)
+    if url:
+        _add("url", url)
+    if application:
+        filter_clauses.append(_contains_attribute_match("app_id", application))
     if error:
         filter_clauses.append({"match_phrase": {"status.description": error}})
     if service:
@@ -461,7 +549,7 @@ def _build_search_filter_clauses(
         filter_clauses.append({"term": {"name": "request"}})
     if keyword_trace_ids is not None:
         filter_clauses.append({"terms": {_TRACE_ID_KEYWORD: keyword_trace_ids}})
-    return filter_clauses
+    return filter_clauses, span_groups
 
 
 def _extract_paginated_trace_ids(ids_response: dict) -> list:
@@ -483,9 +571,7 @@ def _paginate_resolved_traces(
 ) -> list:
     """Filter all_traces to resolved status, sort, and return one page of trace IDs."""
     matched = [(tid, t) for tid, t in all_traces.items() if (t.get("status") or "unknown") == status]
-    sort_attr = {"timestamp": "timestamp", "url": "url", "latency": "latency", "status_code": "status_code"}.get(
-        sort_by or "timestamp", "timestamp"
-    )
+    sort_attr = sort_by if sort_by in SORT_FIELD_MAP else "timestamp"
     reverse = (sort_dir == "desc")
 
     def _key(item: tuple) -> tuple:
@@ -620,29 +706,55 @@ async def search_traces(
     model: Optional[str] = None,
     error: Optional[str] = None,
     service: Optional[str] = None,
+    url: Optional[str] = None,
+    application: Optional[str] = None,
 ) -> dict:
     """Execute the full trace search and return a result dict for the route to wrap.
 
     Returns keys: data, total, agg_total, by_level, by_task, is_partial.
     """
+    # Non-admins cannot filter by error: the value is redacted in the response,
+    # so accepting the param would let callers recover it by binary-probing.
+    if not is_admin:
+        error = None
+
     base_filter_clauses = _build_base_filter_clauses(tenant_filter, start_date, end_date)
 
     keyword_trace_ids = _run_keyword_prequery(opensearch_client, q, base_filter_clauses)
     if keyword_trace_ids is not None and not keyword_trace_ids:
         return {"data": [], "total": 0, "agg_total": 0, "by_level": {}, "by_task": {}, "is_partial": False}
 
-    # model_name lives on the 'model' span, so anchoring to 'request' spans
-    # would produce zero matches when a model filter is active.
     needs_request_anchor = bool(
-        (status_code_list or sort_by in set(SORT_FIELD_MAP) - {"timestamp"}) and not model
+        (status_code_list or sort_by in set(SORT_FIELD_MAP) - {"timestamp"} or error) and not model
     )
 
-    filter_clauses = _build_search_filter_clauses(
+    filter_clauses, span_groups = _build_search_filter_clauses(
         base_filter_clauses, task_types, effective_status, user,
         metadata_key, metadata_value, service_id, status_code_list,
         needs_request_anchor, keyword_trace_ids,
         method=method, model=model, error=error, service=service,
+        url=url, application=application,
     )
+
+    if len(span_groups) <= 1:
+        # No cross-span conflict: span-exclusive filters are safe in the main query.
+        for filters in span_groups.values():
+            for attr, val in filters:
+                filter_clauses.append(_contains_attribute_match(attr, val))
+    else:
+        # Cross-span conflict: resolve each span group via pre-query and intersect.
+        cross_span_trace_ids = _resolve_cross_span_filters(opensearch_client, base_filter_clauses, span_groups)
+        if cross_span_trace_ids is not None and not cross_span_trace_ids:
+            return {"data": [], "total": 0, "agg_total": 0, "by_level": {}, "by_task": {}, "is_partial": False}
+        gating_trace_ids = _intersect_trace_id_gates(keyword_trace_ids, cross_span_trace_ids)
+        needs_request_anchor = bool(status_code_list or sort_by in set(SORT_FIELD_MAP) - {"timestamp"} or error)
+        filter_clauses, _ = _build_search_filter_clauses(
+            base_filter_clauses, task_types, effective_status, user,
+            metadata_key, metadata_value, service_id, status_code_list,
+            needs_request_anchor, gating_trace_ids,
+            method=None, model=None, error=error, service=service,
+            url=None, application=None,
+        )
 
     filter_query = {"bool": {"must": filter_clauses}} if filter_clauses else {"match_all": {}}
     status_clause = {"match_phrase": {"attributes.status": effective_status}}

@@ -5,13 +5,9 @@ from typing import Optional
 from fastapi import HTTPException, status
 
 from app.schemas.telemetry import DEFAULT_COLUMN_KEYS, VALID_COLUMN_KEYS
+from app.services.telemetry_service import SORT_FIELD_MAP
 
-SORT_FIELD_MAP = {
-    "timestamp": "@timestamp",
-    "url": "attributes.url.keyword",
-    "latency": "attributes.total_time_ms",
-    "status_code": "attributes.status_code",
-}
+__all__ = ["SORT_FIELD_MAP"]
 
 
 def validate_metadata_and_sort_params(
