@@ -28,12 +28,14 @@ import {
   useDisclosure,
   Wrap,
 } from "@chakra-ui/react";
+import { useQuery } from "@tanstack/react-query";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import FieldLabel from "../../common/FieldLabel";
 import FormActions from "../../common/FormActions";
 import FormDrawer from "../../common/FormDrawer";
 import FormSection from "../../common/FormSection";
 import ReadOnlyField from "../../common/ReadOnlyField";
+import { getDomainOptions } from "../../../services/configManagementService";
 import { getPolicyType } from "../../../services/policyHierarchyService";
 import { apiDomainName, definitionFromPolicyType, MIN_REGEX_EXAMPLES } from "./apiMap";
 import { regexCompiles } from "./detection";
@@ -764,6 +766,7 @@ function PolicyForm({
   onSave: (input: PolicyInput) => Promise<string | null>;
 }) {
   const { domains, types: allTypes, typesStatus, typesError, categories, subcategories } = usePiiPolicies();
+  const domainOptions = useQuery({ queryKey: ["configs", "domains"], queryFn: getDomainOptions });
   const types = useMemo(() => sharedTypes(allTypes), [allTypes]);
   const [name, setName] = useState(initial.name);
   const [description, setDescription] = useState(initial.description);
@@ -1001,9 +1004,13 @@ function PolicyForm({
           <ChipPicker
             label="Domain"
             required
-            error={errors.domain}
+            error={errors.domain || (domainOptions.isError ? apiErrorMessage(domainOptions.error, "Couldn't load domains.") : undefined)}
             placeholder="Select domains"
-            options={domains.map((d) => ({ value: d.id, label: d.name, checked: domainIds.includes(d.id) }))}
+            options={(domainOptions.data ?? []).map((d) => ({
+              value: d.code,
+              label: d.label,
+              checked: domainIds.includes(d.code),
+            }))}
             onCheck={(value, checked) =>
               setDomainIds(checked ? [...domainIds, value] : domainIds.filter((id) => id !== value))
             }

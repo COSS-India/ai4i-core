@@ -135,6 +135,8 @@ export const apiEndpoints = {
       nmt: `${API_V1}/nmt/try-it`,
     },
     inferenceTypes: `${API_V1}/inference-types`,
+    /** Platform-core config table. GET list (filter with `?type=`), POST, PATCH/DELETE by id. */
+    configs: `${API_V1}/configs`,
   },
 
   telemetry: {
