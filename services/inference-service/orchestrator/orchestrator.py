@@ -43,6 +43,10 @@ ALLOWED_TASK_TYPES = [
 # Set on an error a fallback service answered with (a 4xx): the fallback's
 # service info, so the request span still records that a fallback served it.
 FALLBACK_INFO_ATTR = "served_by_fallback_info"
+# Set (True) on an error raised after the request was sent to a fallback that
+# then failed (5xx, or every fallback failing: 503). The request still counts
+# as sent to a fallback; service_id stays the service the client asked for.
+FALLBACK_SENT_ATTR = "sent_to_fallback"
 
 
 class Orchestrator:
@@ -158,9 +162,11 @@ class Orchestrator:
         service_info: Dict[str, Any],
         request: Optional[Request],
     ) -> Tuple[Dict[str, Any], BaseTaskService, Any]:
-        """_run_with_fallbacks, marking the request span when a fallback
-        answered: with its result, or with a 4xx of its own (tagged
-        FALLBACK_INFO_ATTR), as the LLM path counts any fallback answer below 500."""
+        """_run_with_fallbacks, marking the request span whenever the request
+        was sent to a fallback, as the LLM path does: one that answered (its
+        result, or a 4xx of its own tagged FALLBACK_INFO_ATTR) becomes the
+        span's service; one that failed (FALLBACK_SENT_ATTR) leaves the
+        requested service on it."""
         try:
             served_info, task_service, task_response = await self._run_with_fallbacks(
                 payload, service_info, request
@@ -169,6 +175,8 @@ class Orchestrator:
             fb_info = getattr(exc, FALLBACK_INFO_ATTR, None)
             if fb_info is not None:
                 self._apply_fallback_state(attrs, fb_info, request)
+            elif getattr(exc, FALLBACK_SENT_ATTR, False):
+                attrs.update(fallback_span_attrs(attrs["service_id"]))
             raise
         if served_info is not service_info:
             self._apply_fallback_state(attrs, served_info, request)
@@ -208,11 +216,12 @@ class Orchestrator:
         Any other failure is raised unchanged, and so is every failure when no
         fallback is configured or a group was already answered (per-item
         tasks: those groups are billed, so the payload must not run twice).
-        A fallback that no longer resolves or fails the Tier gate is skipped;
-        one that rejects the input returns that error to the client, tagged
-        with the fallback's service info (FALLBACK_INFO_ATTR): it answered, so
-        the request counts as served by fallback, as the LLM path counts any
-        fallback answer below 500.
+        A fallback that no longer resolves or fails the Tier gate is skipped
+        (the request is never sent to it). Once the request has been sent to a
+        fallback it counts as sent to one, as on the LLM path: an error the
+        fallback answers with (a 4xx) is raised tagged with its service info
+        (FALLBACK_INFO_ATTR); a fallback failure, and the 503 when every
+        fallback fails, are tagged FALLBACK_SENT_ATTR.
         """
         requested_id = service_info.get("serviceId") or ""
         task_service = self._get_task_service(service_info)
@@ -226,12 +235,14 @@ class Orchestrator:
             reason = type(exc.__cause__ or exc).__name__
 
         tried = [requested_id]
+        sent = False
         for fallback_id in fallbacks:
             log_failover(requested_id, fallback_id, reason)
             tried.append(fallback_id)
             attempt = await self._try_fallback(requested_id, fallback_id, payload, request)
             if attempt is None:
                 continue
+            sent = True
             fb_info, fb_service, response, reason, stop = attempt
             if response is not None:
                 return fb_info, fb_service, response
@@ -240,7 +251,9 @@ class Orchestrator:
                 # payload; the next one must not bill those groups again.
                 break
         log_all_failed(requested_id, tried)
-        raise AllServicesUnavailableError(requested_id, tried)
+        error = AllServicesUnavailableError(requested_id, tried)
+        setattr(error, FALLBACK_SENT_ATTR, sent)
+        raise error
 
     async def _try_fallback(
         self, requested_id: str, fallback_id: str, payload: Dict[str, Any], request: Optional[Request]
@@ -248,7 +261,8 @@ class Orchestrator:
         """One fallback attempt: None when it is skipped (no longer resolves,
         or fails the Tier gate), else (service info, task service, response,
         reason, stop) as _run_fallback_service. A 4xx it answers with is
-        raised tagged with its service info (FALLBACK_INFO_ATTR)."""
+        raised tagged with its service info (FALLBACK_INFO_ATTR), any other
+        error it raises with FALLBACK_SENT_ATTR."""
         fb_payload = {**payload, "config": {**(payload.get("config") or {}), "serviceId": fallback_id}}
         try:
             fb_info = await self._resolve_service_and_model(fb_payload)
@@ -262,6 +276,8 @@ class Orchestrator:
         except Exception as exc:
             if http_status_for(exc) < 500:
                 setattr(exc, FALLBACK_INFO_ATTR, fb_info)
+            else:
+                setattr(exc, FALLBACK_SENT_ATTR, True)
             raise
         return fb_info, fb_service, response, reason, stop
 

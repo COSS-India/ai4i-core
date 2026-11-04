@@ -215,11 +215,29 @@ def test_triton_fallback_4xx_still_counts_as_served_by_fallback_like_llm():
     assert (attrs["service_id"], attrs["served_by_fallback"], attrs["requested_service_id"]) == ("nmt-b", True, "nmt-a")
 
 
-def test_triton_fallback_5xx_is_not_served_by_fallback():
+def test_triton_fallback_5xx_still_counts_as_sent_to_a_fallback():
+    # The request was sent to the fallback: flagged, but the span keeps the
+    # requested service, as nothing served it.
     orch = _orchestrator()
     _wire(orch, {"nmt-a": _task_service(exc=_unreachable()), "nmt-b": _task_service(exc=RuntimeError("bad config"))})
     attrs, err = _route(orch, ["nmt-b"])
     assert isinstance(err, RuntimeError) and http_status_for(err) == 502
+    assert (attrs["service_id"], attrs["served_by_fallback"], attrs["requested_service_id"]) == ("nmt-a", True, "nmt-a")
+
+
+def test_triton_every_fallback_failing_is_a_503_sent_to_a_fallback():
+    orch = _orchestrator()
+    _wire(orch, {"nmt-a": _task_service(exc=_unreachable()), "nmt-b": _task_service(exc=_unreachable())})
+    attrs, err = _route(orch, ["nmt-b"])
+    assert isinstance(err, AllServicesUnavailableError) and http_status_for(err) == 503
+    assert (attrs["service_id"], attrs["served_by_fallback"], attrs["requested_service_id"]) == ("nmt-a", True, "nmt-a")
+
+
+def test_triton_fallbacks_only_skipped_were_never_sent_the_request():
+    orch = _orchestrator()
+    _wire(orch, {"nmt-a": _task_service(exc=_unreachable())})   # nmt-b no longer resolves
+    attrs, err = _route(orch, ["nmt-b"])
+    assert isinstance(err, AllServicesUnavailableError)
     assert "served_by_fallback" not in attrs
 
 
@@ -246,6 +264,9 @@ def test_llm_request_span_carries_the_fallback_only_when_one_answered():
 
     marked = seeded(SimpleNamespace(service_id="llm-b", requested_service_id="llm-a"))
     assert (marked["service_id"], marked["served_by_fallback"], marked["requested_service_id"]) == ("llm-b", True, "llm-a")
+    # Every fallback failed: still sent to one, and the span keeps the requested service.
+    all_failed = seeded(SimpleNamespace(service_id="llm-a", requested_service_id="llm-a"))
+    assert (all_failed["service_id"], all_failed["served_by_fallback"]) == ("llm-a", True)
     assert "served_by_fallback" not in seeded(SimpleNamespace(service_id="llm-a"))
 
 
@@ -353,9 +374,23 @@ def test_llm_buffered_unresolvable_fallback_is_skipped_and_all_failing_is_503():
 
 
 def test_llm_every_fallback_skipped_is_503_like_triton():
+    from types import SimpleNamespace
+
     proxy, patches = _proxy({"llm-a": (502, {})})  # llm-b does not resolve
-    (status, body), _ = _with(patches, ["llm-b"], proxy.proxy_traced(PATH, {"model": "llm-a", "messages": []}, None))
+    request = SimpleNamespace(state=SimpleNamespace(service_id="llm-a"))
+    (status, body), _ = _with(patches, ["llm-b"], proxy.proxy_traced(PATH, {"model": "llm-a", "messages": []}, request))
     assert status == 503 and body["error"]["type"] == "all_services_unavailable"
+    assert not hasattr(request.state, "requested_service_id")   # never sent to a fallback
+
+
+def test_llm_every_fallback_failing_is_still_sent_to_a_fallback():
+    from types import SimpleNamespace
+
+    proxy, patches = _proxy({"llm-a": (502, {}), "llm-b": (503, {})})
+    request = SimpleNamespace(state=SimpleNamespace(service_id="llm-a"))
+    (status, _), _ = _with(patches, ["llm-b"], proxy.proxy_traced(PATH, {"model": "llm-a", "messages": []}, request))
+    assert status == 503
+    assert (request.state.service_id, request.state.requested_service_id) == ("llm-a", "llm-a")
 
 
 def test_llm_failure_reason_is_classified():
@@ -389,6 +424,18 @@ def test_llm_stream_all_failing_is_503():
         patches, ["llm-b"], proxy.proxy_traced_stream(PATH, {"model": "llm-a", "messages": [], "stream": True}, None)
     )
     assert (kind, status) == ("error", 503) and result["error"]["type"] == "all_services_unavailable"
+
+
+def test_llm_stream_every_fallback_failing_is_still_sent_to_a_fallback():
+    from types import SimpleNamespace
+
+    proxy, patches = _proxy({"llm-a": (502, {}), "llm-b": (502, {})})
+    request = SimpleNamespace(state=SimpleNamespace(service_id="llm-a"))
+    (kind, status, _, _), _ = _with(
+        patches, ["llm-b"], proxy.proxy_traced_stream(PATH, {"model": "llm-a", "messages": [], "stream": True}, request)
+    )
+    assert (kind, status) == ("error", 503)
+    assert (request.state.service_id, request.state.requested_service_id) == ("llm-a", "llm-a")
 
 
 # ── Stream start: headers and first line are time-limited ─────────────────────

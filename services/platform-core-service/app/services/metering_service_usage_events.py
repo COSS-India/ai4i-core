@@ -155,7 +155,7 @@ class UsageEventsMeteringService(MeteringService):
         The previous figures are None when request rows don't cover that span,
         as Prometheus reported them past its retention.
 
-        Also fallback_requests: the requests a fallback service answered,
+        Also fallback_requests: the requests sent to a fallback service,
         already part of the total (0 when there were none). Only this store
         records fallbacks, so the other backends leave the key out."""
         start, end, shift = self._bounds(time_range)

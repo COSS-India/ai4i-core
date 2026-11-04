@@ -426,8 +426,9 @@ def _avg_requests_per_tenant_cell(
 def _overview_kpis(rt: Optional[dict]) -> list[Cell]:
     """Successful/Failed show the COUNT as the value and the rate as
     sub-text (helper); both are colored on the frontend (green / red).
-    Fallback-served requests come last, only from a source that records
-    fallbacks (usage_events); they are part of Total Requests, not added."""
+    Fallback requests (sent to a fallback service) come last, only from a
+    source that records fallbacks (usage_events); they are part of Total
+    Requests, not added."""
     if not rt:
         return []
     success_rate = rt["success_rate"]["rate_pct"]
@@ -469,7 +470,7 @@ def _overview_kpis(rt: Optional[dict]) -> list[Cell]:
     if fallback is not None:
         kpis.append(Cell(
             key="fallback_requests",
-            label="Fallback-served Requests",
+            label="Fallback Requests",
             value=fallback["formatted"],
             previous=fallback["previous_formatted"],
             pct_change=fallback["vs_previous_pct"],

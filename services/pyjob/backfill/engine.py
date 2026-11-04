@@ -37,7 +37,7 @@ daily_usage's DEFAULT partition; the dashboard and undo read them the same.
 The rows are estimates: Prometheus' daily counter growth, today's prices, the
 institution's current tier, and an API key only when the application has just
 one (Prometheus can't tell an application's keys apart). Prometheus has no
-record of which requests a fallback service answered, so fallback_count is 0.
+record of which requests were sent to a fallback service, so fallback_count is 0.
 """
 from __future__ import annotations
 

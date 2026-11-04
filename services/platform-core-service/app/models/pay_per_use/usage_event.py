@@ -63,8 +63,9 @@ class UsageEvent(Base):
     were added by migration e8972603749c.
 
     served_by_fallback and response_time_ms describe a request and are set on
-    request rows only (migration ea3961c258e4): when a fallback answered,
-    service_id is the fallback; response_time_ms is the request span's
+    request rows only (migration ea3961c258e4): served_by_fallback when the
+    request was sent to a fallback (service_id is the fallback when one
+    answered, else the requested service); response_time_ms is the span's
     duration, NULL on usage rows and on rows from before the column.
     """
 

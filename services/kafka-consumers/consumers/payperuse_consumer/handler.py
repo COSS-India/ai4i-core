@@ -753,8 +753,8 @@ async def _record_request(data: dict, msg: Message) -> None:
             input_units_cost=Decimal(0),
             cached_input_units_cost=Decimal(0),
             output_units_cost=Decimal(0),
-            # Set by inference-service only when a fallback answered; the
-            # exporter may send it as a bool or a string.
+            # Set by inference-service only when the request was sent to a
+            # fallback; the exporter may send it as a bool or a string.
             served_by_fallback=str(attrs.get("served_by_fallback", "")).lower() == "true",
             response_time_ms=_span_duration_ms(data.get("start_time"), data.get("end_time")),
         ))
