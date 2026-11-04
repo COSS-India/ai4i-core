@@ -35,7 +35,7 @@ import FormActions from "../../common/FormActions";
 import FormDrawer from "../../common/FormDrawer";
 import FormSection from "../../common/FormSection";
 import ReadOnlyField from "../../common/ReadOnlyField";
-import { getDomainOptions } from "../../../services/configManagementService";
+import { domainCodeLabel, getDomainOptions } from "../../../services/configManagementService";
 import { getPolicyType } from "../../../services/policyHierarchyService";
 import { apiDomainName, definitionFromPolicyType, MIN_REGEX_EXAMPLES } from "./apiMap";
 import { regexCompiles } from "./detection";
@@ -1316,17 +1316,20 @@ function DomainPicker({
 }>) {
   const domainOptions = useQuery({ queryKey: ["configs", "domains"], queryFn: getDomainOptions });
   const loadError = domainOptions.isError ? apiErrorMessage(domainOptions.error, "Couldn't load domains.") : undefined;
+  const listed = domainOptions.data ?? [];
+  // Saved domains missing from the list (or every one while it loads) still show as chips, so they can be removed.
+  const unlisted = selected.filter((code) => !listed.some((d) => d.code === code));
+  const unlistedSuffix = domainOptions.isSuccess ? " (unavailable)" : "";
   return (
     <ChipPicker
       label="Domain"
       required
       error={error || loadError}
-      placeholder="Select domains"
-      options={(domainOptions.data ?? []).map((d) => ({
-        value: d.code,
-        label: d.label,
-        checked: selected.includes(d.code),
-      }))}
+      placeholder={domainOptions.isPending ? "Loading domains…" : "Select domains"}
+      options={[
+        ...listed.map((d) => ({ value: d.code, label: d.label, checked: selected.includes(d.code) })),
+        ...unlisted.map((code) => ({ value: code, label: `${domainCodeLabel(code)}${unlistedSuffix}`, checked: true })),
+      ]}
       onCheck={(value, checked) => onChange(checked ? [...selected, value] : selected.filter((id) => id !== value))}
     />
   );
