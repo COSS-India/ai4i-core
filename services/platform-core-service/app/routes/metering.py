@@ -375,13 +375,15 @@ def _avg_requests_per_tenant_cell(
 
 def _overview_kpis(rt: Optional[dict]) -> list[Cell]:
     """Successful/Failed show the COUNT as the value and the rate as
-    sub-text (helper); both are colored on the frontend (green / red)."""
+    sub-text (helper); both are colored on the frontend (green / red).
+    Fallback-served requests come last, only from a source that records
+    fallbacks (usage_events); they are part of Total Requests, not added."""
     if not rt:
         return []
     success_rate = rt["success_rate"]["rate_pct"]
     # No traffic → 0% failure (not 100%); 100−0 would be wrong.
     failure_rate = round(100 - success_rate, 2) if rt["total_requests"]["count"] else 0.0
-    return [
+    kpis = [
         Cell(
             key="total_requests",
             label="Total Requests",
@@ -413,21 +415,16 @@ def _overview_kpis(rt: Optional[dict]) -> list[Cell]:
             pct_change=rt["avg_rps"]["vs_previous_pct"],
         ),
     ]
-
-
-def _fallback_requests_cell(rt: Optional[dict]) -> Optional[Cell]:
-    """The fallback-served requests card, from request_total's
-    fallback_requests; None when the source doesn't record fallbacks."""
-    fallback = (rt or {}).get("fallback_requests")
-    if fallback is None:
-        return None
-    return Cell(
-        key="fallback_requests",
-        label="Fallback-served Requests",
-        value=fallback["formatted"],
-        previous=fallback["previous_formatted"],
-        pct_change=fallback["vs_previous_pct"],
-    )
+    fallback = rt.get("fallback_requests")
+    if fallback is not None:
+        kpis.append(Cell(
+            key="fallback_requests",
+            label="Fallback-served Requests",
+            value=fallback["formatted"],
+            previous=fallback["previous_formatted"],
+            pct_change=fallback["vs_previous_pct"],
+        ))
+    return kpis
 
 
 def _platform_adoption_block(
@@ -741,7 +738,6 @@ async def get_overview(
         platform_adoption=platform_adoption,
         usage_concentration=usage_conc,
         request_volume=chart,
-        fallback_requests=_fallback_requests_cell(rt),
         first_usage_at=first_usage_at,
         onboarded_at=iso_ist(onboarded_at) if onboarded_at else None,
         degraded=degraded,
