@@ -6,7 +6,7 @@ import {
   type ConfigItem,
 } from "./dto/schemas/configManagement";
 
-export type { ConfigItem };
+export type { ConfigItem } from "./dto/schemas/configManagement";
 
 export interface DomainOption {
   code: string;

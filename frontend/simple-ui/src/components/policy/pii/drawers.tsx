@@ -1304,17 +1304,16 @@ function ModelEntityStatus({
   );
 }
 
-/** Multi-select: the picked options sit as removable chips inside the field; the list opens below it. */
 /** Domain picker over the platform's standard domain list (GET /api/v1/configs?type=domains). */
 function DomainPicker({
   error,
   selected,
   onChange,
-}: {
+}: Readonly<{
   error?: string;
   selected: string[];
   onChange: (ids: string[]) => void;
-}) {
+}>) {
   const domainOptions = useQuery({ queryKey: ["configs", "domains"], queryFn: getDomainOptions });
   const loadError = domainOptions.isError ? apiErrorMessage(domainOptions.error, "Couldn't load domains.") : undefined;
   return (
@@ -1333,6 +1332,7 @@ function DomainPicker({
   );
 }
 
+/** Multi-select: the picked options sit as removable chips inside the field; the list opens below it. */
 function ChipPicker({
   label,
   required,
