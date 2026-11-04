@@ -40,6 +40,11 @@ ALLOWED_TASK_TYPES = [
 ]
 
 
+# Set on an error a fallback service answered with (a 4xx): the fallback's
+# service info, so the request span still records that a fallback served it.
+FALLBACK_INFO_ATTR = "served_by_fallback_info"
+
+
 class Orchestrator:
     """
     Orchestrator manages the routing and execution of inference requests.
@@ -123,9 +128,17 @@ class Orchestrator:
 
             # Run the requested service; when its model is unreachable, the
             # Application's fallbacks for it in order (none → as before).
-            served_info, task_service, task_response = await self._run_with_fallbacks(
-                payload, service_info, request
-            )
+            try:
+                served_info, task_service, task_response = await self._run_with_fallbacks(
+                    payload, service_info, request
+                )
+            except Exception as exc:
+                # A fallback that answered with its own 4xx still served the
+                # request (see _run_with_fallbacks), as on the LLM path.
+                fb_info = getattr(exc, FALLBACK_INFO_ATTR, None)
+                if fb_info is not None:
+                    self._apply_fallback_state(attrs, fb_info, request)
+                raise
             if served_info is not service_info:
                 self._apply_fallback_state(attrs, served_info, request)
             if isinstance(task_response, dict) and isinstance(task_response.get("model"), dict):
@@ -185,7 +198,10 @@ class Orchestrator:
         fallback is configured or a group was already answered (per-item
         tasks: those groups are billed, so the payload must not run twice).
         A fallback that no longer resolves or fails the Tier gate is skipped;
-        one that rejects the input returns that error to the client.
+        one that rejects the input returns that error to the client, tagged
+        with the fallback's service info (FALLBACK_INFO_ATTR): it answered, so
+        the request counts as served by fallback, as the LLM path counts any
+        fallback answer below 500.
         """
         requested_id = service_info.get("serviceId") or ""
         task_service = self._get_task_service(service_info)
@@ -210,7 +226,12 @@ class Orchestrator:
                 log_fallback_skipped(requested_id, fallback_id, type(exc).__name__)
                 continue
             fb_service = self._get_task_service(fb_info)
-            response, reason, stop = await self._run_fallback_service(fb_service, fb_payload, fb_info)
+            try:
+                response, reason, stop = await self._run_fallback_service(fb_service, fb_payload, fb_info)
+            except Exception as exc:
+                if http_status_for(exc) < 500:
+                    setattr(exc, FALLBACK_INFO_ATTR, fb_info)
+                raise
             if response is not None:
                 return fb_info, fb_service, response
             if stop:
