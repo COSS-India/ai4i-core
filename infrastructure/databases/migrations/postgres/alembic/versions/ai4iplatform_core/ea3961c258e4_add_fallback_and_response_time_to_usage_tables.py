@@ -4,16 +4,17 @@ usage_events: both describe a request and are written on request rows
 (status set, no units) from the request span; usage rows leave them at their
 defaults.
 
-- served_by_fallback (boolean, default false): a fallback service answered
-  the request instead of the one the client asked for; service_id is then
-  the fallback that answered.
+- served_by_fallback (boolean, default false): the service the client asked
+  for was unavailable and the request was sent to a fallback service,
+  whether a fallback answered it (service_id is then that fallback) or every
+  fallback failed (service_id stays the requested service).
 - response_time_ms (integer): the request span's duration (end - start) in
   milliseconds. NULL on usage rows.
 
 daily_usage: the daily rollup of those columns, per dimension row, counted
 from request rows the same way as request_count.
 
-- fallback_count: requests served by a fallback service. Already part of
+- fallback_count: requests sent to a fallback service. Already part of
   request_count; never more than it.
 - total_response_time_ms: the sum of response_time_ms. The average response
   time is total_response_time_ms / request_count; both are additive, so any

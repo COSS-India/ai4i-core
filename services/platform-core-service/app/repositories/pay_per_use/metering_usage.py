@@ -7,11 +7,12 @@ correlation ids, which a client can reuse across calls via X-Correlation-ID),
 units from usage rows (see UsageEvent), so a request is counted once whatever
 usage rows it has. Rows from before the cut-over (PRE_CUTOVER_ROWS) are
 counted by distinct correlation id, as the request they stand in for may have
-several. A request is failed when its status is 400 or above. Fallback-served
-requests are request rows with served_by_fallback (daily_usage.fallback_count
-in the rollup); they are part of the request total, never added to it. Server
-errors are failed requests whose status is 500 or above (server errors and
-timeouts; daily_usage.server_error_count), part of the failures.
+several. A request is failed when its status is 400 or above. Fallback
+requests (sent to a fallback service) are request rows with served_by_fallback
+(daily_usage.fallback_count in the rollup); they are part of the request total,
+never added to it. Server errors are failed requests whose status is 500 or
+above (server errors and timeouts; daily_usage.server_error_count), part of the
+failures.
 
 Whole IST days read the daily_usage rollup when it's enabled and has the day;
 everything else — today, partial days at a range's edges, days not rolled up
@@ -48,7 +49,7 @@ _SERVER_ERRORS = (
     f"count(*) FILTER (WHERE {REQUEST_ROWS} AND status_code >= 500)"
     f" + count(DISTINCT correlation_id) FILTER (WHERE {PRE_CUTOVER_ROWS} AND status_code >= 500)"
 )
-# Requests a fallback service answered: request rows only (older rows predate the flag).
+# Requests sent to a fallback service: request rows only (older rows predate the flag).
 _FALLBACK = f"count(*) FILTER (WHERE {REQUEST_ROWS} AND served_by_fallback)"
 
 # Grouping dimensions: (daily_usage expression, usage_events expression).
@@ -62,8 +63,8 @@ _GROUPS = {
 
 @dataclass
 class UsageAgg:
-    """Requests, failures (server errors among them), fallback-served
-    requests and units for one group."""
+    """Requests, failures (server errors among them), requests sent to a
+    fallback and units for one group."""
     requests: int = 0
     failed: int = 0
     server_errors: int = 0

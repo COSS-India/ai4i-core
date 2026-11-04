@@ -25,6 +25,7 @@ from services.service_fallback import (
     log_all_failed,
     log_failover,
     log_fallback_skipped,
+    mark_sent_to_fallback,
     mark_served_by_fallback,
 )
 from services.guardrail import (
@@ -415,6 +416,7 @@ class OpenAIProxyService:
         ):
             log_failover(service_id, fb_id, reason)
             tried.append(fb_id)
+            mark_sent_to_fallback(request, service_id)
             status_code, body = await self._forward_traced(path, fb_url, fb_id, fb_model, fb_payload, fb_info)
             if status_code < 500:
                 mark_served_by_fallback(request, service_id, fb_id)
@@ -836,6 +838,7 @@ class OpenAIProxyService:
         ):
             log_failover(service_id, fb_id, reason)
             tried.append(fb_id)
+            mark_sent_to_fallback(request, service_id)
             kind, status_code, result = await self.proxy_stream(path=fb_url, payload=fb_payload, service_info=fb_info)
             if kind == "stream" or status_code < 500:
                 mark_served_by_fallback(request, service_id, fb_id)
@@ -1089,6 +1092,7 @@ class OpenAIProxyService:
         ):
             log_failover(service_id, fb_id, reason)
             tried.append(fb_id)
+            mark_sent_to_fallback(request, service_id)
             with traced_span("model") as fb_model_attrs:
                 self._seed_model_attrs(fb_model_attrs, fb_id, fb_model)
             status_code, body = await self._post_multipart(path, fb_url, files, fb_data, fb_info)

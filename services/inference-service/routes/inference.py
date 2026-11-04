@@ -538,8 +538,9 @@ def _seed_llm_request_attrs(req_attrs: dict, request: Request) -> None:
 
 
 def _apply_llm_fallback_attrs(req_attrs: dict, request: Request) -> None:
-    """Mark the request span when a configured fallback answered: the
-    fallback chain (llm_service.mark_served_by_fallback) keeps the service the
+    """Mark the request span when the request was sent to a configured
+    fallback, answered or not: the fallback chain (llm_service
+    mark_sent_to_fallback / mark_served_by_fallback) keeps the service the
     client asked for on request.state."""
     requested = getattr(request.state, "requested_service_id", None)
     if requested:

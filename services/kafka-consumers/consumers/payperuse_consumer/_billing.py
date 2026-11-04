@@ -536,8 +536,8 @@ class UsageEvent:
     input_units_cost: Decimal
     cached_input_units_cost: Decimal
     output_units_cost: Decimal
-    # Request rows only (from the "request" span): a fallback service
-    # answered, and the request's duration in milliseconds.
+    # Request rows only (from the "request" span): the request was sent to a
+    # fallback service, and its duration in milliseconds.
     served_by_fallback: bool = False
     response_time_ms: Optional[int] = None
 

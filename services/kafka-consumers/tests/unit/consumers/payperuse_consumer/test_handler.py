@@ -847,7 +847,7 @@ class TestRecordRequest:
         async def commit(self):
             self.commits += 1
 
-    def _span(self, **attrs):
+    def _span(self, start_ns=None, **attrs):
         base = {
             "authType": "api_key", "tenantId": "45", "app_id": "37", "api_key_id": "49",
             "tier_id": "a9e9ef55-3ed5-4b54-94a8-404d6bdaf3ad", "correlation_id": "corr-1",
@@ -855,7 +855,10 @@ class TestRecordRequest:
             "status_code": 200,
         }
         base.update(attrs)
-        return {"name": "request", "end_time": self._END_NS, "attributes": {k: v for k, v in base.items() if v is not None}}
+        span = {"name": "request", "end_time": self._END_NS, "attributes": {k: v for k, v in base.items() if v is not None}}
+        if start_ns is not None:
+            span["start_time"] = start_ns
+        return span
 
     def _run(self, monkeypatch, span, pricing_task_type="llm"):
         import asyncio
@@ -945,6 +948,23 @@ class TestRecordRequest:
         assert self._run(monkeypatch, self._span(status_code=None))["events"] == []
         assert self._run(monkeypatch, self._span(tenantId=None))["events"] == []
 
+    def test_fallback_flag_and_response_time(self, monkeypatch):
+        span = self._span(start_ns=self._END_NS - 742_400_000, served_by_fallback=True,
+                          requested_service_id="svc-primary")
+        (event,) = self._run(monkeypatch, span)["events"]
+        assert (event.served_by_fallback, event.response_time_ms) == (True, 742)
+
+    def test_fallback_flag_as_bool_or_string(self, monkeypatch):
+        # The exporter may send the attribute as a JSON bool or a string.
+        for value, expected in ((True, True), ("true", True), ("True", True), (False, False),
+                                ("false", False), (None, False)):
+            (event,) = self._run(monkeypatch, self._span(served_by_fallback=value))["events"]
+            assert event.served_by_fallback is expected, value
+
+    def test_no_start_time_means_no_response_time(self, monkeypatch):
+        (event,) = self._run(monkeypatch, self._span())["events"]
+        assert event.response_time_ms is None
+
     def test_request_spans_are_never_billed(self, monkeypatch):
         from consumers.payperuse_consumer import handler as h
 
@@ -953,3 +973,26 @@ class TestRecordRequest:
 
         monkeypatch.setattr(h, "_bill_usage", _no_billing)
         assert len(self._run(monkeypatch, self._span())["events"]) == 1
+
+
+class TestSpanDurationMs:
+    """_span_duration_ms: a request span's duration in whole milliseconds."""
+
+    @pytest.mark.parametrize(
+        "start, end, expected",
+        [
+            (1_000_000_000, 1_742_400_000, 742),     # 742.4 ms
+            (1_000_000_000, 1_000_600_000, 1),       # 0.6 ms rounds to 1
+            ("1000000000", "1005000000", 5),         # numeric strings
+            (1_000_000_000, 1_000_000_000, 0),       # same instant
+            (None, 1_000_000_000, None),             # no start time
+            (0, 1_000_000_000, None),
+            (1_000_000_000, None, None),             # no end time
+            (2_000_000_000, 1_000_000_000, None),    # out of order
+            ("bad", 1_000_000_000, None),
+        ],
+    )
+    def test_duration(self, start, end, expected):
+        from consumers.payperuse_consumer.handler import _span_duration_ms
+
+        assert _span_duration_ms(start, end) == expected
