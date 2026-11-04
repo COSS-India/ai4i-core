@@ -157,7 +157,9 @@ class UsageEventsMeteringService(MeteringService):
 
         Also fallback_requests: the requests sent to a fallback service,
         already part of the total (0 when there were none). Only this store
-        records fallbacks, so the other backends leave the key out."""
+        records fallbacks, so the other backends leave the key out. Its
+        previous figures are None too when that span starts before fallbacks
+        were recorded."""
         start, end, shift = self._bounds(time_range)
         tid, type_ids = _tenant_pk(tenant_id, tenant), await self._type_ids(task_types)
         seconds = max(1, round((end - start).total_seconds()))
@@ -167,7 +169,8 @@ class UsageEventsMeteringService(MeteringService):
         if await self._covered(prev_start, prev_end):
             prev = await self._counts(prev_start, prev_end, tid, type_ids)
             previous = (prev.requests, prev.successful, prev.requests / seconds)
-            prev_fallback = prev.fallback
+            if await self._usage.fallbacks_recorded_by(prev_start):
+                prev_fallback = prev.fallback
         result = request_total_result(
             cur.requests, cur.successful, round(cur.requests / seconds, 4), previous,
             filters={

@@ -229,6 +229,27 @@ class TestFallbackRequests:
         )
         assert other["fallback_requests"]["count"] == 0
 
+    async def test_previous_is_none_before_fallbacks_were_recorded(self, session, rollup_off):
+        """D3 vs D4: no request row before D4 has a response time, so D4's 0
+        is not a real figure."""
+        await _seed(session)
+        await _mark_fallback(session, "mue-3")
+        fb = (await _svc(session).request_total(
+            True, None, None, _day_range(_D3), tenant_id=str(_TENANT),
+        ))["fallback_requests"]
+        assert (fb["previous_count"], fb["previous_formatted"], fb["vs_previous_pct"]) == (None, None, None)
+
+    async def test_previous_is_set_once_fallbacks_were_recorded(self, session, rollup_off):
+        await _seed(session)
+        await _mark_fallback(session, "mue-3")
+        await session.execute(
+            text("UPDATE usage_events SET response_time_ms = 120 WHERE correlation_id = 'mue-6'"),
+        )
+        fb = (await _svc(session).request_total(
+            True, None, None, _day_range(_D3), tenant_id=str(_TENANT),
+        ))["fallback_requests"]
+        assert (fb["previous_count"], fb["previous_formatted"]) == (0, "0")
+
     async def test_rolled_up_days_add_fallback_count(self, session, rollup_on):
         """D5 is only in daily_usage, D3 only in usage_events: both count."""
         await _seed(session)

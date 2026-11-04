@@ -247,6 +247,17 @@ class MeteringUsageRepository:
             {"start": start, "end": end},
         )
 
+    async def fallbacks_recorded_by(self, at: datetime) -> bool:
+        """Whether request rows carried the fallback flag by ``at``: the last
+        request row before it has a response time, written with the flag (rows
+        from before migration ea3961c258e4 have neither). One step back along
+        the request-row index (ix_usage_events_request_rows)."""
+        return bool(await self._scalar(
+            f"SELECT response_time_ms IS NOT NULL FROM usage_events WHERE occurred_at < :at AND {REQUEST_ROWS}"
+            " ORDER BY occurred_at DESC LIMIT 1",
+            {"at": at},
+        ))
+
     async def first_usage(self, tenant_id: Optional[int]) -> Optional[datetime]:
         """When API-key usage begins: the tenant's first usage_events row (by
         its (tenant_id, occurred_at) index), or platform-wide the first day in
