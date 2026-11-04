@@ -15,6 +15,7 @@ import json
 import sys
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import Optional
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -40,6 +41,7 @@ _parse_task_types = _metering_route_mod._parse_task_types
 get_tenant_consumption = _metering_route_mod.get_tenant_consumption
 get_overview = _metering_route_mod.get_overview
 get_model_consumption = _metering_route_mod.get_model_consumption
+_overview_kpis = _metering_route_mod._overview_kpis
 
 from app.services.metering_service import MeteringService
 from app.utils.metering_promql_builder import PROMETHEUS_API_PATH_LABEL, AbsoluteRange
@@ -725,10 +727,10 @@ class TestOverviewFirstUsageAtHybrid:
         assert not any(k.startswith("metering:first-usage:") for k in _set_keys(redis))
         assert len(_overview_keys(redis)) == 1
 
-    async def test_cache_key_is_v9(self, fake_usage_repo):
+    async def test_cache_key_is_v10(self, fake_usage_repo):
         redis = _empty_redis()
         await _call_overview(self._svc(), redis=redis)
-        assert _overview_keys(redis)[0].startswith("metering:overview:v9:")
+        assert _overview_keys(redis)[0].startswith("metering:overview:v10:")
 
 
 def _redis_with(entries: dict) -> AsyncMock:
@@ -1017,3 +1019,36 @@ class TestOverviewOnboardedAt:
         assert response.degraded is False
         assert _overview_keys(redis) == []
         svc._safe_rollback_auth_db.assert_awaited_once()
+
+
+def _request_total(fallback: Optional[dict] = None) -> dict:
+    """A request_total result: 90 requests, 80 successful; ``fallback`` adds
+    fallback_requests (only the usage_events source sets it)."""
+    from app.services.metering_service import request_total_result
+    rt = request_total_result(90, 80, 0.5, None, filters={})
+    if fallback is not None:
+        rt["fallback_requests"] = fallback
+    return rt
+
+
+class TestFallbackRequestsKpi:
+    def test_last_kpi_and_total_unchanged(self):
+        kpis = _overview_kpis(_request_total({
+            "count": 12, "formatted": "12", "vs_previous_pct": 50.0,
+            "previous_count": 8, "previous_formatted": "8",
+        }))
+        assert [k.key for k in kpis] == ["total_requests", "successful", "failed", "avg_rps", "fallback_requests"]
+        assert kpis[0].value == "90"
+        assert (kpis[-1].value, kpis[-1].previous, kpis[-1].pct_change) == ("12", "8", 50.0)
+
+    def test_zero_is_a_kpi_not_missing(self):
+        kpis = _overview_kpis(_request_total({
+            "count": 0, "formatted": "0", "vs_previous_pct": None,
+            "previous_count": None, "previous_formatted": None,
+        }))
+        assert (kpis[-1].key, kpis[-1].value) == ("fallback_requests", "0")
+
+    def test_absent_when_the_source_does_not_record_fallbacks(self):
+        assert [k.key for k in _overview_kpis(_request_total())] == [
+            "total_requests", "successful", "failed", "avg_rps",
+        ]

@@ -9,7 +9,7 @@ fails exactly as it did before this feature.
 
 import json
 import logging
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import redis.asyncio as aioredis
 
@@ -51,6 +51,32 @@ async def get_fallbacks(service_id: str) -> List[str]:
         logger.warning("Service fallback lookup failed for app_id=%s: %s", app_id, type(exc).__name__)
         return []
     return [str(f) for f in fallbacks if f and f != service_id]
+
+
+def fallback_span_attrs(requested: str) -> Dict[str, Any]:
+    """The "request" span attributes of a request sent to a fallback (the
+    requested service was unavailable), whether a fallback answered it or
+    every one failed. The billing consumer writes sent_to_fallback onto the
+    request's usage_events row; requested_service_id stays on the span for
+    tracing (service_id there is the fallback that answered, or the requested
+    service when none did)."""
+    return {"sent_to_fallback": True, "requested_service_id": requested}
+
+
+def mark_sent_to_fallback(request: Optional[Any], requested: str) -> None:
+    """Record on request.state that the request was sent to a fallback, so
+    the LLM "request" span — opened by the route, outside the fallback chain —
+    can carry fallback_span_attrs even when every fallback fails."""
+    if request is not None:
+        request.state.requested_service_id = requested
+
+
+def mark_served_by_fallback(request: Optional[Any], requested: str, fallback: str) -> None:
+    """Point request.state at the fallback that answered, as well as
+    mark_sent_to_fallback."""
+    if request is not None:
+        request.state.service_id = fallback
+        request.state.requested_service_id = requested
 
 
 def log_failover(requested: str, fallback: str, reason: str) -> None:
