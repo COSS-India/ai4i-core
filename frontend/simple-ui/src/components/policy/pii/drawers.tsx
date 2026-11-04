@@ -766,7 +766,6 @@ function PolicyForm({
   onSave: (input: PolicyInput) => Promise<string | null>;
 }) {
   const { domains, types: allTypes, typesStatus, typesError, categories, subcategories } = usePiiPolicies();
-  const domainOptions = useQuery({ queryKey: ["configs", "domains"], queryFn: getDomainOptions });
   const types = useMemo(() => sharedTypes(allTypes), [allTypes]);
   const [name, setName] = useState(initial.name);
   const [description, setDescription] = useState(initial.description);
@@ -1001,20 +1000,7 @@ function PolicyForm({
           </FormField>
         </SimpleGrid>
         <SimpleGrid columns={{ base: 1, md: 2 }} spacingX={4} spacingY={4} alignItems="start">
-          <ChipPicker
-            label="Domain"
-            required
-            error={errors.domain || (domainOptions.isError ? apiErrorMessage(domainOptions.error, "Couldn't load domains.") : undefined)}
-            placeholder="Select domains"
-            options={(domainOptions.data ?? []).map((d) => ({
-              value: d.code,
-              label: d.label,
-              checked: domainIds.includes(d.code),
-            }))}
-            onCheck={(value, checked) =>
-              setDomainIds(checked ? [...domainIds, value] : domainIds.filter((id) => id !== value))
-            }
-          />
+          <DomainPicker error={errors.domain} selected={domainIds} onChange={setDomainIds} />
           <FormField label="Supported Languages" required error={errors.languages}>
             <Wrap>
               {languages.map((code) => (
@@ -1319,6 +1305,34 @@ function ModelEntityStatus({
 }
 
 /** Multi-select: the picked options sit as removable chips inside the field; the list opens below it. */
+/** Domain picker over the platform's standard domain list (GET /api/v1/configs?type=domains). */
+function DomainPicker({
+  error,
+  selected,
+  onChange,
+}: {
+  error?: string;
+  selected: string[];
+  onChange: (ids: string[]) => void;
+}) {
+  const domainOptions = useQuery({ queryKey: ["configs", "domains"], queryFn: getDomainOptions });
+  const loadError = domainOptions.isError ? apiErrorMessage(domainOptions.error, "Couldn't load domains.") : undefined;
+  return (
+    <ChipPicker
+      label="Domain"
+      required
+      error={error || loadError}
+      placeholder="Select domains"
+      options={(domainOptions.data ?? []).map((d) => ({
+        value: d.code,
+        label: d.label,
+        checked: selected.includes(d.code),
+      }))}
+      onCheck={(value, checked) => onChange(checked ? [...selected, value] : selected.filter((id) => id !== value))}
+    />
+  );
+}
+
 function ChipPicker({
   label,
   required,
