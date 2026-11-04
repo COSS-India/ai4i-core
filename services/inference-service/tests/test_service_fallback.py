@@ -169,6 +169,107 @@ def test_every_service_failing_is_503():
     assert "nmt-a, nmt-b" in str(exc.value)
 
 
+# ── Request span: sent_to_fallback (the PPU consumer writes it to usage_events) ──
+
+def _route(orch, fallbacks):
+    """route_inference with the request span stubbed: returns (span attrs, result or error)."""
+    from contextlib import contextmanager
+
+    attrs = {}
+
+    @contextmanager
+    def span(*args, **kwargs):
+        yield attrs
+
+    orch._validate_task_type = lambda task_type: None
+    orch._enforce_tier_gate = lambda info, request: None
+    with patch("orchestrator.orchestrator.traced_span", span), \
+            patch("orchestrator.orchestrator.get_context_attributes", return_value={}), \
+            patch("orchestrator.orchestrator.get_endpoint_path", return_value="/api/v1/nmt/inference"), \
+            patch("orchestrator.orchestrator.get_fallbacks", AsyncMock(return_value=fallbacks)):
+        try:
+            return attrs, _run(orch.route_inference(PAYLOAD, None))
+        except Exception as exc:
+            return attrs, exc
+
+
+def test_triton_fallback_answer_marks_the_request_span():
+    orch = _orchestrator()
+    _wire(orch, {"nmt-a": _task_service(exc=_unreachable()), "nmt-b": _task_service({"output": ["b"]})})
+    attrs, _ = _route(orch, ["nmt-b"])
+    assert (attrs["service_id"], attrs["sent_to_fallback"], attrs["requested_service_id"]) == ("nmt-b", True, "nmt-a")
+
+
+def test_triton_primary_answer_leaves_the_span_unmarked():
+    orch = _orchestrator()
+    _wire(orch, {"nmt-a": _task_service({"output": ["a"]})})
+    attrs, _ = _route(orch, ["nmt-b"])
+    assert attrs["service_id"] == "nmt-a" and "sent_to_fallback" not in attrs
+
+
+def test_triton_fallback_4xx_still_counts_as_sent_to_fallback_like_llm():
+    orch = _orchestrator()
+    _wire(orch, {"nmt-a": _task_service(exc=_unreachable()), "nmt-b": _task_service(exc=ValueError("too long"))})
+    attrs, err = _route(orch, ["nmt-b"])
+    assert isinstance(err, ValueError) and http_status_for(err) == 400
+    assert (attrs["service_id"], attrs["sent_to_fallback"], attrs["requested_service_id"]) == ("nmt-b", True, "nmt-a")
+
+
+def test_triton_fallback_5xx_still_counts_as_sent_to_a_fallback():
+    # The request was sent to the fallback: flagged, but the span keeps the
+    # requested service, as nothing served it.
+    orch = _orchestrator()
+    _wire(orch, {"nmt-a": _task_service(exc=_unreachable()), "nmt-b": _task_service(exc=RuntimeError("bad config"))})
+    attrs, err = _route(orch, ["nmt-b"])
+    assert isinstance(err, RuntimeError) and http_status_for(err) == 502
+    assert (attrs["service_id"], attrs["sent_to_fallback"], attrs["requested_service_id"]) == ("nmt-a", True, "nmt-a")
+
+
+def test_triton_every_fallback_failing_is_a_503_sent_to_a_fallback():
+    orch = _orchestrator()
+    _wire(orch, {"nmt-a": _task_service(exc=_unreachable()), "nmt-b": _task_service(exc=_unreachable())})
+    attrs, err = _route(orch, ["nmt-b"])
+    assert isinstance(err, AllServicesUnavailableError) and http_status_for(err) == 503
+    assert (attrs["service_id"], attrs["sent_to_fallback"], attrs["requested_service_id"]) == ("nmt-a", True, "nmt-a")
+
+
+def test_triton_fallbacks_only_skipped_were_never_sent_the_request():
+    orch = _orchestrator()
+    _wire(orch, {"nmt-a": _task_service(exc=_unreachable())})   # nmt-b no longer resolves
+    attrs, err = _route(orch, ["nmt-b"])
+    assert isinstance(err, AllServicesUnavailableError)
+    assert "sent_to_fallback" not in attrs
+
+
+def test_mark_served_by_fallback_keeps_the_requested_service():
+    from types import SimpleNamespace
+
+    request = SimpleNamespace(state=SimpleNamespace(service_id="llm-a"))
+    service_fallback.mark_served_by_fallback(request, "llm-a", "llm-b")
+    assert (request.state.service_id, request.state.requested_service_id) == ("llm-b", "llm-a")
+    service_fallback.mark_served_by_fallback(None, "llm-a", "llm-b")   # no request: nothing to mark
+
+
+def test_llm_request_span_carries_the_fallback_only_when_one_answered():
+    from types import SimpleNamespace
+
+    import routes.inference as inference_routes
+
+    def seeded(state):
+        attrs = {}
+        request = SimpleNamespace(url=SimpleNamespace(path="/api/v1/chat/completions"), method="POST", state=state)
+        with patch("routes.inference.get_context_attributes", return_value={}):
+            inference_routes._seed_llm_request_attrs(attrs, request)
+        return attrs
+
+    marked = seeded(SimpleNamespace(service_id="llm-b", requested_service_id="llm-a"))
+    assert (marked["service_id"], marked["sent_to_fallback"], marked["requested_service_id"]) == ("llm-b", True, "llm-a")
+    # Every fallback failed: still sent to one, and the span keeps the requested service.
+    all_failed = seeded(SimpleNamespace(service_id="llm-a", requested_service_id="llm-a"))
+    assert (all_failed["service_id"], all_failed["sent_to_fallback"]) == ("llm-a", True)
+    assert "sent_to_fallback" not in seeded(SimpleNamespace(service_id="llm-a"))
+
+
 # ── Redis read ────────────────────────────────────────────────────────────────
 
 def _redis(value=None, exc=None):
@@ -245,9 +346,17 @@ def test_llm_buffered_moves_to_fallback_on_5xx():
     request = MagicMock()
     (status, body), _ = _with(patches, ["llm-b"], proxy.proxy_traced(PATH, {"model": "llm-a", "messages": []}, request))
     assert (status, body) == (200, {"choices": []})
-    assert request.state.service_id == "llm-b"
+    assert (request.state.service_id, request.state.requested_service_id) == ("llm-b", "llm-a")
     assert [c.args[2] for c in proxy._forward_traced.call_args_list] == ["llm-a", "llm-b"]
     assert proxy._forward_traced.call_args_list[1].args[4]["model"] == "llm-b-model"
+
+
+def test_llm_buffered_fallback_4xx_counts_as_sent_to_fallback():
+    proxy, patches = _proxy({"llm-a": (502, {}), "llm-b": (400, {"detail": "too long"})})
+    request = MagicMock()
+    (status, _), _ = _with(patches, ["llm-b"], proxy.proxy_traced(PATH, {"model": "llm-a", "messages": []}, request))
+    assert status == 400
+    assert (request.state.service_id, request.state.requested_service_id) == ("llm-b", "llm-a")
 
 
 def test_llm_buffered_4xx_never_reads_the_fallback_map():
@@ -265,9 +374,23 @@ def test_llm_buffered_unresolvable_fallback_is_skipped_and_all_failing_is_503():
 
 
 def test_llm_every_fallback_skipped_is_503_like_triton():
+    from types import SimpleNamespace
+
     proxy, patches = _proxy({"llm-a": (502, {})})  # llm-b does not resolve
-    (status, body), _ = _with(patches, ["llm-b"], proxy.proxy_traced(PATH, {"model": "llm-a", "messages": []}, None))
+    request = SimpleNamespace(state=SimpleNamespace(service_id="llm-a"))
+    (status, body), _ = _with(patches, ["llm-b"], proxy.proxy_traced(PATH, {"model": "llm-a", "messages": []}, request))
     assert status == 503 and body["error"]["type"] == "all_services_unavailable"
+    assert not hasattr(request.state, "requested_service_id")   # never sent to a fallback
+
+
+def test_llm_every_fallback_failing_is_still_sent_to_a_fallback():
+    from types import SimpleNamespace
+
+    proxy, patches = _proxy({"llm-a": (502, {}), "llm-b": (503, {})})
+    request = SimpleNamespace(state=SimpleNamespace(service_id="llm-a"))
+    (status, _), _ = _with(patches, ["llm-b"], proxy.proxy_traced(PATH, {"model": "llm-a", "messages": []}, request))
+    assert status == 503
+    assert (request.state.service_id, request.state.requested_service_id) == ("llm-a", "llm-a")
 
 
 def test_llm_failure_reason_is_classified():
@@ -290,7 +413,7 @@ def test_llm_stream_moves_to_fallback_before_first_byte():
         patches, ["llm-b"], proxy.proxy_traced_stream(PATH, {"model": "llm-a", "messages": [], "stream": True}, request)
     )
     assert (kind, status) == ("stream", 200)
-    assert request.state.service_id == "llm-b"
+    assert (request.state.service_id, request.state.requested_service_id) == ("llm-b", "llm-a")
     assert ctx["started_at"] <= time.time()  # the route's request span measures from before the first attempt
     assert proxy.proxy_stream.call_args_list[1].kwargs["payload"]["model"] == "llm-b-model"
 
@@ -301,6 +424,18 @@ def test_llm_stream_all_failing_is_503():
         patches, ["llm-b"], proxy.proxy_traced_stream(PATH, {"model": "llm-a", "messages": [], "stream": True}, None)
     )
     assert (kind, status) == ("error", 503) and result["error"]["type"] == "all_services_unavailable"
+
+
+def test_llm_stream_every_fallback_failing_is_still_sent_to_a_fallback():
+    from types import SimpleNamespace
+
+    proxy, patches = _proxy({"llm-a": (502, {}), "llm-b": (502, {})})
+    request = SimpleNamespace(state=SimpleNamespace(service_id="llm-a"))
+    (kind, status, _, _), _ = _with(
+        patches, ["llm-b"], proxy.proxy_traced_stream(PATH, {"model": "llm-a", "messages": [], "stream": True}, request)
+    )
+    assert (kind, status) == ("error", 503)
+    assert (request.state.service_id, request.state.requested_service_id) == ("llm-a", "llm-a")
 
 
 # ── Stream start: headers and first line are time-limited ─────────────────────

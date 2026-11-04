@@ -40,7 +40,12 @@ boundaries are IST midnight.
    rows existed (status set, with units) stands in for its request and counts
    once per correlation id, as one request can have several. Rows without a
    status_code add units and cost only. A request is failed when its status
-   is 400 or above.
+   is 400 or above, and a server error (server_error_count, the platform's
+   own failures: 5xx and timeouts) when it is 500 or above. fallback_count,
+   total_response_time_ms and response_time_count come from request rows
+   only, which carry sent_to_fallback and response_time_ms;
+   response_time_count is the average's divisor, as rows from before
+   response_time_ms have none.
 
 Re-running is safe: both steps converge to the same state. A
 transaction-level advisory lock per step makes an overlapping run skip the
@@ -72,6 +77,7 @@ DIMENSIONS = (
 )
 MEASURES = (
     "request_count", "success_count", "failed_count",
+    "fallback_count", "server_error_count", "total_response_time_ms", "response_time_count",
     "total_units", "cached_input_units", "output_units",
     "input_units_cost", "cached_input_units_cost", "output_units_cost",
 )
@@ -268,6 +274,17 @@ _AGGREGATE = text(
             count(*) FILTER (WHERE status_code >= 400 AND total_units = 0)
               + count(DISTINCT correlation_id) FILTER (WHERE status_code >= 400 AND total_units > 0)
               AS failed_count,
+            -- platform-side failures (server errors, timeouts): part of failed_count
+            count(*) FILTER (WHERE status_code >= 500 AND total_units = 0)
+              + count(DISTINCT correlation_id) FILTER (WHERE status_code >= 500 AND total_units > 0)
+              AS server_error_count,
+            -- set on request rows only; pre-cutover rows carry neither
+            count(*) FILTER (WHERE sent_to_fallback AND status_code IS NOT NULL AND total_units = 0)
+              AS fallback_count,
+            coalesce(sum(response_time_ms) FILTER (WHERE status_code IS NOT NULL AND total_units = 0), 0)
+              AS total_response_time_ms,
+            count(response_time_ms) FILTER (WHERE status_code IS NOT NULL AND total_units = 0)
+              AS response_time_count,
             sum(total_units) AS total_units,
             sum(cached_input_units) AS cached_input_units,
             sum(output_units) AS output_units,
