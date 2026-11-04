@@ -55,16 +55,19 @@ export const METERING = {
       TOTAL_REQUESTS: "total_requests",
       SUCCESSFUL: "successful",
       FAILED: "failed",
+      FALLBACK_REQUESTS: "fallback_requests",
       AVG_RPS: "avg_rps",
     },
     LABELS: {
       total_requests: "Total Requests",
+      fallback_requests: "Fallback-served Requests",
       avg_rps: "Average RPS",
     },
     HELPERS: {
       total_requests: `Across all ${INSTITUTIONS}`,
       successful: "Of all requests",
       failed: "Of all requests",
+      fallback_requests: "Served by secondary Services",
       avg_rps: "Requests per second",
     },
     TOOLTIPS: {
@@ -73,6 +76,8 @@ export const METERING = {
       successful:
         "Total AI Model requests that completed without error in the selected window.",
       failed: "Total AI Model requests that returned an error in the selected window.",
+      fallback_requests:
+        "AI Model requests served by a secondary (fallback) Service instead of the primary Service in the selected window. These are already included in Total Requests.",
       avg_rps: "Average AI Model requests per second over the selected window.",
     },
   },
