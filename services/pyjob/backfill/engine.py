@@ -22,9 +22,10 @@ The flow:
        applications, single-key applications, tiers, LLM services and their
        prices, the LLM inference type.
     3. For each day:
-         a. ask Prometheus for the day's LLM requests, successful requests and
-            prompt / completion tokens, per institution, application and service
-            (the same queries the Prometheus-backed dashboard used, release-2.8);
+         a. ask Prometheus for the day's LLM requests, successful requests,
+            server errors (5xx), total request duration and prompt / completion
+            tokens, per institution, application and service (the same
+            queries the Prometheus-backed dashboard used, release-2.8);
          b. build one row per institution, application and service, with cost =
             tokens x the service's price (today's price);
          c. write the day's rows (replacing that day's earlier backfill rows).
@@ -35,7 +36,8 @@ daily_usage's DEFAULT partition; the dashboard and undo read them the same.
 
 The rows are estimates: Prometheus' daily counter growth, today's prices, the
 institution's current tier, and an API key only when the application has just
-one (Prometheus can't tell an application's keys apart).
+one (Prometheus can't tell an application's keys apart). Prometheus has no
+record of which requests a fallback service answered, so fallback_count is 0.
 """
 from __future__ import annotations
 
@@ -66,6 +68,7 @@ DAY_SECONDS = 86_400
 # requests the LLM chat paths only.
 REQUESTS_METRIC = "telemetry_obsv_requests_total"
 LLM_TOKENS_METRIC = "telemetry_obsv_llm_tokens_processed_sum"
+DURATION_METRIC = "telemetry_obsv_request_duration_seconds_sum"
 LLM_CHAT_PATHS = r"/api/v1/chat(/completions)?"
 BASE_SELECTORS = 'tenant!="unknown",auth_type=~"api_key|"'
 # One row per institution, application and service.
@@ -92,10 +95,14 @@ def day_queries(path_label: str) -> dict[str, str]:
     """The day's queries, evaluated at the day's end (the next IST midnight)."""
     requests = f'{REQUESTS_METRIC}{{{BASE_SELECTORS},{path_label}=~"{LLM_CHAT_PATHS}"}}'
     successful = f'{REQUESTS_METRIC}{{{BASE_SELECTORS},{path_label}=~"{LLM_CHAT_PATHS}",status_code=~"2.."}}'
+    server_errors = f'{REQUESTS_METRIC}{{{BASE_SELECTORS},{path_label}=~"{LLM_CHAT_PATHS}",status_code=~"5.."}}'
+    duration = f'{DURATION_METRIC}{{{BASE_SELECTORS},{path_label}=~"{LLM_CHAT_PATHS}"}}'
     tokens = f'{LLM_TOKENS_METRIC}{{{BASE_SELECTORS},token_type=~"prompt|completion"}}'
     return {
         "requests": sum_over_day(requests, GROUP_BY),
         "successful": sum_over_day(successful, GROUP_BY),
+        "server_errors": sum_over_day(server_errors, GROUP_BY),
+        "duration": sum_over_day(duration, GROUP_BY),     # seconds
         "tokens": sum_over_day(tokens, f"{GROUP_BY}, token_type"),
     }
 
@@ -222,6 +229,7 @@ def build_day_rows(day: date, results: dict[str, list[dict]], lookups: Lookups) 
     for (tenant_id, application_id, service_id), t in totals.items():
         requests = int(_whole(t["requests"]))
         failed = max(0, requests - int(_whole(t["successful"])))
+        server_errors = min(failed, int(_whole(t["server_errors"])))
         prompt, completion = _whole(t["prompt"]), _whole(t["completion"])
         if requests == 0 and prompt + completion == 0:
             continue
@@ -247,6 +255,9 @@ def build_day_rows(day: date, results: dict[str, list[dict]], lookups: Lookups) 
             "request_count": requests,
             "success_count": requests - failed,
             "failed_count": failed,
+            "fallback_count": 0,
+            "server_error_count": server_errors,
+            "total_response_time_ms": int(_whole(t["duration"] * 1000)),
             "total_units": prompt + completion,
             "cached_input_units": Decimal(0),
             "output_units": completion,
@@ -262,6 +273,7 @@ _COLUMNS = (
     "application_id", "application_name", "api_key_id", "tier_id", "tier_name",
     "service_id", "service_name", "model_name", "inference_type_id", "task_type", "unit",
     "request_count", "success_count", "failed_count",
+    "fallback_count", "server_error_count", "total_response_time_ms",
     "total_units", "cached_input_units", "output_units",
     "input_units_cost", "cached_input_units_cost", "output_units_cost",
 )
