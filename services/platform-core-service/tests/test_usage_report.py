@@ -424,7 +424,7 @@ class TestCollector:
             for part in mime.walk():
                 if part.get_content_type() in ("text/plain", "text/html"):
                     body = part.get_content()
-                    assert ("Platform health: availability Not available, response time (P95) 640 ms, "
+                    assert ("Platform health: response time (P95) 640 ms, "
                             "error rate 0.4%, fallback rate 2.1%.") in body
                     assert body.index("Platform health:") < body.index("Model portfolio:")
         assert "Platform Health" in attached[0] and "Error rate" in attached[0]
@@ -714,8 +714,7 @@ class TestRenderEmail:
         assert msg.subject == "AI Switch – Monthly programme report – September 2026"
         lines = mailer.summary_lines(_full_data())
         assert lines == [
-            "Platform health: availability Not available, response time (P95) 640 ms, "
-            "error rate 0.4%, fallback rate 2.1%.",
+            "Platform health: response time (P95) 640 ms, error rate 0.4%, fallback rate 2.1%.",
             "Model portfolio: 42 Models; 31 were used in September.",
             "Adoption: 26 of 36 Institutions were live (+3 vs August). 18.40M requests were served (+17.9%).",
         ]
@@ -734,11 +733,11 @@ class TestRenderEmail:
             for dummy in ("providers", "financial year", "Budget:",
                           "99.6%", "62.4M", "43%", "₹21.5 Cr", "₹50 Cr"):
                 assert dummy not in body, dummy
-            assert "availability Not available" in body
+            assert "availability" not in body.lower()
 
     def test_failed_figures_show_na_and_drop_the_comparison(self, portal):
         lines = mailer.summary_lines(ReportData(period=SEP, generated_at=AFTER_SEP))
-        assert lines[0] == ("Platform health: availability Not available, response time (P95) Not available, "
+        assert lines[0] == ("Platform health: response time (P95) Not available, "
                             "error rate Not available, fallback rate Not available.")
         assert lines[1] == "Model portfolio: Not available."
         assert lines[2] == "Adoption: Live Institutions: Not available. Requests served: Not available."
@@ -863,8 +862,7 @@ class TestReportHtml:
         ]
         cards = report_context(_full_data())["health"]["cards"]
         assert [(c["label"], c["value"]) for c in cards] == [
-            ("Availability", "Not available"), ("Latency P95", "640 ms"),
-            ("Error rate", "0.4%"), ("Fallback rate", "2.1%"),
+            ("Latency P95", "640 ms"), ("Error rate", "0.4%"), ("Fallback rate", "2.1%"),
         ]
         assert "recorded from" not in html   # recorded for the whole period
 
@@ -1232,12 +1230,11 @@ class TestPlatformHealth:
 
     def test_figures_are_one_decimal_and_whole_ms(self):
         v = fmt.platform_health(PlatformHealth(3, 1, SEP_START, 3, 2, 4055.4))
-        assert v == {"availability": "Not available", "latency_p95": "4,055 ms",
-                     "error_rate": "33.3%", "fallback_rate": "66.7%"}
+        assert v == {"latency_p95": "4,055 ms", "error_rate": "33.3%", "fallback_rate": "66.7%"}
 
-    def test_no_requests_is_a_dash_and_availability_stays_not_available(self):
+    def test_no_requests_is_a_dash(self):
         v = fmt.platform_health(PlatformHealth(0, 0, SEP_START, 0, 0, None))
-        assert v == {"availability": "Not available", "latency_p95": "—", "error_rate": "—", "fallback_rate": "—"}
+        assert v == {"latency_p95": "—", "error_rate": "—", "fallback_rate": "—"}
 
     def test_response_times_not_recorded_are_not_available(self):
         v = fmt.platform_health(PlatformHealth(1000, 4))

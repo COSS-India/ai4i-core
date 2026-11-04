@@ -1,8 +1,7 @@
 """Collects the Usage Viewer report's figures for one period (AI4IDS-3278).
 
 Only figures the platform tracks are collected. Availability, provider
-count and financial-year totals are not tracked: availability is shown as
-"Not available", the others are left out.
+count and financial-year totals are not tracked, so they are left out.
 
 Platform health (latency P95, error rate, fallback rate) comes from request
 rows in usage_events / daily_usage, the dashboard's period source, through

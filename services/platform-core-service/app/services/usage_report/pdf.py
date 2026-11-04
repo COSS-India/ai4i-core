@@ -113,7 +113,6 @@ def _health(d: ReportData) -> dict:
         since = f"Latency P95 and fallback rate are recorded from {h.tracked_from.astimezone(IST):%d %b %Y}."
     return {
         "cards": [
-            _card("Availability", v["availability"]),
             _card("Latency P95", v["latency_p95"]),
             _card("Error rate", v["error_rate"]),
             _card("Fallback rate", v["fallback_rate"]),
