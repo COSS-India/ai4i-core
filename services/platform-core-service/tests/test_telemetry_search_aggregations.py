@@ -17,18 +17,31 @@ import pytest
 # different CWD than running it from inside the service directory, and a
 # bare relative path here would raise FileNotFoundError during collection,
 # aborting the whole test run rather than just this file.
+
+# Load schemas first — the service imports from it.
+_SCHEMAS_PATH = Path(__file__).resolve().parents[1] / "app" / "schemas" / "telemetry.py"
+_schemas_spec = importlib.util.spec_from_file_location("app.schemas.telemetry", _SCHEMAS_PATH)
+_schemas = importlib.util.module_from_spec(_schemas_spec)
+sys.modules["app.schemas.telemetry"] = _schemas
+_schemas_spec.loader.exec_module(_schemas)
+
+# Load the service next — the route imports from it.
+_TELEMETRY_SERVICE_PATH = Path(__file__).resolve().parents[1] / "app" / "services" / "telemetry_service.py"
+_svc_spec = importlib.util.spec_from_file_location("app.services.telemetry_service", _TELEMETRY_SERVICE_PATH)
+_telemetry_svc = importlib.util.module_from_spec(_svc_spec)
+sys.modules["app.services.telemetry_service"] = _telemetry_svc
+_svc_spec.loader.exec_module(_telemetry_svc)
+
 _TELEMETRY_ROUTE_PATH = Path(__file__).resolve().parents[1] / "app" / "routes" / "telemetry.py"
-_spec = importlib.util.spec_from_file_location(
-    "app.routes.telemetry", _TELEMETRY_ROUTE_PATH
-)
+_spec = importlib.util.spec_from_file_location("app.routes.telemetry", _TELEMETRY_ROUTE_PATH)
 _telemetry_route_mod = importlib.util.module_from_spec(_spec)
 sys.modules["app.routes.telemetry"] = _telemetry_route_mod
 _spec.loader.exec_module(_telemetry_route_mod)
 
-_collect_all_trace_ids = _telemetry_route_mod._collect_all_trace_ids
-_build_traces_map = _telemetry_route_mod._build_traces_map
-_compute_full_breakdown = _telemetry_route_mod._compute_full_breakdown
-_BREAKDOWN_BATCH_SIZE = _telemetry_route_mod._BREAKDOWN_BATCH_SIZE
+_collect_all_trace_ids = _telemetry_svc._collect_all_trace_ids
+_build_traces_map = _telemetry_svc._build_traces_map
+_compute_full_breakdown = _telemetry_svc._compute_full_breakdown
+_BREAKDOWN_BATCH_SIZE = _telemetry_svc._BREAKDOWN_BATCH_SIZE
 search_traces_opensearch = _telemetry_route_mod.search_traces_opensearch
 
 
@@ -328,7 +341,7 @@ def test_search_traces_flags_partial_when_breakdown_is_capped():
     rather than silently presenting a partial Success/Failures split as
     if it were exact."""
     client = MagicMock()
-    _telemetry_route_mod._MAX_BREAKDOWN_TRACE_IDS = 2  # lower the cap so the test stays small
+    _telemetry_svc._MAX_BREAKDOWN_TRACE_IDS = 2  # lower the cap so the test stays small
 
     try:
         def search_traces(**kwargs):
@@ -361,4 +374,4 @@ def test_search_traces_flags_partial_when_breakdown_is_capped():
         assert response.aggregations.total == 5  # Total Requests is never capped
         assert response.aggregations.partial is True  # but the breakdown is
     finally:
-        _telemetry_route_mod._MAX_BREAKDOWN_TRACE_IDS = 20000
+        _telemetry_svc._MAX_BREAKDOWN_TRACE_IDS = 20000
