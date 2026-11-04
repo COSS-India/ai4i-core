@@ -53,7 +53,6 @@ import { useRouter } from "next/router";
 import { getTenantIdFromToken } from "../utils/helpers";
 import {
   searchTelemetryTraces,
-  getTelemetryTraceColumns,
   resolveTelemetryTenantId,
   TelemetryTraceRecord,
   TelemetryTraceSortBy,
@@ -89,7 +88,7 @@ import {
 import {
   AUTO_REFRESH_MS,
   DEFAULT_COLUMN_KEYS,
-  FALLBACK_COLUMN_DEFS,
+  LOGS_COLUMN_DEFS,
   SORTABLE_API_KEYS,
   buildColumnsQueryParam,
   columnFiltersToTraceParams,
@@ -660,15 +659,8 @@ function filterActiveTenants(
   );
 }
 
-function resolveLogsColumnDefs(
-  columnsResponse: { columns?: TelemetryTraceColumnDef[] } | undefined,
-  isAdmin: boolean,
-): TelemetryTraceColumnDef[] {
-  const raw =
-    columnsResponse?.columns && columnsResponse.columns.length > 0
-      ? columnsResponse.columns
-      : FALLBACK_COLUMN_DEFS;
-  const normalized = normalizeColumnDefs(raw);
+function resolveLogsColumnDefs(isAdmin: boolean): TelemetryTraceColumnDef[] {
+  const normalized = normalizeColumnDefs(LOGS_COLUMN_DEFS);
   if (isAdmin) return normalized;
   return normalized.filter((c) => !isAdminOnlyColumnKey(c.key));
 }
@@ -1231,32 +1223,14 @@ const LogsPage: React.FC = () => {
     [tenantById],
   );
 
-  const { data: columnsResponse, isFetched: columnsFetched } = useQuery({
-    queryKey: ["telemetry-traces-columns"],
-    queryFn: async () => {
-      try {
-        return await getTelemetryTraceColumns();
-      } catch {
-        // Keep a contract-aligned fallback if /traces/columns is unreachable.
-        return { columns: FALLBACK_COLUMN_DEFS };
-      }
-    },
-    enabled: isAuthenticated && !isUser && !isGuest && !authLoading,
-    staleTime: 5 * 60 * 1000,
-    retry: false,
-  });
+  // Error column is admin-only on the screen (AC-6).
+  const columnDefs = useMemo(() => resolveLogsColumnDefs(isAdmin), [isAdmin]);
 
-  // Error column is admin-only on the screen (AC-6); BE catalogue has no admin_only flag.
-  const columnDefs = useMemo(
-    () => resolveLogsColumnDefs(columnsResponse, isAdmin),
-    [columnsResponse, isAdmin],
-  );
-
-  // Hydrate once after auth + catalogue settle so admin-only columns (e.g. Error) are kept.
+  // Hydrate once after auth settles so admin-only columns (e.g. Error) are kept.
   const didHydrateColumns = useRef(false);
   useEffect(() => {
     if (didHydrateColumns.current) return;
-    if (authLoading || !columnsFetched || columnsResponse === undefined) return;
+    if (authLoading || !isAuthenticated) return;
     didHydrateColumns.current = true;
     const allowed = new Set(columnDefs.map((c) => c.key));
     const stored = readStoredColumns();
@@ -1266,7 +1240,7 @@ const LogsPage: React.FC = () => {
         ? stored.filter((k) => allowed.has(k))
         : defaults;
     setSelectedColumns(next.length > 0 ? next : defaults);
-  }, [authLoading, columnsFetched, columnsResponse, columnDefs]);
+  }, [authLoading, isAuthenticated, columnDefs]);
 
   const draftRef = useRef(draft);
   draftRef.current = draft;

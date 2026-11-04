@@ -99,28 +99,6 @@ export const telemetryTraceRecordSchema = z
   })
   .passthrough();
 
-export const telemetryTraceColumnDefSchema = z
-  .object({
-    key: z.string(),
-    label: z.string(),
-    default: z.boolean(),
-    filterable: z.boolean(),
-    sortable: z.boolean(),
-    keyword_searchable: z.boolean(),
-  })
-  .passthrough();
-
-/** BE returns a bare array; older contract used `{ columns: [...] }`. */
-export const telemetryTraceColumnsResponseSchema = z.preprocess((raw: unknown) => {
-  if (Array.isArray(raw)) return { columns: raw };
-  if (raw && typeof raw === "object" && Array.isArray((raw as { columns?: unknown }).columns)) {
-    return raw;
-  }
-  return { columns: [] };
-}, z.object({
-  columns: z.array(telemetryTraceColumnDefSchema),
-}));
-
 const telemetryByLevelSchema = z.preprocess((raw: unknown) => {
   if (raw && typeof raw === 'object') {
     const o = raw as Record<string, number>;
