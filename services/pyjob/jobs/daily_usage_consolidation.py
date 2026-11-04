@@ -43,7 +43,7 @@ boundaries are IST midnight.
    is 400 or above, and a server error (server_error_count, the platform's
    own failures: 5xx and timeouts) when it is 500 or above. fallback_count,
    total_response_time_ms and response_time_count come from request rows
-   only, which carry served_by_fallback and response_time_ms;
+   only, which carry sent_to_fallback and response_time_ms;
    response_time_count is the average's divisor, as rows from before
    response_time_ms have none.
 
@@ -279,7 +279,7 @@ _AGGREGATE = text(
               + count(DISTINCT correlation_id) FILTER (WHERE status_code >= 500 AND total_units > 0)
               AS server_error_count,
             -- set on request rows only; pre-cutover rows carry neither
-            count(*) FILTER (WHERE served_by_fallback AND status_code IS NOT NULL AND total_units = 0)
+            count(*) FILTER (WHERE sent_to_fallback AND status_code IS NOT NULL AND total_units = 0)
               AS fallback_count,
             coalesce(sum(response_time_ms) FILTER (WHERE status_code IS NOT NULL AND total_units = 0), 0)
               AS total_response_time_ms,

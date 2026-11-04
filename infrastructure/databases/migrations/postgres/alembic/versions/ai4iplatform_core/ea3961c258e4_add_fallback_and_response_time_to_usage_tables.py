@@ -21,7 +21,7 @@ DAILY_USAGE_COLUMNS = ("fallback_count", "total_response_time_ms", "response_tim
 def upgrade() -> None:
     op.add_column(
         "usage_events",
-        sa.Column("served_by_fallback", sa.Boolean(), nullable=False, server_default=sa.false()),
+        sa.Column("sent_to_fallback", sa.Boolean(), nullable=False, server_default=sa.false()),
     )
     op.add_column("usage_events", sa.Column("response_time_ms", sa.Integer(), nullable=True))
 
@@ -34,4 +34,4 @@ def downgrade() -> None:
         op.drop_column("daily_usage", name)
 
     op.drop_column("usage_events", "response_time_ms")
-    op.drop_column("usage_events", "served_by_fallback")
+    op.drop_column("usage_events", "sent_to_fallback")

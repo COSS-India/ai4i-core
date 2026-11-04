@@ -199,7 +199,7 @@ class TestRequestCounts:
 
 async def _mark_fallback(session, corr: str) -> None:
     await session.execute(
-        text("UPDATE usage_events SET served_by_fallback = true WHERE correlation_id = :c"), {"c": corr},
+        text("UPDATE usage_events SET sent_to_fallback = true WHERE correlation_id = :c"), {"c": corr},
     )
 
 

@@ -71,7 +71,7 @@ async def _row(conn, correlation_id, seconds, *, status=None, units=0, tier=_TIE
                fallback=False, response_ms=None):
     await conn.execute(text(
         "INSERT INTO usage_events (correlation_id, occurred_at, tenant_id, tier_id, status_code, total_units,"
-        " served_by_fallback, response_time_ms)"
+        " sent_to_fallback, response_time_ms)"
         " VALUES (:c, :at, :t, :tier, :status, :units, :fallback, :ms)"
     ), {"c": correlation_id, "at": _START + timedelta(hours=10, seconds=seconds), "t": _TENANT,
         "tier": tier, "status": status, "units": units, "fallback": fallback, "ms": response_ms})

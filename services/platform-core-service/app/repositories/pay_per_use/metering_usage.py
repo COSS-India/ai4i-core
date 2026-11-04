@@ -8,7 +8,7 @@ units from usage rows (see UsageEvent), so a request is counted once whatever
 usage rows it has. Rows from before the cut-over (PRE_CUTOVER_ROWS) are
 counted by distinct correlation id, as the request they stand in for may have
 several. A request is failed when its status is 400 or above. Fallback
-requests (sent to a fallback service) are request rows with served_by_fallback (daily_usage.fallback_count
+requests (sent to a fallback service) are request rows with sent_to_fallback (daily_usage.fallback_count
 in the rollup); they are part of the request total, never added to it.
 
 Whole IST days read the daily_usage rollup when it's enabled and has the day;
@@ -43,7 +43,7 @@ _FAILED = (
     f" + count(DISTINCT correlation_id) FILTER (WHERE {PRE_CUTOVER_ROWS} AND status_code >= 400)"
 )
 # Requests sent to a fallback service: request rows only (older rows predate the flag).
-_FALLBACK = f"count(*) FILTER (WHERE {REQUEST_ROWS} AND served_by_fallback)"
+_FALLBACK = f"count(*) FILTER (WHERE {REQUEST_ROWS} AND sent_to_fallback)"
 
 # Grouping dimensions: (daily_usage expression, usage_events expression).
 _GROUPS = {

@@ -62,8 +62,8 @@ class UsageEvent(Base):
     id for its end user, and metadata holds free-form event attributes; both
     were added by migration e8972603749c.
 
-    served_by_fallback and response_time_ms describe a request and are set on
-    request rows only (migration ea3961c258e4): served_by_fallback when the
+    sent_to_fallback and response_time_ms describe a request and are set on
+    request rows only (migration ea3961c258e4): sent_to_fallback when the
     request was sent to a fallback (service_id is the fallback when one
     answered, else the requested service); response_time_ms is the span's
     duration, NULL on usage rows and on rows from before the column.
@@ -120,7 +120,7 @@ class UsageEvent(Base):
     application_user_id = Column(String(64), nullable=True)
     # Declarative classes reserve the name metadata, so the attribute is metadata_.
     metadata_ = Column("metadata", JSONB, nullable=True)
-    served_by_fallback = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    sent_to_fallback = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     response_time_ms = Column(Integer, nullable=True)
 
     # cached_input_units and output_units are parts of total_units.
