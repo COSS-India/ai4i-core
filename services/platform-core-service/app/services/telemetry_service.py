@@ -158,13 +158,21 @@ def _escape_wildcard(value: str) -> str:
 def _contains_field_match(field: str, value: str) -> dict:
     """Wildcard contains-match on an arbitrary field (case-insensitive).
 
-    Uses .keyword with leading+trailing wildcards so partial input honours the
-    'contains' UX label. Falls back to match_phrase for values that exceed the
-    keyword index cap.
+    Uses a bool.should combining a wildcard on .keyword (hits docs whose stored
+    value is ≤ ignore_above) and a match_phrase on the text field (hits docs
+    whose stored value exceeds ignore_above and was never written to .keyword).
     """
     if len(value) > _KEYWORD_IGNORE_ABOVE:
         return {"match_phrase": {field: value}}
-    return {"wildcard": {f"{field}.keyword": {"value": f"*{_escape_wildcard(value)}*", "case_insensitive": True}}}
+    return {
+        "bool": {
+            "should": [
+                {"wildcard": {f"{field}.keyword": {"value": f"*{_escape_wildcard(value)}*", "case_insensitive": True}}},
+                {"match_phrase": {field: value}},
+            ],
+            "minimum_should_match": 1,
+        }
+    }
 
 
 def _contains_attribute_match(attribute: str, value: str) -> dict:

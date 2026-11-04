@@ -169,9 +169,9 @@ class _TracePaginationQuery:
 async def search_traces_opensearch(
     request: Request,
     opensearch_client: Annotated[OpenSearchTraceClient, Depends(_get_opensearch_client)],
-    base: Annotated[_TraceBaseFilters, Depends(_TraceBaseFilters)] = Depends(),
-    span: Annotated[_TraceSpanFilters, Depends(_TraceSpanFilters)] = Depends(),
-    paging: Annotated[_TracePaginationQuery, Depends(_TracePaginationQuery)] = Depends(),
+    base: Annotated[_TraceBaseFilters, Depends(_TraceBaseFilters)],
+    span: Annotated[_TraceSpanFilters, Depends(_TraceSpanFilters)],
+    paging: Annotated[_TracePaginationQuery, Depends(_TracePaginationQuery)],
     columns: Annotated[Optional[str], Query(
         description=(
             "Comma-separated column keys to include in each response row. "
