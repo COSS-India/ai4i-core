@@ -39,7 +39,7 @@ async def list_configs(
     "",
     response_model=CreateConfigResponse,
     status_code=status.HTTP_201_CREATED,
-    responses=error_responses(403),
+    responses=error_responses(403, 409),
 )
 async def create_config(
     payload: ConfigCreate,
@@ -78,7 +78,7 @@ async def get_config(
 @router.put(
     "/{config_id}",
     response_model=UpdateConfigResponse,
-    responses=error_responses(403, 404),
+    responses=error_responses(403, 404, 409),
 )
 async def update_config(
     payload: ConfigUpdate,

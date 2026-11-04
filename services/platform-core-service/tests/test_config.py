@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
-from app.core.exceptions import EntityNotFoundError, InsufficientPermissionsError
+from app.core.exceptions import DuplicateEntityError, EntityNotFoundError, InsufficientPermissionsError
 from app.schemas.config_management.config_schema import ConfigCreate, ConfigItem, ConfigUpdate
 
 # ── Load route module by file path ───────────────────────────────────────────
@@ -112,9 +112,23 @@ class TestConfigCreateSchema:
         obj = ConfigCreate(type="x" * 255, data=_DOMAIN_DATA)
         assert len(obj.type) == 255
 
+    def test_type_empty_string_rejected(self):
+        with pytest.raises(PydanticValidationError, match="blank"):
+            ConfigCreate(type="", data=_DOMAIN_DATA)
+
+    def test_type_whitespace_only_rejected(self):
+        with pytest.raises(PydanticValidationError, match="blank"):
+            ConfigCreate(type="   ", data=_DOMAIN_DATA)
+
+    def test_data_null_rejected(self):
+        # POST {"type": "x", "data": null} must 422, not store JSON null.
+        with pytest.raises(PydanticValidationError, match="null"):
+            ConfigCreate(type="domain", data=None)
+
 
 class TestConfigUpdateSchema:
-    def test_all_fields_optional(self):
+    def test_all_fields_omitted_is_valid(self):
+        # Both omitted → both stay None (no-op update is allowed at schema level).
         obj = ConfigUpdate()
         assert obj.type is None
         assert obj.data is None
@@ -137,6 +151,24 @@ class TestConfigUpdateSchema:
     def test_type_max_255_chars(self):
         with pytest.raises(PydanticValidationError):
             ConfigUpdate(type="x" * 256)
+
+    def test_type_null_rejected(self):
+        # PUT {"type": null} must 422, not reach the DB as NOT NULL violation → 500.
+        with pytest.raises(PydanticValidationError, match="null"):
+            ConfigUpdate(type=None)
+
+    def test_type_empty_string_rejected(self):
+        with pytest.raises(PydanticValidationError, match="blank"):
+            ConfigUpdate(type="")
+
+    def test_type_whitespace_only_rejected(self):
+        with pytest.raises(PydanticValidationError, match="blank"):
+            ConfigUpdate(type="   ")
+
+    def test_data_null_rejected(self):
+        # PUT {"data": null} must 422, not store JSON null in JSONB column.
+        with pytest.raises(PydanticValidationError, match="null"):
+            ConfigUpdate(data=None)
 
 
 # ── Service logic ─────────────────────────────────────────────────────────────
@@ -218,6 +250,20 @@ class TestConfigService:
         assert added_row.created_by == "admin-user"
         assert added_row.updated_by == "admin-user"
 
+    async def test_create_duplicate_type_raises_conflict(self):
+        from app.services.config_management import config_service as svc
+        from sqlalchemy.exc import IntegrityError
+
+        session = _session()
+        body = ConfigCreate(type="domain", data=_DOMAIN_DATA)
+
+        orig = Exception('duplicate key value violates unique constraint "uq_configs_type"')
+        session.commit = AsyncMock(side_effect=IntegrityError("", {}, orig))
+
+        with pytest.raises(DuplicateEntityError):
+            await svc.create_config(session, body, created_by="user-1")
+        session.rollback.assert_awaited_once()
+
     async def test_update_missing_raises_not_found(self):
         from app.services.config_management import config_service as svc
 
@@ -253,6 +299,21 @@ class TestConfigService:
         assert row.type == "domain"  # unchanged
         assert row.data == new_data
 
+    async def test_update_duplicate_type_raises_conflict(self):
+        from app.services.config_management import config_service as svc
+        from sqlalchemy.exc import IntegrityError
+
+        row = _orm_row(type="domain")
+        session = _session(get_return=row)
+        session.refresh = AsyncMock()
+
+        orig = Exception('duplicate key value violates unique constraint "uq_configs_type"')
+        session.commit = AsyncMock(side_effect=IntegrityError("", {}, orig))
+
+        with pytest.raises(DuplicateEntityError):
+            await svc.update_config(session, 1, ConfigUpdate(type="settings"), updated_by="user-1")
+        session.rollback.assert_awaited_once()
+
     async def test_delete_missing_raises_not_found(self):
         from app.services.config_management import config_service as svc
 
@@ -263,9 +324,10 @@ class TestConfigService:
         from app.services.config_management import config_service as svc
 
         session = _session(get_return=_orm_row(id=5))
+        session.delete = AsyncMock()
         deleted_id = await svc.delete_config(session, 5)
         assert deleted_id == 5
-        session.execute.assert_awaited()
+        session.delete.assert_awaited_once()
         session.commit.assert_awaited_once()
 
 
@@ -325,6 +387,18 @@ class TestCreateConfigRoute:
         )
         _, kwargs = stub.call_args
         assert kwargs.get("created_by") == "user-1"
+
+    async def test_duplicate_type_propagates_conflict(self, monkeypatch):
+        monkeypatch.setattr(
+            _config_routes.config_service, "create_config",
+            AsyncMock(side_effect=DuplicateEntityError("Config with type 'domain' already exists")),
+        )
+        with pytest.raises(DuplicateEntityError):
+            await _config_routes.create_config(
+                payload=ConfigCreate(type="domain", data=_DOMAIN_DATA),
+                request=_request(),
+                session=MagicMock(),
+            )
 
     async def test_non_admin_is_rejected(self, monkeypatch):
         stub = AsyncMock()
@@ -399,6 +473,19 @@ class TestUpdateConfigRoute:
                 payload=ConfigUpdate(type="x"),
                 request=_request(),
                 config_id=999,
+                session=MagicMock(),
+            )
+
+    async def test_duplicate_type_propagates_conflict(self, monkeypatch):
+        monkeypatch.setattr(
+            _config_routes.config_service, "update_config",
+            AsyncMock(side_effect=DuplicateEntityError("Config with type 'settings' already exists")),
+        )
+        with pytest.raises(DuplicateEntityError):
+            await _config_routes.update_config(
+                payload=ConfigUpdate(type="settings"),
+                request=_request(),
+                config_id=1,
                 session=MagicMock(),
             )
 

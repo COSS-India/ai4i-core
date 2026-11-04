@@ -1,9 +1,10 @@
 from typing import List
 
-from sqlalchemy import delete, select
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import EntityNotFoundError
+from app.core.exceptions import DuplicateEntityError, EntityNotFoundError
 from app.models.config_management.config import Config
 from app.schemas.config_management.config_schema import (
     ConfigCreate,
@@ -37,7 +38,13 @@ async def create_config(
         updated_by=created_by,
     )
     session.add(row)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        if "uq_configs_type" in str(exc.orig):
+            raise DuplicateEntityError(f"Config with type '{body.type}' already exists")
+        raise
     await session.refresh(row)
     return ConfigItem.model_validate(row)
 
@@ -58,7 +65,13 @@ async def update_config(
         setattr(row, field, value)
     row.updated_by = updated_by
 
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        if "uq_configs_type" in str(exc.orig):
+            raise DuplicateEntityError(f"Config with type '{body.type}' already exists")
+        raise
     await session.refresh(row)
     return ConfigItem.model_validate(row)
 
@@ -68,6 +81,6 @@ async def delete_config(session: AsyncSession, config_id: int) -> int:
     if row is None:
         raise EntityNotFoundError(f"Config {config_id}")
 
-    await session.execute(delete(Config).where(Config.id == config_id))
+    await session.delete(row)
     await session.commit()
     return config_id

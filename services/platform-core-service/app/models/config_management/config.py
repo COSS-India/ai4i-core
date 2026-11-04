@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Integer, String
+from sqlalchemy import Column, DateTime, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 
@@ -7,6 +7,7 @@ from app.models import Base
 
 class Config(Base):
     __tablename__ = "configs"
+    __table_args__ = (UniqueConstraint("type", name="uq_configs_type"),)
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     type = Column(String(255), nullable=False)

@@ -25,6 +25,7 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column("type", sa.String(255), nullable=False),
         sa.Column("data", postgresql.JSONB(), nullable=False),
+        sa.UniqueConstraint("type", name="uq_configs_type"),
         sa.Column("created_by", sa.String(255), nullable=True),
         sa.Column(
             "created_at",
