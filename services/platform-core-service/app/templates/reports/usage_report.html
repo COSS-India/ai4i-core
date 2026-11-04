@@ -35,7 +35,7 @@
   h1 { font: 700 23pt/1.15 "DejaVu Serif", serif; margin: 1mm 0 0; }
   h1.long { font-size: 19pt; }  /* a sub-day period's date and times */
   .nowrap { white-space: nowrap; }
-  h2 { font: 700 13.5pt/1.2 "DejaVu Serif", serif; margin: 0 0 2mm; }
+  h2 { font: 700 12pt/1.2 "DejaVu Serif", serif; margin: 0 0 1.5mm; }
 
   /* Rows of cards use CSS table display, not flex: WeasyPrint sizes a flex
      row's height from its items laid out narrower than they end up, leaving
@@ -47,18 +47,20 @@
   .tr { display: table-row; }
   .td { display: table-cell; vertical-align: top; }
   .cols { display: table; width: 193mm; margin: 0 -3.5mm; border-collapse: separate; border-spacing: 3.5mm 0; table-layout: fixed; }
-  .cols + .cols { margin-top: 3.5mm; }
+  .cols + .cols { margin-top: 2.5mm; }
   /* border-spacing is inherited: layouts nested in a card row reset it. */
   .pair { display: table; width: 100%; table-layout: fixed; border-spacing: 0; }
-  .card { background: var(--card); border-radius: 5px; padding: 2.5mm 3.5mm; }
-  .panel { background: #fff; border: 1px solid var(--border); border-radius: 5px; padding: 2.5mm 3.5mm; }
+  .card { background: var(--card); border-radius: 5px; padding: 1.8mm 3.5mm; }
+  .panel { background: #fff; border: 1px solid var(--border); border-radius: 5px; padding: 2mm 3.5mm; }
   .label { color: var(--muted); font-size: 8.5pt; }
-  .value { font-weight: 700; font-size: 19pt; line-height: 1.2; margin: 1mm 0 0.5mm; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .value.na { color: var(--muted); font-size: 15pt; }
+  .value { font-weight: 700; font-size: 16pt; line-height: 1.2; margin: 0.5mm 0 0.3mm; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .value.na { color: var(--muted); font-size: 13pt; }
   .unit { font-size: 11pt; }
   .note { color: var(--muted); font-size: 7.5pt; }
-  .budget .value { font-size: 17pt; } .budget .unit { font-size: 10pt; }
-  .head { display: flex; justify-content: space-between; align-items: baseline; gap: 2mm; margin-bottom: 1.5mm; }
+  .budget .value, .health .value { font-size: 15pt; } .budget .unit { font-size: 10pt; }
+  /* Four cards to a row: "Not available" (Availability always) must fit. */
+  .budget .value.na, .health .value.na { font-size: 11pt; line-height: 1.75; }
+  .head { display: flex; justify-content: space-between; align-items: baseline; gap: 2mm; margin-bottom: 1mm; }
   .title { font-weight: 700; font-size: 9.5pt; }
   .empty { color: var(--muted); font-size: 8.5pt; }
 
@@ -66,7 +68,7 @@
      A name column that takes the free width needs width: 0 as well as
      flex: 1 1 0: without it WeasyPrint sizes it to the whole name, and a
      long one pushes the figures off the page. */
-  .rank { display: flex; align-items: center; gap: 2.5mm; height: 4.8mm; }
+  .rank { display: flex; align-items: center; gap: 2.5mm; height: 4.2mm; }
   .rank .who { flex: 1 1 0; width: 0; }
   .rank .bar { flex: 0 0 30%; }
   .rank .who b { font-weight: 700; }
@@ -79,15 +81,15 @@
   .clip { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 0; }
 
   /* Models by task type */
-  .caption { color: var(--muted); font-size: 8.5pt; margin: 2.5mm 0 0; }
+  .caption { color: var(--muted); font-size: 8.5pt; margin: 2mm 0 0; }
   .grid { display: table; width: 100%; table-layout: fixed; border-spacing: 0; }
   .grid > .tr > .td { padding: 0 2.5mm; }
   .grid > .tr > .td:first-child { padding-left: 0; } .grid > .tr > .td:last-child { padding-right: 0; }
-  .item { display: flex; gap: 2mm; padding: 0.6mm 0; border-bottom: 1px dotted #b9b6ae; }
+  .item { display: flex; gap: 2mm; padding: 0.4mm 0; border-bottom: 1px dotted #b9b6ae; }
   .item .n { flex: 1 1 0; width: 0; } .item .c { font-weight: 700; text-align: right; }
 
   /* Stacked bars and legends */
-  .stack { display: flex; height: 14px; border-radius: 2px; overflow: hidden; background: #ebe9e4; margin: 1mm 0 1.5mm; }
+  .stack { display: flex; height: 14px; border-radius: 2px; overflow: hidden; background: #ebe9e4; margin: 0.8mm 0 1mm; }
   .stack div { color: #fff; font-size: 7.5pt; font-weight: 700; text-align: center; line-height: 14px; }
   .seg-active { background: var(--navy); } .seg-other { background: var(--light); } .seg-dormant { background: var(--amber); }
   .legend { margin-bottom: 1mm; }
@@ -103,22 +105,35 @@
   .donut .legend span { display: block; margin: 1mm 0; }
 
   /* Requests by task type, under the inference KPIs */
-  .tasks-head { margin: 2mm 0 0.5mm; }
-  .task { display: flex; align-items: center; gap: 1.5mm; height: 4.3mm; font-size: 7.5pt; }
+  .tasks-head { margin: 1.5mm 0 0.5mm; }
+  .task { display: flex; align-items: center; gap: 1.5mm; height: 3.9mm; font-size: 7.5pt; }
   .task .n { flex: 1 1 0; width: 0; } .task .track { flex: 0 0 22%; } .task .c { flex: 0 0 13mm; text-align: right; font-weight: 700; }
 
   /* Budget */
-  .fy { color: var(--muted); font-size: 8pt; margin-top: 2mm; }
+  .fy { color: var(--muted); font-size: 8pt; margin-top: 1.5mm; }
   .meter { display: flex; height: 13px; background: var(--light); margin: 1.5mm 0 1mm; }
   .meter .spent { background: var(--navy); }
   .meter-labels { display: flex; justify-content: space-between; font-weight: 700; font-size: 9pt; color: var(--navy); }
-  .limits { font-size: 9pt; margin: 1.5mm 0 2mm; }
+  .limits { font-size: 9pt; margin: 1mm 0 1.5mm; }
 </style>
 </head>
 <body>
 <div class="page">
   <div class="eyebrow">{{ report_title | upper }}</div>
   <h1 class="{{ 'long' if period_label | length > 24 }}">{{ period_label }} <span class="nowrap">({{ frequency }})</span></h1>
+
+  {# ── Platform Health ── #}
+  <div class="gap"></div>
+  <h2>Platform Health</h2>
+  <div class="cols health"><div class="tr">
+    {% for c in health.cards %}
+    <div class="td card">
+      <div class="label">{{ c.label }}</div>
+      <div class="value{{ ' na' if c.muted }}">{{ c.value }}</div>
+    </div>
+    {% endfor %}
+  </div></div>
+  {% if health.since %}<div class="fy">{{ health.since }}</div>{% endif %}
 
   {# ── Model Portfolio ── #}
   <div class="gap"></div>
