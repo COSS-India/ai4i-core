@@ -244,6 +244,56 @@ def _combine_first_usage(*candidates: Optional[datetime]) -> Optional[str]:
 # ── Cache helpers ─────────────────────────────────────────────────────────────
 
 
+async def _metering_first_request(
+    redis: aioredis.Redis, first_usage_key: str, cached: Optional[dict], queried,
+) -> tuple[Optional[datetime], str]:
+    """The metering half of /overview's first_usage_at, and where it came
+    from (for the log): its own longer-lived cache, or ``queried`` — the
+    first_request_at result, None, or the Exception it raised."""
+    if cached is not None:
+        return _parse_cached_first_request(cached), "cache_hit"
+    if isinstance(queried, Exception):
+        # Falls back to the quota value alone. Not degraded, and not cached
+        # under its own key, so the next overview miss retries it. The
+        # overview itself is still cached: blocking that too would make
+        # every load pay for the slow query again while Prometheus struggles.
+        logger.warning("first_request_at lookup failed: %s", queried)
+        return None, "failed"
+    if queried is None:
+        return None, "none"
+    # Only a real timestamp is cached. A None (no API-key requests yet)
+    # would stick for the whole TTL, and for a tenant on untiered keys
+    # quota_usage has nothing either, so first_usage_at would stay null
+    # for up to an hour after its first request. Not caching it costs
+    # one retry per overview miss until that first request shows up.
+    await _cache_set(
+        redis, first_usage_key, {"first_request_at": _iso_utc(queried)}, ttl=_FIRST_USAGE_CACHE_TTL,
+    )
+    return queried, "queried"
+
+
+def _log_first_usage(
+    scope_tenant: Optional[str],
+    quota_first_usage: Optional[datetime],
+    quota_ok: bool,
+    metering_first_request: Optional[datetime],
+    metering_source: str,
+    first_usage_at: Optional[str],
+) -> None:
+    """Traces a null first_usage_at to the half that produced it without a
+    debugger: INFO only when it is null (the case worth looking at), DEBUG
+    otherwise, so routine overview misses don't add log volume. The tenant
+    id is enough to trace; the organisation name stays out of the logs."""
+    logger.log(
+        logging.INFO if first_usage_at is None else logging.DEBUG,
+        "first_usage_at tenant_id=%s quota=%s quota_ok=%s metering=%s metering_source=%s result=%s",
+        scope_tenant,
+        _iso_utc(quota_first_usage) if quota_first_usage else None, quota_ok,
+        _iso_utc(metering_first_request) if metering_first_request else None, metering_source,
+        first_usage_at,
+    )
+
+
 async def _cache_get(redis: aioredis.Redis, key: str) -> Optional[dict]:
     try:
         raw = await redis.get(key)
@@ -661,43 +711,12 @@ async def get_overview(
         return_exceptions=True,
     )
     *results, metering_first_request = results
-    if first_request_cached is not None:
-        metering_first_request = _parse_cached_first_request(first_request_cached)
-        metering_source = "cache_hit"
-    elif isinstance(metering_first_request, Exception):
-        metering_source = "failed"
-        # Falls back to the quota value alone. Not degraded, and not cached
-        # under its own key, so the next overview miss retries it. The
-        # overview itself is still cached: blocking that too would make
-        # every load pay for the slow query again while Prometheus struggles.
-        logger.warning("first_request_at lookup failed: %s", metering_first_request)
-        metering_first_request = None
-    elif metering_first_request is None:
-        metering_source = "none"
-    else:
-        metering_source = "queried"
-        # Only a real timestamp is cached. A None (no API-key requests yet)
-        # would stick for the whole TTL, and for a tenant on untiered keys
-        # quota_usage has nothing either, so first_usage_at would stay null
-        # for up to an hour after its first request. Not caching it costs
-        # one retry per overview miss until that first request shows up.
-        await _cache_set(
-            redis, first_usage_key,
-            {"first_request_at": _iso_utc(metering_first_request)},
-            ttl=_FIRST_USAGE_CACHE_TTL,
-        )
+    metering_first_request, metering_source = await _metering_first_request(
+        redis, first_usage_key, first_request_cached, metering_first_request,
+    )
     first_usage_at = _combine_first_usage(quota_first_usage, metering_first_request)
-    # Traces a null first_usage_at to the half that produced it without a
-    # debugger: INFO only when it is null (the case worth looking at), DEBUG
-    # otherwise, so routine overview misses don't add log volume. The tenant
-    # id is enough to trace; the organisation name stays out of the logs.
-    logger.log(
-        logging.INFO if first_usage_at is None else logging.DEBUG,
-        "first_usage_at tenant_id=%s quota=%s quota_ok=%s metering=%s metering_source=%s result=%s",
-        scope_tenant,
-        _iso_utc(quota_first_usage) if quota_first_usage else None, first_usage_ok,
-        _iso_utc(metering_first_request) if metering_first_request else None, metering_source,
-        first_usage_at,
+    _log_first_usage(
+        scope_tenant, quota_first_usage, first_usage_ok, metering_first_request, metering_source, first_usage_at,
     )
     # Merge both result sets through one _partition_results call so a failure
     # in either half still degrades the response instead of raising —
