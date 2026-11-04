@@ -949,17 +949,17 @@ class TestRecordRequest:
         assert self._run(monkeypatch, self._span(tenantId=None))["events"] == []
 
     def test_fallback_flag_and_response_time(self, monkeypatch):
-        span = self._span(start_ns=self._END_NS - 742_400_000, served_by_fallback=True,
+        span = self._span(start_ns=self._END_NS - 742_400_000, sent_to_fallback=True,
                           requested_service_id="svc-primary")
         (event,) = self._run(monkeypatch, span)["events"]
-        assert (event.served_by_fallback, event.response_time_ms) == (True, 742)
+        assert (event.sent_to_fallback, event.response_time_ms) == (True, 742)
 
     def test_fallback_flag_as_bool_or_string(self, monkeypatch):
         # The exporter may send the attribute as a JSON bool or a string.
         for value, expected in ((True, True), ("true", True), ("True", True), (False, False),
                                 ("false", False), (None, False)):
-            (event,) = self._run(monkeypatch, self._span(served_by_fallback=value))["events"]
-            assert event.served_by_fallback is expected, value
+            (event,) = self._run(monkeypatch, self._span(sent_to_fallback=value))["events"]
+            assert event.sent_to_fallback is expected, value
 
     def test_no_start_time_means_no_response_time(self, monkeypatch):
         (event,) = self._run(monkeypatch, self._span())["events"]

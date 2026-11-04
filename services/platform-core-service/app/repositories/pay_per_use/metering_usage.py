@@ -8,7 +8,7 @@ units from usage rows (see UsageEvent), so a request is counted once whatever
 usage rows it has. Rows from before the cut-over (PRE_CUTOVER_ROWS) are
 counted by distinct correlation id, as the request they stand in for may have
 several. A request is failed when its status is 400 or above. Fallback
-requests (sent to a fallback service) are request rows with served_by_fallback
+requests (sent to a fallback service) are request rows with sent_to_fallback
 (daily_usage.fallback_count in the rollup); they are part of the request total,
 never added to it. Server errors are failed requests whose status is 500 or
 above (server errors and timeouts; daily_usage.server_error_count), part of the
@@ -50,7 +50,7 @@ _SERVER_ERRORS = (
     f" + count(DISTINCT correlation_id) FILTER (WHERE {PRE_CUTOVER_ROWS} AND status_code >= 500)"
 )
 # Requests sent to a fallback service: request rows only (older rows predate the flag).
-_FALLBACK = f"count(*) FILTER (WHERE {REQUEST_ROWS} AND served_by_fallback)"
+_FALLBACK = f"count(*) FILTER (WHERE {REQUEST_ROWS} AND sent_to_fallback)"
 
 # Grouping dimensions: (daily_usage expression, usage_events expression).
 _GROUPS = {
@@ -257,6 +257,17 @@ class MeteringUsageRepository:
             f" WHERE occurred_at >= :start AND occurred_at < :end AND {REQUEST_ROWS}",
             {"start": start, "end": end},
         )
+
+    async def fallbacks_recorded_by(self, at: datetime) -> bool:
+        """Whether request rows carried the fallback flag by ``at``: the last
+        request row before it has a response time, written with the flag (rows
+        from before migration ea3961c258e4 have neither). One step back along
+        the request-row index (ix_usage_events_request_rows)."""
+        return bool(await self._scalar(
+            f"SELECT response_time_ms IS NOT NULL FROM usage_events WHERE occurred_at < :at AND {REQUEST_ROWS}"
+            " ORDER BY occurred_at DESC LIMIT 1",
+            {"at": at},
+        ))
 
     async def response_times_from(self, end: datetime) -> Optional[datetime]:
         """When request rows began carrying a response time (and the fallback

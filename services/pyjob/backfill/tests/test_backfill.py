@@ -102,13 +102,18 @@ def test_server_errors_and_response_time_but_no_fallbacks():
     }
     (row,) = build_day_rows(DAY, results, _lookups())
     assert (row["failed_count"], row["server_error_count"]) == (3, 2)
-    assert row["total_response_time_ms"] == 12346
+    assert (row["total_response_time_ms"], row["response_time_count"]) == (12346, 20)
     assert row["fallback_count"] == 0   # Prometheus has no record of fallbacks
 
     # Server errors are part of the failures, never more than them.
     results["server_errors"] = [_series(5, **labels)]
     (row,) = build_day_rows(DAY, results, _lookups())
     assert row["server_error_count"] == 3
+
+    # No duration series: nothing timed, so nothing in the average's divisor.
+    del results["duration"]
+    (row,) = build_day_rows(DAY, results, _lookups())
+    assert (row["total_response_time_ms"], row["response_time_count"]) == (0, 0)
 
 
 def test_unknown_application_service_and_tenant():

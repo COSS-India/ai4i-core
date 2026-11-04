@@ -56,11 +56,11 @@ async def get_fallbacks(service_id: str) -> List[str]:
 def fallback_span_attrs(requested: str) -> Dict[str, Any]:
     """The "request" span attributes of a request sent to a fallback (the
     requested service was unavailable), whether a fallback answered it or
-    every one failed. The billing consumer writes served_by_fallback onto the
+    every one failed. The billing consumer writes sent_to_fallback onto the
     request's usage_events row; requested_service_id stays on the span for
     tracing (service_id there is the fallback that answered, or the requested
     service when none did)."""
-    return {"served_by_fallback": True, "requested_service_id": requested}
+    return {"sent_to_fallback": True, "requested_service_id": requested}
 
 
 def mark_sent_to_fallback(request: Optional[Any], requested: str) -> None:

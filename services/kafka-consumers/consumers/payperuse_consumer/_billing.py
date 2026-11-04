@@ -538,7 +538,7 @@ class UsageEvent:
     output_units_cost: Decimal
     # Request rows only (from the "request" span): the request was sent to a
     # fallback service, and its duration in milliseconds.
-    served_by_fallback: bool = False
+    sent_to_fallback: bool = False
     response_time_ms: Optional[int] = None
 
 
@@ -555,7 +555,7 @@ _INSERT_USAGE_EVENT = text(
     "   tier_id, service_id, inference_type_id, task_type, unit_of_measurement, status_code,"
     "   total_units, cached_input_units, output_units,"
     "   input_units_cost, cached_input_units_cost, output_units_cost,"
-    "   served_by_fallback, response_time_ms)"
+    "   sent_to_fallback, response_time_ms)"
     " VALUES"
     "  (:correlation_id, :occurred_at, :tenant_id, :application_id, :api_key_id,"
     "   (SELECT id FROM tiers WHERE id = CAST(:tier_id AS uuid)),"
@@ -565,7 +565,7 @@ _INSERT_USAGE_EVENT = text(
     "   :status_code,"
     "   :total_units, :cached_input_units, :output_units,"
     "   :input_units_cost, :cached_input_units_cost, :output_units_cost,"
-    "   :served_by_fallback, :response_time_ms)"
+    "   :sent_to_fallback, :response_time_ms)"
     " ON CONFLICT (correlation_id, occurred_at) DO NOTHING"
 )
 
@@ -603,7 +603,7 @@ async def record_usage_event(db: AsyncSession, event: UsageEvent) -> bool:
                 "input_units_cost": event.input_units_cost,
                 "cached_input_units_cost": event.cached_input_units_cost,
                 "output_units_cost": event.output_units_cost,
-                "served_by_fallback": event.served_by_fallback,
+                "sent_to_fallback": event.sent_to_fallback,
                 "response_time_ms": event.response_time_ms,
             })
         if result.rowcount == 0:
