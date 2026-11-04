@@ -10,7 +10,6 @@ import {
   traceSchema,
   traceSearchResponseSchema,
   telemetryTraceSearchResponseSchema,
-  telemetryTraceColumnsResponseSchema,
   telemetryTraceDetailSchema,
 } from './dto/schemas/observability';
 import type {
@@ -19,7 +18,6 @@ import type {
   LogSearchResponse,
   Process,
   Span,
-  TelemetryTraceColumnsResponse,
   TelemetryTraceDetail,
   TelemetryTraceRecord,
   TelemetryTraceSearchResponse,
@@ -37,7 +35,6 @@ export type {
   TelemetrySpan,
   TelemetrySpanContext,
   TelemetryTraceColumnDef,
-  TelemetryTraceColumnsResponse,
   TelemetryTraceDetail,
   TelemetryTraceRecord,
   TelemetryTraceSearchAggregations,
@@ -256,23 +253,6 @@ const telemetryErrorMessage = (error: unknown, fallback: string): string => {
   if (detail && typeof detail === 'object') return JSON.stringify(detail);
   if (err?.message) return err.message;
   return fallback;
-};
-
-/**
- * Column catalogue for the Logs Dashboard picker.
- * GET /api/v1/telemetry/traces/columns
- */
-export const getTelemetryTraceColumns = async (): Promise<TelemetryTraceColumnsResponse> => {
-  try {
-    const response = await apiService.get(
-      telemetryUrl(apiEndpoints.telemetry.tracesColumns),
-      { timeout: 30000, responseSchema: telemetryTraceColumnsResponseSchema }
-    );
-    return response.data;
-  } catch (error: unknown) {
-    console.error('Failed to get telemetry trace columns:', error);
-    throw new Error(telemetryErrorMessage(error, 'Failed to load column options'));
-  }
 };
 
 type TelemetryTraceSearchParams = {

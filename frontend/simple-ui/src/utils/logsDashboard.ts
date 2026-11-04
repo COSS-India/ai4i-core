@@ -25,10 +25,11 @@ export const KEYWORD_MAX_LENGTH = 256;
 export const COLUMN_STORAGE_KEY = "logs-dashboard-columns";
 
 /**
- * Offline fallback matching platform-core COLUMN_DEFINITIONS (AI4IDS-3529).
- * Prefer GET /telemetry/traces/columns when the API is available.
+ * Column catalogue for the Logs Dashboard picker. Mirrors platform-core
+ * COLUMN_DEFINITIONS (AI4IDS-3529) — keep keys in sync, since traces/search
+ * rejects unknown keys in `columns`.
  */
-export const FALLBACK_COLUMN_DEFS: TelemetryTraceColumnDef[] = [
+export const LOGS_COLUMN_DEFS: TelemetryTraceColumnDef[] = [
   { key: "timestamp", label: "Timestamp", default: true, filterable: false, sortable: true, keyword_searchable: false },
   { key: "status", label: "Status", default: true, filterable: true, sortable: false, keyword_searchable: true },
   { key: "task_type", label: "Task Type", default: true, filterable: true, sortable: false, keyword_searchable: true },
@@ -40,13 +41,12 @@ export const FALLBACK_COLUMN_DEFS: TelemetryTraceColumnDef[] = [
   { key: "model", label: "Model", default: false, filterable: false, sortable: false, keyword_searchable: true },
   { key: "latency", label: "Latency (ms)", default: false, filterable: false, sortable: true, keyword_searchable: false },
   { key: "application", label: "Application", default: false, filterable: false, sortable: false, keyword_searchable: true },
-  { key: "api_key", label: "API Key", default: false, filterable: false, sortable: false, keyword_searchable: true },
   { key: "end_user", label: "End User", default: false, filterable: true, sortable: false, keyword_searchable: true },
   { key: "metadata", label: "Metadata", default: false, filterable: true, sortable: false, keyword_searchable: true },
   { key: "method", label: "Method", default: false, filterable: false, sortable: false, keyword_searchable: false },
 ];
 
-export const DEFAULT_COLUMN_KEYS = FALLBACK_COLUMN_DEFS.filter((c) => c.default).map(
+export const DEFAULT_COLUMN_KEYS = LOGS_COLUMN_DEFS.filter((c) => c.default).map(
   (c) => c.key
 );
 
