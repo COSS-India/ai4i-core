@@ -651,7 +651,6 @@ function tenantsFromResponse(
   return tenantsData.tenants;
 }
 
-
 function filterActiveTenants(
   tenantsData: { tenants?: LogsTenantOption[] } | undefined,
 ): LogsTenantOption[] {
