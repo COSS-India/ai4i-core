@@ -158,7 +158,7 @@ const containsFilter = (label: string): DataTableColumnFilterConfig => ({
  */
 const LOGS_COLUMN_FILTERS: Record<string, DataTableColumnFilterConfig> = {
   end_user: { type: "text", placeholder: "Search", helper: "Exact match on end-user ID" },
-  service: { type: "text", placeholder: "Search", helper: "Exact match on service ID" },
+  service: { type: "text", placeholder: "Search", helper: "Matches service name" },
   status_code: {
     type: "text",
     placeholder: "Search",
@@ -198,7 +198,7 @@ export const logsColumnFilterConfig = (
 /** traces/search params for per-column searches; keys follow the column catalogue. */
 export type LogsColumnFilterParams = {
   user?: string;
-  serviceId?: string;
+  service?: string;
   statusCode?: string;
   metadataKey?: string;
   metadataValue?: string;
@@ -221,7 +221,7 @@ export const columnFiltersToTraceParams = (
     .join(",");
   return {
     user: filters.end_user,
-    serviceId: filters.service,
+    service: filters.service,
     statusCode: statusCode || undefined,
     metadataKey: metadata?.key,
     metadataValue: metadata?.value,

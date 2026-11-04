@@ -270,8 +270,8 @@ type TelemetryTraceSearchParams = {
   metadataValue?: string;
   /** Keyword across all spans of a log (1–256 chars). */
   q?: string;
-  /** Exact service id on the request span. */
-  serviceId?: string;
+  /** Phrase match on the service name shown in the Service column. */
+  service?: string;
   /** Comma-separated status codes (100–599, max 10). */
   statusCode?: string;
   /** Per-column contains searches when the backend accepts them. */
@@ -316,7 +316,7 @@ function buildTraceSearchQueryParams(
     queryParams.append('metadata_value', params.metadataValue);
   }
   appendIfPresent(queryParams, 'q', params.q);
-  appendIfPresent(queryParams, 'service_id', params.serviceId);
+  appendIfPresent(queryParams, 'service', params.service);
   appendIfPresent(queryParams, 'status_code', params.statusCode);
   appendIfPresent(queryParams, 'url', params.url);
   appendIfPresent(queryParams, 'method', params.method);

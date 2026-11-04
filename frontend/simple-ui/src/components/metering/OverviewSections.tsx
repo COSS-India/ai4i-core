@@ -1,7 +1,12 @@
 import { SimpleGrid, Text, VStack } from "@chakra-ui/react";
 import React, { useMemo } from "react";
 import { METERING } from "../../config/meteringConstants";
-import type { KeyMetricsSupplement, MeteringTopN, OverviewResponse } from "../../types/metering";
+import type {
+  KeyMetricsSupplement,
+  MeteringCell,
+  MeteringTopN,
+  OverviewResponse,
+} from "../../types/metering";
 import {
   formatMeteringKpiValue,
   formatTenantLabel,
@@ -16,42 +21,71 @@ interface OverviewKpiCardsProps {
   data: OverviewResponse;
   /** When false, omit the all-institutions helper on Total Requests. */
   isPlatformWide?: boolean;
+  /** Institution Admin only: show the Fallback-served Requests card after Failed. */
+  showFallbackRequests?: boolean;
 }
 
-// Value colour per KPI: successful = green, failed = red, others neutral.
+// Value colour per KPI: successful = green, failed = red, fallback = orange, others neutral.
 const KPI_VALUE_COLORS: Record<string, string> = {
   total_requests: "gray.800",
   successful: "green.500",
   failed: "red.500",
+  fallback_requests: "orange.500",
   avg_rps: "gray.800",
 };
+
+// An increase in these KPIs is bad, so their trend is shown red.
+const INVERTED_TREND_KPIS = new Set<string>([
+  METERING.KPI.KEYS.FAILED,
+  METERING.KPI.KEYS.FALLBACK_REQUESTS,
+]);
+
+/** Drop or reposition the fallback KPI so it sits right after Failed. */
+function orderOverviewKpis(kpis: MeteringCell[], showFallbackRequests: boolean): MeteringCell[] {
+  const fallbackKey = METERING.KPI.KEYS.FALLBACK_REQUESTS;
+  const rest = kpis.filter((kpi) => kpi.key !== fallbackKey);
+  const fallback = kpis.find((kpi) => kpi.key === fallbackKey);
+  if (!showFallbackRequests || !fallback) return rest;
+  const failedIndex = rest.findIndex((kpi) => kpi.key === METERING.KPI.KEYS.FAILED);
+  // No fallback-served requests in the window is a real zero, not missing data.
+  const cell = { ...fallback, value: fallback.value ?? 0 };
+  if (failedIndex === -1) return [...rest, cell];
+  return [...rest.slice(0, failedIndex + 1), cell, ...rest.slice(failedIndex + 1)];
+}
 
 /** Top-row summary KPI cards (Total Requests, Successful, Failed, Average RPS). */
 export const OverviewKpiCards: React.FC<OverviewKpiCardsProps> = ({
   data,
   isPlatformWide = true,
-}) => (
-  <SimpleGrid columns={{ base: 1, sm: 2, lg: 4 }} spacing={4}>
-    {data.kpis.map((kpi) => {
-      const fallbackHelper =
-        kpi.key === METERING.KPI.KEYS.TOTAL_REQUESTS && !isPlatformWide
-          ? undefined
-          : METERING.KPI.HELPERS[kpi.key as keyof typeof METERING.KPI.HELPERS];
-      return (
-        <KpiCard
-          key={kpi.key}
-          label={METERING.KPI.LABELS[kpi.key as keyof typeof METERING.KPI.LABELS] ?? kpi.label}
-          value={formatMeteringKpiValue(kpi.key, kpi.value)}
-          pctChange={kpi.pct_change}
-          valueColor={KPI_VALUE_COLORS[kpi.key] ?? "gray.800"}
-          invertTrend={kpi.key === "failed"}
-          helper={kpi.helper ?? fallbackHelper}
-          tooltip={METERING.KPI.TOOLTIPS[kpi.key as keyof typeof METERING.KPI.TOOLTIPS]}
-        />
-      );
-    })}
-  </SimpleGrid>
-);
+  showFallbackRequests = false,
+}) => {
+  const kpis = useMemo(
+    () => orderOverviewKpis(data.kpis, showFallbackRequests),
+    [data.kpis, showFallbackRequests],
+  );
+  return (
+    <SimpleGrid columns={{ base: 1, sm: 2, lg: Math.max(kpis.length, 4) }} spacing={4}>
+      {kpis.map((kpi) => {
+        const fallbackHelper =
+          kpi.key === METERING.KPI.KEYS.TOTAL_REQUESTS && !isPlatformWide
+            ? undefined
+            : METERING.KPI.HELPERS[kpi.key as keyof typeof METERING.KPI.HELPERS];
+        return (
+          <KpiCard
+            key={kpi.key}
+            label={METERING.KPI.LABELS[kpi.key as keyof typeof METERING.KPI.LABELS] ?? kpi.label}
+            value={formatMeteringKpiValue(kpi.key, kpi.value)}
+            pctChange={kpi.pct_change}
+            valueColor={KPI_VALUE_COLORS[kpi.key] ?? "gray.800"}
+            invertTrend={INVERTED_TREND_KPIS.has(kpi.key)}
+            helper={kpi.helper ?? fallbackHelper}
+            tooltip={METERING.KPI.TOOLTIPS[kpi.key as keyof typeof METERING.KPI.TOOLTIPS]}
+          />
+        );
+      })}
+    </SimpleGrid>
+  );
+};
 
 interface ConsumptionOverviewSectionProps {
   data: OverviewResponse;
