@@ -4,42 +4,6 @@ from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
 
-class ColumnDefinition(BaseModel):
-    """User-facing metadata for one column in the trace search column picker."""
-    key: str
-    label: str
-    default: bool
-    filterable: bool
-    sortable: bool
-    keyword_searchable: bool
-
-
-# Static column definitions — single source of truth for the column picker.
-# span is used by _required_span_types to decide which span types to fetch per request.
-# The /traces/columns endpoint exposes only the user-facing fields via ColumnDefinition.
-COLUMN_DEFINITIONS: List[Dict[str, Any]] = [
-    {"key": "timestamp",   "label": "Timestamp",   "default": True,  "filterable": False, "sortable": True,  "keyword_searchable": False, "span": None},
-    {"key": "status",      "label": "Status",      "default": True,  "filterable": True,  "sortable": False, "keyword_searchable": True,  "span": None},
-    {"key": "task_type",   "label": "Task Type",   "default": True,  "filterable": True,  "sortable": False, "keyword_searchable": True,  "span": "model"},
-    {"key": "url",         "label": "URL",         "default": True,  "filterable": False, "sortable": True,  "keyword_searchable": True,  "span": "request"},
-    {"key": "institution", "label": "Institution", "default": True,  "filterable": True,  "sortable": False, "keyword_searchable": False, "span": None},
-    {"key": "status_code", "label": "Status Code", "default": False, "filterable": True,  "sortable": True,  "keyword_searchable": True,  "span": "request"},
-    {"key": "error",       "label": "Error",       "default": False, "filterable": False, "sortable": False, "keyword_searchable": True,  "span": "request"},
-    {"key": "service",     "label": "Service",     "default": False, "filterable": True,  "sortable": False, "keyword_searchable": True,  "span": None},
-    {"key": "model",       "label": "Model",       "default": False, "filterable": False, "sortable": False, "keyword_searchable": True,  "span": "model"},
-    {"key": "latency",     "label": "Latency (ms)","default": False, "filterable": False, "sortable": True,  "keyword_searchable": False, "span": "request"},
-    {"key": "application", "label": "Application", "default": False, "filterable": False, "sortable": False, "keyword_searchable": True,  "span": None},
-    {"key": "end_user",    "label": "End User",    "default": False, "filterable": True,  "sortable": False, "keyword_searchable": True,  "span": None},
-    {"key": "metadata",    "label": "Metadata",    "default": False, "filterable": True,  "sortable": False, "keyword_searchable": True,  "span": None},
-    {"key": "method",      "label": "Method",      "default": False, "filterable": False, "sortable": False, "keyword_searchable": False, "span": "request"},
-]
-
-VALID_COLUMN_KEYS: frozenset = frozenset(col["key"] for col in COLUMN_DEFINITIONS)
-DEFAULT_COLUMN_KEYS: frozenset = frozenset(col["key"] for col in COLUMN_DEFINITIONS if col["default"])
-COLUMN_SPAN_DEP: Dict[str, Optional[str]] = {col["key"]: col["span"] for col in COLUMN_DEFINITIONS}
-ALL_SPAN_TYPES: frozenset = frozenset({"request", "model", "ai-inference"})
-
-
 class TraceSpanContext(BaseModel):
     """Span context information."""
     trace_id: str
@@ -48,7 +12,7 @@ class TraceSpanContext(BaseModel):
 
 
 class TraceSpanAttributes(BaseModel):
-    """Flexible span attributes."""
+    """Flexible span attributes — mirrors what the inference service emits per span."""
     total_time_ms: Optional[float] = None
     url: Optional[str] = None
     method: Optional[str] = None
@@ -65,6 +29,28 @@ class TraceSpanAttributes(BaseModel):
     class Config:
         extra = "allow"
         protected_namespaces = ()
+
+
+# Column keys that differ from their TraceSpanAttributes field name.
+_COLUMN_KEY_ALIASES: Dict[str, str] = {
+    "model":   "model_name",
+    "latency": "total_time_ms",
+}
+
+# Columns sourced from span metadata, status description, or context attributes
+# — present on every span, not specific to a single span type.
+_NON_ATTR_COLUMNS: frozenset = frozenset({
+    "timestamp", "institution", "service", "error", "application", "end_user", "metadata",
+})
+
+# Derived from TraceSpanAttributes fields: swap aliased field names for their
+# column key equivalents, then add the non-attribute columns.
+VALID_COLUMN_KEYS: frozenset = (
+    (frozenset(TraceSpanAttributes.model_fields) - frozenset(_COLUMN_KEY_ALIASES.values()))
+    | frozenset(_COLUMN_KEY_ALIASES.keys())
+    | _NON_ATTR_COLUMNS
+)
+DEFAULT_COLUMN_KEYS: frozenset = frozenset({"timestamp", "status", "task_type", "url", "institution"})
 
 
 class TraceSpan(BaseModel):
