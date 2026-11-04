@@ -128,6 +128,7 @@ const SERVICE_BASE_PATHS = [
   // Catalog lives under /api/v1/notification-alerts (not …/catalog alone).
   apiEndpoints.notificationAlerts.catalog.replace(/\/catalog$/, ""),
   apiEndpoints.platform.inferenceTypes,
+  apiEndpoints.platform.configs,
 ];
 
 const extractErrorMessage = (data: any, fallback: string): string => {

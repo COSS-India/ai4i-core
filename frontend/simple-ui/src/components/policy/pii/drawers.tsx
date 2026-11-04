@@ -28,12 +28,14 @@ import {
   useDisclosure,
   Wrap,
 } from "@chakra-ui/react";
+import { useQuery } from "@tanstack/react-query";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import FieldLabel from "../../common/FieldLabel";
 import FormActions from "../../common/FormActions";
 import FormDrawer from "../../common/FormDrawer";
 import FormSection from "../../common/FormSection";
 import ReadOnlyField from "../../common/ReadOnlyField";
+import { domainCodeLabel, getDomainOptions } from "../../../services/configManagementService";
 import { getPolicyType } from "../../../services/policyHierarchyService";
 import { apiDomainName, definitionFromPolicyType, MIN_REGEX_EXAMPLES } from "./apiMap";
 import { regexCompiles } from "./detection";
@@ -998,16 +1000,7 @@ function PolicyForm({
           </FormField>
         </SimpleGrid>
         <SimpleGrid columns={{ base: 1, md: 2 }} spacingX={4} spacingY={4} alignItems="start">
-          <ChipPicker
-            label="Domain"
-            required
-            error={errors.domain}
-            placeholder="Select domains"
-            options={domains.map((d) => ({ value: d.id, label: d.name, checked: domainIds.includes(d.id) }))}
-            onCheck={(value, checked) =>
-              setDomainIds(checked ? [...domainIds, value] : domainIds.filter((id) => id !== value))
-            }
-          />
+          <DomainPicker error={errors.domain} selected={domainIds} onChange={setDomainIds} />
           <FormField label="Supported Languages" required error={errors.languages}>
             <Wrap>
               {languages.map((code) => (
@@ -1308,6 +1301,37 @@ function ModelEntityStatus({
         Retry
       </Button>
     </Text>
+  );
+}
+
+/** Domain picker over the platform's standard domain list (GET /api/v1/configs?type=domains). */
+function DomainPicker({
+  error,
+  selected,
+  onChange,
+}: Readonly<{
+  error?: string;
+  selected: string[];
+  onChange: (ids: string[]) => void;
+}>) {
+  const domainOptions = useQuery({ queryKey: ["configs", "domains"], queryFn: getDomainOptions });
+  const loadError = domainOptions.isError ? apiErrorMessage(domainOptions.error, "Couldn't load domains.") : undefined;
+  const listed = domainOptions.data ?? [];
+  // Saved domains missing from the list (or every one while it loads) still show as chips, so they can be removed.
+  const unlisted = selected.filter((code) => !listed.some((d) => d.code === code));
+  const unlistedSuffix = domainOptions.isSuccess ? " (unavailable)" : "";
+  return (
+    <ChipPicker
+      label="Domain"
+      required
+      error={error || loadError}
+      placeholder={domainOptions.isPending ? "Loading domains…" : "Select domains"}
+      options={[
+        ...listed.map((d) => ({ value: d.code, label: d.label, checked: selected.includes(d.code) })),
+        ...unlisted.map((code) => ({ value: code, label: `${domainCodeLabel(code)}${unlistedSuffix}`, checked: true })),
+      ]}
+      onCheck={(value, checked) => onChange(checked ? [...selected, value] : selected.filter((id) => id !== value))}
+    />
   );
 }
 
