@@ -7,8 +7,6 @@ from fastapi import HTTPException, status
 from app.schemas.telemetry import DEFAULT_COLUMN_KEYS, VALID_COLUMN_KEYS
 from app.services.telemetry_service import SORT_FIELD_MAP
 
-__all__ = ["SORT_FIELD_MAP"]
-
 
 def validate_metadata_and_sort_params(
     metadata_key: Optional[str],

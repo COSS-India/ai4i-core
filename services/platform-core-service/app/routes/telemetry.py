@@ -18,7 +18,12 @@ from app.utils.telemetry_params import (
     parse_status_codes,
     validate_metadata_and_sort_params,
 )
-from app.services.telemetry_service import get_trace_spans, search_traces
+from app.services.telemetry_service import (
+    get_trace_spans,
+    search_traces,
+    TraceFilterParams,
+    PaginationParams,
+)
 from app.core.exceptions import InsufficientPermissionsError
 from app.core.config import settings
 
@@ -195,28 +200,32 @@ async def search_traces_opensearch(
         result = await search_traces(
             opensearch_client,
             selected_columns=selected_columns,
-            effective_status=effective_status,
             tenant_filter=tenant_filter,
             is_admin=is_admin_user,
-            task_types=task_types,
-            user=user,
-            metadata_key=metadata_key,
-            metadata_value=metadata_value,
-            service_id=service_id,
-            status_code_list=status_code_list,
-            start_date=start_date,
-            end_date=end_date,
-            q=q,
-            sort_by=sort_by,
-            sort_order=sort_order,
-            page=page,
-            page_size=page_size,
-            method=method,
-            model=model,
-            error=error,
-            service=service,
-            url=url,
-            application=application,
+            filters=TraceFilterParams(
+                effective_status=effective_status,
+                task_types=task_types,
+                user=user,
+                metadata_key=metadata_key,
+                metadata_value=metadata_value,
+                service_id=service_id,
+                status_code_list=status_code_list,
+                start_date=start_date,
+                end_date=end_date,
+                q=q,
+                method=method,
+                model=model,
+                error=error,
+                service=service,
+                url=url,
+                application=application,
+            ),
+            pagination=PaginationParams(
+                page=page,
+                page_size=page_size,
+                sort_by=sort_by,
+                sort_order=sort_order,
+            ),
         )
 
         summary = SearchTraceSummary(

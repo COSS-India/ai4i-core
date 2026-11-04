@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from dataclasses import dataclass, field
 from typing import Optional
 
 from fastapi import HTTPException, status
@@ -149,17 +150,26 @@ def _exact_attribute_match(attribute: str, value: str) -> dict:
     return {"term": {f"{field}.keyword": {"value": value, "case_insensitive": True}}}
 
 
-def _contains_attribute_match(attribute: str, value: str) -> dict:
-    """Wildcard contains-match on one span attribute (case-insensitive).
+def _escape_wildcard(value: str) -> str:
+    """Escape OpenSearch wildcard special characters in user-supplied input."""
+    return value.replace("\\", "\\\\").replace("*", "\\*").replace("?", "\\?")
 
-    Uses .keyword with leading+trailing wildcards so partial input (e.g. 'ald'
-    finds 'emerald-model') honours the 'contains…' UX label. Falls back to
-    match_phrase for values that exceed the keyword index cap.
+
+def _contains_field_match(field: str, value: str) -> dict:
+    """Wildcard contains-match on an arbitrary field (case-insensitive).
+
+    Uses .keyword with leading+trailing wildcards so partial input honours the
+    'contains' UX label. Falls back to match_phrase for values that exceed the
+    keyword index cap.
     """
-    field = f"attributes.{attribute}"
     if len(value) > _KEYWORD_IGNORE_ABOVE:
         return {"match_phrase": {field: value}}
-    return {"wildcard": {f"{field}.keyword": {"value": f"*{value}*", "case_insensitive": True}}}
+    return {"wildcard": {f"{field}.keyword": {"value": f"*{_escape_wildcard(value)}*", "case_insensitive": True}}}
+
+
+def _contains_attribute_match(attribute: str, value: str) -> dict:
+    """Wildcard contains-match on one span attribute (case-insensitive)."""
+    return _contains_field_match(f"attributes.{attribute}", value)
 
 
 # Maps span name → {entry_key: attribute_key}.
@@ -195,6 +205,27 @@ def _apply_span_to_trace(entry: dict, span_name: str, attrs: dict) -> None:
         entry["status"] = span_status
 
 
+def _new_trace_entry(trace_id: str, source: dict, attrs: dict, tenant_filter: Optional[str]) -> dict:
+    return {
+        "trace_id":    trace_id,
+        "service":     source.get("service_name") or "ai4x-inference",
+        "task_type":   None,
+        "status":      "unknown",
+        "url":         None,
+        "latency":     None,
+        "status_code": None,
+        "tenant_id":   tenant_filter or attrs.get("tenantId") or "system",
+        "timestamp":   source.get(_TIMESTAMP_FIELD) or source.get("timestamp"),
+        "method":      None,
+        "error":       None,
+        "model_name":  None,
+        # any-span fields: captured from the first span seen for this trace
+        "app_id":   attrs.get("app_id"),
+        "end_user": attrs.get("enduser.id"),
+        "metadata": attrs.get("metadata_kv"),
+    }
+
+
 def _build_traces_map(hits: list, tenant_filter: Optional[str]) -> dict:
     """Turn a list of raw span records into one summary record per trace (log).
 
@@ -219,24 +250,7 @@ def _build_traces_map(hits: list, tenant_filter: Optional[str]) -> dict:
         attrs = source.get("attributes", {})
 
         if trace_id not in traces_map:
-            traces_map[trace_id] = {
-                "trace_id":   trace_id,
-                "service":    source.get("service_name") or "ai4x-inference",
-                "task_type":  None,
-                "status":     "unknown",
-                "url":        None,
-                "latency":    None,
-                "status_code": None,
-                "tenant_id":  tenant_filter or attrs.get("tenantId") or "system",
-                "timestamp":  source.get(_TIMESTAMP_FIELD) or source.get("timestamp"),
-                "method":     None,
-                "error":      None,
-                "model_name": None,
-                # any-span fields: captured from the first span seen for this trace
-                "app_id":   attrs.get("app_id"),
-                "end_user": attrs.get("enduser.id"),
-                "metadata": attrs.get("metadata_kv"),
-            }
+            traces_map[trace_id] = _new_trace_entry(trace_id, source, attrs, tenant_filter)
         elif source.get("service_name") and (not traces_map[trace_id]["service"] or traces_map[trace_id]["service"] == "ai4x-inference"):
             traces_map[trace_id]["service"] = source.get("service_name")
 
@@ -252,6 +266,37 @@ def _build_traces_map(hits: list, tenant_filter: Optional[str]) -> dict:
                 traces_map[trace_id]["error"] = source.get("status", {}).get("description")
 
     return traces_map
+
+
+# Maps selected_column key → (row key, base key). Columns with special logic
+# (error, status) are handled explicitly in _build_row.
+_COLUMN_TO_FIELD: dict[str, tuple[str, str]] = {
+    "timestamp":   ("timestamp",   "timestamp"),
+    "task_type":   ("task_type",   "task_type"),
+    "url":         ("url",         "url"),
+    "institution": ("tenant_id",   "tenant_id"),
+    "service":     ("service",     "service"),
+    "status_code": ("status_code", "status_code"),
+    "latency":     ("latency",     "latency"),
+    "method":      ("method",      "method"),
+    "model":       ("model",       "model_name"),
+    "application": ("application", "app_id"),
+    "end_user":    ("end_user",    "end_user"),
+    "metadata":    ("metadata",    "metadata"),
+}
+
+
+def _build_row(tid: str, base: dict, selected_columns: frozenset, is_admin: bool) -> dict:
+    row: dict = {"trace_id": tid}
+    for col in selected_columns:
+        if col == "error":
+            row["error"] = base.get("error") if is_admin else None
+        elif col == "status":
+            row["status"] = base.get("status", "unknown")
+        elif col in _COLUMN_TO_FIELD:
+            row_key, base_key = _COLUMN_TO_FIELD[col]
+            row[row_key] = base.get(base_key)
+    return row
 
 
 def _build_page_data(
@@ -271,25 +316,7 @@ def _build_page_data(
     for tid in paginated_trace_ids:
         if tid not in traces_map:
             continue
-        base = traces_map[tid]
-
-        row: dict = {"trace_id": tid}
-        if "timestamp"   in selected_columns: row["timestamp"]   = base.get("timestamp")
-        if "status"      in selected_columns: row["status"]      = base.get("status", "unknown")
-        if "task_type"   in selected_columns: row["task_type"]   = base.get("task_type")
-        if "url"         in selected_columns: row["url"]         = base.get("url")
-        if "institution" in selected_columns: row["tenant_id"]   = base.get("tenant_id")
-        if "service"     in selected_columns: row["service"]     = base.get("service")
-        if "status_code" in selected_columns: row["status_code"] = base.get("status_code")
-        if "error"       in selected_columns: row["error"]       = base.get("error") if is_admin else None
-        if "latency"     in selected_columns: row["latency"]     = base.get("latency")
-        if "method"      in selected_columns: row["method"]      = base.get("method")
-        if "model"       in selected_columns: row["model"]       = base.get("model_name")
-        if "application" in selected_columns: row["application"] = base.get("app_id")
-        if "end_user"    in selected_columns: row["end_user"]    = base.get("end_user")
-        if "metadata"    in selected_columns: row["metadata"]    = base.get("metadata")
-        result.append(row)
-
+        result.append(_build_row(tid, traces_map[tid], selected_columns, is_admin))
     return result
 
 
@@ -470,9 +497,41 @@ def _resolve_cross_span_filters(
         ids = _collect_all_trace_ids(
             opensearch_client, {"bool": {"filter": clauses}}, limit=_MAX_KEYWORD_TRACE_IDS + 1
         )
+        if len(ids) > _MAX_KEYWORD_TRACE_IDS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Too many results. Please narrow your date range or refine your search.",
+            )
         gating = _intersect_trace_id_gates(gating, ids)
 
     return gating
+
+
+def _build_task_type_clauses(task_types: str) -> list:
+    types_list = [t.strip() for t in task_types.split(",") if t.strip()]
+    if len(types_list) == 1:
+        return [{"match_phrase": {"attributes.task_type": types_list[0]}}]
+    if types_list:
+        return [{"bool": {"should": [{"match_phrase": {"attributes.task_type": t}} for t in types_list], "minimum_should_match": 1}}]
+    return []
+
+
+def _categorize_filter(attr_name: str, value: str, filter_clauses: list, span_groups: dict) -> None:
+    owner = _span_owner(attr_name)
+    if owner:
+        span_groups.setdefault(owner, []).append((attr_name, value))
+    else:
+        filter_clauses.append(_exact_attribute_match(attr_name, value))
+
+
+@dataclass
+class _SpanFilterParams:
+    method: Optional[str] = None
+    model: Optional[str] = None
+    error: Optional[str] = None
+    service: Optional[str] = None
+    url: Optional[str] = None
+    application: Optional[str] = None
 
 
 def _build_search_filter_clauses(
@@ -486,12 +545,7 @@ def _build_search_filter_clauses(
     status_code_list: list,
     needs_request_anchor: bool,
     keyword_trace_ids: Optional[list],
-    method: Optional[str] = None,
-    model: Optional[str] = None,
-    error: Optional[str] = None,
-    service: Optional[str] = None,
-    url: Optional[str] = None,
-    application: Optional[str] = None,
+    span_filters: Optional[_SpanFilterParams] = None,
 ) -> tuple[list, dict]:
     """Returns (filter_clauses, span_groups).
 
@@ -502,25 +556,10 @@ def _build_search_filter_clauses(
     """
     filter_clauses = list(base_filter_clauses)
     span_groups: dict[str, list] = {}
-
-    def _add(attr_name: str, value: str) -> None:
-        owner = _span_owner(attr_name)
-        if owner:
-            span_groups.setdefault(owner, []).append((attr_name, value))
-        else:
-            filter_clauses.append(_exact_attribute_match(attr_name, value))
+    sf = span_filters or _SpanFilterParams()
 
     if task_types:
-        types_list = [t.strip() for t in task_types.split(",") if t.strip()]
-        if len(types_list) == 1:
-            filter_clauses.append({"match_phrase": {"attributes.task_type": types_list[0]}})
-        elif types_list:
-            filter_clauses.append({
-                "bool": {
-                    "should": [{"match_phrase": {"attributes.task_type": t}} for t in types_list],
-                    "minimum_should_match": 1,
-                }
-            })
+        filter_clauses.extend(_build_task_type_clauses(task_types))
     if effective_status:
         filter_clauses.append({"match_phrase": {"attributes.status": effective_status}})
     if user is not None:
@@ -533,18 +572,18 @@ def _build_search_filter_clauses(
         filter_clauses.append(_exact_attribute_match("service_id", service_id))
     if status_code_list:
         filter_clauses.append({"terms": {"attributes.status_code": status_code_list}})
-    if method:
-        _add("method", method)
-    if model:
-        _add("model_name", model)
-    if url:
-        _add("url", url)
-    if application:
-        filter_clauses.append(_contains_attribute_match("app_id", application))
-    if error:
-        filter_clauses.append({"match_phrase": {"status.description": error}})
-    if service:
-        filter_clauses.append({"match_phrase": {"service_name": service}})
+    if sf.method:
+        _categorize_filter("method", sf.method, filter_clauses, span_groups)
+    if sf.model:
+        _categorize_filter("model_name", sf.model, filter_clauses, span_groups)
+    if sf.url:
+        _categorize_filter("url", sf.url, filter_clauses, span_groups)
+    if sf.application:
+        filter_clauses.append(_contains_attribute_match("app_id", sf.application))
+    if sf.error:
+        filter_clauses.append(_contains_field_match("status.description", sf.error))
+    if sf.service:
+        filter_clauses.append({"match_phrase": {"service_name": sf.service}})
     if needs_request_anchor:
         filter_clauses.append({"term": {"name": "request"}})
     if keyword_trace_ids is not None:
@@ -680,43 +719,81 @@ async def _compute_agg_totals(
     return agg_total, by_level, by_task, is_partial, all_traces
 
 
+def _bool_filter(clauses: list) -> dict:
+    return {"bool": {"must": clauses}} if clauses else {"match_all": {}}
+
+
+def _inline_span_filters(span_groups: dict, filter_clauses: list) -> None:
+    for filters in span_groups.values():
+        for attr, val in filters:
+            filter_clauses.append(_contains_attribute_match(attr, val))
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
+
+@dataclass
+class TraceFilterParams:
+    effective_status: Optional[str] = None
+    task_types: Optional[str] = None
+    user: Optional[str] = None
+    metadata_key: Optional[str] = None
+    metadata_value: Optional[str] = None
+    service_id: Optional[str] = None
+    status_code_list: list = field(default_factory=list)
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    q: Optional[str] = None
+    method: Optional[str] = None
+    model: Optional[str] = None
+    error: Optional[str] = None
+    service: Optional[str] = None
+    url: Optional[str] = None
+    application: Optional[str] = None
+
+
+@dataclass
+class PaginationParams:
+    page: int = 1
+    page_size: int = 20
+    sort_by: Optional[str] = None
+    sort_order: Optional[str] = None
+
 
 async def search_traces(
     opensearch_client: OpenSearchTraceClient,
     *,
     selected_columns: frozenset,
-    effective_status: Optional[str],
     tenant_filter: Optional[str],
     is_admin: bool,
-    task_types: Optional[str],
-    user: Optional[str],
-    metadata_key: Optional[str],
-    metadata_value: Optional[str],
-    service_id: Optional[str],
-    status_code_list: list,
-    start_date: Optional[str],
-    end_date: Optional[str],
-    q: Optional[str],
-    sort_by: Optional[str],
-    sort_order: Optional[str],
-    page: int,
-    page_size: int,
-    method: Optional[str] = None,
-    model: Optional[str] = None,
-    error: Optional[str] = None,
-    service: Optional[str] = None,
-    url: Optional[str] = None,
-    application: Optional[str] = None,
+    filters: TraceFilterParams,
+    pagination: PaginationParams,
 ) -> dict:
     """Execute the full trace search and return a result dict for the route to wrap.
 
     Returns keys: data, total, agg_total, by_level, by_task, is_partial.
     """
+    effective_status = filters.effective_status
+    task_types = filters.task_types
+    user = filters.user
+    metadata_key = filters.metadata_key
+    metadata_value = filters.metadata_value
+    service_id = filters.service_id
+    status_code_list = filters.status_code_list
+    start_date = filters.start_date
+    end_date = filters.end_date
+    q = filters.q
     # Non-admins cannot filter by error: the value is redacted in the response,
     # so accepting the param would let callers recover it by binary-probing.
-    if not is_admin:
-        error = None
+    error = filters.error if is_admin else None
+    method = filters.method
+    model = filters.model
+    service = filters.service
+    url = filters.url
+    application = filters.application
+    sort_by = pagination.sort_by
+    sort_order = pagination.sort_order
+    page = pagination.page
+    page_size = pagination.page_size
 
     base_filter_clauses = _build_base_filter_clauses(tenant_filter, start_date, end_date)
 
@@ -732,15 +809,12 @@ async def search_traces(
         base_filter_clauses, task_types, effective_status, user,
         metadata_key, metadata_value, service_id, status_code_list,
         needs_request_anchor, keyword_trace_ids,
-        method=method, model=model, error=error, service=service,
-        url=url, application=application,
+        _SpanFilterParams(method=method, model=model, error=error, service=service, url=url, application=application),
     )
 
     if len(span_groups) <= 1:
         # No cross-span conflict: span-exclusive filters are safe in the main query.
-        for filters in span_groups.values():
-            for attr, val in filters:
-                filter_clauses.append(_contains_attribute_match(attr, val))
+        _inline_span_filters(span_groups, filter_clauses)
     else:
         # Cross-span conflict: resolve each span group via pre-query and intersect.
         cross_span_trace_ids = _resolve_cross_span_filters(opensearch_client, base_filter_clauses, span_groups)
@@ -752,14 +826,13 @@ async def search_traces(
             base_filter_clauses, task_types, effective_status, user,
             metadata_key, metadata_value, service_id, status_code_list,
             needs_request_anchor, gating_trace_ids,
-            method=None, model=None, error=error, service=service,
-            url=None, application=None,
+            _SpanFilterParams(error=error, service=service),
         )
 
-    filter_query = {"bool": {"must": filter_clauses}} if filter_clauses else {"match_all": {}}
+    filter_query = _bool_filter(filter_clauses)
     status_clause = {"match_phrase": {"attributes.status": effective_status}}
     agg_filter_clauses = [c for c in filter_clauses if c != status_clause]
-    agg_filter_query = {"bool": {"must": agg_filter_clauses}} if agg_filter_clauses else {"match_all": {}}
+    agg_filter_query = _bool_filter(agg_filter_clauses)
 
     sort_field = SORT_FIELD_MAP.get(sort_by or "timestamp", _TIMESTAMP_FIELD)
     sort_dir = sort_order if sort_order in {"asc", "desc"} else "desc"
