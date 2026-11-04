@@ -283,7 +283,8 @@ def repo_state():
         # times recorded long before September; totals by aggregate() start.
         request_rows_from=SEP_START,
         response_times_from=SEP_START - (SEP_END - SEP_START),
-        totals={SEP_START: (1000, 4, 21)},   # start -> (requests, server errors, fallbacks)
+        totals={SEP_START: (1000, 21)},   # start -> (requests, fallbacks)
+        server_errors=(1000, 4),          # (requests, server errors) in the period
         p95=639.6,
     )
 
@@ -299,6 +300,7 @@ def repo(monkeypatch, repo_state):
     _stub_usage(monkeypatch, "response_times_from", lambda self, end: state.response_times_from)
     _stub_usage(monkeypatch, "response_time_p95", lambda self, start, end: state.p95)
     _stub_usage(monkeypatch, "aggregate", lambda self, start, end, group_by=(), **k: _agg(state.totals[start]))
+    _stub_usage(monkeypatch, "server_errors", lambda self, start, end: state.server_errors)
     return state
 
 
@@ -312,8 +314,8 @@ def _stub_usage(monkeypatch, name, side_effect):
 def _agg(totals) -> dict:
     from app.repositories.pay_per_use.metering_usage import UsageAgg
 
-    requests, server_errors, fallback = totals
-    return {(): UsageAgg(requests=requests, failed=server_errors, server_errors=server_errors, fallback=fallback)}
+    requests, fallback = totals
+    return {(): UsageAgg(requests=requests, fallback=fallback)}
 
 
 class TestCollector:
@@ -1259,7 +1261,7 @@ class TestPlatformHealth:
     async def test_recording_that_began_mid_period_covers_only_those_days(self, retention_90d, repo):
         since = datetime(2026, 9, 20, 6, 0, tzinfo=UTC)
         repo.response_times_from = since
-        repo.totals[since] = (400, 1, 20)   # requests from the 20th on
+        repo.totals[since] = (400, 20)   # requests from the 20th on
         h = (await self._collector().collect(SEP, now=AFTER_SEP)).platform_health
         assert (h.tracked_from, h.tracked_requests, h.fallbacks) == (since, 400, 20)
         assert h.fallback_rate_pct == pytest.approx(5.0)       # of the 400, not the month's 1000

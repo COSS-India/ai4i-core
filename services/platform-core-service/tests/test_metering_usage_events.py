@@ -274,23 +274,32 @@ async def _timed(session, corr: str, ms) -> None:
 class TestPlatformHealthReads:
     """The Adoption report's Platform Health reads (MeteringUsageRepository)."""
 
-    async def test_server_errors_are_the_5xx_requests_only(self, session, rollup_off):
-        await _seed(session)   # D3: 200, 502, 200; D4: 200, 429
+    @staticmethod
+    async def _seeded_server_errors(session, day: date, rolled_up: bool = False) -> tuple[int, int]:
+        """What _seed adds to server_errors() for ``day``: the read is
+        platform-wide, so other rows in the DB are subtracted. rolled_up adds
+        the day to daily_usage as rolled up before server_error_count existed."""
         repo = MeteringUsageRepository(session)
-        d3 = (await repo.aggregate(_mid(_D3), _mid(_D3 + timedelta(days=1)), tenant_id=_TENANT))[()]
-        d4 = (await repo.aggregate(_mid(_D4), _mid(_D4 + timedelta(days=1)), tenant_id=_TENANT))[()]
-        assert (d3.requests, d3.failed, d3.server_errors) == (3, 1, 1)
-        assert (d4.requests, d4.failed, d4.server_errors) == (2, 1, 0)   # a 429 is the client's
+        rng = (_mid(day), _mid(day + timedelta(days=1)))
+        before = await repo.server_errors(*rng)
+        llm = await _seed(session)
+        if rolled_up:
+            await _daily(session, day, llm, requests=3, failed=1, units=Decimal("400"))
+        after = await repo.server_errors(*rng)
+        return after[0] - before[0], after[1] - before[1]
 
-    async def test_rolled_up_days_add_server_error_count(self, session, rollup_on):
-        await _seed(session)
-        await session.execute(
-            text("UPDATE daily_usage SET server_error_count = 1 WHERE usage_date = :d AND tenant_id = :t"),
-            {"d": _D5, "t": _TENANT},
-        )
-        repo = MeteringUsageRepository(session)
-        d5 = (await repo.aggregate(_mid(_D5), _mid(_D5 + timedelta(days=1)), tenant_id=_TENANT))[()]
-        assert (d5.requests, d5.server_errors) == (4, 1)
+    async def test_server_errors_are_the_5xx_requests_only(self, session, rollup_off):
+        # D3: 200, 502, 200 (with usage rows, which aren't requests)
+        assert await self._seeded_server_errors(session, _D3) == (3, 1)
+
+    async def test_a_4xx_is_not_a_server_error(self, session, rollup_off):
+        # D4: 200, 429 (the client's error)
+        assert await self._seeded_server_errors(session, _D4) == (2, 0)
+
+    async def test_read_from_usage_events_even_on_rolled_up_days(self, session, rollup_on):
+        """A day rolled up before server_error_count existed keeps it at 0;
+        the 502 is still counted, from usage_events."""
+        assert await self._seeded_server_errors(session, _D3, rolled_up=True) == (3, 1)
 
     async def test_p95_and_when_response_times_begin(self, session, rollup_off):
         await _seed(session)

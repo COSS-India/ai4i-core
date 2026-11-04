@@ -4,9 +4,11 @@ Only figures the platform tracks are collected. Availability, provider
 count and financial-year totals are not tracked, so they are left out.
 
 Platform health (latency P95, error rate, fallback rate) comes from request
-rows in usage_events / daily_usage, the dashboard's period source, through
-MeteringUsageRepository. The error rate counts server errors and timeouts
-(status 500 or above); an empty response returns 200 and isn't counted.
+rows through MeteringUsageRepository. The error rate counts server errors and
+timeouts (status 500 or above; an empty response returns 200 and isn't
+counted), read with its requests from usage_events, which has every day's
+status codes; the fallback rate reads usage_events / daily_usage, the
+dashboard's period source.
 
 Every figure comes from one collect() run, so the email summary and the
 attached PDF always agree (a single ReportData feeds both).
@@ -408,8 +410,8 @@ class UsageReportCollector:
         usage = MeteringUsageRepository(self._core_db)
         if await usage.request_rows_from(period.start, period.end) is None:
             return None
-        total = (await usage.aggregate(period.start, period.end)).get((), UsageAgg())
-        health = PlatformHealth(requests=total.requests, server_errors=total.server_errors)
+        requests, server_errors = await usage.server_errors(period.start, period.end)
+        health = PlatformHealth(requests=requests, server_errors=server_errors)
         since = await usage.response_times_from(period.end)
         if since is None:
             return health
