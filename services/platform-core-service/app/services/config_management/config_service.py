@@ -13,8 +13,11 @@ from app.schemas.config_management.config_schema import (
 )
 
 
-async def list_configs(session: AsyncSession) -> List[ConfigItem]:
-    result = await session.execute(select(Config).order_by(Config.id))
+async def list_configs(session: AsyncSession, *, type_filter: str | None = None) -> List[ConfigItem]:
+    query = select(Config)
+    if type_filter is not None:
+        query = query.where(Config.type == type_filter.strip())
+    result = await session.execute(query.order_by(Config.id))
     return [ConfigItem.model_validate(row) for row in result.scalars().all()]
 
 
@@ -43,7 +46,7 @@ async def create_config(
     except IntegrityError as exc:
         await session.rollback()
         if "uq_configs_type" in str(exc.orig):
-            raise DuplicateEntityError(f"Config with type '{body.type}' already exists")
+            raise DuplicateEntityError(f"Config type '{body.type}'")
         raise
     await session.refresh(row)
     return ConfigItem.model_validate(row)
@@ -70,7 +73,7 @@ async def update_config(
     except IntegrityError as exc:
         await session.rollback()
         if "uq_configs_type" in str(exc.orig):
-            raise DuplicateEntityError(f"Config with type '{body.type}' already exists")
+            raise DuplicateEntityError(f"Config type '{body.type}'")
         raise
     await session.refresh(row)
     return ConfigItem.model_validate(row)

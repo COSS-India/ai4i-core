@@ -36,9 +36,11 @@ class ConfigCreate(BaseModel):
 
     @field_validator("type", mode="before")
     @classmethod
-    def type_not_blank(cls, v: Any) -> Any:
-        if isinstance(v, str) and not v.strip():
-            raise ValueError("type cannot be blank")
+    def type_strip_and_validate(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                raise ValueError("type cannot be blank")
         return v
 
     @field_validator("data", mode="before")
@@ -69,8 +71,10 @@ class ConfigUpdate(BaseModel):
         # Field explicitly sent as null → validator called with v=None → reject.
         if v is None:
             raise ValueError("type cannot be null; omit the field to leave it unchanged")
-        if isinstance(v, str) and not v.strip():
-            raise ValueError("type cannot be blank")
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                raise ValueError("type cannot be blank")
         return v
 
     @field_validator("data", mode="before")

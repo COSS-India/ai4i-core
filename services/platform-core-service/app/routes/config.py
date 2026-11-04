@@ -1,6 +1,8 @@
 """Config management endpoints — ADMIN only."""
 
-from fastapi import APIRouter, Depends, Path, Request, status
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Path, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -23,15 +25,13 @@ from app.services.config_management import config_service
 router = APIRouter(prefix="/config", tags=["Config"])
 
 
-@router.get("", response_model=ListConfigResponse, responses=error_responses(403))
+@router.get("", response_model=ListConfigResponse)
 async def list_configs(
-    request: Request,
+    type: Optional[str] = Query(None, max_length=255, description="Filter by config type (e.g. 'domain')."),
     session: AsyncSession = Depends(get_db),
 ) -> ListConfigResponse:
-    """List all config entries. Admin only."""
-    if not is_admin(request):
-        raise InsufficientPermissionsError()
-    items = await config_service.list_configs(session)
+    """List all config entries, optionally filtered by type. All authenticated roles."""
+    items = await config_service.list_configs(session, type_filter=type)
     return ListConfigResponse(success=True, data=ConfigListData(items=items))
 
 

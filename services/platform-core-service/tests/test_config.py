@@ -76,6 +76,7 @@ def _session(*, rows=None, get_return=None) -> MagicMock:
     session.add = MagicMock()
     session.commit = AsyncMock()
     session.refresh = AsyncMock()
+    session.rollback = AsyncMock()
     return session
 
 
@@ -111,6 +112,10 @@ class TestConfigCreateSchema:
     def test_type_exactly_255_chars_is_accepted(self):
         obj = ConfigCreate(type="x" * 255, data=_DOMAIN_DATA)
         assert len(obj.type) == 255
+
+    def test_type_is_stripped(self):
+        obj = ConfigCreate(type="  domain  ", data=_DOMAIN_DATA)
+        assert obj.type == "domain"
 
     def test_type_empty_string_rejected(self):
         with pytest.raises(PydanticValidationError, match="blank"):
@@ -151,6 +156,10 @@ class TestConfigUpdateSchema:
     def test_type_max_255_chars(self):
         with pytest.raises(PydanticValidationError):
             ConfigUpdate(type="x" * 256)
+
+    def test_type_is_stripped(self):
+        obj = ConfigUpdate(type="  settings  ")
+        assert obj.type == "settings"
 
     def test_type_null_rejected(self):
         # PUT {"type": null} must 422, not reach the DB as NOT NULL violation → 500.
@@ -341,7 +350,7 @@ class TestListConfigsRoute:
             _config_routes.config_service, "list_configs",
             AsyncMock(return_value=[_config_item(id=1), _config_item(id=2)]),
         )
-        resp = await _config_routes.list_configs(request=_request(), session=MagicMock())
+        resp = await _config_routes.list_configs(type=None, session=MagicMock())
         assert resp.success is True
         assert len(resp.data.items) == 2
 
@@ -349,15 +358,30 @@ class TestListConfigsRoute:
         monkeypatch.setattr(
             _config_routes.config_service, "list_configs", AsyncMock(return_value=[])
         )
-        resp = await _config_routes.list_configs(request=_request(), session=MagicMock())
+        resp = await _config_routes.list_configs(type=None, session=MagicMock())
         assert resp.data.items == []
 
-    async def test_non_admin_is_rejected(self, monkeypatch):
+    async def test_filter_by_type_passes_to_service(self, monkeypatch):
+        stub = AsyncMock(return_value=[_config_item()])
+        monkeypatch.setattr(_config_routes.config_service, "list_configs", stub)
+        await _config_routes.list_configs(type="domain", session=MagicMock())
+        _, kwargs = stub.call_args
+        assert kwargs.get("type_filter") == "domain"
+
+    async def test_no_filter_passes_none_to_service(self, monkeypatch):
         stub = AsyncMock(return_value=[])
         monkeypatch.setattr(_config_routes.config_service, "list_configs", stub)
-        with pytest.raises(InsufficientPermissionsError):
-            await _config_routes.list_configs(request=_request(is_admin=False), session=MagicMock())
-        stub.assert_not_awaited()
+        await _config_routes.list_configs(type=None, session=MagicMock())
+        _, kwargs = stub.call_args
+        assert kwargs.get("type_filter") is None
+
+    async def test_all_roles_can_list(self, monkeypatch):
+        # No permission check on list — any authenticated user passes through.
+        stub = AsyncMock(return_value=[_config_item()])
+        monkeypatch.setattr(_config_routes.config_service, "list_configs", stub)
+        resp = await _config_routes.list_configs(type=None, session=MagicMock())
+        assert resp.success is True
+        stub.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -551,7 +575,7 @@ class TestDeleteConfigRoute:
 
 
 def test_config_endpoints_registered_in_api_permissions():
-    """All 5 config endpoints must be in api_permissions.json with permissionRequired=1."""
+    """Config endpoints must be in api_permissions.json with correct permissions."""
     from pathlib import Path
 
     permissions_file = (
@@ -563,8 +587,12 @@ def test_config_endpoints_registered_in_api_permissions():
     )
     perm_map = {e["endpoint"]: e["permissionRequired"] for e in entries}
 
+    # List is open to all authenticated roles (configs.read = 120).
+    assert "GET:/api/v1/config" in perm_map
+    assert perm_map["GET:/api/v1/config"] == 120, "List must use configs.read (120), not admin sentinel"
+
+    # All mutating + get-by-id endpoints remain admin-only (sentinel = 1).
     for endpoint in [
-        "GET:/api/v1/config",
         "POST:/api/v1/config",
         "GET:/api/v1/config/{config_id}",
         "PUT:/api/v1/config/{config_id}",

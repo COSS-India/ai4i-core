@@ -205,7 +205,7 @@
     { "endpoint": "PUT:/api/v1/preferences/columns/{view_key}",            "permissionRequired": 1,  "description": "Fallback for a view with no entry of its own (admin sentinel — ADMIN only)" },
     { "endpoint": "DELETE:/api/v1/preferences/columns/{view_key}",         "permissionRequired": 1,  "description": "Fallback for a view with no entry of its own (admin sentinel — ADMIN only)" },
 
-    { "endpoint": "GET:/api/v1/config",                                   "permissionRequired": 1,  "description": "List all config entries (admin sentinel — ADMIN only)" },
+    { "endpoint": "GET:/api/v1/config",                                   "permissionRequired": 120, "description": "List all config entries (configs.read — all roles)" },
     { "endpoint": "POST:/api/v1/config",                                  "permissionRequired": 1,  "description": "Create a config entry (admin sentinel — ADMIN only)" },
     { "endpoint": "GET:/api/v1/config/{config_id}",                       "permissionRequired": 1,  "description": "Get config entry by ID (admin sentinel — ADMIN only)" },
     { "endpoint": "PUT:/api/v1/config/{config_id}",                       "permissionRequired": 1,  "description": "Update a config entry (admin sentinel — ADMIN only)" },
