@@ -168,7 +168,7 @@ class _TracePaginationQuery:
 @router.get("/traces/search", response_model=SearchTracesResponse)
 async def search_traces_opensearch(
     request: Request,
-    opensearch_client: OpenSearchTraceClient = Depends(_get_opensearch_client),
+    opensearch_client: Annotated[OpenSearchTraceClient, Depends(_get_opensearch_client)],
     base: Annotated[_TraceBaseFilters, Depends(_TraceBaseFilters)] = Depends(),
     span: Annotated[_TraceSpanFilters, Depends(_TraceSpanFilters)] = Depends(),
     paging: Annotated[_TracePaginationQuery, Depends(_TracePaginationQuery)] = Depends(),
@@ -277,7 +277,7 @@ async def search_traces_opensearch(
 async def get_trace_by_id(
     trace_id: str,
     request: Request,
-    opensearch_client: OpenSearchTraceClient = Depends(_get_opensearch_client),
+    opensearch_client: Annotated[OpenSearchTraceClient, Depends(_get_opensearch_client)],
 ):
     """
     Get a specific trace by ID from OpenSearch.
