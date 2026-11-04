@@ -18,6 +18,10 @@ from request rows the same way as request_count.
 - total_response_time_ms: the sum of response_time_ms. The average response
   time is total_response_time_ms / request_count; both are additive, so any
   period or set of rows averages by summing them.
+- server_error_count: platform-side failures, requests whose status is 500
+  or above (server errors, and timeouts, which reach the client as 502/503).
+  Part of failed_count, which also counts the client's 4xx errors; the error
+  rate is server_error_count / request_count.
 
 Percentiles (P95) are not additive across days or dimension rows, so they are
 not stored in daily_usage; they are read from usage_events.response_time_ms,
@@ -43,7 +47,7 @@ down_revision: Union[str, None] = "8fbe729b1331"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-DAILY_USAGE_COLUMNS = ("fallback_count", "total_response_time_ms")
+DAILY_USAGE_COLUMNS = ("fallback_count", "total_response_time_ms", "server_error_count")
 
 
 def upgrade() -> None:
