@@ -490,28 +490,43 @@ def _resolve_cross_span_filters(
     """Resolve a cross-span conflict into a trace-ID intersection.
 
     span_groups comes from _build_search_filter_clauses: span_owner → [(attr, value)].
-    Runs one pre-query per span group and returns the intersection of their trace IDs.
+    Runs pre-queries in selectivity order (non-request groups first) and cascades
+    each group's result IDs into the next pre-query, so a broad group like method=POST
+    is narrowed by prior selective groups before it is evaluated.
     Returns None when there is no conflict (single or empty span_groups).
     """
     if len(span_groups) <= 1:
         return None
 
+    # Non-request groups (model, url, …) are typically selective; run them first
+    # so their IDs gate the broader request-span group (method=POST matches everything).
+    ordered = sorted(span_groups.items(), key=lambda kv: 0 if kv[0] != "request" else 1)
+
     gating: Optional[list] = None
-    for span_name, filters in span_groups.items():
+    for span_name, filters in ordered:
         anchor = [{"term": {"name": span_name}}] if span_name == "request" else []
-        clauses = base_filter_clauses + anchor + [
+        # Inject accumulated gate to narrow this pre-query; skip injection when the
+        # gate is too large to use as a terms clause efficiently.
+        gate_clause = (
+            [{"terms": {_TRACE_ID_KEYWORD: gating}}]
+            if gating is not None and len(gating) <= _MAX_KEYWORD_TRACE_IDS
+            else []
+        )
+        clauses = base_filter_clauses + anchor + gate_clause + [
             _contains_attribute_match(attr, val) for attr, val in filters
         ]
         ids = _collect_all_trace_ids(
             opensearch_client, {"bool": {"filter": clauses}}, limit=_MAX_KEYWORD_TRACE_IDS + 1
         )
-        if len(ids) > _MAX_KEYWORD_TRACE_IDS:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Too many results. Please narrow your date range or refine your search.",
-            )
         gating = _intersect_trace_id_gates(gating, ids)
+        if gating is not None and len(gating) == 0:
+            return gating
 
+    if gating is not None and len(gating) > _MAX_KEYWORD_TRACE_IDS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Too many results. Please narrow your date range or refine your search.",
+        )
     return gating
 
 
@@ -834,7 +849,7 @@ async def search_traces(
             base_filter_clauses, task_types, effective_status, user,
             metadata_key, metadata_value, service_id, status_code_list,
             needs_request_anchor, gating_trace_ids,
-            _SpanFilterParams(error=error, service=service),
+            _SpanFilterParams(error=error, service=service, application=application),
         )
 
     filter_query = _bool_filter(filter_clauses)
