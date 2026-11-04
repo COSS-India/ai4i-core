@@ -58,7 +58,7 @@
   .unit { font-size: 11pt; }
   .note { color: var(--muted); font-size: 7.5pt; }
   .budget .value, .health .value { font-size: 15pt; } .budget .unit { font-size: 10pt; }
-  /* Four cards to a row: "Not available" must fit. */
+  /* Budget's four cards (Platform Health's three) to a row: "Not available" must fit. */
   .budget .value.na, .health .value.na { font-size: 11pt; line-height: 1.75; }
   .head { display: flex; justify-content: space-between; align-items: baseline; gap: 2mm; margin-bottom: 1mm; }
   .title { font-weight: 700; font-size: 9.5pt; }
@@ -111,6 +111,7 @@
 
   /* Budget */
   .fy { color: var(--muted); font-size: 8pt; margin-top: 1.5mm; }
+  .since { color: var(--muted); font-size: 8pt; margin-top: 1.5mm; }
   .meter { display: flex; height: 13px; background: var(--light); margin: 1.5mm 0 1mm; }
   .meter .spent { background: var(--navy); }
   .meter-labels { display: flex; justify-content: space-between; font-weight: 700; font-size: 9pt; color: var(--navy); }
@@ -133,7 +134,7 @@
     </div>
     {% endfor %}
   </div></div>
-  {% if health.since %}<div class="fy">{{ health.since }}</div>{% endif %}
+  {% if health.since %}<div class="since">{{ health.since }}</div>{% endif %}
 
   {# ── Model Portfolio ── #}
   <div class="gap"></div>
