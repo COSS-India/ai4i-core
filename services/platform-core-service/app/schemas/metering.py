@@ -217,6 +217,11 @@ class OverviewResponse(BaseModel):
     platform_adoption: Optional[PlatformAdoption] = None
     usage_concentration: Optional[UsageConcentration] = None
     request_volume: Optional[Graph] = None
+    # Requests a fallback (secondary) service answered in the period, for the
+    # same scope and filters as the KPIs; part of Total Requests, not added to
+    # it. 0 when there were none; None when the metering source doesn't record
+    # fallbacks (only usage_events does).
+    fallback_requests: Optional[Cell] = None
     # Earliest usage for the scoped tenant (platform-wide for an unscoped
     # admin view), UTC ISO-8601: the earlier of the first billed usage
     # (quota_usage) and the first API-key request the metering source still

@@ -40,6 +40,7 @@ _parse_task_types = _metering_route_mod._parse_task_types
 get_tenant_consumption = _metering_route_mod.get_tenant_consumption
 get_overview = _metering_route_mod.get_overview
 get_model_consumption = _metering_route_mod.get_model_consumption
+_fallback_requests_cell = _metering_route_mod._fallback_requests_cell
 
 from app.services.metering_service import MeteringService
 from app.utils.metering_promql_builder import PROMETHEUS_API_PATH_LABEL, AbsoluteRange
@@ -725,10 +726,10 @@ class TestOverviewFirstUsageAtHybrid:
         assert not any(k.startswith("metering:first-usage:") for k in _set_keys(redis))
         assert len(_overview_keys(redis)) == 1
 
-    async def test_cache_key_is_v9(self, fake_usage_repo):
+    async def test_cache_key_is_v10(self, fake_usage_repo):
         redis = _empty_redis()
         await _call_overview(self._svc(), redis=redis)
-        assert _overview_keys(redis)[0].startswith("metering:overview:v9:")
+        assert _overview_keys(redis)[0].startswith("metering:overview:v10:")
 
 
 def _redis_with(entries: dict) -> AsyncMock:
@@ -1017,3 +1018,23 @@ class TestOverviewOnboardedAt:
         assert response.degraded is False
         assert _overview_keys(redis) == []
         svc._safe_rollback_auth_db.assert_awaited_once()
+
+
+class TestFallbackRequestsCell:
+    def test_card_from_request_total(self):
+        cell = _fallback_requests_cell({"fallback_requests": {
+            "count": 12, "formatted": "12", "vs_previous_pct": 50.0,
+            "previous_count": 8, "previous_formatted": "8",
+        }})
+        assert (cell.key, cell.value, cell.previous, cell.pct_change) == ("fallback_requests", "12", "8", 50.0)
+
+    def test_zero_is_a_card_not_missing(self):
+        cell = _fallback_requests_cell({"fallback_requests": {
+            "count": 0, "formatted": "0", "vs_previous_pct": None,
+            "previous_count": 0, "previous_formatted": "0",
+        }})
+        assert cell is not None and cell.value == "0"
+
+    def test_none_when_the_source_does_not_record_fallbacks(self):
+        assert _fallback_requests_cell({"total_requests": {}}) is None
+        assert _fallback_requests_cell(None) is None

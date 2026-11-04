@@ -197,6 +197,51 @@ class TestRequestCounts:
         assert (llm["total_requests"]["count"], nmt["total_requests"]["count"]) == (3, 0)
 
 
+async def _mark_fallback(session, corr: str) -> None:
+    await session.execute(
+        text("UPDATE usage_events SET served_by_fallback = true WHERE correlation_id = :c"), {"c": corr},
+    )
+
+
+@pytest.mark.asyncio
+class TestFallbackRequests:
+    """The Institution tab's fallback-served count: part of the total, scoped
+    and filtered like it, 0 when there were none."""
+
+    async def test_counted_and_still_part_of_the_total(self, session, rollup_off):
+        await _seed(session)
+        await _mark_fallback(session, "mue-3")
+        rt = await _svc(session).request_total(True, None, None, _day_range(_D3), tenant_id=str(_TENANT))
+        assert rt["fallback_requests"]["count"] == 1
+        assert rt["total_requests"]["count"] == 3   # unchanged
+
+    async def test_zero_when_none_in_the_period(self, session, rollup_off):
+        await _seed(session)
+        await _mark_fallback(session, "mue-3")   # D3, outside the range below
+        rt = await _svc(session).request_total(True, None, None, _day_range(_D4), tenant_id=str(_TENANT))
+        assert (rt["fallback_requests"]["count"], rt["fallback_requests"]["formatted"]) == (0, "0")
+
+    async def test_only_the_scoped_institution(self, session, rollup_off):
+        await _seed(session)
+        await _mark_fallback(session, "mue-3")
+        other = await _svc(session).request_total(
+            True, None, None, _day_range(_D3), tenant_id=str(_TENANT + 1),
+        )
+        assert other["fallback_requests"]["count"] == 0
+
+    async def test_rolled_up_days_add_fallback_count(self, session, rollup_on):
+        """D5 is only in daily_usage, D3 only in usage_events: both count."""
+        await _seed(session)
+        await _mark_fallback(session, "mue-3")
+        await session.execute(
+            text("UPDATE daily_usage SET fallback_count = 2 WHERE usage_date = :d AND tenant_id = :t"),
+            {"d": _D5, "t": _TENANT},
+        )
+        week = AbsoluteRange(start=_mid(_TODAY - timedelta(days=7)), end=_mid(_TODAY))
+        rt = await _svc(session).request_total(True, None, None, week, tenant_id=str(_TENANT))
+        assert rt["fallback_requests"]["count"] == 3
+
+
 @pytest.mark.asyncio
 class TestChart:
     async def test_hourly_buckets_from_usage_events(self, session, rollup_off):

@@ -7,7 +7,9 @@ correlation ids, which a client can reuse across calls via X-Correlation-ID),
 units from usage rows (see UsageEvent), so a request is counted once whatever
 usage rows it has. Rows from before the cut-over (PRE_CUTOVER_ROWS) are
 counted by distinct correlation id, as the request they stand in for may have
-several. A request is failed when its status is 400 or above.
+several. A request is failed when its status is 400 or above. Fallback-served
+requests are request rows with served_by_fallback (daily_usage.fallback_count
+in the rollup); they are part of the request total, never added to it.
 
 Whole IST days read the daily_usage rollup when it's enabled and has the day;
 everything else — today, partial days at a range's edges, days not rolled up
@@ -40,6 +42,8 @@ _FAILED = (
     f"count(*) FILTER (WHERE {REQUEST_ROWS} AND status_code >= 400)"
     f" + count(DISTINCT correlation_id) FILTER (WHERE {PRE_CUTOVER_ROWS} AND status_code >= 400)"
 )
+# Requests a fallback service answered: request rows only (older rows predate the flag).
+_FALLBACK = f"count(*) FILTER (WHERE {REQUEST_ROWS} AND served_by_fallback)"
 
 # Grouping dimensions: (daily_usage expression, usage_events expression).
 _GROUPS = {
@@ -52,9 +56,10 @@ _GROUPS = {
 
 @dataclass
 class UsageAgg:
-    """Requests, failures and units for one group."""
+    """Requests, failures, fallback-served requests and units for one group."""
     requests: int = 0
     failed: int = 0
+    fallback: int = 0
     units: Decimal = field(default_factory=Decimal)
     cached_units: Decimal = field(default_factory=Decimal)
     output_units: Decimal = field(default_factory=Decimal)
@@ -66,6 +71,7 @@ class UsageAgg:
     def add(self, row: Any) -> None:
         self.requests += int(row.requests or 0)
         self.failed += int(row.failed or 0)
+        self.fallback += int(row.fallback or 0)
         self.units += Decimal(row.units or 0)
         self.cached_units += Decimal(row.cached_units or 0)
         self.output_units += Decimal(row.output_units or 0)
@@ -156,6 +162,7 @@ class MeteringUsageRepository:
             rows = await self._all(
                 f"SELECT usage_date AS d{', ' + select_cols if cols else ''},"
                 " sum(request_count) AS requests, sum(failed_count) AS failed,"
+                " sum(fallback_count) AS fallback,"
                 " sum(total_units) AS units, sum(cached_input_units) AS cached_units,"
                 " sum(output_units) AS output_units"
                 f" FROM daily_usage WHERE usage_date = ANY(:days){where}"
@@ -187,7 +194,7 @@ class MeteringUsageRepository:
             group_clause = f" GROUP BY {', '.join(exprs)}" if exprs else ""
             rows = await self._all(
                 f"SELECT {select_cols}"
-                f" {_REQUESTS} AS requests, {_FAILED} AS failed,"
+                f" {_REQUESTS} AS requests, {_FAILED} AS failed, {_FALLBACK} AS fallback,"
                 " sum(total_units) AS units, sum(cached_input_units) AS cached_units,"
                 " sum(output_units) AS output_units"
                 f" FROM usage_events WHERE ({' OR '.join(ranges)}){where}{group_clause}",

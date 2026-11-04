@@ -153,23 +153,39 @@ class UsageEventsMeteringService(MeteringService):
         """Total / successful / failed requests and average RPS, against the
         same span shifted back (for `today`, yesterday's same clock span).
         The previous figures are None when request rows don't cover that span,
-        as Prometheus reported them past its retention."""
+        as Prometheus reported them past its retention.
+
+        Also fallback_requests: the requests a fallback service answered,
+        already part of the total (0 when there were none). Only this store
+        records fallbacks, so the other backends leave the key out."""
         start, end, shift = self._bounds(time_range)
         tid, type_ids = _tenant_pk(tenant_id, tenant), await self._type_ids(task_types)
         seconds = max(1, round((end - start).total_seconds()))
         cur = await self._counts(start, end, tid, type_ids)
         prev_start, prev_end = start - timedelta(seconds=shift), end - timedelta(seconds=shift)
-        previous = None
+        previous = prev_fallback = None
         if await self._covered(prev_start, prev_end):
             prev = await self._counts(prev_start, prev_end, tid, type_ids)
             previous = (prev.requests, prev.successful, prev.requests / seconds)
-        return request_total_result(
+            prev_fallback = prev.fallback
+        result = request_total_result(
             cur.requests, cur.successful, round(cur.requests / seconds, 4), previous,
             filters={
                 "inference_only": inference_only, "tenant": tenant,
                 "service_id": service_id, "time_range": time_range or "all",
             },
         )
+        fmt = self._format_count
+        result["fallback_requests"] = {
+            "count": cur.fallback,
+            "formatted": fmt(cur.fallback),
+            "vs_previous_pct": (
+                round((cur.fallback - prev_fallback) / prev_fallback * 100, 1) if prev_fallback else None
+            ),
+            "previous_count": prev_fallback,
+            "previous_formatted": fmt(prev_fallback) if prev_fallback is not None else None,
+        }
+        return result
 
     async def request_volume_chart(
         self,

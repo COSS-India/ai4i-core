@@ -415,6 +415,21 @@ def _overview_kpis(rt: Optional[dict]) -> list[Cell]:
     ]
 
 
+def _fallback_requests_cell(rt: Optional[dict]) -> Optional[Cell]:
+    """The fallback-served requests card, from request_total's
+    fallback_requests; None when the source doesn't record fallbacks."""
+    fallback = (rt or {}).get("fallback_requests")
+    if fallback is None:
+        return None
+    return Cell(
+        key="fallback_requests",
+        label="Fallback-served Requests",
+        value=fallback["formatted"],
+        previous=fallback["previous_formatted"],
+        pct_change=fallback["vs_previous_pct"],
+    )
+
+
 def _platform_adoption_block(
     is_admin: bool,
     tc: Optional[dict],
@@ -597,9 +612,9 @@ async def get_overview(
     auth_type_filter = API_KEY_AUTH_TYPE
 
     ranking_active = is_admin and not scope_tenant
-    # v9: usage_events source (v8: period.dataFrom/partial; v7: onboarded_at; v6: period filter).
+    # v10: fallback_requests; v9: usage_events source (v8: period.dataFrom/partial; v7: onboarded_at; v6: period filter).
     cache_key = (
-        f"metering:overview:v9:{usage_period.cache_part}:{scope_tenant_name or 'all'}:"
+        f"metering:overview:v10:{usage_period.cache_part}:{scope_tenant_name or 'all'}:"
         f"{_caller_role_label(request)}:{','.join(task_type_filter) if task_type_filter else 'all'}"
         + (f":{limit}" if ranking_active else "")
     )
@@ -726,6 +741,7 @@ async def get_overview(
         platform_adoption=platform_adoption,
         usage_concentration=usage_conc,
         request_volume=chart,
+        fallback_requests=_fallback_requests_cell(rt),
         first_usage_at=first_usage_at,
         onboarded_at=iso_ist(onboarded_at) if onboarded_at else None,
         degraded=degraded,
