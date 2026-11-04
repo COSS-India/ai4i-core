@@ -47,10 +47,8 @@ function orderOverviewKpis(kpis: MeteringCell[], showFallbackRequests: boolean):
   const fallback = kpis.find((kpi) => kpi.key === fallbackKey);
   if (!showFallbackRequests || !fallback) return rest;
   const failedIndex = rest.findIndex((kpi) => kpi.key === METERING.KPI.KEYS.FAILED);
-  // No fallback-served requests in the window is a real zero, not missing data.
-  const cell = { ...fallback, value: fallback.value ?? 0 };
-  if (failedIndex === -1) return [...rest, cell];
-  return [...rest.slice(0, failedIndex + 1), cell, ...rest.slice(failedIndex + 1)];
+  if (failedIndex === -1) return [...rest, fallback];
+  return [...rest.slice(0, failedIndex + 1), fallback, ...rest.slice(failedIndex + 1)];
 }
 
 /** Top-row summary KPI cards (Total Requests, Successful, Failed, Average RPS). */
