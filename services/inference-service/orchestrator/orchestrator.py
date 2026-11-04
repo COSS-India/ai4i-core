@@ -16,7 +16,13 @@ from trace.request_span import (
 )
 
 from services.base.task_service import BaseTaskService
-from services.service_fallback import get_fallbacks, log_all_failed, log_failover, log_fallback_skipped
+from services.service_fallback import (
+    fallback_span_attrs,
+    get_fallbacks,
+    log_all_failed,
+    log_failover,
+    log_fallback_skipped,
+)
 from inference.inference_server_resolver import InferenceServerResolver
 from utils.failover import AllServicesUnavailableError, UpstreamUnavailableError
 from utils.http_status import http_status_for
@@ -150,6 +156,7 @@ class Orchestrator:
         served_info: Dict[str, Any],
         request: Optional[Request],
     ) -> None:
+        attrs.update(fallback_span_attrs(attrs["service_id"]))
         attrs["service_id"] = served_info.get("serviceId") or ""
         if request is not None:
             request.state.service_id = attrs["service_id"]

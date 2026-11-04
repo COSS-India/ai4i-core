@@ -20,7 +20,13 @@ from ai4i_core.context import (
 from ai4i_core.observability.utils import get_llm_cached_tokens, get_llm_usage
 from config import settings
 from inference.inference_server_resolver import InferenceServerResolver
-from services.service_fallback import get_fallbacks, log_all_failed, log_failover, log_fallback_skipped
+from services.service_fallback import (
+    get_fallbacks,
+    log_all_failed,
+    log_failover,
+    log_fallback_skipped,
+    mark_served_by_fallback,
+)
 from services.guardrail import (
     GuardrailContext,
     GuardrailError,
@@ -411,8 +417,7 @@ class OpenAIProxyService:
             tried.append(fb_id)
             status_code, body = await self._forward_traced(path, fb_url, fb_id, fb_model, fb_payload, fb_info)
             if status_code < 500:
-                if request is not None:
-                    request.state.service_id = fb_id
+                mark_served_by_fallback(request, service_id, fb_id)
                 break
             reason = self._failure_reason or "upstream_5xx"
         if fallbacks and status_code >= 500:
@@ -833,9 +838,8 @@ class OpenAIProxyService:
             tried.append(fb_id)
             kind, status_code, result = await self.proxy_stream(path=fb_url, payload=fb_payload, service_info=fb_info)
             if kind == "stream" or status_code < 500:
+                mark_served_by_fallback(request, service_id, fb_id)
                 service_id, model_name, payload, service_info = fb_id, fb_model, fb_payload, fb_info
-                if request is not None:
-                    request.state.service_id = fb_id
                 break
             reason = self._failure_reason or "upstream_5xx"
 
@@ -1089,8 +1093,7 @@ class OpenAIProxyService:
                 self._seed_model_attrs(fb_model_attrs, fb_id, fb_model)
             status_code, body = await self._post_multipart(path, fb_url, files, fb_data, fb_info)
             if status_code < 500:
-                if request is not None:
-                    request.state.service_id = fb_id
+                mark_served_by_fallback(request, service_id, fb_id)
                 break
             reason = self._failure_reason or "upstream_5xx"
 
