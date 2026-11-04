@@ -101,61 +101,77 @@ def _resolve_tenant_filter(request: Request, is_admin: bool, tenant_id: Optional
     return tenant_filter
 
 
+class _TraceBaseFilters:
+    def __init__(
+        self,
+        task_types: Optional[str] = Query(None, description="Comma-separated task type filter (e.g. nmt,llm,asr)"),
+        status_filter: Optional[str] = Query(None, description="Filter by status (success, failed) — legacy alias for `status`"),
+        tenant_id: Optional[str] = Query(None, description="Filter by tenant_id (ADMIN only for other tenants)"),
+        start_date: Optional[str] = Query(None, description="Start date in ISO format"),
+        end_date: Optional[str] = Query(None, description="End date in ISO format"),
+        q: Annotated[Optional[str], Query(min_length=1, max_length=256, description="Keyword search across all span fields")] = None,
+        log_status: Annotated[Optional[str], Query(alias="status", description="Filter by status: success or failed")] = None,
+        status_code: Annotated[Optional[str], Query(description="Comma-separated HTTP status codes 100-599, max 10 values")] = None,
+        service_id: Optional[str] = Query(None, description="Exact match on service ID"),
+    ):
+        self.task_types = task_types
+        self.status_filter = status_filter
+        self.tenant_id = tenant_id
+        self.start_date = start_date
+        self.end_date = end_date
+        self.q = q
+        self.log_status = log_status
+        self.status_code = status_code
+        self.service_id = service_id
+
+
+class _TraceSpanFilters:
+    def __init__(
+        # Annotated (not `= Query(None)`) so a direct call that omits these gets
+        # None, not a truthy FieldInfo.
+        self,
+        user: Annotated[Optional[str], Query(max_length=256, description="Exact end-user ID the caller sent as OpenAI `user`")] = None,
+        metadata_key: Annotated[Optional[str], Query(min_length=1, max_length=64, pattern=r"^[^=]+$", description="Caller metadata key (no '='); requires metadata_value")] = None,
+        metadata_value: Annotated[Optional[str], Query(max_length=512, description="Exact value for metadata_key")] = None,
+        method: Annotated[Optional[str], Query(max_length=16, description="Contains match on HTTP method (e.g. GET, POST)")] = None,
+        model: Annotated[Optional[str], Query(max_length=256, description="Contains match on model name")] = None,
+        error: Annotated[Optional[str], Query(max_length=512, description="Phrase match on error/status description")] = None,
+        service: Annotated[Optional[str], Query(max_length=256, description="Phrase match on service name")] = None,
+        url: Annotated[Optional[str], Query(max_length=512, description="Contains match on request URL")] = None,
+        application: Annotated[Optional[str], Query(max_length=256, description="Contains match on application ID")] = None,
+    ):
+        self.user = user
+        self.metadata_key = metadata_key
+        self.metadata_value = metadata_value
+        self.method = method
+        self.model = model
+        self.error = error
+        self.service = service
+        self.url = url
+        self.application = application
+
+
+class _TracePaginationQuery:
+    def __init__(
+        self,
+        page: int = Query(1, ge=1, description="Page number for pagination"),
+        page_size: int = Query(20, ge=1, le=100, description="Number of traces per page"),
+        sort_by: Optional[str] = Query(None, description="Sort field: timestamp, url, latency, status_code"),
+        sort_order: Optional[str] = Query(None, description="Sort direction: desc (default) or asc"),
+    ):
+        self.page = page
+        self.page_size = page_size
+        self.sort_by = sort_by
+        self.sort_order = sort_order
+
+
 @router.get("/traces/search", response_model=SearchTracesResponse)
 async def search_traces_opensearch(
     request: Request,
-    task_types: Optional[str] = Query(None, description="Comma-separated task type filter (e.g. nmt,llm,asr)"),
-    status_filter: Optional[str] = Query(None, description="Filter by status (success, failed) — legacy alias for `status`"),
-    tenant_id: Optional[str] = Query(None, description="Filter by tenant_id (ADMIN only for other tenants)"),
-    start_date: Optional[str] = Query(None, description="Start date in ISO format"),
-    end_date: Optional[str] = Query(None, description="End date in ISO format"),
-    page: int = Query(1, ge=1, description="Page number for pagination"),
-    page_size: int = Query(20, ge=1, le=100, description="Number of traces per page"),
     opensearch_client: OpenSearchTraceClient = Depends(_get_opensearch_client),
-    # Annotated (not `= Query(None)`) so a direct call that omits these gets
-    # None, not a truthy FieldInfo.
-    user: Annotated[Optional[str], Query(
-        max_length=256, description="Exact end-user ID the caller sent as OpenAI `user`",
-    )] = None,
-    metadata_key: Annotated[Optional[str], Query(
-        min_length=1, max_length=64, pattern=r"^[^=]+$",
-        description="Caller metadata key (no '='); requires metadata_value",
-    )] = None,
-    metadata_value: Annotated[Optional[str], Query(
-        max_length=512, description="Exact value for metadata_key",
-    )] = None,
-    q: Annotated[Optional[str], Query(
-        min_length=1, max_length=256,
-        description="Keyword search across all span fields",
-    )] = None,
-    log_status: Annotated[Optional[str], Query(
-        alias="status",
-        description="Filter by status: success or failed",
-    )] = None,
-    status_code: Annotated[Optional[str], Query(
-        description="Comma-separated HTTP status codes 100-599, max 10 values",
-    )] = None,
-    service_id: Optional[str] = Query(None, description="Exact match on service ID"),
-    sort_by: Optional[str] = Query(None, description="Sort field: timestamp, url, latency, status_code"),
-    sort_order: Optional[str] = Query(None, description="Sort direction: desc (default) or asc"),
-    method: Annotated[Optional[str], Query(
-        max_length=16, description="Contains match on HTTP method (e.g. GET, POST)",
-    )] = None,
-    model: Annotated[Optional[str], Query(
-        max_length=256, description="Contains match on model name",
-    )] = None,
-    error: Annotated[Optional[str], Query(
-        max_length=512, description="Phrase match on error/status description",
-    )] = None,
-    service: Annotated[Optional[str], Query(
-        max_length=256, description="Phrase match on service name",
-    )] = None,
-    url: Annotated[Optional[str], Query(
-        max_length=512, description="Contains match on request URL",
-    )] = None,
-    application: Annotated[Optional[str], Query(
-        max_length=256, description="Contains match on application ID",
-    )] = None,
+    base: Annotated[_TraceBaseFilters, Depends(_TraceBaseFilters)] = Depends(),
+    span: Annotated[_TraceSpanFilters, Depends(_TraceSpanFilters)] = Depends(),
+    paging: Annotated[_TracePaginationQuery, Depends(_TracePaginationQuery)] = Depends(),
     columns: Annotated[Optional[str], Query(
         description=(
             "Comma-separated column keys to include in each response row. "
@@ -178,23 +194,23 @@ async def search_traces_opensearch(
     immediately so the caller can narrow the search.
     """
     _validate_telemetry_access(request)
-    validate_metadata_and_sort_params(metadata_key, metadata_value, sort_by, sort_order)
+    validate_metadata_and_sort_params(span.metadata_key, span.metadata_value, paging.sort_by, paging.sort_order)
     selected_columns = parse_columns(columns)
-    status_code_list = parse_status_codes(status_code)
+    status_code_list = parse_status_codes(base.status_code)
     # `status` (log_status) takes precedence over the legacy `status_filter` alias
-    effective_status = log_status or status_filter
+    effective_status = base.log_status or base.status_filter
 
     try:
         is_admin_user = _is_admin(request)
-        tenant_filter = _resolve_tenant_filter(request, is_admin_user, tenant_id)
+        tenant_filter = _resolve_tenant_filter(request, is_admin_user, base.tenant_id)
 
         logger.info(
-            f"Searching traces - task_types={task_types}, status={effective_status}, "
-            f"tenant={tenant_filter}, service_id={service_id}, status_code={status_code}, "
-            f"method={method}, model={model}, url={url}, application={application}, "
-            f"error={'set' if error else None}, service={service}, "
-            f"q={'set' if q else None}, sort_by={sort_by}, sort_order={sort_order}, "
-            f"user_filter={user is not None}, metadata_filter={metadata_key is not None}"
+            f"Searching traces - task_types={base.task_types}, status={effective_status}, "
+            f"tenant={tenant_filter}, service_id={base.service_id}, status_code={base.status_code}, "
+            f"method={span.method}, model={span.model}, url={span.url}, application={span.application}, "
+            f"error={'set' if span.error else None}, service={span.service}, "
+            f"q={'set' if base.q else None}, sort_by={paging.sort_by}, sort_order={paging.sort_order}, "
+            f"user_filter={span.user is not None}, metadata_filter={span.metadata_key is not None}"
         )
 
         result = await search_traces(
@@ -204,27 +220,27 @@ async def search_traces_opensearch(
             is_admin=is_admin_user,
             filters=TraceFilterParams(
                 effective_status=effective_status,
-                task_types=task_types,
-                user=user,
-                metadata_key=metadata_key,
-                metadata_value=metadata_value,
-                service_id=service_id,
+                task_types=base.task_types,
+                user=span.user,
+                metadata_key=span.metadata_key,
+                metadata_value=span.metadata_value,
+                service_id=base.service_id,
                 status_code_list=status_code_list,
-                start_date=start_date,
-                end_date=end_date,
-                q=q,
-                method=method,
-                model=model,
-                error=error,
-                service=service,
-                url=url,
-                application=application,
+                start_date=base.start_date,
+                end_date=base.end_date,
+                q=base.q,
+                method=span.method,
+                model=span.model,
+                error=span.error,
+                service=span.service,
+                url=span.url,
+                application=span.application,
             ),
             pagination=PaginationParams(
-                page=page,
-                page_size=page_size,
-                sort_by=sort_by,
-                sort_order=sort_order,
+                page=paging.page,
+                page_size=paging.page_size,
+                sort_by=paging.sort_by,
+                sort_order=paging.sort_order,
             ),
         )
 
@@ -236,8 +252,8 @@ async def search_traces_opensearch(
         return SearchTracesResponse(
             data=result["data"],
             total=result["total"],
-            page=page,
-            pageSize=page_size,
+            page=paging.page,
+            pageSize=paging.page_size,
             aggregations={
                 "total": result["agg_total"] if effective_status else result["total"],
                 "by_level": result["by_level"],
