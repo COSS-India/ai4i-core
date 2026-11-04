@@ -10,7 +10,10 @@ Empty values follow one rule everywhere:
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Optional, Union
+from typing import TYPE_CHECKING, Optional, Union
+
+if TYPE_CHECKING:
+    from app.services.usage_report.collector import PlatformHealth
 
 NA = "Not available"
 NO_RATE = "—"
@@ -85,3 +88,25 @@ def signed_pct(value: Optional[float]) -> str:
 
 def signed_int(value: Optional[int]) -> str:
     return NA if value is None else f"{value:+d}"
+
+
+def latency_ms(value: Optional[float]) -> str:
+    """Whole milliseconds: 639.6 -> "640 ms", 4055 -> "4,055 ms"."""
+    return NO_RATE if value is None else f"{round(value):,} ms"
+
+
+def platform_health(health: Optional["PlatformHealth"]) -> dict[str, str]:
+    """The four Platform Health figures. Availability is not captured. With
+    no requests in the period the others are "—"; latency P95 and fallback
+    rate are "Not available" when the period has none recorded (see
+    PlatformHealth.tracked_from); everything is when health failed to load."""
+    values = {"availability": NA, "latency_p95": NA, "error_rate": NA, "fallback_rate": NA}
+    if health is None:
+        return values
+    if not health.requests:
+        return {**values, "latency_p95": NO_RATE, "error_rate": NO_RATE, "fallback_rate": NO_RATE}
+    values["error_rate"] = pct(health.error_rate_pct)
+    if health.tracked_from is not None:
+        values["latency_p95"] = latency_ms(health.latency_p95_ms)
+        values["fallback_rate"] = pct(health.fallback_rate_pct)
+    return values
