@@ -20,6 +20,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.core.config import settings
+from app.repositories.pay_per_use.metering_usage import MeteringUsageRepository
 from app.services.metering_service_usage_events import UsageEventsMeteringService
 from app.utils.metering_promql_builder import AbsoluteRange
 from app.utils.usage_period import IST, resolve_period
@@ -240,6 +241,50 @@ class TestFallbackRequests:
         week = AbsoluteRange(start=_mid(_TODAY - timedelta(days=7)), end=_mid(_TODAY))
         rt = await _svc(session).request_total(True, None, None, week, tenant_id=str(_TENANT))
         assert rt["fallback_requests"]["count"] == 3
+
+
+async def _timed(session, corr: str, ms) -> None:
+    await session.execute(
+        text("UPDATE usage_events SET response_time_ms = :ms WHERE correlation_id = :c"), {"c": corr, "ms": ms},
+    )
+
+
+@pytest.mark.asyncio
+class TestPlatformHealthReads:
+    """The Adoption report's Platform Health reads (MeteringUsageRepository)."""
+
+    async def test_server_errors_are_the_5xx_requests_only(self, session, rollup_off):
+        await _seed(session)   # D3: 200, 502, 200; D4: 200, 429
+        repo = MeteringUsageRepository(session)
+        d3 = (await repo.aggregate(_mid(_D3), _mid(_D3 + timedelta(days=1)), tenant_id=_TENANT))[()]
+        d4 = (await repo.aggregate(_mid(_D4), _mid(_D4 + timedelta(days=1)), tenant_id=_TENANT))[()]
+        assert (d3.requests, d3.failed, d3.server_errors) == (3, 1, 1)
+        assert (d4.requests, d4.failed, d4.server_errors) == (2, 1, 0)   # a 429 is the client's
+
+    async def test_rolled_up_days_add_server_error_count(self, session, rollup_on):
+        await _seed(session)
+        await session.execute(
+            text("UPDATE daily_usage SET server_error_count = 1 WHERE usage_date = :d AND tenant_id = :t"),
+            {"d": _D5, "t": _TENANT},
+        )
+        repo = MeteringUsageRepository(session)
+        d5 = (await repo.aggregate(_mid(_D5), _mid(_D5 + timedelta(days=1)), tenant_id=_TENANT))[()]
+        assert (d5.requests, d5.server_errors) == (4, 1)
+
+    async def test_p95_and_when_response_times_begin(self, session, rollup_off):
+        await _seed(session)
+        repo = MeteringUsageRepository(session)
+        day = (_mid(_D3), _mid(_D3 + timedelta(days=1)))
+        assert await repo.response_time_p95(*day) is None   # none recorded yet
+        for corr, ms in (("mue-1", 100), ("mue-2", 4000), ("mue-3", 200)):
+            await _timed(session, corr, ms)
+        # percentile_cont over 100, 200, 4000: 200 + 0.9 * (4000 - 200)
+        assert await repo.response_time_p95(*day) == pytest.approx(3620.0)
+        # The first timed request row (other tests' rows may be older), never
+        # one after the end it is asked about.
+        first = await repo.response_times_from(day[1])
+        assert first is not None and first <= day[0] + timedelta(hours=1, minutes=10)   # mue-1
+        assert await repo.response_times_from(datetime(2000, 1, 1, tzinfo=timezone.utc)) is None
 
 
 @pytest.mark.asyncio
