@@ -96,11 +96,11 @@ def latency_ms(value: Optional[float]) -> str:
 
 
 def platform_health(health: Optional["PlatformHealth"]) -> dict[str, str]:
-    """The four Platform Health figures. Availability is not captured. With
-    no requests in the period the others are "—"; latency P95 and fallback
-    rate are "Not available" when the period has none recorded (see
+    """The Platform Health figures; availability is not captured, so it is
+    left out. With no requests in the period they are "—"; latency P95 and
+    fallback rate are "Not available" when the period has none recorded (see
     PlatformHealth.tracked_from); everything is when health failed to load."""
-    values = {"availability": NA, "latency_p95": NA, "error_rate": NA, "fallback_rate": NA}
+    values = {"latency_p95": NA, "error_rate": NA, "fallback_rate": NA}
     if health is None:
         return values
     if not health.requests:
