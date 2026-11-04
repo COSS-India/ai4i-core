@@ -101,6 +101,27 @@ def _empty(loaded: bool, message: str) -> str:
     return message if loaded else fmt.NA
 
 
+def _health(d: ReportData) -> dict:
+    """The Platform Health cards: label and value only, so the section costs
+    one row. ``since`` is a caption for a period in which response times and
+    fallbacks began being recorded (latency P95 and fallback rate cover only
+    the days since); None otherwise."""
+    h = d.platform_health
+    v = fmt.platform_health(h)
+    since = None
+    if h is not None and h.tracked_from is not None and h.tracked_from > d.period.start:
+        since = f"Latency P95 and fallback rate are recorded from {h.tracked_from.astimezone(IST):%d %b %Y}."
+    return {
+        "cards": [
+            _card("Availability", v["availability"]),
+            _card("Latency P95", v["latency_p95"]),
+            _card("Error rate", v["error_rate"]),
+            _card("Fallback rate", v["fallback_rate"]),
+        ],
+        "since": since,
+    }
+
+
 def _models(d: ReportData) -> dict:
     active, inactive = d.active_models, d.inactive_models
     known = active is not None and inactive is not None
@@ -257,6 +278,7 @@ def report_context(data: ReportData) -> dict:
         "frequency": data.period.title,
         "date_span": data.period.date_span,
         "generated_at": f"{data.generated_at.astimezone(IST):%d %b %Y %H:%M} IST",
+        "health": _health(data),
         "models": _models(data),
         "adoption": _adoption(data),
         "budget": _budget(data),
