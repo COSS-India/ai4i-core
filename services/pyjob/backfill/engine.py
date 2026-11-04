@@ -202,72 +202,90 @@ def _whole(value: Decimal) -> Decimal:
     return value.quantize(Decimal(1), ROUND_HALF_UP)
 
 
+def _series_key(labels: dict, lookups: Lookups) -> Optional[tuple]:
+    """(tenant_id, application_id, service_id) of a series; None without a
+    numeric tenant_id. An application not in the auth DB and a service that
+    isn't an LLM service in mm_services become NULL."""
+    tenant_id = _label_int(labels.get("tenant_id"))
+    if tenant_id is None:
+        return None
+    application_id = _label_int(labels.get("application_id"))
+    if application_id not in lookups.applications:
+        application_id = None
+    service_id = labels.get("service_id") or None
+    if service_id not in lookups.services:
+        service_id = None     # not an LLM service in mm_services: no name, no price
+    return tenant_id, application_id, service_id
+
+
+def _day_totals(results: dict[str, list[dict]], lookups: Lookups) -> dict[tuple, dict[str, Decimal]]:
+    """Each query's values added up per _series_key."""
+    totals: dict[tuple, dict[str, Decimal]] = defaultdict(lambda: defaultdict(Decimal))
+    for kind, series in results.items():
+        for s in series:
+            labels = s["metric"]
+            key = _series_key(labels, lookups)
+            if key is None:
+                continue
+            name = labels.get("token_type") if kind == "tokens" else kind   # prompt / completion
+            totals[key][name] += Decimal(str(s["value"][1]))
+    return totals
+
+
+def _day_row(day: date, key: tuple, t: dict[str, Decimal], lookups: Lookups) -> Optional[dict]:
+    """One daily_usage row from a key's totals; None when it has no requests
+    and no tokens."""
+    tenant_id, application_id, service_id = key
+    requests = int(_whole(t["requests"]))
+    failed = max(0, requests - int(_whole(t["successful"])))
+    server_errors = min(failed, int(_whole(t["server_errors"])))
+    prompt, completion = _whole(t["prompt"]), _whole(t["completion"])
+    if requests == 0 and prompt + completion == 0:
+        return None
+    tenant_name, allocated_budget, tier_id = lookups.tenants.get(tenant_id, (None, None, None))
+    service = lookups.services.get(service_id)
+    return {
+        "usage_date": day,
+        "billing_month": f"{day:%Y-%m}",
+        "tenant_id": tenant_id,
+        "tenant_name": tenant_name,
+        "allocated_budget": allocated_budget,
+        "application_id": application_id,
+        "application_name": lookups.applications.get(application_id),
+        "api_key_id": lookups.single_keys.get(application_id),
+        "tier_id": tier_id if tier_id in lookups.tiers else None,
+        "tier_name": lookups.tiers.get(tier_id),
+        "service_id": service_id,
+        "service_name": service.name if service else None,
+        "model_name": service.model_name if service else None,
+        "inference_type_id": lookups.llm_type_id,
+        "task_type": "llm",
+        "unit": lookups.llm_unit,
+        "request_count": requests,
+        "success_count": requests - failed,
+        "failed_count": failed,
+        "fallback_count": 0,
+        "server_error_count": server_errors,
+        "total_response_time_ms": int(_whole(t["duration"] * 1000)),
+        # Prometheus times every request it counts; no duration, no timed requests.
+        "response_time_count": requests if t["duration"] else 0,
+        "total_units": prompt + completion,
+        "cached_input_units": Decimal(0),
+        "output_units": completion,
+        "input_units_cost": prompt * service.input_rate if service else Decimal(0),
+        "cached_input_units_cost": Decimal(0),
+        "output_units_cost": completion * service.output_rate if service else Decimal(0),
+    }
+
+
 def build_day_rows(day: date, results: dict[str, list[dict]], lookups: Lookups) -> list[dict]:
     """The day's daily_usage rows from its query results: one per institution,
     application and service. Series without a numeric tenant_id are skipped.
     An application not in the auth DB and a service that isn't an LLM service
     in mm_services become NULL before grouping, so series that end up with the
     same key add up into one row (two rows would break daily_usage's unique key)."""
-    totals: dict[tuple, dict[str, Decimal]] = defaultdict(lambda: defaultdict(Decimal))
-    for kind, series in results.items():
-        for s in series:
-            labels = s["metric"]
-            tenant_id = _label_int(labels.get("tenant_id"))
-            if tenant_id is None:
-                continue
-            application_id = _label_int(labels.get("application_id"))
-            if application_id not in lookups.applications:
-                application_id = None
-            service_id = labels.get("service_id") or None
-            if service_id not in lookups.services:
-                service_id = None     # not an LLM service in mm_services: no name, no price
-            key = (tenant_id, application_id, service_id)
-            name = labels.get("token_type") if kind == "tokens" else kind   # prompt / completion
-            totals[key][name] += Decimal(str(s["value"][1]))
-
-    rows = []
-    for (tenant_id, application_id, service_id), t in totals.items():
-        requests = int(_whole(t["requests"]))
-        failed = max(0, requests - int(_whole(t["successful"])))
-        server_errors = min(failed, int(_whole(t["server_errors"])))
-        prompt, completion = _whole(t["prompt"]), _whole(t["completion"])
-        if requests == 0 and prompt + completion == 0:
-            continue
-        tenant_name, allocated_budget, tier_id = lookups.tenants.get(tenant_id, (None, None, None))
-        service = lookups.services.get(service_id)
-        rows.append({
-            "usage_date": day,
-            "billing_month": f"{day:%Y-%m}",
-            "tenant_id": tenant_id,
-            "tenant_name": tenant_name,
-            "allocated_budget": allocated_budget,
-            "application_id": application_id,
-            "application_name": lookups.applications.get(application_id),
-            "api_key_id": lookups.single_keys.get(application_id),
-            "tier_id": tier_id if tier_id in lookups.tiers else None,
-            "tier_name": lookups.tiers.get(tier_id),
-            "service_id": service_id,
-            "service_name": service.name if service else None,
-            "model_name": service.model_name if service else None,
-            "inference_type_id": lookups.llm_type_id,
-            "task_type": "llm",
-            "unit": lookups.llm_unit,
-            "request_count": requests,
-            "success_count": requests - failed,
-            "failed_count": failed,
-            "fallback_count": 0,
-            "server_error_count": server_errors,
-            "total_response_time_ms": int(_whole(t["duration"] * 1000)),
-            # Prometheus times every request it counts; no duration, no timed requests.
-            "response_time_count": requests if t["duration"] else 0,
-            "total_units": prompt + completion,
-            "cached_input_units": Decimal(0),
-            "output_units": completion,
-            "input_units_cost": prompt * service.input_rate if service else Decimal(0),
-            "cached_input_units_cost": Decimal(0),
-            "output_units_cost": completion * service.output_rate if service else Decimal(0),
-        })
-    return rows
+    rows = (_day_row(day, key, t, lookups) for key, t in _day_totals(results, lookups).items())
+    return [row for row in rows if row is not None]
 
 
 _COLUMNS = (
