@@ -21,7 +21,7 @@ interface OverviewKpiCardsProps {
   data: OverviewResponse;
   /** When false, omit the all-institutions helper on Total Requests. */
   isPlatformWide?: boolean;
-  /** Institution Admin only: show the Fallback-served Requests card after Failed. */
+  /** Institution Admin only: show the Fallback Requests card after Failed. */
   showFallbackRequests?: boolean;
 }
 
