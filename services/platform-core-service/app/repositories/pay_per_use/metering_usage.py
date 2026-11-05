@@ -42,6 +42,11 @@ _FAILED = (
     f"count(*) FILTER (WHERE {REQUEST_ROWS} AND status_code >= 400)"
     f" + count(DISTINCT correlation_id) FILTER (WHERE {PRE_CUTOVER_ROWS} AND status_code >= 400)"
 )
+# Server errors and timeouts (status 500 or above): part of the failures.
+_SERVER_ERRORS = (
+    f"count(*) FILTER (WHERE {REQUEST_ROWS} AND status_code >= 500)"
+    f" + count(DISTINCT correlation_id) FILTER (WHERE {PRE_CUTOVER_ROWS} AND status_code >= 500)"
+)
 # Requests sent to a fallback service: request rows only (older rows predate the flag).
 _FALLBACK = f"count(*) FILTER (WHERE {REQUEST_ROWS} AND sent_to_fallback)"
 
@@ -257,6 +262,38 @@ class MeteringUsageRepository:
             " ORDER BY occurred_at DESC LIMIT 1",
             {"at": at},
         ))
+
+    async def server_errors(self, start: datetime, end: datetime) -> tuple[int, int]:
+        """(requests, server errors) in [start, end), both from usage_events,
+        which has every day's status codes. Not from daily_usage: days rolled
+        up before migration ea3961c258e4 keep server_error_count at 0."""
+        row = (await self._all(
+            f"SELECT {_REQUESTS} AS requests, {_SERVER_ERRORS} AS server_errors FROM usage_events"
+            " WHERE occurred_at >= :start AND occurred_at < :end",
+            {"start": start, "end": end},
+        ))[0]
+        return int(row.requests or 0), int(row.server_errors or 0)
+
+    async def response_times_from(self, end: datetime) -> Optional[datetime]:
+        """When request rows began carrying a response time (and the fallback
+        flag, written with it), if before ``end``; None when not yet. Walks
+        the request-row index (ix_usage_events_request_rows) in time order."""
+        return await self._scalar(
+            f"SELECT occurred_at FROM usage_events WHERE occurred_at < :end AND {REQUEST_ROWS}"
+            " AND response_time_ms IS NOT NULL ORDER BY occurred_at LIMIT 1",
+            {"end": end},
+        )
+
+    async def response_time_p95(self, start: datetime, end: datetime) -> Optional[float]:
+        """The 95th-percentile response time (ms) of the requests in
+        [start, end), failed ones included; None when none has one. Read from
+        usage_events: a percentile can't be combined from daily figures."""
+        return await self._scalar(
+            "SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY response_time_ms) FROM usage_events"
+            f" WHERE occurred_at >= :start AND occurred_at < :end AND {REQUEST_ROWS}"
+            " AND response_time_ms IS NOT NULL",
+            {"start": start, "end": end},
+        )
 
     async def first_usage(self, tenant_id: Optional[int]) -> Optional[datetime]:
         """When API-key usage begins: the tenant's first usage_events row (by

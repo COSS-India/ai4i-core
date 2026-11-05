@@ -20,6 +20,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.core.config import settings
+from app.repositories.pay_per_use.metering_usage import MeteringUsageRepository
 from app.services.metering_service_usage_events import UsageEventsMeteringService
 from app.utils.metering_promql_builder import AbsoluteRange
 from app.utils.usage_period import IST, resolve_period
@@ -261,6 +262,59 @@ class TestFallbackRequests:
         week = AbsoluteRange(start=_mid(_TODAY - timedelta(days=7)), end=_mid(_TODAY))
         rt = await _svc(session).request_total(True, None, None, week, tenant_id=str(_TENANT))
         assert rt["fallback_requests"]["count"] == 3
+
+
+async def _timed(session, corr: str, ms) -> None:
+    await session.execute(
+        text("UPDATE usage_events SET response_time_ms = :ms WHERE correlation_id = :c"), {"c": corr, "ms": ms},
+    )
+
+
+@pytest.mark.asyncio
+class TestPlatformHealthReads:
+    """The Adoption report's Platform Health reads (MeteringUsageRepository)."""
+
+    @staticmethod
+    async def _seeded_server_errors(session, day: date, rolled_up: bool = False) -> tuple[int, int]:
+        """What _seed adds to server_errors() for ``day``: the read is
+        platform-wide, so other rows in the DB are subtracted. rolled_up adds
+        the day to daily_usage as rolled up before server_error_count existed."""
+        repo = MeteringUsageRepository(session)
+        rng = (_mid(day), _mid(day + timedelta(days=1)))
+        before = await repo.server_errors(*rng)
+        llm = await _seed(session)
+        if rolled_up:
+            await _daily(session, day, llm, requests=3, failed=1, units=Decimal("400"))
+        after = await repo.server_errors(*rng)
+        return after[0] - before[0], after[1] - before[1]
+
+    async def test_server_errors_are_the_5xx_requests_only(self, session, rollup_off):
+        # D3: 200, 502, 200 (with usage rows, which aren't requests)
+        assert await self._seeded_server_errors(session, _D3) == (3, 1)
+
+    async def test_a_4xx_is_not_a_server_error(self, session, rollup_off):
+        # D4: 200, 429 (the client's error)
+        assert await self._seeded_server_errors(session, _D4) == (2, 0)
+
+    async def test_read_from_usage_events_even_on_rolled_up_days(self, session, rollup_on):
+        """A day rolled up before server_error_count existed keeps it at 0;
+        the 502 is still counted, from usage_events."""
+        assert await self._seeded_server_errors(session, _D3, rolled_up=True) == (3, 1)
+
+    async def test_p95_and_when_response_times_begin(self, session, rollup_off):
+        await _seed(session)
+        repo = MeteringUsageRepository(session)
+        day = (_mid(_D3), _mid(_D3 + timedelta(days=1)))
+        assert await repo.response_time_p95(*day) is None   # none recorded yet
+        for corr, ms in (("mue-1", 100), ("mue-2", 4000), ("mue-3", 200)):
+            await _timed(session, corr, ms)
+        # percentile_cont over 100, 200, 4000: 200 + 0.9 * (4000 - 200)
+        assert await repo.response_time_p95(*day) == pytest.approx(3620.0)
+        # The first timed request row (other tests' rows may be older), never
+        # one after the end it is asked about.
+        first = await repo.response_times_from(day[1])
+        assert first is not None and first <= day[0] + timedelta(hours=1, minutes=10)   # mue-1
+        assert await repo.response_times_from(datetime(2000, 1, 1, tzinfo=timezone.utc)) is None
 
 
 @pytest.mark.asyncio
