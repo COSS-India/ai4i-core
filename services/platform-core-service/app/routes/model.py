@@ -4,16 +4,24 @@ Model management API endpoints.
 
 import logging
 import re
-from typing import Optional
+from datetime import date, datetime
+from typing import Annotated, Any, Dict, FrozenSet, List, Optional
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.utils.route_helpers import DATE_PARAM_HELP, DateOrDatetime, range_end_exclusive, range_start, split_csv
 from app.core.exceptions import ValidationError
 from app.dependencies.services import ModelService, get_model_service
+from app.repositories.model_management.model_repository import ModelListFilters
 from app.schemas.common import MessageMeta, error_responses
 from app.schemas.enums.model_management import VersionStatusEnum
+from app.schemas.model_management.model_columns import (
+    COLUMN_FIELDS_MAP,
+    SORTABLE_KEYS,
+    response_fields_for,
+)
 from app.services.pay_per_use import inference_type_cache
 from app.schemas.model_management.model import (
     CreateModelData,
@@ -41,6 +49,135 @@ _MODEL_ID_RE = re.compile(r"^(?=.*[a-zA-Z0-9])[a-zA-Z0-9/_-]+$")
 _MODEL_ID_MAX_LEN = 255
 
 
+def _select_fields(item: Dict[str, Any], fields: FrozenSet[str]) -> Dict[str, Any]:
+    return {k: v for k, v in item.items() if k in fields}
+
+
+def _parse_columns(columns: Optional[str]) -> Optional[FrozenSet[str]]:
+    """Selected column ids; None means return the full item."""
+    if not columns:
+        return None
+    requested = {p.strip() for p in columns.split(",") if p.strip()}
+    if not requested:
+        return None
+    valid = frozenset(COLUMN_FIELDS_MAP)
+    unknown = requested - valid
+    if unknown:
+        raise ValidationError(
+            message=(
+                f"Unknown column keys: {', '.join(sorted(unknown))}. "
+                f"Valid keys: {', '.join(sorted(valid))}"
+            ),
+            code="INVALID_COLUMNS",
+        )
+    return frozenset(requested)
+
+
+def _validate_sort(sort_by: Optional[str], sort_order: str) -> None:
+    if sort_by is not None and sort_by not in SORTABLE_KEYS:
+        raise ValidationError(
+            message=f"sort_by must be one of: {', '.join(sorted(SORTABLE_KEYS))}",
+            code="INVALID_SORT_BY",
+        )
+    if sort_order not in {"asc", "desc"}:
+        raise ValidationError(message="sort_order must be 'asc' or 'desc'", code="INVALID_SORT_ORDER")
+
+
+def _validate_date_range(created_from: Any, created_to: Any) -> None:
+    if created_from is not None and created_to is not None:
+        if range_start(created_from) >= range_end_exclusive(created_to):
+            raise ValidationError(
+                message="created_from must not be after created_to",
+                code="INVALID_DATE_RANGE",
+            )
+
+
+class ModelListFilterParams:
+    """Query-param dependency: the filter half of GET /models/list."""
+
+    def __init__(
+        self,
+        name: Annotated[
+            Optional[str],
+            Query(description="Case-insensitive 'contains' match on the model name."),
+        ] = None,
+        version: Annotated[
+            Optional[str],
+            Query(description="Case-insensitive 'contains' match on the model version."),
+        ] = None,
+        task_types: Annotated[
+            Optional[str],
+            Query(description="Comma-separated task types to include."),
+        ] = None,
+        provider_name: Annotated[
+            Optional[str],
+            Query(description="Case-insensitive 'contains' match on the provider (submitter) name."),
+        ] = None,
+        version_status: Annotated[
+            Optional[str],
+            Query(description="Filter by version status: 'active' or 'deprecated'."),
+        ] = None,
+        created_from: Annotated[
+            Optional[DateOrDatetime],
+            Query(description="Models created at or after this point. " + DATE_PARAM_HELP),
+        ] = None,
+        created_to: Annotated[
+            Optional[DateOrDatetime],
+            Query(description="Models created before this point. " + DATE_PARAM_HELP),
+        ] = None,
+        include_deprecated: Annotated[
+            bool,
+            Query(description="Include deprecated versions. Ignored when version_status is set."),
+        ] = True,
+        created_by: Annotated[
+            Optional[str],
+            Query(description="Filter by user ID who created the model."),
+        ] = None,
+    ) -> None:
+        self.name = name
+        self.version = version
+        self.task_types = task_types
+        self.provider_name = provider_name
+        self.version_status = version_status
+        self.created_from = created_from
+        self.created_to = created_to
+        self.include_deprecated = include_deprecated
+        self.created_by = created_by
+
+
+class ModelListSortParams:
+    """Query-param dependency: the sort and pagination half of GET /models/list."""
+
+    def __init__(
+        self,
+        sort_by: Annotated[
+            Optional[str],
+            Query(
+                description=(
+                    "Column id to sort by: " + ", ".join(sorted(SORTABLE_KEYS)) + ". "
+                    "Default: newest first."
+                ),
+            ),
+        ] = None,
+        sort_order: Annotated[
+            str,
+            Query(description="Sort direction when sort_by is given: asc (default) or desc."),
+        ] = "asc",
+        offset: Annotated[
+            int,
+            Query(ge=0, description="Number of items to skip (for pagination)."),
+        ] = 0,
+        limit: Annotated[
+            int,
+            Query(ge=1, le=1000, description="Maximum number of items to return. Defaults to 100."),
+        ] = 100,
+    ) -> None:
+        self.sort_by = sort_by
+        self.sort_order = sort_order
+        self.offset = offset
+        self.limit = limit
+
+
 def _validate_model_id(model_id: str) -> str:
     """Reject a structurally invalid model_id before any DB lookup is attempted
     (AI4IDS-1932) — mirrors ServiceCreateRequest._validate_service_id's format
@@ -59,74 +196,72 @@ def _validate_model_id(model_id: str) -> str:
     return model_id
 
 
-@router.get("")
+@router.get("", response_model_exclude_unset=True)
 async def list_models(
     response: Response,
-    task_types: Optional[str] = Query(
-        None,
-        description="Comma-separated task types to include. A single value is a one-element list.",
-    ),
-    include_deprecated: bool = Query(
-        True,
-        description="Include deprecated versions.",
-    ),
-    version_status: Optional[str] = Query(
-        None,
-        description="Filter by version status: 'active' or 'deprecated'. Overrides include_deprecated.",
-    ),
-    model_name: Optional[str] = Query(
-        None,
-        description="Filter by exact model name (returns all versions).",
-    ),
-    created_by: Optional[str] = Query(
-        None,
-        description="Filter by user ID who created the model.",
-    ),
-    offset: int = Query(
-        0,
-        ge=0,
-        description="Number of items to skip (for pagination).",
-    ),
-    limit: int = Query(
-        100,
-        ge=1,
-        le=1000,
-        description="Maximum number of items to return. Defaults to 100.",
-    ),
-    svc: ModelService = Depends(get_model_service),
-    db: AsyncSession = Depends(get_db),
+    db: Annotated[AsyncSession, Depends(get_db)],
+    svc: Annotated[ModelService, Depends(get_model_service)],
+    filters: Annotated[ModelListFilterParams, Depends()],
+    paging: Annotated[ModelListSortParams, Depends()],
+    columns: Annotated[
+        Optional[str],
+        Query(
+            description=(
+                "Comma-separated column ids (as returned by the model-column config entry); "
+                "each row then carries only the fields those columns need. "
+                "Omit to return the full item."
+            ),
+        ),
+    ] = None,
 ) -> ListModelsResponse:
-    """List models with optional filters and offset/limit pagination."""
+    """List models with optional filters, sorting and offset/limit pagination."""
+    sort_by = paging.sort_by or None
+    _validate_sort(sort_by, paging.sort_order)
+    _validate_date_range(filters.created_from, filters.created_to)
+    selected = _parse_columns(columns)
+
     valid_version_statuses = [e.value.lower() for e in VersionStatusEnum]
-    if version_status is not None and version_status not in valid_version_statuses:
-        raise ValidationError(f"Invalid version_status. Accepted values are: {valid_version_statuses}.")
-    # ONE task-type filter param: a drill-down is just a one-element list, so a
-    # separate single param would only recreate union/precedence ambiguity.
-    # Parsed leniently: names outside the catalogue (e.g. entries with no
-    # registered models) are skipped rather than failing the whole request —
-    # they can't match any row anyway.
-    #
-    # The allowlist is the live catalogue, not TaskTypeEnum. Only the validation
-    # source changed: mm_models/mm_services are still filtered by name, since
-    # their task type is a JSONB string, not a foreign key.
-    _task_types = []
+    if filters.version_status is not None and filters.version_status not in valid_version_statuses:
+        raise ValidationError(
+            f"Invalid version_status. Accepted values are: {valid_version_statuses}."
+        )
+
+    task_types = split_csv(filters.task_types)
     if task_types:
         valid = {entry["name"] for entry in await inference_type_cache.get_all(db)}
-        _task_types = [t.strip().lower() for t in task_types.split(",") if t.strip().lower() in valid]
-    items, total = await svc.list_models(
-        task_types=_task_types or None,
-        include_deprecated=include_deprecated,
-        version_status=version_status,
-        model_name=model_name,
-        created_by=created_by,
-        offset=offset,
-        limit=limit,
+        task_types = [t for t in task_types if t in valid]
+
+    model_filters = ModelListFilters(
+        name=filters.name or None,
+        version=filters.version or None,
+        task_types=task_types or None,
+        provider_name=filters.provider_name or None,
+        version_status=filters.version_status,
+        created_from=filters.created_from,
+        created_to=filters.created_to,
+        include_deprecated=filters.include_deprecated,
+        created_by=filters.created_by,
     )
+
+    include_service_count = selected is None or "noOfServices" in selected
+    items, total = await svc.list_models(
+        filters=model_filters,
+        sort_by=sort_by,
+        sort_order=paging.sort_order,
+        include_service_count=include_service_count,
+        offset=paging.offset,
+        limit=paging.limit,
+    )
+
+    if selected is not None:
+        fields = response_fields_for(selected)
+        items = [_select_fields(i, fields) for i in items]
+
     response.headers["X-Total-Count"] = str(total)
     return ListModelsResponse(
         success=True,
         data=items,
-        meta=ModelListMeta(total=total, offset=offset, limit=limit),
+        meta=ModelListMeta(total=total, offset=paging.offset, limit=paging.limit),
     )
 
 

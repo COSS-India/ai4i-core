@@ -754,6 +754,7 @@ class ModelResponse(BaseSchema):
     isMultilingual: bool = False
     domain: List[str] = Field(default_factory=list)
     submitter: Optional[Submitter] = None
+    providerName: Optional[str] = None
     license: Optional[str] = None
     licenseUrl: Optional[str] = None
     adapterConfig: Optional[AdapterConfigSchema] = None
@@ -772,7 +773,9 @@ class ModelResponse(BaseSchema):
 
 
 class ModelListItem(ModelResponse):
-    """One row in a list response — same shape as ModelResponse for now."""
+    """One row in a list response — extends ModelResponse with list-only fields."""
+
+    noOfServices: Optional[int] = None
 
 
 class ModelListResponse(BaseSchema):
@@ -820,7 +823,7 @@ class ModelListMeta(BaseSchema):
 class ListModelsResponse(SuccessResponseWithMeta):
     """GET /models"""
 
-    data: List[ModelResponse]
+    data: List[Dict[str, Any]]
     meta: ModelListMeta
 
 
