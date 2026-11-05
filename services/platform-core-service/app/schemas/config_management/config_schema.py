@@ -5,8 +5,17 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.common import MessageMeta, SuccessResponse, SuccessResponseWithMeta
 
-_EXAMPLE_TYPE = "domain"
-_EXAMPLE_DATA = ["healthcare", "global", "general"]
+_EXAMPLE_TYPE = "model-column"
+_EXAMPLE_DATA = [
+    {"key": "name", "label": "Name", "required": True},
+    {"key": "version", "label": "Version", "required": True},
+    {"key": "taskType", "label": "Task Type", "required": True},
+    {"key": "providerName", "label": "Provider Name", "required": True},
+    {"key": "status", "label": "Status", "required": False},
+    {"key": "createdAt", "label": "Created At", "required": False},
+    {"key": "noOfServices", "label": "No. of Services", "required": False},
+    {"key": "actions", "label": "Actions", "required": True},
+]
 _EXAMPLE_USER = "user-uuid-or-username"
 _EXAMPLE_TS = "2026-11-04T10:00:00Z"
 

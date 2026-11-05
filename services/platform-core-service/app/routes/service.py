@@ -3,16 +3,15 @@ Service management API endpoints.
 """
 
 import logging
-from datetime import date, datetime
 from typing import Annotated, Any, Dict, FrozenSet, List, Optional, Union
 
 from fastapi import APIRouter, Depends, Query, Request, Response
-from pydantic import BeforeValidator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import importlib as _importlib
 
 from app.core.database import get_db
+from app.utils.route_helpers import DATE_PARAM_HELP, DateOrDatetime, split_csv
 from app.core.exceptions import AppError, ValidationError
 from app.core.permissions import is_platform_admin
 from app.dependencies.services import ServiceService, get_service_service
@@ -166,25 +165,6 @@ async def list_try_it_services(
     )
 
 
-def _parse_date_or_datetime(value: Any) -> Any:
-    """A bare YYYY-MM-DD stays a calendar date (a whole UTC day); anything with
-    a time is a datetime that keeps its UTC offset. Pydantic's own union would
-    read 2026-01-05T00:00:00+05:30 as the date 2026-01-05 and drop the offset."""
-    if not isinstance(value, str):
-        return value
-    value = value.strip()
-    if len(value) == 10:
-        return date.fromisoformat(value)
-    return datetime.fromisoformat(value)
-
-
-DateOrDatetime = Annotated[date | datetime, BeforeValidator(_parse_date_or_datetime)]
-
-_DATE_PARAM_HELP = (
-    "Either an ISO date (YYYY-MM-DD, a whole UTC day) or an ISO datetime with offset "
-    "(e.g. 2026-01-05T00:00:00+05:30, an exact instant; no offset means UTC). "
-    "URL-encode '+' as %2B."
-)
 
 
 class ServiceListFilterParams:
@@ -240,7 +220,7 @@ class ServiceListFilterParams:
             Query(
                 description=(
                     "Services created at or after this point: the start of the day for a date, "
-                    "the instant itself for a datetime. " + _DATE_PARAM_HELP + " Admin/moderator only."
+                    "the instant itself for a datetime. " + DATE_PARAM_HELP + " Admin/moderator only."
                 ),
             ),
         ] = None,
@@ -250,7 +230,7 @@ class ServiceListFilterParams:
                 description=(
                     "Services created before this point: up to and including the day for a date, "
                     "strictly before the instant for a datetime (send the next day's local midnight). "
-                    + _DATE_PARAM_HELP + " Must not be before created_from. Admin/moderator only."
+                    + DATE_PARAM_HELP + " Must not be before created_from. Admin/moderator only."
                 ),
             ),
         ] = None,
@@ -259,7 +239,7 @@ class ServiceListFilterParams:
             Query(
                 description=(
                     "Services published at or after this point: the start of the day for a date, "
-                    "the instant itself for a datetime. " + _DATE_PARAM_HELP + " Admin/moderator only."
+                    "the instant itself for a datetime. " + DATE_PARAM_HELP + " Admin/moderator only."
                 ),
             ),
         ] = None,
@@ -269,7 +249,7 @@ class ServiceListFilterParams:
                 description=(
                     "Services published before this point: up to and including the day for a date, "
                     "strictly before the instant for a datetime (send the next day's local midnight). "
-                    + _DATE_PARAM_HELP + " Must not be before published_from. Admin/moderator only."
+                    + DATE_PARAM_HELP + " Must not be before published_from. Admin/moderator only."
                 ),
             ),
         ] = None,
@@ -332,7 +312,7 @@ class ServiceListSortParams:
 
 def _parse_columns(columns: Optional[str], is_admin: bool) -> Optional[FrozenSet[str]]:
     """Selected column ids plus the mandatory ones; None means the full item."""
-    requested = set(_split_csv(columns))
+    requested = set(split_csv(columns))
     if not requested:
         return None
     unknown = requested - VALID_COLUMN_KEYS
@@ -396,11 +376,6 @@ def _validate_date_ranges(filters: ServiceListFilterParams) -> None:
             )
 
 
-def _split_csv(value: Optional[str]) -> List[str]:
-    """Split a comma-separated query value into stripped, lowercased, non-empty items."""
-    if not value:
-        return []
-    return [part for part in (p.strip().lower() for p in value.split(",")) if part]
 
 
 async def _resolve_task_types(task_types: Optional[str], db: AsyncSession) -> List[str]:
@@ -413,7 +388,7 @@ async def _resolve_task_types(task_types: Optional[str], db: AsyncSession) -> Li
     # The allowlist is the live catalogue, not TaskTypeEnum. Only the validation
     # source changed: mm_models/mm_services are still filtered by name, since
     # their task type is a JSONB string, not a foreign key.
-    requested = _split_csv(task_types)
+    requested = split_csv(task_types)
     if not requested:
         return []
     valid = {entry["name"] for entry in await inference_type_cache.get_all(db)}
@@ -454,7 +429,7 @@ async def list_services(
     _reject_admin_only_filters(filters, is_admin)
     _validate_date_ranges(filters)
     task_types = await _resolve_task_types(filters.task_types, db)
-    tier_ids = _split_csv(filters.tier_ids) or None
+    tier_ids = split_csv(filters.tier_ids) or None
     # A non-admin filters by tier to pick from what their Tier can call (the
     # Application fallback picker): published services only, whatever was sent.
     is_published = True if (tier_ids and not is_admin) else filters.is_published
