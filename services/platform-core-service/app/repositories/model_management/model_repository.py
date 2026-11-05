@@ -5,14 +5,132 @@ Pure data-access — no business rules, no HTTP concerns. Returns ORM
 instances or scalars; the caller decides how to surface them.
 """
 
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass, replace
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
-from sqlalchemy import case, delete, desc, func, select, update
+from sqlalchemy import asc, case, delete, desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.model_management.model import Model, VersionStatus
+from app.models.model_management.service import Service
+
+
+@dataclass
+class ModelListFilters:
+    """Filters shared by ModelRepository.list_models / count_models."""
+
+    name: Optional[str] = None
+    version: Optional[str] = None
+    task_types: Optional[List[str]] = None
+    provider_name: Optional[str] = None
+    version_status: Optional[str] = None
+    created_from: "date | datetime | None" = None
+    created_to: "date | datetime | None" = None
+    created_by: Optional[str] = None
+    include_deprecated: bool = True
+
+
+def _escape_like(value: str) -> str:
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _contains(column, value: str):
+    """Case-insensitive substring match with LIKE wildcards escaped."""
+    return column.ilike(f"%{_escape_like(value)}%", escape="\\")
+
+
+def _range_start(value: "date | datetime") -> datetime:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
+
+
+def _range_end_exclusive(value: "date | datetime") -> datetime:
+    if isinstance(value, datetime):
+        return _range_start(value)
+    return _range_start(value) + timedelta(days=1)
+
+
+def _apply_model_filters(stmt, filters: ModelListFilters):
+    """Single source of truth for model list/count WHERE clauses."""
+    f = filters
+    if f.task_types:
+        stmt = stmt.where(
+            func.lower(Model.task["type"].astext).in_([t.lower() for t in f.task_types])
+        )
+    if f.name:
+        stmt = stmt.where(_contains(Model.name, f.name))
+    if f.version:
+        stmt = stmt.where(_contains(Model.version, f.version))
+    if f.provider_name:
+        stmt = stmt.where(_contains(Model.submitter["name"].astext, f.provider_name))
+    if f.version_status == "active":
+        stmt = stmt.where(Model.version_status == VersionStatus.ACTIVE)
+    elif f.version_status == "deprecated":
+        stmt = stmt.where(Model.version_status == VersionStatus.DEPRECATED)
+    elif not f.include_deprecated:
+        stmt = stmt.where(Model.version_status == VersionStatus.ACTIVE)
+    if f.created_by is not None:
+        stmt = stmt.where(Model.created_by == f.created_by)
+    if f.created_from is not None:
+        stmt = stmt.where(Model.created_at >= _range_start(f.created_from))
+    if f.created_to is not None:
+        stmt = stmt.where(Model.created_at < _range_end_exclusive(f.created_to))
+    return stmt
+
+
+def _sort_model_expressions() -> Dict[str, Any]:
+    service_count = (
+        select(func.count(Service.id))
+        .where(Service.model_id == Model.model_id)
+        .where(Service.deleted_at.is_(None))
+        .scalar_subquery()
+    )
+    return {
+        "name": Model.name,
+        "version": Model.version,
+        "taskType": func.lower(Model.task["type"].astext),
+        "providerName": func.lower(Model.submitter["name"].astext),
+        "status": Model.version_status,
+        "createdAt": Model.created_at,
+        "noOfServices": service_count,
+    }
+
+
+def _model_list_order_by(sort_by: Optional[str], sort_order: str) -> list:
+    """ORDER BY terms. Default: newest first. Model.id is the tie-breaker."""
+    if sort_by is None:
+        priority = case((Model.version_status == VersionStatus.ACTIVE, 0), else_=1)
+        return [desc(Model.created_at), priority, Model.model_id]
+    exprs = _sort_model_expressions()
+    if sort_by not in exprs:
+        raise ValueError(f"Unsupported sort key: {sort_by}")
+    expr = exprs[sort_by]
+    ordered = desc(expr) if sort_order == "desc" else asc(expr)
+    return [ordered.nulls_last(), Model.model_id]
+
+
+def _merge_model_filters(
+    filters: Optional[ModelListFilters],
+    task_types: Optional[List[str]],
+    include_deprecated: bool,
+    version_status: Optional[str],
+    created_by: Optional[str],
+) -> ModelListFilters:
+    """Fold legacy keyword params into a ModelListFilters for unified handling."""
+    merged = replace(filters) if filters else ModelListFilters()
+    if task_types:
+        merged.task_types = task_types
+    if version_status is not None:
+        merged.version_status = version_status
+    if not include_deprecated and merged.version_status is None:
+        merged.include_deprecated = False
+    if created_by is not None:
+        merged.created_by = created_by
+    return merged
 
 
 # JSONB-backed columns — must call flag_modified() after in-place mutation.
@@ -83,33 +201,16 @@ class ModelRepository:
     async def count_models(
         self,
         *,
+        filters: Optional[ModelListFilters] = None,
         task_types: Optional[List[str]] = None,
         version_status: Optional[str] = None,
-        model_name: Optional[str] = None,
         created_by: Optional[str] = None,
     ) -> int:
         """Return the total number of models matching the given filters (no pagination)."""
-        stmt = select(func.count(Model.id))
-        if task_types:
-            # Case-insensitive: this filter now runs with all 11
-            # TaskTypeEnum values (previously always just ["llm"], where a
-            # casing mismatch could never surface), and an exact JSONB
-            # match against whatever case a row happens to be stored in
-            # would silently ghost that model_id here while /api/v1/models
-            # (TaskSpecLenient) still renders it normally — see
-            # metering_service.py's model_breakdown for the ghost-drop
-            # consequence.
-            stmt = stmt.where(
-                func.lower(Model.task["type"].astext).in_([t.lower() for t in task_types])
-            )
-        if model_name:
-            stmt = stmt.where(func.lower(Model.name) == func.lower(model_name))
-        if version_status == "active":
-            stmt = stmt.where(Model.version_status == VersionStatus.ACTIVE)
-        elif version_status == "deprecated":
-            stmt = stmt.where(Model.version_status == VersionStatus.DEPRECATED)
-        if created_by is not None:
-            stmt = stmt.where(Model.created_by == created_by)
+        merged = _merge_model_filters(
+            filters, task_types, True, version_status, created_by
+        )
+        stmt = _apply_model_filters(select(func.count(Model.id)), merged)
         result = await self._db.execute(stmt)
         return int(result.scalar() or 0)
 
@@ -174,48 +275,41 @@ class ModelRepository:
     async def list_models(
         self,
         *,
+        filters: Optional[ModelListFilters] = None,
+        sort_by: Optional[str] = None,
+        sort_order: str = "asc",
+        offset: int = 0,
+        limit: Optional[int] = None,
         task_types: Optional[List[str]] = None,
         include_deprecated: bool = True,
         version_status: Optional[str] = None,
-        model_name: Optional[str] = None,
         created_by: Optional[str] = None,
-        offset: int = 0,
-        limit: Optional[int] = None,
     ) -> List[Model]:
-        priority = case(
-            (Model.version_status == VersionStatus.ACTIVE, 0),
-            else_=1,
+        merged = _merge_model_filters(
+            filters, task_types, include_deprecated, version_status, created_by
         )
-        stmt = select(Model)
-        if task_types:
-            # Case-insensitive: this filter now runs with all 11
-            # TaskTypeEnum values (previously always just ["llm"], where a
-            # casing mismatch could never surface), and an exact JSONB
-            # match against whatever case a row happens to be stored in
-            # would silently ghost that model_id here while /api/v1/models
-            # (TaskSpecLenient) still renders it normally — see
-            # metering_service.py's model_breakdown for the ghost-drop
-            # consequence.
-            stmt = stmt.where(
-                func.lower(Model.task["type"].astext).in_([t.lower() for t in task_types])
-            )
-        if model_name:
-            stmt = stmt.where(func.lower(Model.name) == func.lower(model_name))
-        # version_status takes precedence over include_deprecated
-        if version_status == "active":
-            stmt = stmt.where(Model.version_status == VersionStatus.ACTIVE)
-        elif version_status == "deprecated":
-            stmt = stmt.where(Model.version_status == VersionStatus.DEPRECATED)
-        elif not include_deprecated:
-            stmt = stmt.where(Model.version_status == VersionStatus.ACTIVE)
-        if created_by is not None:
-            stmt = stmt.where(Model.created_by == created_by)
-        stmt = stmt.order_by(desc(Model.created_at), priority, Model.model_id)
+        stmt = _apply_model_filters(select(Model), merged)
+        stmt = stmt.order_by(*_model_list_order_by(sort_by, sort_order))
         stmt = stmt.offset(offset)
         if limit is not None:
             stmt = stmt.limit(limit)
         result = await self._db.execute(stmt)
         return list(result.scalars().all())
+
+    async def get_service_counts_by_model_ids(
+        self, model_ids: List[str]
+    ) -> Dict[str, int]:
+        """Return {model_id: service_count} for active (non-deleted) services."""
+        if not model_ids:
+            return {}
+        stmt = (
+            select(Service.model_id, func.count(Service.id).label("cnt"))
+            .where(Service.model_id.in_(model_ids))
+            .where(Service.deleted_at.is_(None))
+            .group_by(Service.model_id)
+        )
+        result = await self._db.execute(stmt)
+        return {row.model_id: row.cnt for row in result.all()}
 
     # ── Writes ──
 

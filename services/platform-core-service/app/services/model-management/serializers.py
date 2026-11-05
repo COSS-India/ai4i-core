@@ -43,7 +43,7 @@ def _mask_api_key(key: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     return {**key, "value": "***"}
 
 
-def model_to_dict(model: Model) -> Dict[str, Any]:
+def model_to_dict(model: Model, *, service_count: Optional[int] = None) -> Dict[str, Any]:
     """Serialize a Model ORM row to the API response shape."""
     ep = model.inference_endpoint or {}
     return {
@@ -59,6 +59,7 @@ def model_to_dict(model: Model) -> Dict[str, Any]:
         "isMultilingual": bool(model.is_multilingual),
         "domain": model.domain or [],
         "submitter": model.submitter,
+        "providerName": model.submitter.get("name") if model.submitter else None,
         "license": model.license,
         "licenseUrl": model.license_url,
         "adapterConfig": ep.get("adapterConfig") or ep.get("adapter_config"),
@@ -74,6 +75,7 @@ def model_to_dict(model: Model) -> Dict[str, Any]:
         "createdAt": _iso(model.created_at),
         "createdBy": model.created_by,
         "updatedBy": model.updated_by,
+        "noOfServices": service_count,
     }
 
 

@@ -42,7 +42,9 @@ class VersionStatus(str, Enum):
     DEPRECATED = "DEPRECATED"
 
 
-_stub("app.models").model_management = MagicMock()
+_app_models = _stub("app.models")
+_app_models.model_management = MagicMock()
+_app_models.pay_per_use = MagicMock()
 _stub("app.models.model_management")
 _stub(
     "app.models.model_management.model",
@@ -50,15 +52,53 @@ _stub(
     VersionStatus=VersionStatus,
 )
 _stub("app.models.model_management.service", Service=MagicMock)
+_stub("app.models.pay_per_use")
+_stub("app.models.pay_per_use.inference_type", InferenceType=MagicMock)
+_stub("app.services.pay_per_use")
+_stub("app.services.pay_per_use.inference_type_cache",
+      get_all=AsyncMock(return_value=[]),
+      get_unit_map=AsyncMock(return_value={}),
+      get_unit_map_standalone=AsyncMock(return_value={}))
 _stub("app.repositories").model_management = MagicMock()
 _stub("app.repositories.model_management")
+from dataclasses import dataclass as _dataclass
+from typing import List as _List, Optional as _Optional
+
+@_dataclass
+class ModelListFilters:
+    name: _Optional[str] = None
+    version: _Optional[str] = None
+    task_types: _Optional[_List[str]] = None
+    provider_name: _Optional[str] = None
+    version_status: _Optional[str] = None
+    created_from: _Optional[object] = None
+    created_to: _Optional[object] = None
+    created_by: _Optional[str] = None
+    include_deprecated: bool = True
+
 _stub(
     "app.repositories.model_management.model_repository",
     ModelRepository=MagicMock,
+    ModelListFilters=ModelListFilters,
 )
+@_dataclass
+class ServiceListFilters:
+    task_types: _Optional[_List[str]] = None
+    is_published: _Optional[bool] = None
+    created_by: _Optional[str] = None
+    name: _Optional[str] = None
+    service_id: _Optional[str] = None
+    model_name: _Optional[str] = None
+    tier_ids: _Optional[_List[str]] = None
+    created_from: _Optional[object] = None
+    created_to: _Optional[object] = None
+    published_from: _Optional[object] = None
+    published_to: _Optional[object] = None
+
 _stub(
     "app.repositories.model_management.service_repository",
     ServiceRepository=MagicMock,
+    ServiceListFilters=ServiceListFilters,
 )
 
 # ── Import service classes ────────────────────────────────────────────────────
@@ -94,6 +134,7 @@ def _make_model_svc() -> ModelService:
     model_repo.get_by_uuid = AsyncMock(return_value=None)
     model_repo.list_models = AsyncMock(return_value=[])
     model_repo.count_models = AsyncMock(return_value=0)
+    model_repo.get_service_counts_by_model_ids = AsyncMock(return_value={})
     model_repo.apply_updates = AsyncMock()
     model_repo.delete_by_model_id = AsyncMock()
     model_repo.count_active_versions = AsyncMock(return_value=0)
@@ -157,7 +198,7 @@ def _make_model_orm(
     m.is_lang_detection_enabled = False
     m.is_multilingual = False
     m.domain = []
-    m.submitter = {}
+    m.submitter = {"name": "Test Org", "aboutMe": "A test org", "team": []}
     m.license = "mit"
     m.license_url = None
     m.training_dataset = {"description": "test training dataset"}
@@ -519,8 +560,126 @@ class TestModelServiceList:
         await svc.list_models(task_types=["llm"], include_deprecated=False, offset=1, limit=5)
 
         svc._models.count_models.assert_awaited_once_with(
-            task_types=["llm"], version_status=None, model_name=None, created_by=None,
+            filters=None, task_types=["llm"], version_status=None, created_by=None,
         )
+
+
+# ===========================================================================
+# Section 5b — ModelService.list_models extended (filters, sort, service count)
+# ===========================================================================
+
+
+class TestModelServiceListExtended:
+    @pytest.mark.asyncio
+    async def test_list_with_filters_passes_to_repo(self):
+        svc = _make_model_svc()
+        svc._models.list_models = AsyncMock(return_value=[])
+        filters = ModelListFilters(name="indic", task_types=["nmt"])
+        await svc.list_models(filters=filters)
+        svc._models.list_models.assert_awaited_once()
+        call_kwargs = svc._models.list_models.call_args.kwargs
+        assert call_kwargs["filters"] is filters
+
+    @pytest.mark.asyncio
+    async def test_list_with_sort_params_passed_to_repo(self):
+        svc = _make_model_svc()
+        svc._models.list_models = AsyncMock(return_value=[])
+        await svc.list_models(sort_by="name", sort_order="desc")
+        call_kwargs = svc._models.list_models.call_args.kwargs
+        assert call_kwargs["sort_by"] == "name"
+        assert call_kwargs["sort_order"] == "desc"
+
+    @pytest.mark.asyncio
+    async def test_list_with_include_service_count_fetches_counts(self):
+        svc = _make_model_svc()
+        model = _make_model_orm(model_id="m1")
+        svc._models.list_models = AsyncMock(return_value=[model])
+        svc._models.get_service_counts_by_model_ids = AsyncMock(return_value={"m1": 3})
+        items, _ = await svc.list_models(include_service_count=True)
+        svc._models.get_service_counts_by_model_ids.assert_awaited_once_with(["m1"])
+        assert items[0]["noOfServices"] == 3
+
+    @pytest.mark.asyncio
+    async def test_list_without_service_count_skips_count_query(self):
+        svc = _make_model_svc()
+        svc._models.list_models = AsyncMock(return_value=[_make_model_orm()])
+        await svc.list_models(include_service_count=False)
+        svc._models.get_service_counts_by_model_ids.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_list_service_count_zero_for_model_with_no_services(self):
+        svc = _make_model_svc()
+        model = _make_model_orm(model_id="m1")
+        svc._models.list_models = AsyncMock(return_value=[model])
+        svc._models.get_service_counts_by_model_ids = AsyncMock(return_value={})
+        items, _ = await svc.list_models(include_service_count=True)
+        assert items[0]["noOfServices"] == 0
+
+    @pytest.mark.asyncio
+    async def test_list_no_service_count_is_none_in_response(self):
+        svc = _make_model_svc()
+        svc._models.list_models = AsyncMock(return_value=[_make_model_orm()])
+        items, _ = await svc.list_models(include_service_count=False)
+        assert items[0]["noOfServices"] is None
+
+    @pytest.mark.asyncio
+    async def test_list_provider_name_extracted_from_submitter(self):
+        svc = _make_model_svc()
+        model = _make_model_orm()
+        model.submitter = {"name": "AI4Bharat", "aboutMe": "NLP org", "team": []}
+        svc._models.list_models = AsyncMock(return_value=[model])
+        items, _ = await svc.list_models()
+        assert items[0]["providerName"] == "AI4Bharat"
+
+    @pytest.mark.asyncio
+    async def test_list_provider_name_none_when_submitter_empty(self):
+        svc = _make_model_svc()
+        model = _make_model_orm()
+        model.submitter = {}
+        svc._models.list_models = AsyncMock(return_value=[model])
+        items, _ = await svc.list_models()
+        assert items[0]["providerName"] is None
+
+    @pytest.mark.asyncio
+    async def test_list_provider_name_none_when_no_submitter(self):
+        svc = _make_model_svc()
+        model = _make_model_orm()
+        model.submitter = None
+        svc._models.list_models = AsyncMock(return_value=[model])
+        items, _ = await svc.list_models()
+        assert items[0]["providerName"] is None
+
+    @pytest.mark.asyncio
+    async def test_list_multiple_models_service_counts_per_model(self):
+        svc = _make_model_svc()
+        m1 = _make_model_orm(model_id="m1")
+        m2 = _make_model_orm(model_id="m2")
+        svc._models.list_models = AsyncMock(return_value=[m1, m2])
+        svc._models.get_service_counts_by_model_ids = AsyncMock(
+            return_value={"m1": 5, "m2": 0}
+        )
+        items, _ = await svc.list_models(include_service_count=True)
+        assert items[0]["noOfServices"] == 5
+        assert items[1]["noOfServices"] == 0
+
+    @pytest.mark.asyncio
+    async def test_list_with_version_status_filter_passed_to_repo(self):
+        svc = _make_model_svc()
+        svc._models.list_models = AsyncMock(return_value=[])
+        filters = ModelListFilters(version_status="active")
+        await svc.list_models(filters=filters)
+        call_kwargs = svc._models.list_models.call_args.kwargs
+        assert call_kwargs["filters"].version_status == "active"
+
+    @pytest.mark.asyncio
+    async def test_list_count_uses_same_filters_as_list(self):
+        svc = _make_model_svc()
+        svc._models.list_models = AsyncMock(return_value=[_make_model_orm()])
+        svc._models.count_models = AsyncMock(return_value=5)
+        filters = ModelListFilters(name="test", task_types=["nmt"])
+        await svc.list_models(filters=filters, offset=0, limit=10)
+        count_kwargs = svc._models.count_models.call_args.kwargs
+        assert count_kwargs["filters"] is filters
 
 
 # ===========================================================================
