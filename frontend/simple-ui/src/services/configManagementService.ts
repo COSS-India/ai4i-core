@@ -42,12 +42,15 @@ export type StatusReasonConfigType = "suspend-reasons" | "deactivate-reasons";
 export interface StatusReasonOption {
   code: string;
   label: string;
-  /** The admin must add remarks when picking this reason (e.g. Other). */
+  /** The admin must add remarks when picking this reason (only Other). */
   remarksRequired: boolean;
 }
 
-/** Matches an "Other" reason by key or label: "OTHER", "other_reason", "Other (remarks mandatory)". */
-const OTHER_REASON_PATTERN = /^other\b/i;
+/**
+ * The "Other" reason, matched by key (e.g. `other-remarks-mandatory`): the only
+ * reason whose remarks are mandatory. The config's own `required` flag is not used.
+ */
+const OTHER_REASON_KEY_PATTERN = /^other\b/i;
 
 /** Predefined reasons for suspending or deactivating an institution, in config order. */
 export async function getStatusReasonOptions(
@@ -57,16 +60,13 @@ export async function getStatusReasonOptions(
   const config = items.find((item) => item.type === type);
   if (!config) return [];
   const options = new Map<string, StatusReasonOption>();
-  for (const { key, label, remarks_required } of statusReasonsConfigDataSchema.parse(config.data)) {
+  for (const { key, label } of statusReasonsConfigDataSchema.parse(config.data)) {
     const code = key.trim();
     if (!code || options.has(code)) continue;
-    const text = label?.trim() || code;
     options.set(code, {
       code,
-      label: text,
-      // "Other" always needs remarks, even if the config omits the flag.
-      remarksRequired:
-        remarks_required === true || OTHER_REASON_PATTERN.test(code) || OTHER_REASON_PATTERN.test(text),
+      label: label?.trim() || code,
+      remarksRequired: OTHER_REASON_KEY_PATTERN.test(code),
     });
   }
   return Array.from(options.values());

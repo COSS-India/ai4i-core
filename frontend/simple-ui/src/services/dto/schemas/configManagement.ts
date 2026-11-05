@@ -37,7 +37,6 @@ export const statusReasonsConfigDataSchema = z.array(
     .object({
       key: z.string(),
       label: z.string().optional(),
-      remarks_required: z.boolean().optional(),
     })
     .passthrough(),
 );
