@@ -1,5 +1,6 @@
+import { useQueryClient } from "@tanstack/react-query";
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { piiService } from "../../../services/piiService";
+import { getDomainOptions } from "../../../services/configManagementService";
 import {
   definitionFromPolicyType,
   policyCreatePayload,
@@ -51,7 +52,6 @@ import {
 export type { PolicyInput } from "./model";
 
 export type PiiTab = "categories" | "policies" | "configuration" | "playground";
-export type ConfigTab = "types" | "domain";
 export type CatalogScope = "all" | "subscribed";
 /** A simulation response plus the policy it was run with. */
 export interface PlaygroundResult extends PolicySimulation {
@@ -68,7 +68,6 @@ export type DrawerState =
   | { kind: "add-type" }
   | { kind: "edit-type"; id: string }
   | { kind: "view-type"; id: string; entity?: { name: string; mode: PolicyField["mode"] } }
-  | { kind: "add-domain" }
   | { kind: "create-policy" }
   | { kind: "edit-policy"; id: string }
   | { kind: "view-policy"; id: string };
@@ -84,8 +83,6 @@ export interface ConfirmState {
 interface PiiPoliciesContextValue {
   domains: Domain[];
   domainsStatus: "loading" | "ready" | "error";
-  domainsError: string;
-  reloadDomains: () => void;
   types: PiiType[];
   policies: Policy[];
   categories: PolicyCategory[];
@@ -124,8 +121,6 @@ interface PiiPoliciesContextValue {
   showSubcategoryPolicies: (subcategoryId: string) => void;
   tab: PiiTab;
   setTab: (tab: PiiTab) => void;
-  configTab: ConfigTab;
-  setConfigTab: (tab: ConfigTab) => void;
   catalogScope: CatalogScope;
   setCatalogScope: (scope: CatalogScope) => void;
   policySearch: string;
@@ -138,8 +133,6 @@ interface PiiPoliciesContextValue {
   setPolicySubcategoryFilter: (value: string) => void;
   typeSearch: string;
   setTypeSearch: (value: string) => void;
-  domainSearch: string;
-  setDomainSearch: (value: string) => void;
   playgroundPolicyId: string;
   playgroundInput: string;
   playgroundResult: PlaygroundResult | null;
@@ -157,7 +150,6 @@ interface PiiPoliciesContextValue {
   confirm: ConfirmState | null;
   askConfirm: (confirm: ConfirmState) => void;
   closeConfirm: () => void;
-  addDomain: (name: string, description: string) => Promise<string | null>;
   addType: (input: TypeInput) => Promise<string | null>;
   updateType: (id: string, input: TypeInput) => Promise<string | null>;
   deleteType: (id: string) => Promise<void>;
@@ -191,7 +183,6 @@ export function PiiPoliciesProvider({
   const canManage = role === "adopter";
   const [domains, setDomains] = useState<Domain[]>([]);
   const [domainsStatus, setDomainsStatus] = useState<"loading" | "ready" | "error">("loading");
-  const [domainsError, setDomainsError] = useState("");
   const [types, setTypes] = useState<PiiType[]>([]);
   const [policies, setPolicies] = useState<Policy[]>([]);
   const [categories, setCategories] = useState<PolicyCategory[]>([]);
@@ -207,14 +198,12 @@ export function PiiPoliciesProvider({
   const [subscriptions, setSubscriptions] = useState<Record<string, string[]>>({});
 
   const [tab, setTab] = useState<PiiTab>("policies");
-  const [configTab, setConfigTab] = useState<ConfigTab>("types");
   const [catalogScope, setCatalogScope] = useState<CatalogScope>("all");
   const [policySearch, setPolicySearch] = useState("");
   const [policyDomainFilter, setPolicyDomainFilter] = useState("");
   const [policyCategoryFilter, setPolicyCategoryFilter] = useState("");
   const [policySubcategoryFilter, setPolicySubcategoryFilter] = useState("");
   const [typeSearch, setTypeSearch] = useState("");
-  const [domainSearch, setDomainSearch] = useState("");
   const [playgroundPolicyId, setPlaygroundPolicyId] = useState("");
   const [playgroundInput, setPlaygroundInputState] = useState("");
   const [playgroundResult, setPlaygroundResult] = useState<PlaygroundResult | null>(null);
@@ -264,25 +253,26 @@ export function PiiPoliciesProvider({
       });
   }, []);
 
+  const queryClient = useQueryClient();
   const domainsRequest = useRef(0);
   const reloadDomains = useCallback(() => {
     const requestId = ++domainsRequest.current;
     setDomainsStatus("loading");
-    setDomainsError("");
-    void fetchDomains(role === "adopter")
-      .then((next) => {
+    // Same query (and cache entry) as the policy drawer's DomainPicker and the list's Domain filter.
+    void queryClient
+      .fetchQuery({ queryKey: ["configs", "domain"], queryFn: getDomainOptions })
+      .then((options) => {
         if (requestId !== domainsRequest.current) return;
-        setDomains(next.domains);
-        setDomainsError(next.warning);
+        // The name is the config key, which is what policies store and the payload sends.
+        setDomains(options.map((option) => ({ id: option.code, name: option.code, description: "" })));
         setDomainsStatus("ready");
       })
-      .catch((error: unknown) => {
+      .catch(() => {
         if (requestId !== domainsRequest.current) return;
         setDomains([]);
-        setDomainsError(apiErrorMessage(error, "Couldn't load domains."));
         setDomainsStatus("error");
       });
-  }, [role]);
+  }, [queryClient]);
 
   const domainsRef = useRef(domains);
   domainsRef.current = domains;
@@ -321,8 +311,8 @@ export function PiiPoliciesProvider({
     };
   }, [canManage, reloadTypes]);
 
-  // The policy form needs the types on load; opening Configuration → PII Types fetches them again.
-  const typesTabOpen = tab === "configuration" && configTab === "types";
+  // The policy form needs the types on load; opening Configuration fetches them again.
+  const typesTabOpen = tab === "configuration";
   useEffect(() => {
     if (typesTabOpen) reloadTypes();
   }, [typesTabOpen, reloadTypes]);
@@ -404,8 +394,6 @@ export function PiiPoliciesProvider({
     return {
       domains,
       domainsStatus,
-      domainsError,
-      reloadDomains,
       types,
       policies,
       categories,
@@ -573,8 +561,6 @@ export function PiiPoliciesProvider({
         }
         setTab(next);
       },
-      configTab,
-      setConfigTab,
       catalogScope,
       setCatalogScope,
       policySearch,
@@ -587,8 +573,6 @@ export function PiiPoliciesProvider({
       setPolicySubcategoryFilter,
       typeSearch,
       setTypeSearch,
-      domainSearch,
-      setDomainSearch,
       playgroundPolicyId,
       playgroundInput,
       playgroundResult,
@@ -641,23 +625,6 @@ export function PiiPoliciesProvider({
       confirm,
       askConfirm: setConfirm,
       closeConfirm: () => setConfirm(null),
-      addDomain: async (name, description) => {
-        const domainId = name.trim();
-        if (!domainId) return "Domain name is required.";
-        if (domainId.length > 50) return "Domain name is limited to 50 characters.";
-        if (duplicateName(domains, domainId)) return "A domain with this name already exists.";
-        try {
-          await piiService.createDomain(domainId, description.trim());
-          const next = await fetchDomains(true);
-          setDomains(next.domains);
-          setDomainsStatus("ready");
-          setDomainsError(next.warning);
-          toast("Domain created.");
-          return null;
-        } catch (error: unknown) {
-          return apiErrorMessage(error, "Couldn't create the domain.");
-        }
-      },
       addType: async (input) => {
        // if (duplicateName(types, input.name)) return "A policy type with this name already exists.";
         try {
@@ -875,8 +842,6 @@ export function PiiPoliciesProvider({
   }, [
     domains,
     domainsStatus,
-    domainsError,
-    reloadDomains,
     types,
     policies,
     categories,
@@ -894,14 +859,12 @@ export function PiiPoliciesProvider({
     role,
     institutionId,
     tab,
-    configTab,
     catalogScope,
     policySearch,
     policyDomainFilter,
     policyCategoryFilter,
     policySubcategoryFilter,
     typeSearch,
-    domainSearch,
     playgroundPolicyId,
     playgroundInput,
     playgroundResult,
@@ -918,32 +881,6 @@ export function usePiiPolicies() {
   const ctx = useContext(PiiPoliciesContext);
   if (!ctx) throw new Error("usePiiPolicies must be used within PiiPoliciesProvider");
   return ctx;
-}
-
-/**
- * Adopters read every domain, including descriptions. Everyone else reads the
- * public list of active domain ids. A failed admin read falls back to that list
- * and returns a warning that the list is partial.
- */
-async function fetchDomains(includeAll: boolean): Promise<{ domains: Domain[]; warning: string }> {
-  let warning = "";
-  if (includeAll) {
-    try {
-      const response = await piiService.getAllDomains();
-      return {
-        domains: response.data.map((row) => ({
-          id: row.domain_id,
-          name: row.domain_id,
-          description: row.description?.trim() ?? "",
-        })),
-        warning,
-      };
-    } catch (error: unknown) {
-      warning = `${apiErrorMessage(error, "Couldn't load all domains.")} Showing active domains only, without descriptions.`;
-    }
-  }
-  const response = await piiService.getDomains();
-  return { domains: response.data.map((id) => ({ id, name: id, description: "" })), warning };
 }
 
 function toCategory(item: PolicyCategoryItem): PolicyCategory {
