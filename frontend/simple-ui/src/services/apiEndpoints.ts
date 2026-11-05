@@ -136,7 +136,7 @@ export const apiEndpoints = {
     },
     inferenceTypes: `${API_V1}/inference-types`,
     /** Platform-core config table. GET list (filter with `?type=`), POST, PATCH/DELETE by id. */
-    configs: `${API_V1}/configs`,
+    configs: `${API_V1}/config`,
   },
 
   telemetry: {

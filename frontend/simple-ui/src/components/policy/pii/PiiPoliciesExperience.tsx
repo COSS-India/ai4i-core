@@ -744,7 +744,6 @@ function ExperienceBody() {
     role,
     tab,
     setTab,
-    configTab,
     confirm,
     closeConfirm,
     createCategory,
@@ -768,11 +767,8 @@ function ExperienceBody() {
     if (tab === "categories") {
       return <CreateButton onClick={() => setCategoryFormOpen(true)}>Add category</CreateButton>;
     }
-    if (tab === "configuration" && configTab === "types") {
+    if (tab === "configuration") {
       return <CreateButton onClick={() => openDrawer({ kind: "add-type" })}>Add Policy Type</CreateButton>;
-    }
-    if (tab === "configuration" && configTab === "domain") {
-      return <CreateButton onClick={() => openDrawer({ kind: "add-domain" })}>Create Domain</CreateButton>;
     }
     return undefined;
   })();
