@@ -6,7 +6,7 @@ instances or scalars; the caller decides how to surface them.
 """
 
 from dataclasses import dataclass, replace
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
@@ -16,6 +16,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.model_management.model import Model, VersionStatus
 from app.models.model_management.service import Service
+from app.utils.route_helpers import range_end_exclusive, range_start
 
 
 @dataclass
@@ -42,17 +43,6 @@ def _contains(column, value: str):
     return column.ilike(f"%{_escape_like(value)}%", escape="\\")
 
 
-def _range_start(value: "date | datetime") -> datetime:
-    if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
-    return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
-
-
-def _range_end_exclusive(value: "date | datetime") -> datetime:
-    if isinstance(value, datetime):
-        return _range_start(value)
-    return _range_start(value) + timedelta(days=1)
-
 
 def _apply_model_filters(stmt, filters: ModelListFilters):
     """Single source of truth for model list/count WHERE clauses."""
@@ -76,9 +66,9 @@ def _apply_model_filters(stmt, filters: ModelListFilters):
     if f.created_by is not None:
         stmt = stmt.where(Model.created_by == f.created_by)
     if f.created_from is not None:
-        stmt = stmt.where(Model.created_at >= _range_start(f.created_from))
+        stmt = stmt.where(Model.created_at >= range_start(f.created_from))
     if f.created_to is not None:
-        stmt = stmt.where(Model.created_at < _range_end_exclusive(f.created_to))
+        stmt = stmt.where(Model.created_at < range_end_exclusive(f.created_to))
     return stmt
 
 
@@ -90,8 +80,8 @@ def _sort_model_expressions() -> Dict[str, Any]:
         .scalar_subquery()
     )
     return {
-        "name": Model.name,
-        "version": Model.version,
+        "name": func.lower(Model.name),
+        "version": func.lower(Model.version),
         "taskType": func.lower(Model.task["type"].astext),
         "providerName": func.lower(Model.submitter["name"].astext),
         "status": Model.version_status,

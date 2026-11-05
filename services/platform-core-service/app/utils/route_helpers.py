@@ -1,6 +1,6 @@
 """Shared helpers used across list-endpoint route handlers."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Any, List, Optional
 
 from pydantic import BeforeValidator
@@ -32,3 +32,15 @@ def split_csv(value: Optional[str]) -> List[str]:
     if not value:
         return []
     return [part for part in (p.strip().lower() for p in value.split(",")) if part]
+
+
+def range_start(value: "date | datetime") -> datetime:
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    return datetime(value.year, value.month, value.day, tzinfo=timezone.utc)
+
+
+def range_end_exclusive(value: "date | datetime") -> datetime:
+    if isinstance(value, datetime):
+        return range_start(value)
+    return range_start(value) + timedelta(days=1)

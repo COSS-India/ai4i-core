@@ -26,8 +26,12 @@ SORTABLE_KEYS: FrozenSet[str] = frozenset({
 
 
 def response_fields_for(selected: FrozenSet[str]) -> FrozenSet[str]:
-    """Response fields to keep for the selected column ids."""
-    fields: set = set()
+    """Response fields to keep for the selected column ids.
+
+    modelId is always included so the frontend can key rows and navigate to a
+    model regardless of which display columns were requested.
+    """
+    fields: set = {"modelId"}
     for col_id in selected:
         fields.update(COLUMN_FIELDS_MAP.get(col_id, ()))
     return frozenset(fields)

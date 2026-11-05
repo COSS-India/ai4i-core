@@ -11,17 +11,14 @@ from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.utils.route_helpers import DATE_PARAM_HELP, DateOrDatetime, split_csv
+from app.utils.route_helpers import DATE_PARAM_HELP, DateOrDatetime, range_end_exclusive, range_start, split_csv
 from app.core.exceptions import ValidationError
 from app.dependencies.services import ModelService, get_model_service
-from app.repositories.model_management.model_repository import (
-    ModelListFilters,
-    _range_end_exclusive,
-    _range_start,
-)
+from app.repositories.model_management.model_repository import ModelListFilters
 from app.schemas.common import MessageMeta, error_responses
 from app.schemas.enums.model_management import VersionStatusEnum
 from app.schemas.model_management.model_columns import (
+    COLUMN_FIELDS_MAP,
     SORTABLE_KEYS,
     response_fields_for,
 )
@@ -51,9 +48,6 @@ router = APIRouter(
 _MODEL_ID_RE = re.compile(r"^(?=.*[a-zA-Z0-9])[a-zA-Z0-9/_-]+$")
 _MODEL_ID_MAX_LEN = 255
 
-_DATE_PARAM_HELP = DATE_PARAM_HELP
-_split_csv = split_csv
-
 
 def _select_fields(item: Dict[str, Any], fields: FrozenSet[str]) -> Dict[str, Any]:
     return {k: v for k, v in item.items() if k in fields}
@@ -66,6 +60,16 @@ def _parse_columns(columns: Optional[str]) -> Optional[FrozenSet[str]]:
     requested = {p.strip() for p in columns.split(",") if p.strip()}
     if not requested:
         return None
+    valid = frozenset(COLUMN_FIELDS_MAP)
+    unknown = requested - valid
+    if unknown:
+        raise ValidationError(
+            message=(
+                f"Unknown column keys: {', '.join(sorted(unknown))}. "
+                f"Valid keys: {', '.join(sorted(valid))}"
+            ),
+            code="INVALID_COLUMNS",
+        )
     return frozenset(requested)
 
 
@@ -81,7 +85,7 @@ def _validate_sort(sort_by: Optional[str], sort_order: str) -> None:
 
 def _validate_date_range(created_from: Any, created_to: Any) -> None:
     if created_from is not None and created_to is not None:
-        if _range_start(created_from) >= _range_end_exclusive(created_to):
+        if range_start(created_from) >= range_end_exclusive(created_to):
             raise ValidationError(
                 message="created_from must not be after created_to",
                 code="INVALID_DATE_RANGE",
@@ -115,11 +119,11 @@ class ModelListFilterParams:
         ] = None,
         created_from: Annotated[
             Optional[DateOrDatetime],
-            Query(description="Models created at or after this point. " + _DATE_PARAM_HELP),
+            Query(description="Models created at or after this point. " + DATE_PARAM_HELP),
         ] = None,
         created_to: Annotated[
             Optional[DateOrDatetime],
-            Query(description="Models created before this point. " + _DATE_PARAM_HELP),
+            Query(description="Models created before this point. " + DATE_PARAM_HELP),
         ] = None,
         include_deprecated: Annotated[
             bool,
@@ -222,7 +226,7 @@ async def list_models(
             f"Invalid version_status. Accepted values are: {valid_version_statuses}."
         )
 
-    task_types = _split_csv(filters.task_types)
+    task_types = split_csv(filters.task_types)
     if task_types:
         valid = {entry["name"] for entry in await inference_type_cache.get_all(db)}
         task_types = [t for t in task_types if t in valid]

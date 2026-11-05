@@ -823,7 +823,7 @@ class ModelListMeta(BaseSchema):
 class ListModelsResponse(SuccessResponseWithMeta):
     """GET /models"""
 
-    data: List[Any]
+    data: List[Dict[str, Any]]
     meta: ModelListMeta
 
 
