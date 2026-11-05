@@ -1304,7 +1304,7 @@ function ModelEntityStatus({
   );
 }
 
-/** Domain picker over the platform's standard domain list (GET /api/v1/configs?type=domains). */
+/** Domain picker over the platform's standard domain list (GET /api/v1/config?type=domain). */
 function DomainPicker({
   error,
   selected,
@@ -1314,7 +1314,7 @@ function DomainPicker({
   selected: string[];
   onChange: (ids: string[]) => void;
 }>) {
-  const domainOptions = useQuery({ queryKey: ["configs", "domains"], queryFn: getDomainOptions });
+  const domainOptions = useQuery({ queryKey: ["configs", "domain"], queryFn: getDomainOptions });
   const loadError = domainOptions.isError ? apiErrorMessage(domainOptions.error, "Couldn't load domains.") : undefined;
   const listed = domainOptions.data ?? [];
   // Saved domains missing from the list (or every one while it loads) still show as chips, so they can be removed.

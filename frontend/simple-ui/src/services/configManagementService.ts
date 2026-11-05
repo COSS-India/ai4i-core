@@ -22,16 +22,18 @@ export async function listConfigs(type?: string): Promise<ConfigItem[]> {
   return response.data.data.items;
 }
 
-/** The platform's standard domain list, in the order the `domains` config stores it. */
+/** The platform's standard domain list, in the order the `domain` config stores it. */
 export async function getDomainOptions(): Promise<DomainOption[]> {
-  const items = await listConfigs("domains");
-  const config = items.find((item) => item.type === "domains");
+  const items = await listConfigs("domain");
+  const config = items.find((item) => item.type === "domain");
   if (!config) return [];
-  const codes = domainsConfigDataSchema.parse(config.data).allowed;
-  return Array.from(new Set(codes.map((code) => code.trim()).filter(Boolean))).map((code) => ({
-    code,
-    label: domainCodeLabel(code),
-  }));
+  const options = new Map<string, DomainOption>();
+  for (const { key, label } of domainsConfigDataSchema.parse(config.data)) {
+    const code = key.trim();
+    if (!code || options.has(code)) continue;
+    options.set(code, { code, label: label?.trim() || domainCodeLabel(code) });
+  }
+  return Array.from(options.values());
 }
 
 /** "art-and-culture" → "Art and Culture". */

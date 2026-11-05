@@ -16,6 +16,7 @@ import {
   Text,
   Textarea,
 } from "@chakra-ui/react";
+import { useQuery } from "@tanstack/react-query";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import FormActions from "../../common/FormActions";
 import FormDrawer from "../../common/FormDrawer";
@@ -23,6 +24,7 @@ import ReadOnlyField from "../../common/ReadOnlyField";
 import LoadingSpinner from "../../common/LoadingSpinner";
 import FieldLabel from "../../common/FieldLabel";
 import { FIELD_HINTS } from "../../../config/fieldHints";
+import { getDomainOptions } from "../../../services/configManagementService";
 import DataTable, {
   FILL_HEIGHT_COLUMN_PROPS,
   createActionsColumn,
@@ -109,6 +111,8 @@ export function PolicyList() {
   const canManage = role === "adopter";
   const parentActive = useParentActive();
   const names = useHierarchyNames();
+  // Same platform domain list (and cache entry) as the policy drawer's DomainPicker.
+  const domainOptions = useQuery({ queryKey: ["configs", "domain"], queryFn: getDomainOptions });
 
   const rows = useMemo(
     () =>
@@ -359,7 +363,7 @@ export function PolicyList() {
             width: "170px",
             options: [
               { value: "", label: "All Domains" },
-              ...domains.map((d) => ({ value: d.id, label: d.name })),
+              ...(domainOptions.data ?? []).map((d) => ({ value: d.code, label: d.label })),
             ],
           },
         ]}
