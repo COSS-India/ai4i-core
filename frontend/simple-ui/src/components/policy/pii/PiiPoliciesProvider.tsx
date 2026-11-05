@@ -259,7 +259,7 @@ export function PiiPoliciesProvider({
     const requestId = ++domainsRequest.current;
     setDomainsStatus("loading");
     // Same query (and cache entry) as the policy drawer's DomainPicker and the list's Domain filter.
-    void queryClient
+    queryClient
       .fetchQuery({ queryKey: ["configs", "domain"], queryFn: getDomainOptions })
       .then((options) => {
         if (requestId !== domainsRequest.current) return;
