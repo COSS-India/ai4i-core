@@ -3,6 +3,7 @@ import { apiEndpoints } from "./apiEndpoints";
 import {
   configListResponseSchema,
   domainsConfigDataSchema,
+  statusReasonsConfigDataSchema,
   type ConfigItem,
 } from "./dto/schemas/configManagement";
 
@@ -32,6 +33,36 @@ export async function getDomainOptions(): Promise<DomainOption[]> {
     const code = key.trim();
     if (!code || options.has(code)) continue;
     options.set(code, { code, label: label?.trim() || domainCodeLabel(code) });
+  }
+  return Array.from(options.values());
+}
+
+export type StatusReasonConfigType = "suspend-reasons" | "deactivate-reasons";
+
+export interface StatusReasonOption {
+  code: string;
+  label: string;
+  /** The admin must add remarks when picking this reason (e.g. Other). */
+  remarksRequired: boolean;
+}
+
+/** Predefined reasons for suspending or deactivating an institution, in config order. */
+export async function getStatusReasonOptions(
+  type: StatusReasonConfigType,
+): Promise<StatusReasonOption[]> {
+  const items = await listConfigs(type);
+  const config = items.find((item) => item.type === type);
+  if (!config) return [];
+  const options = new Map<string, StatusReasonOption>();
+  for (const { key, label, remarks_required } of statusReasonsConfigDataSchema.parse(config.data)) {
+    const code = key.trim();
+    if (!code || options.has(code)) continue;
+    options.set(code, {
+      code,
+      label: label?.trim() || code,
+      // "Other" always needs remarks, even if the config omits the flag.
+      remarksRequired: remarks_required === true || code.toUpperCase() === "OTHER",
+    });
   }
   return Array.from(options.values());
 }
