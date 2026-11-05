@@ -1,6 +1,6 @@
 """Config management endpoints — ADMIN only."""
 
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, Path, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,11 +24,13 @@ from app.services.config_management import config_service
 
 router = APIRouter(prefix="/config", tags=["Config"])
 
+_CONFIG_ID_DESC = "Config ID."
 
-@router.get("", response_model=ListConfigResponse)
+
+@router.get("")
 async def list_configs(
-    type: Optional[str] = Query(None, max_length=255, description="Filter by config type (e.g. 'domain')."),
-    session: AsyncSession = Depends(get_db),
+    type: Annotated[Optional[str], Query(max_length=255, description="Filter by config type (e.g. 'domain').")] = None,
+    session: Annotated[AsyncSession, Depends(get_db)] = None,
 ) -> ListConfigResponse:
     """List all config entries, optionally filtered by type. All authenticated roles."""
     items = await config_service.list_configs(session, type_filter=type)
@@ -37,14 +39,13 @@ async def list_configs(
 
 @router.post(
     "",
-    response_model=CreateConfigResponse,
     status_code=status.HTTP_201_CREATED,
     responses=error_responses(403, 409),
 )
 async def create_config(
     payload: ConfigCreate,
     request: Request,
-    session: AsyncSession = Depends(get_db),
+    session: Annotated[AsyncSession, Depends(get_db)] = None,
 ) -> CreateConfigResponse:
     """Create a new config entry. Admin only."""
     if not is_admin(request):
@@ -60,13 +61,12 @@ async def create_config(
 
 @router.get(
     "/{config_id}",
-    response_model=GetConfigResponse,
     responses=error_responses(403, 404),
 )
 async def get_config(
     request: Request,
-    config_id: int = Path(..., gt=0, description="Config ID."),
-    session: AsyncSession = Depends(get_db),
+    config_id: Annotated[int, Path(gt=0, description=_CONFIG_ID_DESC)],
+    session: Annotated[AsyncSession, Depends(get_db)] = None,
 ) -> GetConfigResponse:
     """Fetch a single config entry by ID. 404 if it does not exist. Admin only."""
     if not is_admin(request):
@@ -77,14 +77,13 @@ async def get_config(
 
 @router.put(
     "/{config_id}",
-    response_model=UpdateConfigResponse,
     responses=error_responses(403, 404, 409),
 )
 async def update_config(
     payload: ConfigUpdate,
     request: Request,
-    config_id: int = Path(..., gt=0, description="Config ID."),
-    session: AsyncSession = Depends(get_db),
+    config_id: Annotated[int, Path(gt=0, description=_CONFIG_ID_DESC)],
+    session: Annotated[AsyncSession, Depends(get_db)] = None,
 ) -> UpdateConfigResponse:
     """Update a config entry. Only the fields sent are changed.
     404 if it does not exist. Admin only."""
@@ -101,13 +100,12 @@ async def update_config(
 
 @router.delete(
     "/{config_id}",
-    response_model=DeleteConfigResponse,
     responses=error_responses(403, 404),
 )
 async def delete_config(
     request: Request,
-    config_id: int = Path(..., gt=0, description="Config ID."),
-    session: AsyncSession = Depends(get_db),
+    config_id: Annotated[int, Path(gt=0, description=_CONFIG_ID_DESC)],
+    session: Annotated[AsyncSession, Depends(get_db)] = None,
 ) -> DeleteConfigResponse:
     """Delete a config entry by ID. 404 if it does not exist. Admin only."""
     if not is_admin(request):
