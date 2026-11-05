@@ -1,9 +1,7 @@
 import {
   FormControl,
   FormErrorMessage,
-  FormHelperText,
   FormLabel,
-  HStack,
   Select,
   Text,
   Textarea,
@@ -22,14 +20,17 @@ import {
 import {
   getStatusReasonOptions,
   type StatusReasonConfigType,
+  type StatusReasonOption,
 } from "../../services/configManagementService";
 import { useTenantManagement } from "./hooks/useTenantManagement";
 
+type TenantManagement = ReturnType<typeof useTenantManagement>;
+
 type InstitutionConfirmDialogsProps = Readonly<{
-  tm: ReturnType<typeof useTenantManagement>;
+  tm: TenantManagement;
 }>;
 
-const STATUS_REMARKS_MAX_LENGTH = 500;
+const STATUS_REMARKS_MAX_LENGTH = 200;
 
 /** Config holding the predefined reasons for a status change; null when none are asked for. */
 function getStatusReasonConfigType(newStatus: string): StatusReasonConfigType | null {
@@ -86,6 +87,172 @@ function getTenantStatusConfirmBody(
   return null;
 }
 
+type StatusReasonSelectProps = Readonly<{
+  reasons: StatusReasonOption[];
+  value: string;
+  onChange: (code: string) => void;
+  isLoading: boolean;
+  isError: boolean;
+  isDisabled: boolean;
+}>;
+
+function StatusReasonSelect({
+  reasons,
+  value,
+  onChange,
+  isLoading,
+  isError,
+  isDisabled,
+}: StatusReasonSelectProps) {
+  return (
+    <FormControl isRequired isInvalid={isError}>
+      <FormLabel>Reason</FormLabel>
+      <Select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        isDisabled={isLoading || isDisabled}
+      >
+        {/* Prompt for the closed field only; not a choice in the open list. */}
+        <option value="" disabled hidden>
+          {isLoading ? "Loading reasons…" : "Select a reason"}
+        </option>
+        {reasons.map((r) => (
+          <option key={r.code} value={r.code}>
+            {r.label}
+          </option>
+        ))}
+      </Select>
+      <FormErrorMessage>
+        Couldn&apos;t load the reasons. Close the dialog and try again.
+      </FormErrorMessage>
+    </FormControl>
+  );
+}
+
+type StatusRemarksFieldProps = Readonly<{
+  label: string;
+  isRequired: boolean;
+  placeholder?: string;
+  rows: number;
+  value: string;
+  onChange: (value: string) => void;
+  isDisabled: boolean;
+}>;
+
+function StatusRemarksField({
+  label,
+  isRequired,
+  placeholder,
+  rows,
+  value,
+  onChange,
+  isDisabled,
+}: StatusRemarksFieldProps) {
+  return (
+    <FormControl isRequired={isRequired}>
+      <FormLabel>
+        {label}
+        {!isRequired && (
+          <Text as="span" fontWeight="normal" color="gray.500">
+            {" "}
+            (optional)
+          </Text>
+        )}
+      </FormLabel>
+      <Textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value.slice(0, STATUS_REMARKS_MAX_LENGTH))}
+        maxLength={STATUS_REMARKS_MAX_LENGTH}
+        rows={rows}
+        placeholder={placeholder}
+        isDisabled={isDisabled}
+      />
+    </FormControl>
+  );
+}
+
+/**
+ * Institution status changes record a reason (Suspend / Deactivate) or a
+ * description (Activate). Loads the reasons and works out what the dialog requires.
+ */
+function useTenantStatusForm(tm: TenantManagement, isOpen: boolean) {
+  const target = tm.statusUpdateTarget;
+  const newStatus = tm.statusUpdateNewStatus;
+  const isTenantTarget = target?.type === "tenant";
+  const reasonConfigType = isTenantTarget ? getStatusReasonConfigType(newStatus) : null;
+  const reasonOptions = useQuery({
+    queryKey: ["configs", reasonConfigType],
+    queryFn: () => getStatusReasonOptions(reasonConfigType as StatusReasonConfigType),
+    enabled: isOpen && reasonConfigType !== null,
+  });
+  const reasons = reasonOptions.data ?? [];
+  const selectedReason = reasons.find((r) => r.code === tm.statusReason);
+  const isActivation = isTenantTarget && isTenantStatus(newStatus, TENANT.STATUS.ACTIVE);
+  // Every activation (from Suspended or Deactivated) needs a description.
+  const isDescriptionRequired = isActivation;
+  const areRemarksRequired = selectedReason?.remarksRequired ?? false;
+  const hasRemarks = tm.statusRemarks.trim().length > 0;
+  const isConfirmDisabled = reasonConfigType
+    ? !selectedReason || (areRemarksRequired && !hasRemarks)
+    : isDescriptionRequired && !hasRemarks;
+  return {
+    reasonConfigType,
+    reasons,
+    isLoadingReasons: reasonOptions.isLoading,
+    isReasonsError: reasonOptions.isError,
+    isActivation,
+    isDescriptionRequired,
+    areRemarksRequired,
+    isConfirmDisabled,
+  };
+}
+
+type TenantStatusFieldsProps = Readonly<{
+  tm: TenantManagement;
+  form: ReturnType<typeof useTenantStatusForm>;
+}>;
+
+function TenantStatusFields({ tm, form }: TenantStatusFieldsProps) {
+  // Suspend / Deactivate ask for remarks only when the reason needs them (Other).
+  const showRemarks = form.isActivation || form.areRemarksRequired;
+  const isRemarksMandatory = form.isActivation
+    ? form.isDescriptionRequired
+    : form.areRemarksRequired;
+  return (
+    <>
+      {form.reasonConfigType && (
+        <StatusReasonSelect
+          reasons={form.reasons}
+          value={tm.statusReason}
+          onChange={(code) => {
+            tm.setStatusReason(code);
+            // Remarks belong to the reason they were typed for.
+            tm.setStatusRemarks("");
+          }}
+          isLoading={form.isLoadingReasons}
+          isError={form.isReasonsError}
+          isDisabled={tm.isSubmittingStatus}
+        />
+      )}
+      {showRemarks && (
+        <StatusRemarksField
+          label={form.isActivation ? "Description" : "Remarks"}
+          isRequired={isRemarksMandatory}
+          placeholder={
+            form.isActivation
+              ? `Why is this ${INSTITUTION.toLowerCase()} being reactivated?`
+              : undefined
+          }
+          rows={form.isActivation ? 4 : 3}
+          value={tm.statusRemarks}
+          onChange={tm.setStatusRemarks}
+          isDisabled={tm.isSubmittingStatus}
+        />
+      )}
+    </>
+  );
+}
+
 export default function InstitutionConfirmDialogs({ tm }: InstitutionConfirmDialogsProps) {
   const target = tm.statusUpdateTarget;
   const isOpen = tm.isStatusDialogOpen && Boolean(target);
@@ -99,94 +266,9 @@ export default function InstitutionConfirmDialogs({ tm }: InstitutionConfirmDial
     ? getTenantStatusConfirmBody(target.currentStatus, tm.statusUpdateNewStatus)
     : null;
 
-  // Institution status changes record a reason (Suspend / Deactivate) or a description (Activate).
-  const reasonConfigType = isTenantTarget
-    ? getStatusReasonConfigType(tm.statusUpdateNewStatus)
-    : null;
-  const reasonOptions = useQuery({
-    queryKey: ["configs", reasonConfigType],
-    queryFn: () => getStatusReasonOptions(reasonConfigType as StatusReasonConfigType),
-    enabled: isOpen && reasonConfigType !== null,
-  });
-  const reasons = reasonOptions.data ?? [];
-  const selectedReason = reasons.find((r) => r.code === tm.statusReason);
-  const isActivation =
-    isTenantTarget && isTenantStatus(tm.statusUpdateNewStatus, TENANT.STATUS.ACTIVE);
-  const isDescriptionRequired =
-    isActivation && isTenantStatus(target.currentStatus, TENANT.STATUS.DEACTIVATED);
-  const areRemarksRequired = selectedReason?.remarksRequired ?? false;
-  const hasRemarks = tm.statusRemarks.trim().length > 0;
-  const isConfirmDisabled = reasonConfigType
-    ? !selectedReason || (areRemarksRequired && !hasRemarks)
-    : isDescriptionRequired && !hasRemarks;
-
+  const tenantForm = useTenantStatusForm(tm, isOpen);
   const tenantAction = getTenantStatusAction(tm.statusUpdateNewStatus);
-  const remarksLabel = isActivation ? "Description" : "Remarks";
-  const isRemarksMandatory = isActivation ? isDescriptionRequired : areRemarksRequired;
-  let remarksHint: string | null = null;
-  if (isDescriptionRequired) {
-    remarksHint = "Required. Recorded with this status change.";
-  } else if (reasonConfigType) {
-    remarksHint = areRemarksRequired
-      ? `Remarks are required when the reason is ${selectedReason?.label ?? "Other"}.`
-      : "Required only when the reason is Other.";
-  }
-
-  const reasonFields = isTenantTarget ? (
-    <>
-      {reasonConfigType && (
-        <FormControl isRequired isInvalid={reasonOptions.isError}>
-          <FormLabel>Reason</FormLabel>
-          <Select
-            placeholder={reasonOptions.isLoading ? "Loading reasons…" : "Select a reason"}
-            value={tm.statusReason}
-            onChange={(e) => tm.setStatusReason(e.target.value)}
-            isDisabled={reasonOptions.isLoading || tm.isSubmittingStatus}
-          >
-            {reasons.map((r) => (
-              <option key={r.code} value={r.code}>
-                {r.label}
-              </option>
-            ))}
-          </Select>
-          <FormErrorMessage>
-            Couldn&apos;t load the reasons. Close the dialog and try again.
-          </FormErrorMessage>
-        </FormControl>
-      )}
-      <FormControl isRequired={isRemarksMandatory}>
-        <FormLabel>
-          {remarksLabel}
-          {!isRemarksMandatory && (
-            <Text as="span" fontWeight="normal" color="gray.500">
-              {" "}
-              (optional)
-            </Text>
-          )}
-        </FormLabel>
-        <Textarea
-          value={tm.statusRemarks}
-          onChange={(e) =>
-            tm.setStatusRemarks(e.target.value.slice(0, STATUS_REMARKS_MAX_LENGTH))
-          }
-          maxLength={STATUS_REMARKS_MAX_LENGTH}
-          rows={isActivation ? 4 : 3}
-          placeholder={
-            isDescriptionRequired
-              ? `Why is this ${INSTITUTION.toLowerCase()} being reactivated?`
-              : "Add context for this change"
-          }
-          isDisabled={tm.isSubmittingStatus}
-        />
-        <HStack justify={remarksHint ? "space-between" : "flex-end"} mt={2}>
-          {remarksHint && <FormHelperText mt={0}>{remarksHint}</FormHelperText>}
-          <FormHelperText mt={0}>
-            {tm.statusRemarks.length}/{STATUS_REMARKS_MAX_LENGTH}
-          </FormHelperText>
-        </HStack>
-      </FormControl>
-    </>
-  ) : null;
+  const reasonFields = isTenantTarget ? <TenantStatusFields tm={tm} form={tenantForm} /> : null;
 
   const body =
     apiKeyNote || reasonFields ? (
@@ -216,7 +298,7 @@ export default function InstitutionConfirmDialogs({ tm }: InstitutionConfirmDial
         confirmLabel={isTenantTarget ? tenantAction.verb : "Update"}
         confirmColorScheme={isTenantTarget ? tenantAction.colorScheme : "blue"}
         isConfirmLoading={tm.isSubmittingStatus}
-        isConfirmDisabled={isTenantTarget && isConfirmDisabled}
+        isConfirmDisabled={isTenantTarget && tenantForm.isConfirmDisabled}
       />
       <ConfirmDialog
         isOpen={tm.isDeleteUserDialogOpen}

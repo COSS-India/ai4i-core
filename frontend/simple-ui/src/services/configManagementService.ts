@@ -46,6 +46,9 @@ export interface StatusReasonOption {
   remarksRequired: boolean;
 }
 
+/** Matches an "Other" reason by key or label: "OTHER", "other_reason", "Other (remarks mandatory)". */
+const OTHER_REASON_PATTERN = /^other\b/i;
+
 /** Predefined reasons for suspending or deactivating an institution, in config order. */
 export async function getStatusReasonOptions(
   type: StatusReasonConfigType,
@@ -57,11 +60,13 @@ export async function getStatusReasonOptions(
   for (const { key, label, remarks_required } of statusReasonsConfigDataSchema.parse(config.data)) {
     const code = key.trim();
     if (!code || options.has(code)) continue;
+    const text = label?.trim() || code;
     options.set(code, {
       code,
-      label: label?.trim() || code,
+      label: text,
       // "Other" always needs remarks, even if the config omits the flag.
-      remarksRequired: remarks_required === true || code.toUpperCase() === "OTHER",
+      remarksRequired:
+        remarks_required === true || OTHER_REASON_PATTERN.test(code) || OTHER_REASON_PATTERN.test(text),
     });
   }
   return Array.from(options.values());
