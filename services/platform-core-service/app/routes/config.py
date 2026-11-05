@@ -1,4 +1,4 @@
-"""Config management endpoints — ADMIN only."""
+"""Config management endpoints — list is open to all authenticated users; all other operations are ADMIN only."""
 
 from typing import Annotated, Optional
 

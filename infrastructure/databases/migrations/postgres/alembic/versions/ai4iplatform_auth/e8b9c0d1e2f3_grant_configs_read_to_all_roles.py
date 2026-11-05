@@ -1,10 +1,5 @@
 """Grant configs.read (120) to all roles.
 
-configs.read already exists (seeded in 2362774ac241) and is currently
-assigned only to ADMIN and MODERATOR. The GET /api/v1/config list endpoint
-is intended to be accessible by every authenticated role, so this migration
-grants configs.read to USER, GUEST, TENANT ADMIN, and USAGE VIEWER.
-
 Revision ID: e8b9c0d1e2f3
 Revises: ba0818f032cd
 Create Date: 2026-11-05
