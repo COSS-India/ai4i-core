@@ -204,6 +204,8 @@ export interface ModelResponse {
   isMultilingual?: boolean;
   domain?: Domain[] | string[];
   submitter?: Submitter | null;
+  /** List rows only: `submitter.name`, sent when the Provider column is requested. */
+  providerName?: string | null;
   license?: License | string | null;
   licenseUrl?: string | null;
   adapterConfig?: Record<string, unknown> | null;
@@ -238,6 +240,18 @@ export interface ModelListParams {
   taskTypes?: string;
   versionStatus?: string;
   createdBy?: string;
+  /** Comma-separated `model-column` keys → `columns=`; rows carry only those columns' fields. */
+  columns?: string;
+  /** Case-insensitive "contains" filters. */
+  name?: string;
+  version?: string;
+  providerName?: string;
+  /** `YYYY-MM-DD`; whole local day on the API side. */
+  createdFrom?: string;
+  createdTo?: string;
+  /** A `model-column` key; omit for the API default (newest first). */
+  sortBy?: string;
+  sortOrder?: "asc" | "desc";
 }
 
 /** Legacy snake_case keys still returned by some gateways or older rows. */
