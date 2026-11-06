@@ -428,7 +428,7 @@ class AuthService:
         tenant = await self._tenants.get_by_id(user.tenant_id)
         if tenant is None:
             raise EntityNotFoundError(f"Tenant {user.tenant_id}")
-        await self._tenants.update(tenant, {"status": TenantStatus.ACTIVE})
+        await self._tenants.update(tenant, {"status": TenantStatus.ACTIVE, "reason": None})
         await sync_tenant_users_for_status(
             self._users, tenant.id, TenantStatus.ACTIVE, updated_by=user.id
         )

@@ -67,6 +67,29 @@ async def assert_tenant_admin_assignable(
     assert_default_tenant_not_targeted(tenant)
 
 
+# Target statuses that need a reason on PATCH /tenants/{id}/status: the
+# Suspend / Deactivate reason (or the admin's text for Other), or the
+# description when activating.
+STATUSES_REQUIRING_REASON = frozenset(
+    {TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED, TenantStatus.ACTIVE}
+)
+
+
+def assert_status_reason(target: TenantStatus, reason: Optional[str]) -> None:
+    """Raise ValidationError when ``reason`` is missing or not allowed for ``target``."""
+    if target in STATUSES_REQUIRING_REASON:
+        if not reason:
+            raise ValidationError(
+                message=f"A reason is required to change the status to {target.value}.",
+                code="STATUS_REASON_REQUIRED",
+            )
+    elif reason:
+        raise ValidationError(
+            message=f"A reason is not allowed when changing the status to {target.value}.",
+            code="STATUS_REASON_NOT_ALLOWED",
+        )
+
+
 def assert_valid_tenant_status_transition(
     current: TenantStatus,
     target: TenantStatus,
