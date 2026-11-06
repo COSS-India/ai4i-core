@@ -124,26 +124,39 @@ export const getModelListPage = async (params: ModelListParams): Promise<Paginat
   }
 };
 
+/** Plain text filters: `ModelListParams` field → GET /models/list query param. */
+const MODEL_LIST_TEXT_PARAMS: ReadonlyArray<[keyof ModelListParams, string]> = [
+  ['versionStatus', 'version_status'],
+  ['createdBy', 'created_by'],
+  ['columns', 'columns'],
+  ['name', 'name'],
+  ['version', 'version'],
+  ['providerName', 'provider_name'],
+  ['createdFrom', 'created_from'],
+  ['createdTo', 'created_to'],
+];
+
+function buildModelListQueryParams(params: ModelListParams): Record<string, string | number> {
+  const queryParams: Record<string, string | number> = {};
+  if (params.offset !== undefined && params.offset > 0) queryParams.offset = params.offset;
+  if (params.limit !== undefined) queryParams.limit = params.limit;
+  // drill-down selected -> it's already in the allowlist, so it IS the intersection
+  const taskTypesParam = params.taskType ?? params.taskTypes;
+  if (taskTypesParam) queryParams.task_types = taskTypesParam;
+  for (const [field, param] of MODEL_LIST_TEXT_PARAMS) {
+    const value = params[field];
+    if (typeof value === 'string' && value) queryParams[param] = value;
+  }
+  if (params.sortBy) {
+    queryParams.sort_by = params.sortBy;
+    queryParams.sort_order = params.sortOrder ?? 'asc';
+  }
+  return queryParams;
+}
+
 export const getModelsPaginated = async (params: ModelListParams = {}): Promise<PaginatedModels> => {
   try {
-    const queryParams: Record<string, string | number> = {};
-    if (params.offset !== undefined && params.offset > 0) queryParams.offset = params.offset;
-    if (params.limit !== undefined) queryParams.limit = params.limit;
-    // drill-down selected -> it's already in the allowlist, so it IS the intersection
-    const taskTypesParam = params.taskType ?? params.taskTypes;
-    if (taskTypesParam) queryParams.task_types = taskTypesParam;
-    if (params.versionStatus) queryParams.version_status = params.versionStatus;
-    if (params.createdBy) queryParams.created_by = params.createdBy;
-    if (params.columns) queryParams.columns = params.columns;
-    if (params.name) queryParams.name = params.name;
-    if (params.version) queryParams.version = params.version;
-    if (params.providerName) queryParams.provider_name = params.providerName;
-    if (params.createdFrom) queryParams.created_from = params.createdFrom;
-    if (params.createdTo) queryParams.created_to = params.createdTo;
-    if (params.sortBy) {
-      queryParams.sort_by = params.sortBy;
-      queryParams.sort_order = params.sortOrder ?? 'asc';
-    }
+    const queryParams = buildModelListQueryParams(params);
 
     const response = await apiService.get(apiEndpoints.platform.models.base, {
       params: queryParams,
