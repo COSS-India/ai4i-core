@@ -1,21 +1,23 @@
 /**
  * Model List column catalogue + local preference helpers (AI4IDS-3351).
- * Mirrors the Service List pattern (AI4IDS-3356). FE catalogue is the source of
- * truth; column visibility is browser-local for 2.11 (server prefs follow-up).
+ * Mirrors the Service List pattern (AI4IDS-3356). The `model-column` config is
+ * the source of truth for order, labels and required columns; MODEL_LIST_COLUMNS
+ * is the fallback. Ids match the config keys (and `GET /models/list?columns=`).
+ * Column visibility is browser-local for 2.11 (server prefs follow-up).
  */
 
 export type ModelListColumnId =
   | "name"
   | "version"
-  | "task"
-  | "provider"
+  | "taskType"
+  | "providerName"
   | "status"
-  | "created"
-  | "serviceCount"
+  | "createdAt"
+  | "noOfServices"
   | "actions";
 
 export type ModelListColumnDef = {
-  /** Known ids are ModelListColumnId; string allows a future API catalogue. */
+  /** Known ids are ModelListColumnId; string allows a config-driven catalogue. */
   id: string;
   label: string;
   mandatory: boolean;
@@ -23,18 +25,18 @@ export type ModelListColumnDef = {
 };
 
 /**
+ * Fallback when the `model-column` config is missing or fails to load.
  * Display order. Mandatory set from AI4IDS-3351 (+ Actions, same as services).
- * Provider maps to submitter.name until BE exposes a dedicated field.
  */
 export const MODEL_LIST_COLUMNS: readonly ModelListColumnDef[] = [
   { id: "name", label: "Name", mandatory: true, defaultVisible: true },
   { id: "version", label: "Version", mandatory: true, defaultVisible: true },
-  { id: "task", label: "Task Type", mandatory: true, defaultVisible: true },
-  { id: "provider", label: "Provider Name", mandatory: true, defaultVisible: true },
+  { id: "taskType", label: "Task Type", mandatory: true, defaultVisible: true },
+  { id: "providerName", label: "Provider Name", mandatory: true, defaultVisible: true },
   { id: "status", label: "Status", mandatory: false, defaultVisible: true },
-  { id: "created", label: "Created At", mandatory: false, defaultVisible: true },
+  { id: "createdAt", label: "Created At", mandatory: false, defaultVisible: true },
   {
-    id: "serviceCount",
+    id: "noOfServices",
     label: "No. of Services",
     mandatory: false,
     defaultVisible: true,
@@ -43,6 +45,48 @@ export const MODEL_LIST_COLUMNS: readonly ModelListColumnDef[] = [
 ];
 
 export const MODEL_LIST_COLUMN_STORAGE_PREFIX = "model-list-columns";
+
+/**
+ * Always requested from GET /models/list, visible or not: search reads `name`,
+ * the task/status filters read `task` / `versionStatus`, and Deprecate/Activate
+ * send `version`.
+ */
+const MODEL_LIST_ALWAYS_FETCHED_COLUMN_IDS: readonly ModelListColumnId[] = [
+  "name",
+  "version",
+  "taskType",
+  "actions",
+];
+
+/** `columns=` value for GET /models/list: the visible ids plus the always-fetched ones. */
+export function modelListColumnsParam(visibleIds: readonly string[]): string {
+  const ids = new Set(visibleIds);
+  for (const id of MODEL_LIST_ALWAYS_FETCHED_COLUMN_IDS) ids.add(id);
+  return Array.from(ids).join(",");
+}
+
+const KNOWN_MODEL_LIST_COLUMN_IDS = new Set(MODEL_LIST_COLUMNS.map((column) => column.id));
+
+/**
+ * Catalogue from `model-column` config entries. Keys the table cannot render are
+ * dropped; an empty result falls back to MODEL_LIST_COLUMNS.
+ */
+export function modelListColumnsFromConfig(
+  entries: readonly { key: string; label: string; required: boolean }[] | null | undefined,
+): readonly ModelListColumnDef[] {
+  const catalogue: ModelListColumnDef[] = [];
+  for (const entry of entries ?? []) {
+    if (!KNOWN_MODEL_LIST_COLUMN_IDS.has(entry.key)) continue;
+    if (catalogue.some((column) => column.id === entry.key)) continue;
+    catalogue.push({
+      id: entry.key,
+      label: entry.label,
+      mandatory: entry.required,
+      defaultVisible: true,
+    });
+  }
+  return catalogue.length > 0 ? catalogue : MODEL_LIST_COLUMNS;
+}
 
 export function defaultModelListColumnIds(
   catalogue: readonly ModelListColumnDef[] = MODEL_LIST_COLUMNS,

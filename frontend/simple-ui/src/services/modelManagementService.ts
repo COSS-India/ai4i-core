@@ -60,6 +60,8 @@ export const unpublishModel = async (
 /** RQ cache key for every model. GET /models defaults `limit` to 100, so callers page. */
 export const MODELS_ALL_QUERY_KEY = ["models-all"] as const;
 export const MODELS_ALL_STALE_MS = 5 * 60 * 1000;
+/** RQ cache key prefix for the Model List table (rows projected by `columns=`). */
+export const MODEL_LIST_QUERY_KEY = ["models-list"] as const;
 
 /**
  * Get models with server-side pagination, filtering, and search.
@@ -100,6 +102,28 @@ export const getAllModels = async (): Promise<ModelDetails[]> => {
   return items;
 };
 
+/** 422 code GET /models/list returns when it rejects the `columns` selection. */
+const isColumnsRejected = (error: unknown): boolean => {
+  const response = (error as {
+    response?: { status?: number; data?: { detail?: { code?: unknown } } };
+  } | null)?.response;
+  return response?.status === 422 && response.data?.detail?.code === 'INVALID_COLUMNS';
+};
+
+/**
+ * One page of the Model List: server-side search, sort and paging, each row
+ * carrying only the fields `columns` need. A config key the API does not know
+ * is rejected; full rows still render every column, so retry without it.
+ */
+export const getModelListPage = async (params: ModelListParams): Promise<PaginatedModels> => {
+  try {
+    return await getModelsPaginated(params);
+  } catch (error: unknown) {
+    if (!params.columns || !isColumnsRejected(error)) throw error;
+    return getModelsPaginated({ ...params, columns: undefined });
+  }
+};
+
 export const getModelsPaginated = async (params: ModelListParams = {}): Promise<PaginatedModels> => {
   try {
     const queryParams: Record<string, string | number> = {};
@@ -110,6 +134,16 @@ export const getModelsPaginated = async (params: ModelListParams = {}): Promise<
     if (taskTypesParam) queryParams.task_types = taskTypesParam;
     if (params.versionStatus) queryParams.version_status = params.versionStatus;
     if (params.createdBy) queryParams.created_by = params.createdBy;
+    if (params.columns) queryParams.columns = params.columns;
+    if (params.name) queryParams.name = params.name;
+    if (params.version) queryParams.version = params.version;
+    if (params.providerName) queryParams.provider_name = params.providerName;
+    if (params.createdFrom) queryParams.created_from = params.createdFrom;
+    if (params.createdTo) queryParams.created_to = params.createdTo;
+    if (params.sortBy) {
+      queryParams.sort_by = params.sortBy;
+      queryParams.sort_order = params.sortOrder ?? 'asc';
+    }
 
     const response = await apiService.get(apiEndpoints.platform.models.base, {
       params: queryParams,
