@@ -5,12 +5,19 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError as PydanticValidationError
 
 from app.core.config import settings
 from app.core.exceptions import EntityNotFoundError, ValidationError
 from app.models.tenant import Tenant, TenantStatus
 from app.models.user import User
-from app.schemas.tenant import TenantUpdate, TenantUserCreate, TenantUserRole, TenantUserUpdate
+from app.schemas.tenant import (
+    TenantStatusUpdate,
+    TenantUpdate,
+    TenantUserCreate,
+    TenantUserRole,
+    TenantUserUpdate,
+)
 from app.services.tenant_lifecycle import (
     assert_default_tenant_not_targeted,
     assert_tenant_admin_assignable,
@@ -108,10 +115,10 @@ class TestTenantUserStatusPayload:
         _assert_tenant_active_for_user_deactivation(tenant, {"is_active": True})
 
 
-def _status_body(status: TenantStatus) -> MagicMock:
-    body = MagicMock()
-    body.status = status
-    return body
+def _status_body(status: TenantStatus) -> TenantStatusUpdate:
+    if status == TenantStatus.ACTIVE:
+        return TenantStatusUpdate(status=status)
+    return TenantStatusUpdate(status=status, reason="Agreement renewal pending")
 
 
 def _tenant_service_with_mocks() -> TenantService:
@@ -299,6 +306,114 @@ class TestDefaultTenantHelpers:
     def test_assert_default_tenant_not_targeted_noop_for_other_org(self) -> None:
         tenant = Tenant(id=2, name="Acme", organisation="Acme", email="test-acme@example.invalid")
         assert_default_tenant_not_targeted(tenant)  # does not raise
+
+
+class TestTenantStatusUpdateReason:
+    @pytest.mark.parametrize("target", [TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED])
+    @pytest.mark.parametrize("reason", [None, "", "   "])
+    def test_reason_required_for_suspend_and_deactivate(
+        self, target: TenantStatus, reason
+    ) -> None:
+        with pytest.raises(PydanticValidationError, match="reason is required"):
+            TenantStatusUpdate(status=target, reason=reason)
+
+    @pytest.mark.parametrize("target", [TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED])
+    def test_reason_is_trimmed(self, target: TenantStatus) -> None:
+        body = TenantStatusUpdate(status=target, reason="  Requested by the Institution ")
+        assert body.reason == "Requested by the Institution"
+
+    def test_other_free_text_is_kept_as_reason(self) -> None:
+        body = TenantStatusUpdate(
+            status=TenantStatus.SUSPENDED, reason="Billing dispute with finance team"
+        )
+        assert body.reason == "Billing dispute with finance team"
+
+    def test_activate_accepts_reason(self) -> None:
+        body = TenantStatusUpdate(status=TenantStatus.ACTIVE, reason=" Agreement renewed ")
+        assert body.reason == "Agreement renewed"
+
+    def test_pending_rejects_reason(self) -> None:
+        with pytest.raises(PydanticValidationError, match="reason is not allowed"):
+            TenantStatusUpdate(status=TenantStatus.PENDING, reason="Awaiting setup")
+
+    def test_activate_without_reason_is_accepted(self) -> None:
+        assert TenantStatusUpdate(status=TenantStatus.ACTIVE).reason is None
+
+    @pytest.mark.parametrize("status", [TenantStatus.ACTIVE, TenantStatus.SUSPENDED])
+    @pytest.mark.parametrize("reason", [0, False, []])
+    def test_non_string_reason_is_rejected(self, status: TenantStatus, reason) -> None:
+        with pytest.raises(PydanticValidationError, match="string"):
+            TenantStatusUpdate(status=status, reason=reason)
+
+    def test_reason_max_length(self) -> None:
+        TenantStatusUpdate(status=TenantStatus.SUSPENDED, reason="r" * 255)
+        with pytest.raises(PydanticValidationError):
+            TenantStatusUpdate(status=TenantStatus.SUSPENDED, reason="r" * 256)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("target", [TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED])
+    async def test_service_saves_reason(self, target: TenantStatus) -> None:
+        svc = _tenant_service_with_mocks()
+        svc._roles.get_user_roles = AsyncMock(return_value=["ADMIN"])
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=Tenant(id=2, name="Acme", organisation="Acme", status=TenantStatus.ACTIVE)
+        )
+        svc._api_keys = AsyncMock()
+
+        await svc.update_tenant_status(
+            _admin_user(),
+            2,
+            TenantStatusUpdate(status=target, reason="Board decision"),
+        )
+
+        data = svc._tenants.update.await_args.args[1]
+        assert data["status"] == target
+        assert data["reason"] == "Board decision"
+
+    @pytest.mark.asyncio
+    async def test_reactivation_clears_reason(self) -> None:
+        svc = _tenant_service_with_mocks()
+        svc._roles.get_user_roles = AsyncMock(return_value=["ADMIN"])
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=Tenant(
+                id=2,
+                name="Acme",
+                organisation="Acme",
+                status=TenantStatus.SUSPENDED,
+                reason="Agreement renewal pending",
+            )
+        )
+        svc._api_keys = AsyncMock()
+
+        await svc.update_tenant_status(
+            _admin_user(), 2, TenantStatusUpdate(status=TenantStatus.ACTIVE)
+        )
+
+        data = svc._tenants.update.await_args.args[1]
+        assert "reason" in data and data["reason"] is None
+
+    @pytest.mark.asyncio
+    async def test_reactivation_saves_given_reason(self) -> None:
+        svc = _tenant_service_with_mocks()
+        svc._roles.get_user_roles = AsyncMock(return_value=["ADMIN"])
+        svc._tenants.get_by_id_for_update = AsyncMock(
+            return_value=Tenant(
+                id=2,
+                name="Acme",
+                organisation="Acme",
+                status=TenantStatus.DEACTIVATED,
+                reason="Agreement or engagement ended",
+            )
+        )
+        svc._api_keys = AsyncMock()
+
+        await svc.update_tenant_status(
+            _admin_user(),
+            2,
+            TenantStatusUpdate(status=TenantStatus.ACTIVE, reason="New agreement signed"),
+        )
+
+        assert svc._tenants.update.await_args.args[1]["reason"] == "New agreement signed"
 
 
 class TestUpdateTenantStatusDefaultOrgGuard:

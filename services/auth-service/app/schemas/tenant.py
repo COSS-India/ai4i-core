@@ -191,14 +191,43 @@ class TenantUpdate(BaseSchema):
 
 
 _TENANT_STATUS_UPDATE_EXAMPLE = {
-    "status": "ACTIVE",
+    "status": "SUSPENDED",
+    "reason": "Agreement renewal pending",
 }
+
+# Statuses that need a reason.
+_STATUSES_REQUIRING_REASON = frozenset({TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED})
 
 
 class TenantStatusUpdate(BaseSchema):
     model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_STATUS_UPDATE_EXAMPLE]})
 
     status: TenantStatus
+    # A predefined Suspend / Deactivate reason, the admin's own text when they
+    # pick Other, or a description when activating. Required for SUSPENDED and
+    # DEACTIVATED, optional for ACTIVE, rejected for PENDING.
+    reason: Optional[str] = Field(None, max_length=255)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _clean_reason(cls, v: Any) -> Any:
+        # Only a blank string means "no reason"; other types fall through to
+        # pydantic's str check and get a type error.
+        v = _clean_text(v)
+        return None if v == "" else v
+
+    @model_validator(mode="after")
+    def _check_reason(self) -> "TenantStatusUpdate":
+        if self.status in _STATUSES_REQUIRING_REASON:
+            if not self.reason:
+                raise ValueError(
+                    f"reason is required to change the status to {self.status.value}."
+                )
+        elif self.reason and self.status == TenantStatus.PENDING:
+            raise ValueError(
+                f"reason is not allowed when changing the status to {self.status.value}."
+            )
+        return self
 
 
 class TierQuotaLimit(BaseSchema):
@@ -232,6 +261,9 @@ class TenantResponse(BaseSchema):
             return value.value
         return str(value).strip().upper()
 
+    # Reason given with the latest status change (Suspend / Deactivate, or
+    # the description on Activate); null when none was given.
+    reason: Optional[str] = None
     created_at: datetime
     created_by: Optional[UUID] = None
     updated_at: Optional[datetime] = None

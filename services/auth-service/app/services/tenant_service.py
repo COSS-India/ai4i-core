@@ -1309,8 +1309,15 @@ class TenantService:
         await sync_tenant_users_for_status(
             self._users, tenant_id, body.status, updated_by=current_user.id
         )
+        # Always overwrite: activating without a reason clears the previous
+        # Suspend / Deactivate reason.
         await self._tenants.update(
-            tenant, {"status": body.status, "updated_by": current_user.id}
+            tenant,
+            {
+                "status": body.status,
+                "reason": body.reason,
+                "updated_by": current_user.id,
+            },
         )
         await self._tenants.save_and_refresh(tenant)
         if self._api_keys is not None:
