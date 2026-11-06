@@ -1608,7 +1608,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setIsStatusDialogOpen(true);
   };
 
-  const handleConfirmStatusUpdate = async () => {
+  /** `reason` is what the Institution status dialog resolved; unused for user status changes. */
+  const handleConfirmStatusUpdate = async (reason?: string) => {
     if (!statusUpdateTarget) return;
     setIsSubmittingStatus(true);
     try {
@@ -1618,12 +1619,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
             statusUpdateTarget.currentStatus,
             TENANT.STATUS.PENDING,
           ) && statusUpdateNewStatus === TENANT.STATUS.DEACTIVATED;
-        const remarks = statusRemarks.trim();
         await tenantService.updateTenantStatus({
           tenant_id: statusUpdateTarget.tenant_id,
           status: statusUpdateNewStatus as TenantStatus,
-          ...(statusReason ? { reason: statusReason } : {}),
-          ...(remarks ? { remarks } : {}),
+          ...(reason ? { reason } : {}),
         });
         if (wasPendingDeactivate) {
           markPendingSoftDeletedTenant(statusUpdateTarget.tenant_id);
