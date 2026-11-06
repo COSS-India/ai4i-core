@@ -47,10 +47,11 @@ export interface StatusReasonOption {
 }
 
 /**
- * The "Other" reason, matched by key (e.g. `other-remarks-mandatory`): the only
- * reason whose remarks are mandatory. The config's own `required` flag is not used.
+ * The "Other" reason: the only reason whose remarks are mandatory. Matched by key,
+ * which must be `other` or start with `other-` / `other_` (any case), e.g.
+ * `other-remarks-mandatory`. The config's own `required` flag is not used.
  */
-const OTHER_REASON_KEY_PATTERN = /^other\b/i;
+const OTHER_REASON_KEY_PATTERN = /^other(?![a-z0-9])/i;
 
 /** Predefined reasons for suspending or deactivating an institution, in config order. */
 export async function getStatusReasonOptions(
