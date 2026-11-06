@@ -1,9 +1,7 @@
 // Model Management page with list and create functionality
 
 import {
-  Badge,
   Box,
-  HStack,
   Skeleton,
   Switch,
   Text,
@@ -22,6 +20,9 @@ import FormDrawer from "../components/common/FormDrawer";
 import ModelExtraDetails from "../components/model-management/ModelDetails";
 import ModelForm from "../components/model-management/ModelForm";
 import ModelListColumnPicker from "../components/model-management/ModelListColumnPicker";
+import ModelStatusConfirmDialog from "../components/model-management/ModelStatusConfirmDialog";
+import ModelViewActions from "../components/model-management/ModelViewActions";
+import { buildModelToolbarFilterDefs } from "../components/model-management/modelToolbarFilters";
 import { validateModelData } from "../components/model-management/modelJsonValidation";
 import {
   modelCreatedAtMs,
@@ -58,7 +59,6 @@ import { MODEL_SAMPLES, type ModelSampleKind } from "../utils/sampleModelJson";
 import { stripJsonComments } from "../utils/stripJsonComments";
 import { showToast } from "../utils/toast";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
-import ConfirmDialog from "../components/common/ConfirmDialog";
 import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
   actionsColumnSize,
@@ -66,13 +66,7 @@ import DataTable, {
 } from "../components/common/table";
 import { FIELD_HINTS } from "../config/fieldHints";
 import { useDeferredColumnSort } from "../utils/tableSort";
-import {
-  MODEL_VERSION,
-  MODEL_VERSION_FILTER_LIST,
-  MODEL_API_KEY_REDACTED,
-  formatModelTaskTypeLabel,
-  formatModelVersionFilterLabel,
-} from "../config/constants";
+import { MODEL_VERSION } from "../config/constants";
 import { useInferenceTypes } from "../hooks/useInferenceTypes";
 import { getPlatformName } from "../config/runtimeConfig";
 
@@ -321,10 +315,15 @@ const ModelManagementPage: React.FC = () => {
     );
   }, []);
 
-  const showTaskTypeAllOption = taskTypeNames.length > 1;
-  // One enabled task type: the toolbar shows it picked (no All), like before.
-  const toolbarTaskType =
-    registry.filters.taskType ?? (showTaskTypeAllOption ? "" : taskTypeNames[0] ?? "");
+  const toolbarFilterDefs = useMemo(
+    () =>
+      buildModelToolbarFilterDefs({
+        filters: registry.filters,
+        setFilter: registry.setFilter,
+        taskTypeNames,
+      }),
+    [registry.filters, registry.setFilter, taskTypeNames],
+  );
 
   const handleClearUpload = () => {
     setUploadedModelData(null);
@@ -821,6 +820,18 @@ const ModelManagementPage: React.FC = () => {
       : withoutActions;
   }, [modelColumnTemplates, modelListColumns, visibleColumnIds]);
 
+  /** Service counts loaded without error; the drawer's status switch waits for them. */
+  const serviceCountsReady = !isServiceCountLoading && !hasServiceCountError;
+  // The view drawer wins when both are open.
+  const isCreateDrawerOpen =
+    isCreateOpen && !isRegistryReadOnly && !(isViewingModel && selectedModel);
+  const openCreateServiceForModel = (modelId: string) => {
+    const returnTo = `/model-management?modelId=${encodeURIComponent(modelId)}`;
+    router.push(
+      `/services-management?modelId=${encodeURIComponent(modelId)}&tab=create&returnTo=${encodeURIComponent(returnTo)}`,
+    );
+  };
+
   const columnPicker = (
     <ModelListColumnPicker
       columns={modelListColumns}
@@ -888,42 +899,7 @@ const ModelManagementPage: React.FC = () => {
                           debounceMs: 400,
                           fields: ["name"],
                         }}
-                        filterDefs={[
-                          {
-                            id: "status",
-                            label: "Status",
-                            type: "select",
-                            param: "version_status",
-                            value: registry.filters.status ?? MODEL_VERSION.FILTER.ALL,
-                            onChange: (value) => registry.setFilter("status", value),
-                            options: [
-                              { label: "All", value: MODEL_VERSION.FILTER.ALL },
-                              ...MODEL_VERSION_FILTER_LIST.map((s) => ({
-                                label: formatModelVersionFilterLabel(s),
-                                value: s,
-                              })),
-                            ],
-                          },
-                          {
-                            id: "taskType",
-                            label: "Task type",
-                            type: "select",
-                            param: "task_types",
-                            value: toolbarTaskType,
-                            onChange: (value) => registry.setFilter("taskType", value),
-                            // Fits the longest task type (LANGUAGE-DIARIZATION).
-                            width: { base: "full", sm: "240px" },
-                            options: [
-                              ...(showTaskTypeAllOption
-                                ? [{ label: "All", value: "" }]
-                                : []),
-                              ...taskTypeNames.map((t) => ({
-                                label: formatModelTaskTypeLabel(t),
-                                value: t,
-                              })),
-                            ],
-                          },
-                        ]}
+                        filterDefs={toolbarFilterDefs}
                       />
         <FormDrawer
           isOpen={Boolean(isViewingModel && selectedModel)}
@@ -933,74 +909,18 @@ const ModelManagementPage: React.FC = () => {
           description="Model configuration."
           actions={
             selectedModel ? (
-              <HStack spacing={2}>
-                {isRegistryReadOnly ? (
-                  <Badge colorScheme="gray" fontSize="xs" px={2} py={0.5}>
-                    Read-only
-                  </Badge>
-                ) : null}
-                {!isRegistryReadOnly &&
-                  (selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && (
-                  <CreateButton
-                    size="sm"
-                    onClick={() => {
-                      const modelId = selectedModel.modelId;
-                      const returnTo = `/model-management?modelId=${encodeURIComponent(modelId)}`;
-                      router.push(
-                        `/services-management?modelId=${encodeURIComponent(modelId)}&tab=create&returnTo=${encodeURIComponent(returnTo)}`,
-                      );
-                    }}
-                  >
-                    Create Service
-                  </CreateButton>
-                )}
-                {!isRegistryReadOnly &&
-                !isServiceCountLoading &&
-                !hasServiceCountError &&
-                isModelDeprecated(selectedModel) ? (
-                  <Tooltip label="Activate model" placement="top" hasArrow>
-                    <Box as="span" display="inline-flex" alignItems="center">
-                      <Switch
-                        size="md"
-                        colorScheme="green"
-                        isChecked={false}
-                        onChange={() => openConfirmDialog("activate", selectedModel)}
-                        isDisabled={updatingModelId !== null}
-                      />
-                    </Box>
-                  </Tooltip>
-                ) : !isRegistryReadOnly &&
-                  !isServiceCountLoading &&
-                  !hasServiceCountError &&
-                  isModelActive(selectedModel) &&
-                  hasLinkedServices(selectedModel) ? (
-                  <Tooltip
-                    label={
-                      hasPublishedService(selectedModel)
-                        ? "Unpublish its services to deprecate"
-                        : "Deprecate model"
-                    }
-                    placement="top"
-                    hasArrow
-                  >
-                    <Box as="span" display="inline-flex" alignItems="center">
-                      <Switch
-                        size="md"
-                        colorScheme="green"
-                        isChecked={true}
-                        onChange={() => {
-                          if (hasPublishedService(selectedModel)) return;
-                          openConfirmDialog("deprecate", selectedModel);
-                        }}
-                        isDisabled={
-                          updatingModelId !== null ||
-                          hasPublishedService(selectedModel)
-                        }
-                      />
-                    </Box>
-                  </Tooltip>
-                ) : null}
-              </HStack>
+              <ModelViewActions
+                isReadOnly={isRegistryReadOnly}
+                serviceCountsReady={serviceCountsReady}
+                isActive={isModelActive(selectedModel)}
+                isDeprecated={isModelDeprecated(selectedModel)}
+                hasLinkedServices={hasLinkedServices(selectedModel)}
+                hasPublishedService={hasPublishedService(selectedModel)}
+                isUpdating={updatingModelId !== null}
+                onCreateService={() => openCreateServiceForModel(selectedModel.modelId)}
+                onActivate={() => openConfirmDialog("activate", selectedModel)}
+                onDeprecate={() => openConfirmDialog("deprecate", selectedModel)}
+              />
             ) : undefined
           }
           footer={<FormActions hideSubmit cancelLabel="Close" onCancel={closeModelView} pt={0} />}
@@ -1020,7 +940,7 @@ const ModelManagementPage: React.FC = () => {
           ) : null}
         </FormDrawer>
         <FormDrawer
-          isOpen={isCreateOpen && !isRegistryReadOnly && !(isViewingModel && selectedModel)}
+          isOpen={isCreateDrawerOpen}
           onClose={closeCreateModal}
           lockDismiss={isUploading}
           size="wide"
@@ -1039,7 +959,7 @@ const ModelManagementPage: React.FC = () => {
             />
           }
         >
-          {isCreateOpen && !isRegistryReadOnly && !(isViewingModel && selectedModel) ? (
+          {isCreateDrawerOpen ? (
           <ModelForm
             mode="create"
             model={parsedModelData}
@@ -1072,31 +992,13 @@ const ModelManagementPage: React.FC = () => {
         </FormDrawer>
       </ContentLayout>
 
-      <ConfirmDialog
+      <ModelStatusConfirmDialog
         isOpen={isConfirmOpen}
+        action={confirmAction}
+        model={modelToConfirm}
+        isConfirmLoading={updatingModelId === modelToConfirm?.modelId}
         onClose={closeConfirmDialog}
         onConfirm={handleConfirmAction}
-        title={confirmAction === "deprecate" ? "Deprecate model" : "Activate model"}
-        body={
-          confirmAction === "deprecate" ? (
-            <>
-              Are you sure you want to deprecate{" "}
-              <strong>{modelToConfirm?.name || modelToConfirm?.modelId}</strong>?
-              Deprecated models cannot be used for new services.
-            </>
-          ) : (
-            <>
-              Are you sure you want to activate{" "}
-              <strong>{modelToConfirm?.name || modelToConfirm?.modelId}</strong>?
-              The model will be available for services again.
-            </>
-          )
-        }
-        confirmLabel="Confirm"
-        cancelLabel="Cancel"
-        confirmColorScheme={confirmAction === "deprecate" ? "orange" : "green"}
-        isConfirmLoading={updatingModelId === modelToConfirm?.modelId}
-        confirmLoadingText={confirmAction === "deprecate" ? "Deprecating..." : "Activating..."}
         leastDestructiveRef={cancelConfirmRef}
       />
     </>
