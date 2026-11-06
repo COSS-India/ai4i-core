@@ -30,14 +30,10 @@ export function useModelRegistryList(options: Readonly<{
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_MODEL_PAGE_SIZE);
   // Toolbar filters keyed by column id (name / status / taskType).
-  const [filters, setFiltersState] = useState<DataTableColumnFilters>({});
+  const [filters, setFilters] = useState<DataTableColumnFilters>({});
 
-  const setFilters = useCallback((next: DataTableColumnFilters) => {
-    setFiltersState(next);
-    setPage(1);
-  }, []);
   const setFilter = useCallback((id: string, value: string) => {
-    setFiltersState((current) => {
+    setFilters((current) => {
       const next = { ...current };
       if (value.trim()) next[id] = value;
       else delete next[id];
@@ -45,7 +41,10 @@ export function useModelRegistryList(options: Readonly<{
     });
     setPage(1);
   }, []);
-  const clearFilters = useCallback(() => setFilters({}), [setFilters]);
+  const clearFilters = useCallback(() => {
+    setFilters({});
+    setPage(1);
+  }, []);
 
   const { onSortChange: setSort } = modelSort;
   const onSortChange = useCallback(
