@@ -11,6 +11,10 @@ all matching traces, still scoped to the caller's own tenant.
 `term` query on the `.keyword` subfield). They were later changed to
 partial/wildcard matching (same shape as `application`/`method`/`model`/`url`)
 so callers can search by a substring instead of needing the full value.
+metadata is the one exception: metadata_kv stores "key=value" strings for
+many different keys, so only the value half is wildcarded — the key is
+anchored exactly, otherwise a search for key "env" would also match an
+unrelated key like "dev_env" that happens to contain the same substring.
 """
 
 from __future__ import annotations
@@ -139,6 +143,20 @@ def _contains(attribute, value):
     }
 
 
+def _metadata_contains(key, value):
+    """The clause a metadata key/value search must send: unlike other tag
+    filters, the key is anchored (not wildcarded) so a search for key="env"
+    can't also match an unrelated key like "dev_env" that merely contains
+    the same substring — only the value half is a contains-match."""
+    return {
+        "wildcard": {
+            "attributes.metadata_kv.keyword": {
+                "value": f"{key}=*{value}*", "case_insensitive": True,
+            }
+        }
+    }
+
+
 # ── The exact ticket scenario ────────────────────────────────────────────────
 
 def test_search_by_user_filters_in_opensearch_across_all_pages():
@@ -160,7 +178,7 @@ def test_search_by_metadata_key_and_value():
 
     _search(client, metadata_key="session_id", metadata_value="s-77")
 
-    assert _contains("metadata_kv", "session_id=s-77") in _clauses(client)
+    assert _metadata_contains("session_id", "s-77") in _clauses(client)
 
 
 def test_tag_search_stays_scoped_to_the_callers_tenant():
@@ -184,7 +202,7 @@ def test_user_and_metadata_filters_combine_with_and():
 
     clauses = _clauses(client)
     assert _contains("enduser.id", "customer-8812") in clauses
-    assert _contains("metadata_kv", "session_id=s-77") in clauses
+    assert _metadata_contains("session_id", "s-77") in clauses
     assert {"match_phrase": {"attributes.task_type": "llm"}} in clauses
 
 
@@ -246,7 +264,7 @@ def test_search_ignores_case_of_the_typed_value(typed):
 
     clauses = _clauses(client)
     assert _contains("enduser.id", typed) in clauses
-    assert _contains("metadata_kv", f"session={typed}") in clauses
+    assert _metadata_contains("session", typed) in clauses
 
 
 def test_search_is_partial_not_exact():
@@ -299,7 +317,7 @@ def test_http_query_params_reach_opensearch():
     assert response.status_code == 200, response.text
     clauses = _clauses(client)
     assert _contains("enduser.id", "customer-8812") in clauses
-    assert _contains("metadata_kv", "session_id=s-77") in clauses
+    assert _metadata_contains("session_id", "s-77") in clauses
 
 
 @pytest.mark.parametrize("params", [

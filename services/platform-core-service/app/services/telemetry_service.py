@@ -180,6 +180,30 @@ def _contains_attribute_match(attribute: str, value: str) -> dict:
     return _contains_field_match(f"attributes.{attribute}", value)
 
 
+def _metadata_kv_match(key: str, value: str) -> dict:
+    """Match a `metadata_kv` entry by exact key and contains-match on the value.
+
+    metadata_kv stores "key=value" strings for arbitrary caller-supplied
+    metadata, so a plain contains-match on the composite string (e.g.
+    "*env=prod*") would also match an unrelated key like "dev_env=prod-2",
+    since that substring appears inside it too. Anchoring the wildcard to
+    start with "key=" keeps the key exact while still allowing a
+    substring match on the value, per the documented filter contract.
+    """
+    field = "attributes.metadata_kv"
+    composite = f"{key}={value}"
+    if len(composite) > _KEYWORD_IGNORE_ABOVE:
+        return {"match_phrase": {field: composite}}
+    return {
+        "wildcard": {
+            f"{field}.keyword": {
+                "value": f"{_escape_wildcard(key)}=*{_escape_wildcard(value)}*",
+                "case_insensitive": True,
+            }
+        }
+    }
+
+
 # Maps span name → {entry_key: attribute_key}.
 # Single source of truth for which fields live exclusively on which span type.
 # _apply_span_to_trace reads this for trace assembly; _span_owner reads it for
@@ -188,9 +212,15 @@ _SPAN_FIELD_MAP: dict[str, dict[str, str]] = {
     "model":   {"task_type": "task_type",    "model_name": "model_name"},
     "request": {"url":       "url",           "latency":    "total_time_ms",
                 "status_code": "status_code", "method":     "method",
-                "end_user":  "enduser.id",    "app_id":     "app_id",
                 "metadata":  "metadata_kv"},
 }
+
+# end_user / app_id aren't span-exclusive: the request span normally carries
+# them, but multipart audio routes (proxy_multipart) open no request span, so
+# the model span is the only one that has them. Handled outside
+# _SPAN_FIELD_MAP so request stays authoritative while still falling back to
+# whichever span actually carries the value.
+_FALLBACK_SPAN_FIELDS: dict[str, str] = {"app_id": "app_id", "end_user": "enduser.id"}
 
 
 def _span_owner(entry_key: str) -> Optional[str]:
@@ -216,6 +246,14 @@ def _apply_span_to_trace(entry: dict, span_name: str, attrs: dict) -> None:
     span_status = attrs.get("status")
     if span_status and (span_name == "request" or not entry["status"]):
         entry["status"] = span_status
+
+    # app_id / end_user: same request-is-authoritative-but-fall-back-if-absent
+    # rule as status, since proxy_multipart's model span is the only span
+    # carrying them when there's no request span to override from.
+    for entry_key, attr_key in _FALLBACK_SPAN_FIELDS.items():
+        value = attrs.get(attr_key)
+        if value and (span_name == "request" or not entry.get(entry_key)):
+            entry[entry_key] = value
 
 
 def _new_trace_entry(trace_id: str, source: dict, attrs: dict, tenant_filter: Optional[str]) -> dict:
@@ -592,9 +630,7 @@ def _build_search_filter_clauses(
     if user is not None:
         filter_clauses.append(_contains_attribute_match("enduser.id", user))
     if metadata_key is not None:
-        filter_clauses.append(
-            _contains_attribute_match("metadata_kv", f"{metadata_key}={metadata_value}")
-        )
+        filter_clauses.append(_metadata_kv_match(metadata_key, metadata_value))
     if service_id:
         filter_clauses.append(_exact_attribute_match("service_id", service_id))
     if status_code_list:
