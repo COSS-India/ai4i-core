@@ -14,6 +14,25 @@ export type ModelListCellModel = ModelDetails & {
   modelId?: string;
 };
 
+/**
+ * Pinned widths for the short Model List columns, sized for the header text plus
+ * its sort / info icon. Name and Provider Name stay fluid and share what is left.
+ */
+const MODEL_LIST_FIXED_COLUMN_WIDTHS: Record<string, string> = {
+  version: "7.5rem",
+  taskType: "8.5rem",
+  status: "8.5rem",
+  createdAt: "10rem",
+  noOfServices: "11rem",
+};
+
+export function modelListColumnWidth(
+  id: string,
+): { width: string; minWidth: string; maxW: string } | undefined {
+  const width = MODEL_LIST_FIXED_COLUMN_WIDTHS[id];
+  return width ? { width, minWidth: width, maxW: width } : undefined;
+}
+
 function modelCreatedAtMs(model: {
   createdAt?: string | null;
   submittedOn?: number | null;
@@ -61,7 +80,7 @@ export function renderModelTaskTypeCell(
 export function renderModelProviderCell(
   model: ModelListCellModel,
 ): React.ReactNode {
-  const label = model.submitter?.name?.trim() || "—";
+  const label = (model.providerName ?? model.submitter?.name)?.trim() || "—";
   return (
     <Text
       fontSize="sm"

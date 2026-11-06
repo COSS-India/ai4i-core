@@ -3,6 +3,7 @@ import { apiEndpoints } from "./apiEndpoints";
 import {
   configListResponseSchema,
   domainsConfigDataSchema,
+  modelColumnsConfigDataSchema,
   statusReasonsConfigDataSchema,
   type ConfigItem,
 } from "./dto/schemas/configManagement";
@@ -35,6 +36,26 @@ export async function getDomainOptions(): Promise<DomainOption[]> {
     options.set(code, { code, label: label?.trim() || domainCodeLabel(code) });
   }
   return Array.from(options.values());
+}
+
+export interface ModelColumnConfigEntry {
+  key: string;
+  label: string;
+  required: boolean;
+}
+
+/** Model List columns from the `model-column` config, in display order. */
+export async function getModelColumnConfig(): Promise<ModelColumnConfigEntry[]> {
+  const items = await listConfigs("model-column");
+  const config = items.find((item) => item.type === "model-column");
+  if (!config) return [];
+  const entries = new Map<string, ModelColumnConfigEntry>();
+  for (const { key, label, required } of modelColumnsConfigDataSchema.parse(config.data)) {
+    const id = key.trim();
+    if (!id || entries.has(id)) continue;
+    entries.set(id, { key: id, label: label?.trim() || id, required: required === true });
+  }
+  return Array.from(entries.values());
 }
 
 export type StatusReasonConfigType = "suspend-reasons" | "deactivate-reasons";
