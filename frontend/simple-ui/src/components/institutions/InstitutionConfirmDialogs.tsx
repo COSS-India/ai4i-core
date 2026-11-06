@@ -30,7 +30,8 @@ type InstitutionConfirmDialogsProps = Readonly<{
   tm: TenantManagement;
 }>;
 
-const STATUS_REMARKS_MAX_LENGTH = 200;
+/** The remarks / description are sent as `reason`, which the API caps at 255 characters. */
+const STATUS_REASON_MAX_LENGTH = 255;
 
 /** Config holding the predefined reasons for a status change; null when none are asked for. */
 function getStatusReasonConfigType(newStatus: string): StatusReasonConfigType | null {
@@ -161,8 +162,8 @@ function StatusRemarksField({
       </FormLabel>
       <Textarea
         value={value}
-        onChange={(e) => onChange(e.target.value.slice(0, STATUS_REMARKS_MAX_LENGTH))}
-        maxLength={STATUS_REMARKS_MAX_LENGTH}
+        onChange={(e) => onChange(e.target.value.slice(0, STATUS_REASON_MAX_LENGTH))}
+        maxLength={STATUS_REASON_MAX_LENGTH}
         rows={rows}
         placeholder={placeholder}
         isDisabled={isDisabled}
@@ -191,10 +192,19 @@ function useTenantStatusForm(tm: TenantManagement, isOpen: boolean) {
   // Every activation (from Suspended or Deactivated) needs a description.
   const isDescriptionRequired = isActivation;
   const areRemarksRequired = selectedReason?.remarksRequired ?? false;
-  const hasRemarks = tm.statusRemarks.trim().length > 0;
+  const remarks = tm.statusRemarks.trim();
+  const hasRemarks = remarks.length > 0;
   const isConfirmDisabled = reasonConfigType
     ? !selectedReason || (areRemarksRequired && !hasRemarks)
     : isDescriptionRequired && !hasRemarks;
+  // The API takes a single `reason`: the picked reason's label, the admin's
+  // text for Other, or the description when activating.
+  let reason: string | undefined;
+  if (selectedReason) {
+    reason = areRemarksRequired ? remarks : selectedReason.label;
+  } else if (isActivation) {
+    reason = remarks;
+  }
   return {
     reasonConfigType,
     reasons,
@@ -204,6 +214,7 @@ function useTenantStatusForm(tm: TenantManagement, isOpen: boolean) {
     isDescriptionRequired,
     areRemarksRequired,
     isConfirmDisabled,
+    reason,
   };
 }
 
@@ -288,7 +299,9 @@ export default function InstitutionConfirmDialogs({ tm }: InstitutionConfirmDial
       <ConfirmDialog
         isOpen={isOpen}
         onClose={tm.closeStatusDialog}
-        onConfirm={tm.handleConfirmStatusUpdate}
+        onConfirm={() =>
+          tm.handleConfirmStatusUpdate(isTenantTarget ? tenantForm.reason : undefined)
+        }
         title={
           isTenantTarget
             ? `${tenantAction.verb} ${INSTITUTION.toLowerCase()}`
