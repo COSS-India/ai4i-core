@@ -3,7 +3,7 @@
 PATCH /auth/tenants/{id}/status now requires a reason when an institution is
 suspended or deactivated: the predefined reason from the suspend-reasons /
 deactivate-reasons config, or the admin's own text when they pick Other.
-Activating takes an optional reason; without one the column is cleared.
+Activating also requires a reason (the description).
 It describes the latest status change only. Existing rows stay NULL.
 
 Revision ID: e87d07abff7b

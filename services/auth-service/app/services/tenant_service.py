@@ -71,6 +71,7 @@ from app.services.tenant_lifecycle import (
     TENANT_ONBOARDING_STATUSES,
     assert_default_tenant_not_targeted,
     assert_email_available,
+    assert_status_reason,
     assert_tenant_email_editable,
     assert_valid_tenant_status_transition,
     is_default_tenant,
@@ -1299,6 +1300,7 @@ class TenantService:
                     "message": "Only administrators can change tenant status.",
                 },
             )
+        assert_status_reason(body.status, body.reason)
         tenant = await self._load_tenant_for_update_or_404(tenant_id)
         if body.status != TenantStatus.ACTIVE:
             assert_default_tenant_not_targeted(
@@ -1309,8 +1311,8 @@ class TenantService:
         await sync_tenant_users_for_status(
             self._users, tenant_id, body.status, updated_by=current_user.id
         )
-        # Always overwrite: activating without a reason clears the previous
-        # Suspend / Deactivate reason.
+        # Every status change carries a reason (assert_status_reason), which
+        # replaces the previous one.
         await self._tenants.update(
             tenant,
             {

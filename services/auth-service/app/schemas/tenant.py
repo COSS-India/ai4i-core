@@ -195,17 +195,15 @@ _TENANT_STATUS_UPDATE_EXAMPLE = {
     "reason": "Agreement renewal pending",
 }
 
-# Statuses that need a reason.
-_STATUSES_REQUIRING_REASON = frozenset({TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED})
-
 
 class TenantStatusUpdate(BaseSchema):
     model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_STATUS_UPDATE_EXAMPLE]})
 
     status: TenantStatus
-    # A predefined Suspend / Deactivate reason, the admin's own text when they
-    # pick Other, or a description when activating. Required for SUSPENDED and
-    # DEACTIVATED, optional for ACTIVE, rejected for PENDING.
+    # The selected Suspend / Deactivate reason label, the admin's own text
+    # when they pick Other, or the description when activating. Required for
+    # SUSPENDED, DEACTIVATED and ACTIVE, rejected for PENDING: enforced by
+    # assert_status_reason so the error carries a code.
     reason: Optional[str] = Field(None, max_length=255)
 
     @field_validator("reason", mode="before")
@@ -215,19 +213,6 @@ class TenantStatusUpdate(BaseSchema):
         # pydantic's str check and get a type error.
         v = _clean_text(v)
         return None if v == "" else v
-
-    @model_validator(mode="after")
-    def _check_reason(self) -> "TenantStatusUpdate":
-        if self.status in _STATUSES_REQUIRING_REASON:
-            if not self.reason:
-                raise ValueError(
-                    f"reason is required to change the status to {self.status.value}."
-                )
-        elif self.reason and self.status == TenantStatus.PENDING:
-            raise ValueError(
-                f"reason is not allowed when changing the status to {self.status.value}."
-            )
-        return self
 
 
 class TierQuotaLimit(BaseSchema):
