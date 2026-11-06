@@ -214,9 +214,7 @@ def _apply_span_to_trace(entry: dict, span_name: str, attrs: dict) -> None:
     # hits cannot mask a request-level failure with its own success status.
     # For other spans, only fill in if we have nothing yet.
     span_status = attrs.get("status")
-    if span_name == "request" and span_status:
-        entry["status"] = span_status
-    elif not entry["status"] and span_status:
+    if span_status and (span_name == "request" or not entry["status"]):
         entry["status"] = span_status
 
 
