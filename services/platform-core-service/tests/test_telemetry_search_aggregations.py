@@ -51,6 +51,42 @@ def _make_request(permission_ids: str = "1", tenant_id: str = "tenant-a") -> Mag
     return request
 
 
+_BASE_FIELDS = (
+    "task_types", "status_filter", "tenant_id", "start_date", "end_date",
+    "q", "log_status", "status_code", "service_id",
+)
+_SPAN_FIELDS = (
+    "user", "metadata_key", "metadata_value", "method", "model",
+    "error", "service", "url", "application",
+)
+_PAGING_FIELDS = ("page", "page_size", "sort_by", "sort_order")
+
+
+def _search(client, request=None, **params):
+    """Build base/span/paging dependency objects and call the route function
+    directly — search_traces_opensearch takes these (not flat kwargs) since
+    the _TraceBaseFilters/_TraceSpanFilters/_TracePaginationQuery refactor."""
+    defaults = dict(
+        task_types=None, status_filter=None, tenant_id=None,
+        start_date=None, end_date=None, q=None, log_status=None,
+        status_code=None, service_id=None,
+        user=None, metadata_key=None, metadata_value=None,
+        method=None, model=None, error=None, service=None, url=None, application=None,
+        page=1, page_size=15, sort_by=None, sort_order=None,
+        columns=None,
+    )
+    merged = {**defaults, **params}
+    columns = merged.pop("columns")
+    base = _telemetry_route_mod._TraceBaseFilters(**{k: merged[k] for k in _BASE_FIELDS})
+    span = _telemetry_route_mod._TraceSpanFilters(**{k: merged[k] for k in _SPAN_FIELDS})
+    paging = _telemetry_route_mod._TracePaginationQuery(**{k: merged[k] for k in _PAGING_FIELDS})
+    return asyncio.run(search_traces_opensearch(
+        request=request or _make_request(),
+        opensearch_client=client,
+        base=base, span=span, paging=paging, columns=columns,
+    ))
+
+
 def _span_hit(trace_id: str, name: str, attrs: dict, timestamp: str = "2026-06-25T10:01:00Z") -> dict:
     return {
         "_source": {
@@ -143,7 +179,7 @@ def test_build_traces_map_reads_status_from_request_span():
     traces_map = _build_traces_map(hits, tenant_filter="tenant-a")
 
     assert traces_map["t1"]["status"] == "success"
-    assert traces_map["t1"]["task_type"] == "nmt"
+    assert traces_map["t1"]["task_type"] == "NMT"
 
 
 def test_build_traces_map_ignores_hits_without_trace_id():
@@ -174,7 +210,7 @@ def test_compute_full_breakdown_counts_each_trace_exactly_once():
 
     assert by_level == {"success": 2, "failure": 1}
     assert sum(by_level.values()) == 3  # reconciles with the 3 traces, no double counting
-    assert by_task == {"nmt": 1, "llm": 1, "unknown": 1}
+    assert by_task == {"NMT": 1, "LLM": 1, "UNKNOWN": 1}
     assert truncated is False
 
 
@@ -305,25 +341,10 @@ def test_search_traces_summary_matches_pagination_total_and_reconciles():
 
     client.search_traces.side_effect = search_traces
 
-    request = _make_request()
-    response = asyncio.run(
-        search_traces_opensearch(
-            request=request,
-            task_types="nmt",
-            status_filter=None,
-            tenant_id=None,
-            start_date="2026-06-25T10:01:00",
-            end_date="2026-06-25T10:05:00",
-            page=1,
-            page_size=3,
-            opensearch_client=client,
-            q=None,
-            log_status=None,
-            status_code=None,
-            service_id=None,
-            sort_by=None,
-            sort_order=None,
-        )
+    response = _search(
+        client, request=_make_request(),
+        task_types="nmt", start_date="2026-06-25T10:01:00", end_date="2026-06-25T10:05:00",
+        page=1, page_size=3,
     )
 
     assert len(response.data) == 3  # the page itself is unaffected
@@ -360,15 +381,7 @@ def test_search_traces_flags_partial_when_breakdown_is_capped():
 
         client.search_traces.side_effect = search_traces
 
-        request = _make_request()
-        response = asyncio.run(
-            search_traces_opensearch(
-                request=request, task_types=None, status_filter=None, tenant_id=None,
-                start_date=None, end_date=None, page=1, page_size=1, opensearch_client=client,
-                q=None, log_status=None, status_code=None, service_id=None,
-                sort_by=None, sort_order=None,
-            )
-        )
+        response = _search(client, request=_make_request(), page=1, page_size=1)
 
         assert response.total == 5
         assert response.aggregations.total == 5  # Total Requests is never capped
