@@ -139,8 +139,8 @@ export async function updateTenant(
 export async function updateTenantStatus(
   payload: TenantStatusUpdateRequest & { tenant_id: string }
 ): Promise<TenantStatusUpdateResponse> {
-  const { tenant_id, status } = payload;
-  const response = await apiService.patch(`${BASE}/${tenant_id}/status`, { status }, {
+  const { tenant_id, ...body } = payload;
+  const response = await apiService.patch(`${BASE}/${tenant_id}/status`, body, {
     suppressErrorAlert: true,
     responseSchema: tenantSuccessEnvelopeSchema(tenantViewSchema),
   });

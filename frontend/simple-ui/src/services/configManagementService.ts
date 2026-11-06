@@ -3,6 +3,7 @@ import { apiEndpoints } from "./apiEndpoints";
 import {
   configListResponseSchema,
   domainsConfigDataSchema,
+  statusReasonsConfigDataSchema,
   type ConfigItem,
 } from "./dto/schemas/configManagement";
 
@@ -32,6 +33,42 @@ export async function getDomainOptions(): Promise<DomainOption[]> {
     const code = key.trim();
     if (!code || options.has(code)) continue;
     options.set(code, { code, label: label?.trim() || domainCodeLabel(code) });
+  }
+  return Array.from(options.values());
+}
+
+export type StatusReasonConfigType = "suspend-reasons" | "deactivate-reasons";
+
+export interface StatusReasonOption {
+  code: string;
+  label: string;
+  /** The admin must add remarks when picking this reason (only Other). */
+  remarksRequired: boolean;
+}
+
+/**
+ * The "Other" reason: the only reason whose remarks are mandatory. Matched by key,
+ * which must be `other` or start with `other-` / `other_` (any case), e.g.
+ * `other-remarks-mandatory`. The config's own `required` flag is not used.
+ */
+const OTHER_REASON_KEY_PATTERN = /^other(?![a-z0-9])/i;
+
+/** Predefined reasons for suspending or deactivating an institution, in config order. */
+export async function getStatusReasonOptions(
+  type: StatusReasonConfigType,
+): Promise<StatusReasonOption[]> {
+  const items = await listConfigs(type);
+  const config = items.find((item) => item.type === type);
+  if (!config) return [];
+  const options = new Map<string, StatusReasonOption>();
+  for (const { key, label } of statusReasonsConfigDataSchema.parse(config.data)) {
+    const code = key.trim();
+    if (!code || options.has(code)) continue;
+    options.set(code, {
+      code,
+      label: label?.trim() || code,
+      remarksRequired: OTHER_REASON_KEY_PATTERN.test(code),
+    });
   }
   return Array.from(options.values());
 }

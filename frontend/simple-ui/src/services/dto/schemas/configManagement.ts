@@ -30,3 +30,13 @@ export const domainsConfigDataSchema = z.array(
 );
 
 export type ConfigItem = z.infer<typeof configItemSchema>;
+
+/** `data` of the `suspend-reasons` / `deactivate-reasons` configs: reasons in display order. */
+export const statusReasonsConfigDataSchema = z.array(
+  z
+    .object({
+      key: z.string(),
+      label: z.string().optional(),
+    })
+    .passthrough(),
+);
