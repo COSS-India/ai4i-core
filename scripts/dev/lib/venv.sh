@@ -6,51 +6,59 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 PYTHON_BIN="${PYTHON_BIN:-python3.11}"
 
-# ONE shared virtualenv at the repo root, populated by a SINGLE pip install
-# across every backend's requirements.txt (plan § 6 step 6 / § 8). pip's
-# resolver picks one version set that satisfies all of them, and the ~60 shared
-# packages (fastapi, uvicorn, sqlalchemy, …) download exactly once. The
-# database/migration requirements are included so migrations run under the same
-# venv (plan § 6 step 7).
-VENV_DIR="$ROOT_DIR/.venv"
+# One virtualenv per backend, each installed from that backend's own pinned
+# requirements.txt — the same file its Docker image installs, so local runs the
+# same library versions as the deployed image. Services pin different versions
+# of some shared packages (e.g. inference holds cryptography and numpy lower),
+# so they cannot share one environment.
+#
+# The repo-root .venv holds the migration requirements only (used by
+# migrate.sh).
+MIGRATION_VENV_DIR="$ROOT_DIR/.venv"
 
-REQUIREMENTS=(
-    "$ROOT_DIR/services/auth-service/requirements.txt"
-    "$ROOT_DIR/services/platform-core-service/requirements.txt"
-    "$ROOT_DIR/services/inference-service/requirements.txt"
-    "$ROOT_DIR/infrastructure/databases/requirements.txt"
+SERVICE_DIRS=(
+    "services/auth-service"
+    "services/platform-core-service"
+    "services/inference-service"
 )
+
+# Path of the virtualenv for a service directory (relative to the repo root).
+service_venv() {
+    echo "$ROOT_DIR/$1/.venv"
+}
+
+_setup_one_venv() {
+
+    local venv="$1"
+    local req="$2"
+
+    [[ -f "$req" ]] || die "requirements file missing: $req"
+
+    if [[ ! -d "$venv" ]]; then
+        log "Creating virtualenv at $venv"
+        "$PYTHON_BIN" -m venv "$venv"
+    else
+        ok "Virtualenv already exists: $venv"
+    fi
+
+    "$venv/bin/pip" install --upgrade pip
+    log "Installing $req..."
+    "$venv/bin/pip" install -r "$req"
+}
 
 setup_venv() {
 
     if [[ -n "${AI4I_SKIP_VENV:-}" ]]; then
-        warn "AI4I_SKIP_VENV set — skipping shared venv create + pip install"
+        warn "AI4I_SKIP_VENV set — skipping virtualenv create + pip install"
         return 0
     fi
 
-    if [[ ! -d "$VENV_DIR" ]]; then
-        log "Creating shared virtualenv at $VENV_DIR"
-        "$PYTHON_BIN" -m venv "$VENV_DIR"
-    else
-        ok "Shared virtualenv already exists"
-    fi
-
-    "$VENV_DIR/bin/pip" install --upgrade pip
-
-    local pip_args=()
-    local req
-    for req in "${REQUIREMENTS[@]}"; do
-        if [[ -f "$req" ]]; then
-            pip_args+=(-r "$req")
-        else
-            warn "requirements file missing: $req"
-        fi
+    local dir
+    for dir in "${SERVICE_DIRS[@]}"; do
+        _setup_one_venv "$(service_venv "$dir")" "$ROOT_DIR/$dir/requirements.txt"
     done
 
-    log "Installing all backend requirements into the shared venv (single resolve)..."
-    # If two services pin incompatible versions of the same lib, pip fails here
-    # loudly — that's a real bug to fix in requirements.txt, not paper over.
-    "$VENV_DIR/bin/pip" install "${pip_args[@]}"
+    _setup_one_venv "$MIGRATION_VENV_DIR" "$ROOT_DIR/infrastructure/databases/requirements.txt"
 
-    ok "Shared virtualenv ready"
+    ok "Virtualenvs ready"
 }

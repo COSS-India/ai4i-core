@@ -5,8 +5,6 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/pids.sh"
 
-VENV_DIR="$ROOT_DIR/.venv"
-
 # Start one backend under uvicorn in the background, hot-reload on. Idempotent:
 # if a live PID is already recorded, it's reused rather than double-started.
 _start_service() {
@@ -21,12 +19,17 @@ _start_service() {
         return 0
     fi
 
+    # Each backend runs from its own virtualenv (see venv.sh).
+    local venv="$ROOT_DIR/$dir/.venv"
+    [[ -d "$venv" ]] \
+        || die "Virtualenv missing at $venv — run setup_venv first"
+
     log "Starting $name on :$port..."
 
     (
         cd "$ROOT_DIR/$dir"
         # shellcheck disable=SC1091
-        source "$VENV_DIR/bin/activate"
+        source "$venv/bin/activate"
         # exec so $! is the uvicorn PID itself (kept accurate for stop).
         exec uvicorn "$app" --host 0.0.0.0 --port "$port" --reload
     ) > "$LOG_DIR/$name.log" 2>&1 &
@@ -46,9 +49,6 @@ _start_service() {
 
 start_all_services() {
 
-    [[ -d "$VENV_DIR" ]] \
-        || die "Shared venv missing at $VENV_DIR — run setup_venv first"
-
     _start_service auth-service           services/auth-service           app.main:app 8081
     _start_service platform-core-service  services/platform-core-service  app.main:app 8095
     _start_service inference-service      services/inference-service      main:app     8090
@@ -67,9 +67,6 @@ stop_all_services() {
 
 # Start a single backend by short name (used by `restart --only`).
 start_one_service() {
-
-    [[ -d "$VENV_DIR" ]] \
-        || die "Shared venv missing at $VENV_DIR — run setup_venv first"
 
     case "$1" in
         auth)      _start_service auth-service          services/auth-service          app.main:app 8081 ;;
