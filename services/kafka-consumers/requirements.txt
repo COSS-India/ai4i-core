@@ -4,15 +4,15 @@
 # (linux/amd64), run `pip check`, and update any transitive pins pip reports.
 
 # ── Shared platform library (consolidated) ──
-ai4i-core==1.0.52
+ai4i-core==1.0.54
 
 # Pinned: the consumer design depends on version-specific behaviour —
 # cooperative-sticky, the batch API, store_offsets, incremental_assign and
 # commit()'s _NO_OFFSET semantics (ARCHITECTURE.md §6).
-confluent-kafka==2.15.0
+confluent-kafka==2.16.1
 
 # ── Kafka (notification producer side-channel — payperuse_consumer only) ──
-kafka-python==2.3.2
+kafka-python==2.3.3
 
 sqlalchemy[asyncio]==2.1.8
 asyncpg==0.32.0
