@@ -47,14 +47,14 @@ export const MODEL_LIST_COLUMNS: readonly ModelListColumnDef[] = [
 export const MODEL_LIST_COLUMN_STORAGE_PREFIX = "model-list-columns";
 
 /**
- * Always requested from GET /models/list, visible or not: search reads `name`,
- * the task/status filters read `task` / `versionStatus`, and Deprecate/Activate
- * send `version`.
+ * Always requested from GET /models/list, visible or not. Search, sort and the
+ * Status / Task Type filters run on the server, so they need no row fields.
+ * - `actions`: the API returns `modelId`, `name` and `versionStatus` for it,
+ *   which the action switches and their toasts read.
+ * - `version`: Deprecate / Activate send it, and `actions` does not include it.
  */
 const MODEL_LIST_ALWAYS_FETCHED_COLUMN_IDS: readonly ModelListColumnId[] = [
-  "name",
   "version",
-  "taskType",
   "actions",
 ];
 

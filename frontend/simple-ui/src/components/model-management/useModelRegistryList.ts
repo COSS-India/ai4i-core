@@ -1,7 +1,7 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  getModelListPage,
+  getModelsPaginated,
   MODEL_LIST_QUERY_KEY,
 } from "../../services/modelManagementService";
 import type { ModelDetails } from "../../types/platform";
@@ -75,16 +75,34 @@ export function useModelRegistryList(options: Readonly<{
 
   const query = useQuery({
     queryKey: [...MODEL_LIST_QUERY_KEY, params],
-    queryFn: () => getModelListPage(params),
+    queryFn: () => getModelsPaginated(params),
     // Always stale: every column, search, sort or page change calls the API.
     staleTime: 0,
     enabled,
   });
 
+  // A refetch can return a smaller total (e.g. the only row on the last page
+  // was deprecated under Status = Active), leaving `page` past the end and the
+  // table showing "No results found". Step back to the last page that has data.
+  // Only act on an empty page: when X-Total-Count is unreadable, total falls
+  // back to items.length, so a page that still has rows must not be clamped.
+  const data = query.data;
+  useEffect(() => {
+    if (!data || data.items.length > 0 || page <= 1) return;
+    const lastPage = Math.max(1, Math.ceil(data.total / pageSize));
+    setPage(Math.min(lastPage, page - 1));
+  }, [data, page, pageSize]);
+
   return {
     items: (query.data?.items ?? []) as ModelDetails[],
     total: query.data?.total ?? 0,
-    isLoading: query.isPending,
+    // A retry after an error keeps status "error" until it succeeds, so show the
+    // loading state while it is in flight rather than a stale error alert.
+    isLoading: query.isPending || (query.isError && query.isFetching),
+    // The request suppresses error toasts, so callers must show this themselves;
+    // otherwise a failed fetch reads as an empty registry.
+    isError: query.isError,
+    refetch: query.refetch,
     page,
     pageSize,
     setPage,

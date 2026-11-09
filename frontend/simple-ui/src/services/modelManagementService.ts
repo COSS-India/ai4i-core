@@ -102,28 +102,6 @@ export const getAllModels = async (): Promise<ModelDetails[]> => {
   return items;
 };
 
-/** 422 code GET /models/list returns when it rejects the `columns` selection. */
-const isColumnsRejected = (error: unknown): boolean => {
-  const response = (error as {
-    response?: { status?: number; data?: { detail?: { code?: unknown } } };
-  } | null)?.response;
-  return response?.status === 422 && response.data?.detail?.code === 'INVALID_COLUMNS';
-};
-
-/**
- * One page of the Model List: server-side search, sort and paging, each row
- * carrying only the fields `columns` need. A config key the API does not know
- * is rejected; full rows still render every column, so retry without it.
- */
-export const getModelListPage = async (params: ModelListParams): Promise<PaginatedModels> => {
-  try {
-    return await getModelsPaginated(params);
-  } catch (error: unknown) {
-    if (!params.columns || !isColumnsRejected(error)) throw error;
-    return getModelsPaginated({ ...params, columns: undefined });
-  }
-};
-
 /** Plain text filters: `ModelListParams` field → GET /models/list query param. */
 const MODEL_LIST_TEXT_PARAMS: ReadonlyArray<[keyof ModelListParams, string]> = [
   ['versionStatus', 'version_status'],
@@ -164,7 +142,9 @@ export const getModelsPaginated = async (params: ModelListParams = {}): Promise<
       responseSchema: modelsListSchema,
     });
 
-    const total = Number.parseInt(response.headers['x-total-count'] ?? '0', 10);
+    // Default to '' (not '0') so an unreadable header yields NaN and falls back
+    // to items.length — a 0 total makes DataTable hide every row.
+    const total = Number.parseInt(response.headers['x-total-count'] ?? '', 10);
     const payload = response.data;
     const items = Array.isArray(payload) ? payload : [];
 

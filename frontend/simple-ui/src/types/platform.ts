@@ -220,6 +220,8 @@ export interface ModelResponse {
   updatedBy?: string | null;
   updatedOn?: number | null;
   createdAt?: string | null;
+  /** List rows only: services linked to this model, sent when the No. of Services column is requested. */
+  noOfServices?: number | null;
 }
 
 export type ModelListItem = ModelResponse;

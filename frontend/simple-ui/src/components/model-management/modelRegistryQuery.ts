@@ -1,21 +1,22 @@
-import { parseDateRangeFilter } from "../common/DataTableColumnFilter";
 import type { DataTableColumnFilters } from "../common/table";
 import type { ModelListParams } from "../../types/platform";
 
-/** Filter ids (column keys) GET /models/list can filter on; others are dropped. */
+/**
+ * Filter ids the Model List page sends to GET /models/list: the name search and
+ * the Status / Task Type toolbar filters. Anything else is dropped.
+ */
 export const MODEL_SERVER_SEARCH_COLUMN_IDS: ReadonlySet<string> = new Set([
   "name",
-  "version",
   "taskType",
-  "providerName",
   "status",
-  "createdAt",
 ]);
 
-/** Column ids GET /models/list accepts as `sort_by`. */
+/** Sortable columns on the Model List page, sent as `sort_by`. */
 const MODEL_SORTABLE_COLUMN_IDS: ReadonlySet<string> = new Set([
-  ...Array.from(MODEL_SERVER_SEARCH_COLUMN_IDS),
-  "noOfServices",
+  "name",
+  "version",
+  "providerName",
+  "createdAt",
 ]);
 
 /** Only the filters the API understands, so anything else never refetches. */
@@ -44,7 +45,6 @@ export function buildModelListParams(options: Readonly<{
 }>): ModelListParams {
   const { filters, enabledTaskTypes, sort, page, pageSize, columns } = options;
   const server = modelServerFilters(filters);
-  const { from, to } = parseDateRangeFilter(server.createdAt ?? "");
   const taskTypes = server.taskType || enabledTaskTypes.join(",");
   const sortBy = MODEL_SORTABLE_COLUMN_IDS.has(sort.key) ? sort.key : undefined;
   return {
@@ -52,12 +52,8 @@ export function buildModelListParams(options: Readonly<{
     limit: pageSize,
     columns: columns || undefined,
     name: server.name,
-    version: server.version,
-    providerName: server.providerName,
     versionStatus: server.status,
     taskTypes: taskTypes || undefined,
-    createdFrom: from || undefined,
-    createdTo: to || undefined,
     sortBy,
     sortOrder: sortBy ? sort.direction : undefined,
   };

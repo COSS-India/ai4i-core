@@ -19,59 +19,38 @@ describe("model registry query (GET /models/list)", () => {
       limit: 25,
       columns: "name,version,taskType,actions",
       name: undefined,
-      version: undefined,
-      providerName: undefined,
       versionStatus: undefined,
       taskTypes: "nmt,llm",
-      createdFrom: undefined,
-      createdTo: undefined,
       sortBy: undefined,
       sortOrder: undefined,
     });
   });
 
-  it("maps every server-backed column search to its query param", () => {
+  it("maps the name search and the Status / Task Type filters to query params", () => {
     const params = buildModelListParams({
       ...base,
-      filters: {
-        name: " gemma ",
-        version: "v2",
-        providerName: "Example",
-        status: "deprecated",
-        taskType: "llm",
-        createdAt: "2026-09-01~2026-09-30",
-      },
+      filters: { name: " gemma ", status: "deprecated", taskType: "llm" },
     });
     expect(params).toMatchObject({
       name: "gemma",
-      version: "v2",
-      providerName: "Example",
       versionStatus: "deprecated",
       taskTypes: "llm",
-      createdFrom: "2026-09-01",
-      createdTo: "2026-09-30",
     });
   });
 
-  it("sends an open-ended date range", () => {
-    const params = buildModelListParams({
-      ...base,
-      filters: { createdAt: "2026-09-01~" },
-    });
-    expect(params.createdFrom).toBe("2026-09-01");
-    expect(params.createdTo).toBeUndefined();
-  });
-
-  it("drops filters the API cannot use", () => {
-    expect(modelServerFilters({ noOfServices: "2", name: "", version: "v1" })).toEqual({
-      version: "v1",
-    });
-  });
-
-  it("sorts by any data column, but not by Actions", () => {
+  it("drops filters the page does not send to the API", () => {
     expect(
-      buildModelListParams({ ...base, sort: { key: "noOfServices", direction: "desc" } }),
-    ).toMatchObject({ sortBy: "noOfServices", sortOrder: "desc" });
+      modelServerFilters({ noOfServices: "2", name: "", version: "v1", status: "active" }),
+    ).toEqual({ status: "active" });
+  });
+
+  it("sorts by the page's sortable columns, but not by others", () => {
+    expect(
+      buildModelListParams({ ...base, sort: { key: "createdAt", direction: "desc" } }),
+    ).toMatchObject({ sortBy: "createdAt", sortOrder: "desc" });
+    expect(
+      buildModelListParams({ ...base, sort: { key: "noOfServices", direction: "asc" } }).sortBy,
+    ).toBeUndefined();
     expect(
       buildModelListParams({ ...base, sort: { key: "actions", direction: "asc" } }).sortBy,
     ).toBeUndefined();
