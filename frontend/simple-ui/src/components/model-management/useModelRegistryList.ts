@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import {
   getModelsPaginated,
   MODEL_LIST_QUERY_KEY,
@@ -78,6 +78,9 @@ export function useModelRegistryList(options: Readonly<{
     queryFn: () => getModelsPaginated(params),
     // Always stale: every column, search, sort or page change calls the API.
     staleTime: 0,
+    // Keep the current rows on screen while a column toggle, page, sort or
+    // filter change loads, instead of swapping the table for the spinner.
+    placeholderData: keepPreviousData,
     enabled,
   });
 
@@ -86,7 +89,9 @@ export function useModelRegistryList(options: Readonly<{
   // table showing "No results found". Step back to the last page that has data.
   // Only act on an empty page: when X-Total-Count is unreadable, total falls
   // back to items.length, so a page that still has rows must not be clamped.
-  const data = query.data;
+  // Skip placeholder data: it is the previous key's result (e.g. the empty page
+  // just stepped back from), and acting on it would step back a second time.
+  const data = query.isPlaceholderData ? undefined : query.data;
   useEffect(() => {
     if (!data || data.items.length > 0 || page <= 1) return;
     const lastPage = Math.max(1, Math.ceil(data.total / pageSize));
