@@ -881,7 +881,7 @@ const ModelManagementPage: React.FC = () => {
                               <AlertDescription flex="1">
                                 {MODEL_REGISTRY_ERRORS.LOAD_FAILED}
                               </AlertDescription>
-                              <Button size="sm" onClick={() => void registry.refetch()}>
+                              <Button size="sm" onClick={registry.retry}>
                                 Retry
                               </Button>
                             </Alert>

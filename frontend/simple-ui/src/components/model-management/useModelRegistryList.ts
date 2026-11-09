@@ -93,6 +93,15 @@ export function useModelRegistryList(options: Readonly<{
     setPage(Math.min(lastPage, page - 1));
   }, [data, page, pageSize]);
 
+  // refetch() resolves with the error state rather than rejecting, so this
+  // catch is only a guard; it keeps the click handler synchronous.
+  const { refetch } = query;
+  const retry = useCallback(() => {
+    refetch().catch((error: unknown) => {
+      console.error("Model list retry failed:", error);
+    });
+  }, [refetch]);
+
   return {
     items: (query.data?.items ?? []) as ModelDetails[],
     total: query.data?.total ?? 0,
@@ -102,7 +111,7 @@ export function useModelRegistryList(options: Readonly<{
     // The request suppresses error toasts, so callers must show this themselves;
     // otherwise a failed fetch reads as an empty registry.
     isError: query.isError,
-    refetch: query.refetch,
+    retry,
     page,
     pageSize,
     setPage,
