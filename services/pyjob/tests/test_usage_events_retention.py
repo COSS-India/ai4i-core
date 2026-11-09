@@ -255,6 +255,28 @@ async def test_late_fallback_rows_add_to_each_part_of_fallback_count():
 
 
 @pytest.mark.asyncio
+async def test_a_day_left_in_default_counts_only_rows_written_after_its_rollup():
+    """A day whose rows never left DEFAULT (no partition) and were rolled up:
+    the first run must not add them on top of that rollup, only what came
+    in after it."""
+    for corr in ("ret-def-1", "ret-def-2"):           # no partition: these land in DEFAULT
+        await _request(OLD, corr)
+    await _sql(
+        "UPDATE usage_events SET created_at = now() - interval '2 days'"
+        " WHERE correlation_id IN ('ret-def-1', 'ret-def-2')"
+    )
+    await job._rollup_day(OLD)                         # the lookback, days ago: reads DEFAULT too
+    assert await _daily(OLD) == (2, 0, 0, 0.0)
+    await _request(OLD, "ret-def-late", status=500, hour=22)
+
+    await job.consolidate(TODAY)
+
+    assert await _daily(OLD) == (3, 1, 0, 0.0)          # not (5, 1): the first two counted once
+    assert not await _has_partition(OLD)
+    assert await _raw_rows(OLD) == 0
+
+
+@pytest.mark.asyncio
 async def test_late_rows_of_a_dropped_day_get_no_partition_back():
     """A partition would make the late rows look like the whole day, which
     the last rollup would then replace the day's rows with."""

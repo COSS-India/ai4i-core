@@ -60,9 +60,10 @@ boundaries are IST midnight.
    that arrived since the lookback last read it), then its partition and
    any DEFAULT rows of it are dropped; a failure rolls the whole day back,
    partition included, so the next run rolls it up again. A day with rows
-   in DEFAULT only was dropped before: those rows arrived late (no
-   partition to land in), so they are added to the day's daily_usage rows
-   instead of replacing them, and deleted. A day with backfill rows
+   in DEFAULT only was dropped before (its late rows had no partition to
+   land in), or never got a partition: of its rows, those inserted
+   (created_at) after the day's rollup rows were last written are added to
+   them, the rest were already counted; all of them are deleted. A day with backfill rows
    (source = 'backfill', see services/pyjob/backfill) is dropped without a
    rollup: the dashboard already shows the backfill for it. The step is
    skipped when step 1 or any rollup failed in the same run.
@@ -81,7 +82,7 @@ from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
 from ai4i_core.logging import get_logger
-from sqlalchemy import bindparam, text
+from sqlalchemy import DateTime, bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bootstrap.config import get_settings
@@ -337,6 +338,7 @@ _AGGREGATE = text(
             sum(output_units_cost) AS output_units_cost
         FROM usage_events
         WHERE occurred_at >= :start AND occurred_at < :end
+          AND (:written_after IS NULL OR created_at > :written_after)
         GROUP BY tenant_id, application_id, api_key_id, tier_id, service_id, inference_type_id,
                  to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM')
     )
@@ -351,7 +353,7 @@ _AGGREGATE = text(
     LEFT JOIN mm_services s ON s.service_id = agg.service_id
     LEFT JOIN mm_models m ON m.model_id = s.model_id
     """
-)
+).bindparams(bindparam("written_after", None, type_=DateTime(timezone=True)))  # None: every row
 
 _UPSERT = text(
     f"""
@@ -397,6 +399,14 @@ _UPSERT_ADD = text(
 
 _HAS_BACKFILL = text("SELECT 1 FROM daily_usage WHERE usage_date = :usage_date AND source = 'backfill' LIMIT 1")
 
+# When the day's rollup rows were last written: a DEFAULT row inserted
+# (created_at) before that was read by that rollup, one inserted after it
+# wasn't. Never counts a row twice; a row only misses being counted when its
+# billing transaction began before that write and committed after it.
+_LAST_ROLLUP = text(
+    "SELECT max(updated_at) FROM daily_usage WHERE usage_date = :usage_date AND source = 'rollup'"
+)
+
 
 async def _auth_names(
     tenant_ids: set[int], application_ids: set[int]
@@ -426,11 +436,17 @@ async def _auth_names(
     return tenants, applications
 
 
-async def _summarise(session: AsyncSession, day: date) -> list[dict]:
-    """The day's daily_usage rows, aggregated from its usage_events rows."""
+async def _summarise(session: AsyncSession, day: date, written_after: datetime | None = None) -> list[dict]:
+    """The day's daily_usage rows, aggregated from its usage_events rows
+    (only those inserted after ``written_after``, when given)."""
     groups = (
         await session.execute(
-            _AGGREGATE, {"start": _day_start(day), "end": _day_start(day + timedelta(days=1))}
+            _AGGREGATE,
+            {
+                "start": _day_start(day),
+                "end": _day_start(day + timedelta(days=1)),
+                "written_after": written_after,
+            },
         )
     ).mappings().all()
     tenants, applications = await _auth_names(
@@ -519,8 +535,12 @@ async def _drop_day(day: date, partition: str | None, has_default: bool) -> None
             if await session.scalar(_HAS_BACKFILL, {"usage_date": day}) is not None:
                 mode, rows = "backfill", []
             elif partition is None:
-                # Late rows only: the day's other rows are already counted.
-                mode, rows = "late_rows_added", await _summarise(session, day)
+                # Rows in DEFAULT only. The day's last rollup counted those
+                # written before it (it reads DEFAULT too: e.g. a day the
+                # partition step never moved out of DEFAULT); only the ones
+                # written after it are added (see _LAST_ROLLUP).
+                last = await session.scalar(_LAST_ROLLUP, {"usage_date": day})
+                mode, rows = "late_rows_added", await _summarise(session, day, written_after=last)
                 if rows:
                     await session.execute(_UPSERT_ADD, rows)
             else:
