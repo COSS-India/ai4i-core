@@ -156,9 +156,9 @@ describe("model list columns (AI4IDS-3351)", () => {
     ).toBe(MODEL_LIST_COLUMNS);
   });
 
-  it("requests the visible columns plus the ones filters and actions need", () => {
+  it("requests the visible columns plus the ones the actions need", () => {
     expect(modelListColumnsParam(["name", "status", "noOfServices"])).toBe(
-      "name,status,noOfServices,version,taskType,actions",
+      "name,status,noOfServices,version,actions",
     );
     expect(modelListColumnsParam(defaults)).toBe(defaults.join(","));
   });

@@ -121,4 +121,16 @@ export function renderModelCreatedAtCell(
   );
 }
 
+/** The row's own `noOfServices` (the API counts it when the column is requested). */
+export function renderModelServiceCountCell(
+  model: ModelListCellModel,
+): React.ReactNode {
+  const count = model.noOfServices ?? 0;
+  return (
+    <Text fontSize="sm" color="ink.600">
+      {count > 0 ? count : "-"}
+    </Text>
+  );
+}
+
 export { modelCreatedAtMs };

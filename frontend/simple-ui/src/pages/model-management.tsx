@@ -1,7 +1,11 @@
 // Model Management page with list and create functionality
 
 import {
+  Alert,
+  AlertDescription,
+  AlertIcon,
   Box,
+  Button,
   Skeleton,
   Switch,
   Text,
@@ -27,6 +31,7 @@ import { validateModelData } from "../components/model-management/modelJsonValid
 import {
   modelCreatedAtMs,
   renderModelCreatedAtCell,
+  renderModelServiceCountCell,
   renderModelNameCell,
   renderModelProviderCell,
   renderModelStatusCell,
@@ -66,7 +71,7 @@ import DataTable, {
 } from "../components/common/table";
 import { FIELD_HINTS } from "../config/fieldHints";
 import { useDeferredColumnSort } from "../utils/tableSort";
-import { MODEL_VERSION } from "../config/constants";
+import { MODEL_REGISTRY_ERRORS, MODEL_VERSION } from "../config/constants";
 import { useInferenceTypes } from "../hooks/useInferenceTypes";
 import { getPlatformName } from "../config/runtimeConfig";
 
@@ -229,7 +234,9 @@ const ModelManagementPage: React.FC = () => {
     enabledTaskTypes: taskTypeNames,
     modelSort,
     // Wait for the saved selection so the first request never sends the fallback ids.
-    enabled: !isLoadingTaskTypes && visibleColumnsReady,
+    // visibleColumnsReady alone turns true for the fallback catalogue while the
+    // column config is still loading, so wait for that config too.
+    enabled: !isLoadingTaskTypes && !isLoadingColumns && visibleColumnsReady,
   });
   const registryItems = registry.items as unknown as Model[];
   const refreshModels = useCallback(async () => {
@@ -671,26 +678,8 @@ const ModelManagementPage: React.FC = () => {
         id: "noOfServices",
         header: "No. of Services",
         hint: FIELD_HINTS.model.col.services,
-        cell: (model) => {
-          if (isServiceCountLoading) {
-            return <Skeleton height="20px" width="28px" borderRadius="md" />;
-          }
-          if (hasServiceCountError) {
-            return (
-              <Tooltip label="Could not load services" placement="top" hasArrow>
-                <Text fontSize="sm" color="gray.400">
-                  —
-                </Text>
-              </Tooltip>
-            );
-          }
-          const count = getServiceCount(model);
-          return (
-            <Text fontSize="sm" color="ink.600">
-              {count > 0 ? count : "-"}
-            </Text>
-          );
-        },
+        // Row's own count; the services list is only for the action switches.
+        cell: renderModelServiceCountCell,
       },
       {
         id: "actions",
@@ -785,7 +774,6 @@ const ModelManagementPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     modelSort,
-    getServiceCount,
     hasLinkedServices,
     hasPublishedService,
     isModelActive,
@@ -886,6 +874,19 @@ const ModelManagementPage: React.FC = () => {
                         isLoading={isLoading}
                         loadingMessage="Loading models..."
                         emptyMessage="No models in the registry yet."
+                        emptyContent={
+                          registry.isError ? (
+                            <Alert status="error" borderRadius="md">
+                              <AlertIcon />
+                              <AlertDescription flex="1">
+                                {MODEL_REGISTRY_ERRORS.LOAD_FAILED}
+                              </AlertDescription>
+                              <Button size="sm" onClick={() => void registry.refetch()}>
+                                Retry
+                              </Button>
+                            </Alert>
+                          ) : undefined
+                        }
                         noResultsMessage="No results found. Try adjusting your search or filters."
                         unfilteredCount={registry.total}
                         hasActiveFilters={registry.hasActiveFilters}
