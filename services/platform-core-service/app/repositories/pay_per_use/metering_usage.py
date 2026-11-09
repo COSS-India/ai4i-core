@@ -11,11 +11,20 @@ several. A request is failed when its status is 400 or above. Fallback
 requests (sent to a fallback service) are request rows with sent_to_fallback (daily_usage.fallback_count
 in the rollup); they are part of the request total, never added to it.
 
-Whole IST days read the daily_usage rollup when it's enabled and has the day;
-everything else — today, partial days at a range's edges, days not rolled up
-yet — reads usage_events, so a day missing from the rollup is never shown as
-zero. The rollup counts requests the same way (request rows one each,
-older status-carrying rows once per correlation id), so both paths agree.
+Whole IST days read the daily_usage rollup when it has the day; everything
+else — today, partial days at a range's edges, days not rolled up yet —
+reads usage_events, so a day missing from the rollup is never shown as zero.
+The rollup counts requests the same way (request rows one each, older
+status-carrying rows once per correlation id), so both paths agree.
+
+pyjob's daily_usage_consolidation drops usage_events days past its retention
+once rolled up; only daily_usage has them then (a dropped day: rollup rows,
+no usage_events rows). A partial day at a range's edge on such a day can't be
+cut at the hour any more, so it counts whole when the range runs to its end
+(a range starting mid-day) and not at all otherwise (a range ending mid-day):
+back-to-back ranges still count each day once. Sub-day buckets
+(request_buckets) have no rows there, and the reads of when data begins fall
+back to daily_usage's rollup rows.
 """
 from __future__ import annotations
 
@@ -30,7 +39,6 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.pay_per_use.usage_event import PRE_CUTOVER_ROWS, REQUEST_ROWS
-from app.repositories.pay_per_use.period_usage import daily_rollup_enabled
 from app.utils.usage_period import IST
 
 # Requests and failed requests among usage_events rows (see the module docstring).
@@ -123,20 +131,32 @@ class MeteringUsageRepository:
         return "".join(f" AND {c}" for c in clauses)
 
     @staticmethod
-    def _rollup_days(start: datetime, end: datetime) -> list[date]:
-        """Whole IST days inside [start, end), today excluded (not complete):
-        the days the rollup can answer."""
-        if not daily_rollup_enabled():
-            return []
-        today = _ist_day(datetime.now(timezone.utc))
+    def _day_pieces(start: datetime, end: datetime) -> list[tuple[date, datetime, datetime]]:
+        """[start, end) cut at IST midnights: (day, piece start, piece end)."""
+        pieces = []
         day = _ist_day(start)
-        if _ist_midnight(day) < start:
+        while _ist_midnight(day) < end:
+            piece = (max(start, _ist_midnight(day)), min(end, _ist_midnight(day + timedelta(days=1))))
+            if piece[0] < piece[1]:
+                pieces.append((day, *piece))
             day += timedelta(days=1)
-        days = []
-        while _ist_midnight(day + timedelta(days=1)) <= end and day < today:
-            days.append(day)
-            day += timedelta(days=1)
-        return days
+        return pieces
+
+    async def _dropped(self, days: Iterable[date]) -> set[date]:
+        """Those of ``days`` whose usage_events rows were dropped: in
+        daily_usage, with no usage_events row left (see the module docstring)."""
+        days = sorted(set(days))
+        if not days:
+            return set()
+        rows = await self._all(
+            "SELECT d FROM unnest(CAST(:days AS date[])) AS d"
+            " WHERE EXISTS (SELECT 1 FROM daily_usage u WHERE u.usage_date = d)"
+            " AND NOT EXISTS (SELECT 1 FROM usage_events e"
+            "  WHERE e.occurred_at >= d::timestamp AT TIME ZONE 'Asia/Kolkata'"
+            "  AND e.occurred_at < (d + 1)::timestamp AT TIME ZONE 'Asia/Kolkata')",
+            {"days": days},
+        )
+        return {row.d for row in rows}
 
     async def aggregate(
         self,
@@ -151,7 +171,21 @@ class MeteringUsageRepository:
         (any of tenant_id, service_id, inference_type_id, day — the IST day).
         ``type_ids`` keeps those catalogue types only ([] matches nothing)."""
         result: dict[tuple, UsageAgg] = {}
-        days = self._rollup_days(start, end)
+        today = _ist_day(datetime.now(timezone.utc))
+        pieces = self._day_pieces(start, end)
+        # Whole days before today (complete): the days the rollup can answer.
+        days = [
+            d for d, s, e in pieces
+            if d < today and s == _ist_midnight(d) and e == _ist_midnight(d + timedelta(days=1))
+        ]
+        partial = [(d, s, e) for d, s, e in pieces if d not in days]
+        # Only edge days matter: a whole day the rollup has is read from it.
+        dropped = await self._dropped({d for d, _, _ in partial if d < today})
+        # A partial day whose usage_events rows are gone: whole when the
+        # range runs to its end, else left out (see the module docstring).
+        days = sorted(days + [
+            d for d, _, e in partial if d in dropped and e == _ist_midnight(d + timedelta(days=1))
+        ])
         rolled: set[date] = set()
 
         if days:
@@ -176,12 +210,11 @@ class MeteringUsageRepository:
 
         # Everything the rollup didn't answer: partial days at the edges, today,
         # and whole days it has no rows for (not rolled up yet, or no usage).
-        intervals = [(start, end)] if not days else [
-            (start, _ist_midnight(days[0])),
-            (_ist_midnight(days[-1] + timedelta(days=1)), end),
+        # Dropped days have no usage_events rows to add.
+        intervals = _merge_intervals([
+            *((s, e) for d, s, e in partial if d not in dropped),
             *((_ist_midnight(d), _ist_midnight(d + timedelta(days=1))) for d in days if d not in rolled),
-        ]
-        intervals = _merge_intervals(intervals)
+        ])
         if intervals:
             params = {}
             ranges = []
@@ -218,7 +251,8 @@ class MeteringUsageRepository:
     ) -> dict[int, tuple[int, int]]:
         """{bucket index: (requests, failed)} over [start, end) in buckets of
         ``step_seconds`` from ``start`` — from usage_events, for sub-day steps
-        (the rollup has nothing finer than a day)."""
+        (the rollup has nothing finer than a day), so none on days whose
+        usage_events rows were dropped."""
         params: dict = {"start": start, "end": end, "step": step_seconds}
         where = self._filters(tenant_id, type_ids, params)
         rows = await self._all(
@@ -233,47 +267,86 @@ class MeteringUsageRepository:
     async def request_rows_from(self, start: datetime, end: datetime) -> Optional[datetime]:
         """When request rows begin inside [start, end): ``start`` when there
         are request rows from before it (fully covered), else the first one
-        inside, else None. Both reads use the partial index on request rows
-        (ix_usage_events_request_rows), never a scan."""
+        inside, else None. The usage_events reads use the partial index on
+        request rows (ix_usage_events_request_rows), never a scan. With none
+        before start (their days were dropped), daily_usage's rollup rows
+        answer by the day: a rolled-up day with requests before start's
+        covers it, and the first one inside the range before the first
+        usage_events request row begins at its midnight (or at start)."""
         before = await self._scalar(
             f"SELECT 1 FROM usage_events WHERE occurred_at < :start AND {REQUEST_ROWS} LIMIT 1",
             {"start": start},
         )
         if before is not None:
             return start
-        return await self._scalar(
+        first_day = _ist_day(start)
+        if await self._scalar(
+            "SELECT 1 FROM daily_usage WHERE source = 'rollup' AND request_count > 0"
+            " AND usage_date < :before LIMIT 1",
+            {"before": first_day},
+        ) is not None:
+            return start
+        first = await self._scalar(
             f"SELECT min(occurred_at) FROM usage_events"
             f" WHERE occurred_at >= :start AND occurred_at < :end AND {REQUEST_ROWS}",
             {"start": start, "end": end},
         )
+        # A dropped day before the first usage_events request row begins earlier.
+        last_day = _ist_day(first) - timedelta(days=1) if first else _ist_day(end - timedelta(microseconds=1))
+        dropped_first = await self._scalar(
+            "SELECT min(usage_date) FROM daily_usage WHERE source = 'rollup' AND request_count > 0"
+            " AND usage_date BETWEEN :first_day AND :last_day",
+            {"first_day": first_day, "last_day": last_day},
+        )
+        if dropped_first is not None:
+            return max(start, _ist_midnight(dropped_first))
+        return first
 
     async def fallbacks_recorded_by(self, at: datetime) -> bool:
         """Whether request rows carried the fallback flag by ``at``: the last
         request row before it has a response time, written with the flag (rows
         from before migration ea3961c258e4 have neither). One step back along
-        the request-row index (ix_usage_events_request_rows)."""
-        return bool(await self._scalar(
+        the request-row index (ix_usage_events_request_rows). With no
+        usage_events request row before ``at`` (their days were dropped), a
+        rolled-up day before at's with response times answers it (the
+        backfill's estimates don't count: the flag wasn't recorded then)."""
+        last = await self._scalar(
             f"SELECT response_time_ms IS NOT NULL FROM usage_events WHERE occurred_at < :at AND {REQUEST_ROWS}"
             " ORDER BY occurred_at DESC LIMIT 1",
             {"at": at},
-        ))
+        )
+        if last is not None:
+            return bool(last)
+        return await self._scalar(
+            "SELECT 1 FROM daily_usage WHERE source = 'rollup' AND response_time_count > 0"
+            " AND usage_date < :before LIMIT 1",
+            {"before": _ist_day(at)},
+        ) is not None
 
     async def first_usage(self, tenant_id: Optional[int]) -> Optional[datetime]:
-        """When API-key usage begins: the tenant's first usage_events row (by
-        its (tenant_id, occurred_at) index), or platform-wide the first day in
-        the rollup — usage_events has no index to answer a platform-wide min.
-        The rollup only covers the days since it started running, so rows
-        from before its first day are checked too: a range read of just that
-        stretch (BRIN). Without a rollup, the whole table is read."""
+        """When API-key usage begins: the first day in the rollup (the
+        tenant's, by ix_daily_usage_tenant_date), as usage_events drops old
+        days. The tenant's first usage_events row on or before that day (by
+        its (tenant_id, occurred_at) index) gives the exact time, while that
+        day is kept. Platform-wide, usage_events has no index to answer a min,
+        so only the stretch before the rollup's first day is read (BRIN): the
+        rollup only covers the days since it started running. With no rollup
+        rows, usage_events alone answers."""
         if tenant_id is not None:
-            return await self._scalar(
-                "SELECT min(occurred_at) FROM usage_events WHERE tenant_id = :tenant_id",
-                {"tenant_id": tenant_id},
+            first_day = await self._scalar(
+                "SELECT min(usage_date) FROM daily_usage WHERE tenant_id = :tenant_id", {"tenant_id": tenant_id},
             )
-        first_day = (
-            await self._scalar("SELECT min(usage_date) FROM daily_usage", {})
-            if daily_rollup_enabled() else None
-        )
+            if first_day is None:
+                return await self._scalar(
+                    "SELECT min(occurred_at) FROM usage_events WHERE tenant_id = :tenant_id",
+                    {"tenant_id": tenant_id},
+                )
+            earlier = await self._scalar(
+                "SELECT min(occurred_at) FROM usage_events WHERE tenant_id = :tenant_id AND occurred_at < :before",
+                {"tenant_id": tenant_id, "before": _ist_midnight(first_day + timedelta(days=1))},
+            )
+            return earlier or _ist_midnight(first_day)
+        first_day = await self._scalar("SELECT min(usage_date) FROM daily_usage", {})
         if first_day is None:
             return await self._scalar("SELECT min(occurred_at) FROM usage_events", {})
         earlier = await self._scalar(

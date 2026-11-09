@@ -7,7 +7,8 @@ concentration, active institutions and models, model usage growth, first
 usage, and the per-model requests, success % and native units (with the LLM
 token split). The counts come from request rows and the units from usage rows
 (see MeteringUsageRepository), so figures are exact rather than Prometheus'
-extrapolated increase(), and not limited by its retention.
+extrapolated increase(), and not limited by its retention: days past
+usage_events' own retention come from the daily_usage rollup, by the day.
 
 Only API-key traffic is recorded, which is what the dashboard already counted.
 Request rows exist from the cut-over onwards; data_since() reports when they
@@ -86,7 +87,8 @@ class UsageEventsMeteringService(MeteringService):
     # ── Store plumbing ────────────────────────────────────────────────────────
 
     async def refresh_retention(self) -> None:
-        """No retention to refresh: usage_events keeps every day."""
+        """No retention to refresh: days past usage_events' retention are read
+        from daily_usage (see MeteringUsageRepository)."""
 
     async def data_since(self, period) -> Optional[datetime]:
         """When request rows begin inside the period: its start once they

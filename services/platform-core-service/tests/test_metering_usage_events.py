@@ -19,7 +19,6 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
-from app.core.config import settings
 from app.services.metering_service_usage_events import UsageEventsMeteringService
 from app.utils.metering_promql_builder import AbsoluteRange
 from app.utils.usage_period import IST, resolve_period
@@ -75,16 +74,6 @@ async def session():
         await trans.rollback()
         await conn.close()
         await engine.dispose()
-
-
-@pytest.fixture()
-def rollup_on(monkeypatch):
-    monkeypatch.setattr(settings, "usage_daily_rollup_enabled", True)
-
-
-@pytest.fixture()
-def rollup_off(monkeypatch):
-    monkeypatch.setattr(settings, "usage_daily_rollup_enabled", False)
 
 
 def _mid(day: date) -> datetime:
@@ -169,7 +158,7 @@ def _day_range(day: date) -> AbsoluteRange:
 
 @pytest.mark.asyncio
 class TestRequestCounts:
-    async def test_each_request_counted_once_from_its_request_row(self, session, rollup_off):
+    async def test_each_request_counted_once_from_its_request_row(self, session):
         await _seed(session)
         rt = await _svc(session).request_total(
             True, None, None, _day_range(_D3), tenant_id=str(_TENANT),
@@ -179,7 +168,7 @@ class TestRequestCounts:
         assert rt["success_rate"]["rate_pct"] == 66.67
         assert rt["avg_rps"]["value"] == round(3 / 86_400, 4)
 
-    async def test_previous_window_figures(self, session, rollup_off):
+    async def test_previous_window_figures(self, session):
         """D3 vs D4 (the day before), covered by request rows from D6 on, so
         the previous figures are set."""
         await _seed(session)
@@ -189,7 +178,7 @@ class TestRequestCounts:
         assert (rt["total_requests"]["previous_count"], rt["failed_requests"]["previous_count"]) == (2, 1)
         assert rt["total_requests"]["vs_previous_pct"] == 50.0
 
-    async def test_task_filter(self, session, rollup_off):
+    async def test_task_filter(self, session):
         await _seed(session)
         svc = _svc(session)
         llm = await svc.request_total(True, None, None, _day_range(_D3), ["llm"], tenant_id=str(_TENANT))
@@ -208,20 +197,20 @@ class TestFallbackRequests:
     """The Institution tab's fallback-served count: part of the total, scoped
     and filtered like it, 0 when there were none."""
 
-    async def test_counted_and_still_part_of_the_total(self, session, rollup_off):
+    async def test_counted_and_still_part_of_the_total(self, session):
         await _seed(session)
         await _mark_fallback(session, "mue-3")
         rt = await _svc(session).request_total(True, None, None, _day_range(_D3), tenant_id=str(_TENANT))
         assert rt["fallback_requests"]["count"] == 1
         assert rt["total_requests"]["count"] == 3   # unchanged
 
-    async def test_zero_when_none_in_the_period(self, session, rollup_off):
+    async def test_zero_when_none_in_the_period(self, session):
         await _seed(session)
         await _mark_fallback(session, "mue-3")   # D3, outside the range below
         rt = await _svc(session).request_total(True, None, None, _day_range(_D4), tenant_id=str(_TENANT))
         assert (rt["fallback_requests"]["count"], rt["fallback_requests"]["formatted"]) == (0, "0")
 
-    async def test_only_the_scoped_institution(self, session, rollup_off):
+    async def test_only_the_scoped_institution(self, session):
         await _seed(session)
         await _mark_fallback(session, "mue-3")
         other = await _svc(session).request_total(
@@ -229,7 +218,7 @@ class TestFallbackRequests:
         )
         assert other["fallback_requests"]["count"] == 0
 
-    async def test_previous_is_none_before_fallbacks_were_recorded(self, session, rollup_off):
+    async def test_previous_is_none_before_fallbacks_were_recorded(self, session):
         """D3 vs D4: no request row before D4 has a response time, so D4's 0
         is not a real figure."""
         await _seed(session)
@@ -239,7 +228,7 @@ class TestFallbackRequests:
         ))["fallback_requests"]
         assert (fb["previous_count"], fb["previous_formatted"], fb["vs_previous_pct"]) == (None, None, None)
 
-    async def test_previous_is_set_once_fallbacks_were_recorded(self, session, rollup_off):
+    async def test_previous_is_set_once_fallbacks_were_recorded(self, session):
         await _seed(session)
         await _mark_fallback(session, "mue-3")
         await session.execute(
@@ -250,7 +239,7 @@ class TestFallbackRequests:
         ))["fallback_requests"]
         assert (fb["previous_count"], fb["previous_formatted"]) == (0, "0")
 
-    async def test_rolled_up_days_add_fallback_count(self, session, rollup_on):
+    async def test_rolled_up_days_add_fallback_count(self, session):
         """D5 is only in daily_usage, D3 only in usage_events: both count."""
         await _seed(session)
         await _mark_fallback(session, "mue-3")
@@ -265,7 +254,7 @@ class TestFallbackRequests:
 
 @pytest.mark.asyncio
 class TestChart:
-    async def test_hourly_buckets_from_usage_events(self, session, rollup_off):
+    async def test_hourly_buckets_from_usage_events(self, session):
         await _seed(session)
         graph = await _svc(session).request_volume_chart(_day_range(_D3), None, tenant_id=str(_TENANT))
 
@@ -275,7 +264,7 @@ class TestChart:
         assert (succ[1].value, fail[1].value, succ[5].value) == (1, 1, 1)
         assert sum(p.value for p in succ) == 2 and sum(p.value for p in fail) == 1
 
-    async def test_daily_buckets_mix_rollup_and_usage_events(self, session, rollup_on):
+    async def test_daily_buckets_mix_rollup_and_usage_events(self, session):
         """D5 is only in daily_usage, D4 and D3 only in usage_events (not
         rolled up): every day shows, none as zero."""
         await _seed(session)
@@ -290,17 +279,10 @@ class TestChart:
         assert (succ[at(_D4)], fail[at(_D4)]) == (1, 1)
         assert (succ[at(_D3)], fail[at(_D3)]) == (2, 1)
 
-    async def test_rollup_off_reads_usage_events_only(self, session, rollup_off):
-        await _seed(session)
-        week = AbsoluteRange(start=_mid(_TODAY - timedelta(days=7)), end=_mid(_TODAY))
-        graph = await _svc(session).request_volume_chart(week, None, tenant_id=str(_TENANT))
-        succ = {p.ts: p.value for p in graph.series[0].points}
-        assert succ[int(_mid(_D5).timestamp())] == 0   # its only data is the rollup
-
 
 @pytest.mark.asyncio
 class TestModelBreakdown:
-    async def test_requests_success_and_llm_tokens_per_service(self, session, rollup_off):
+    async def test_requests_success_and_llm_tokens_per_service(self, session):
         await _seed(session)
         breakdown = await _svc(session).model_breakdown(
             None, _day_range(_D3), tenant_id=str(_TENANT),
@@ -315,14 +297,14 @@ class TestModelBreakdown:
 
 @pytest.mark.asyncio
 class TestTenantsAndCoverage:
-    async def test_concentration_and_active_tenants(self, session, rollup_off):
+    async def test_concentration_and_active_tenants(self, session):
         await _seed(session)
         svc = _svc(session)
         conc = await svc.usage_concentration(50, _day_range(_D3))
         mine = [t for t in conc["top_tenants"] if t["tenant"] == str(_TENANT)]
         assert mine and mine[0]["requests"] == 3
 
-    async def test_data_since(self, session, rollup_off):
+    async def test_data_since(self, session):
         await _seed(session)
         svc = _svc(session)
         # Request rows from before D3 cover it from its start.
@@ -335,7 +317,7 @@ class TestTenantsAndCoverage:
 
 @pytest.mark.asyncio
 class TestPreviousWindowCoverage:
-    async def test_no_previous_figures_before_request_rows_begin(self, session, rollup_off):
+    async def test_no_previous_figures_before_request_rows_begin(self, session):
         """The day before the first request row: not covered, so None —
         rather than a comparison against a day with no request rows."""
         llm = await _llm_id(session)
@@ -358,7 +340,7 @@ class TestRequestRowCounting:
     still a request (as Prometheus counted). Rows from before the cut-over
     stand in for their request and are still counted by correlation id."""
 
-    async def test_reused_correlation_id_counts_every_request(self, session, rollup_off):
+    async def test_reused_correlation_id_counts_every_request(self, session):
         llm = await _llm_id(session)
         await _add_service(session)
         base = _mid(_D3) + timedelta(hours=1)
@@ -371,7 +353,7 @@ class TestRequestRowCounting:
         succ, fail = (s.points for s in graph.series)
         assert (succ[1].value, fail[1].value) == (1, 1)
 
-    async def test_pre_cutover_rows_count_once_per_request(self, session, rollup_off):
+    async def test_pre_cutover_rows_count_once_per_request(self, session):
         """Old-style rows (a status and units): a chunked request's two rows
         are one request."""
         llm = await _llm_id(session)
@@ -384,3 +366,108 @@ class TestRequestRowCounting:
             ), {"at": base + timedelta(seconds=i), "t": _TENANT, "s": _SERVICE, "ty": llm, "u": units})
         rt = await _svc(session).request_total(True, None, None, _day_range(_D3), tenant_id=str(_TENANT))
         assert rt["total_requests"]["count"] == 1
+
+
+async def _drop(session, *days: date) -> None:
+    """Drop ``days``' usage_events rows, as pyjob's retention does once they
+    are rolled up (rolled back with the test's transaction)."""
+    for day in days:
+        await session.execute(
+            text("DELETE FROM usage_events WHERE occurred_at >= :s AND occurred_at < :e"),
+            {"s": _mid(day), "e": _mid(day + timedelta(days=1))},
+        )
+
+
+@pytest.mark.asyncio
+class TestDroppedDays:
+    """Days past usage_events' retention: dropped by pyjob, only in daily_usage."""
+
+    async def test_a_range_starting_mid_day_counts_the_dropped_day_whole(self, session):
+        """D5 can't be cut at 12:00 any more: the range runs to its end, so the
+        whole day counts; the range ending at 12:00 leaves it out, so
+        back-to-back ranges count it once."""
+        await _seed(session)
+        await _drop(session, _D5)
+        noon = _mid(_D5) + timedelta(hours=12)
+        svc = _svc(session)
+        after = await svc.request_total(
+            True, None, None, AbsoluteRange(start=noon, end=_mid(_D4)), tenant_id=str(_TENANT),
+        )
+        before = await svc.request_total(
+            True, None, None, AbsoluteRange(start=_mid(_D6), end=noon), tenant_id=str(_TENANT),
+        )
+        assert after["total_requests"]["count"] == 4
+        assert before["total_requests"]["count"] == 1    # D6's request only
+
+    async def test_dropped_whole_days_read_daily_usage_only(self, session):
+        """A dropped day's late rows, still waiting in usage_events for the
+        next run to add them, don't count twice."""
+        llm = await _seed(session)
+        await _drop(session, _D5)
+        await _request(session, "mue-late", _mid(_D5) + timedelta(hours=3), 200, llm)
+        rt = await _svc(session).request_total(True, None, None, _day_range(_D5), tenant_id=str(_TENANT))
+        assert rt["total_requests"]["count"] == 4
+
+    async def test_no_hourly_chart_for_a_dropped_day(self, session):
+        await _seed(session)
+        await _drop(session, _D5)
+        assert await _svc(session).request_volume_chart(_day_range(_D5), None, tenant_id=str(_TENANT)) is None
+
+    async def test_data_since_from_dropped_days(self, session):
+        """Once a day's request rows are dropped, its rollup tells when data
+        begins: a dropped day before the range covers it, else the first
+        dropped day inside it begins at its midnight."""
+        llm = await _llm_id(session)
+        await _add_service(session)
+        if await session.scalar(text(
+            "SELECT 1 FROM usage_events WHERE status_code IS NOT NULL AND total_units = 0"
+            " AND occurred_at < :d LIMIT 1"
+        ), {"d": _mid(_TODAY)}):
+            pytest.skip("the database already holds request rows from before today")
+        await _daily(session, _D6, llm, requests=2, failed=0, units=0)
+        await _daily(session, _D5, llm, requests=3, failed=0, units=0)
+        await _drop(session, _D6, _D5)
+        await _request(session, "mue-kept", _mid(_D4) + timedelta(hours=1), 200, llm)
+        svc = _svc(session)
+
+        d5 = resolve_period("custom", _D5.isoformat(), _D5.isoformat())
+        assert await svc.data_since(d5) == d5.start          # D6 before it
+        d6_d4 = resolve_period("custom", _D6.isoformat(), _D4.isoformat())
+        assert await svc.data_since(d6_d4) == d6_d4.start    # begins on D6, a dropped day
+        rt = await svc.request_total(True, None, None, _day_range(_D5), tenant_id=str(_TENANT))
+        assert rt["total_requests"]["previous_count"] == 2   # D6 vs D5: covered
+
+    async def test_fallbacks_recorded_by_from_dropped_days(self, session):
+        llm = await _llm_id(session)
+        await _add_service(session)
+        if await session.scalar(text(
+            "SELECT 1 FROM usage_events WHERE status_code IS NOT NULL AND total_units = 0"
+            " AND occurred_at < :d LIMIT 1"
+        ), {"d": _mid(_D4)}):
+            pytest.skip("the database already holds request rows from before D4")
+        if await session.scalar(text(
+            "SELECT 1 FROM daily_usage WHERE source = 'rollup' AND response_time_count > 0"
+            " AND usage_date < :d LIMIT 1"
+        ), {"d": _D4}):
+            pytest.skip("the database already holds rolled-up response times from before D4")
+        await _daily(session, _D6, llm, requests=2, failed=0, units=0)
+        await _drop(session, _D6)
+        repo = _svc(session)._usage
+        assert await repo.fallbacks_recorded_by(_mid(_D4)) is False
+        await session.execute(text(
+            "UPDATE daily_usage SET response_time_count = 2, total_response_time_ms = 240"
+            " WHERE usage_date = :d AND tenant_id = :t"
+        ), {"d": _D6, "t": _TENANT})
+        assert await repo.fallbacks_recorded_by(_mid(_D4)) is True
+
+    async def test_first_request_from_the_rollup_once_usage_events_dropped_it(self, session):
+        llm = await _seed(session)
+        await _daily(session, _TODAY - timedelta(days=40), llm, requests=1, failed=0, units=0)
+        first = await _svc(session).first_request_at(None, tenant_id=str(_TENANT))
+        assert first == _mid(_TODAY - timedelta(days=40))
+
+    async def test_first_request_keeps_its_exact_time_while_usage_events_has_the_day(self, session):
+        await _seed(session)     # D5 in daily_usage; D6's request at 09:00 in usage_events
+        await _daily(session, _D6, await _llm_id(session), requests=1, failed=0, units=0)
+        first = await _svc(session).first_request_at(None, tenant_id=str(_TENANT))
+        assert first == _mid(_D6) + timedelta(hours=9)
