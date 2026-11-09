@@ -727,7 +727,7 @@ class TestOverviewFirstUsageAtHybrid:
         assert not any(k.startswith("metering:first-usage:") for k in _set_keys(redis))
         assert len(_overview_keys(redis)) == 1
 
-    async def test_cache_key_is_v10(self, fake_usage_repo):
+    async def test_cache_key_is_v11(self, fake_usage_repo):
         redis = _empty_redis()
         await _call_overview(self._svc(), redis=redis)
         assert _overview_keys(redis)[0].startswith("metering:overview:v11:")
