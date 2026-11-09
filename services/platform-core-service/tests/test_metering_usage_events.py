@@ -216,11 +216,21 @@ class TestFallbackRequests:
         assert rt["fallback_requests"]["count"] == 1
         assert rt["total_requests"]["count"] == 3   # unchanged
 
+    async def test_split_into_successful_and_failed_by_status(self, session, rollup_off):
+        await _seed(session)
+        await _mark_fallback(session, "mue-2")   # 502: the fallback failed too
+        await _mark_fallback(session, "mue-3")   # 200
+        fb = (await _svc(session).request_total(
+            True, None, None, _day_range(_D3), tenant_id=str(_TENANT),
+        ))["fallback_requests"]
+        assert (fb["count"], fb["successful"]["count"], fb["failed"]["count"]) == (2, 1, 1)
+
     async def test_zero_when_none_in_the_period(self, session, rollup_off):
         await _seed(session)
         await _mark_fallback(session, "mue-3")   # D3, outside the range below
         rt = await _svc(session).request_total(True, None, None, _day_range(_D4), tenant_id=str(_TENANT))
         assert (rt["fallback_requests"]["count"], rt["fallback_requests"]["formatted"]) == (0, "0")
+        assert (rt["fallback_requests"]["successful"]["count"], rt["fallback_requests"]["failed"]["count"]) == (0, 0)
 
     async def test_only_the_scoped_institution(self, session, rollup_off):
         await _seed(session)
@@ -239,6 +249,7 @@ class TestFallbackRequests:
             True, None, None, _day_range(_D3), tenant_id=str(_TENANT),
         ))["fallback_requests"]
         assert (fb["previous_count"], fb["previous_formatted"], fb["vs_previous_pct"]) == (None, None, None)
+        assert (fb["successful"]["previous_count"], fb["failed"]["previous_count"]) == (None, None)
 
     async def test_previous_is_set_once_fallbacks_were_recorded(self, session, rollup_off):
         await _seed(session)
@@ -250,18 +261,22 @@ class TestFallbackRequests:
             True, None, None, _day_range(_D3), tenant_id=str(_TENANT),
         ))["fallback_requests"]
         assert (fb["previous_count"], fb["previous_formatted"]) == (0, "0")
+        assert (fb["successful"]["previous_count"], fb["failed"]["previous_count"]) == (0, 0)
 
     async def test_rolled_up_days_add_fallback_count(self, session, rollup_on):
         """D5 is only in daily_usage, D3 only in usage_events: both count."""
         await _seed(session)
         await _mark_fallback(session, "mue-3")
         await session.execute(
-            text("UPDATE daily_usage SET fallback_count = 2 WHERE usage_date = :d AND tenant_id = :t"),
+            text(
+                "UPDATE daily_usage SET fallback_count = '{\"count\": 2, \"success\": 1, \"failure\": 1}'::jsonb"
+                " WHERE usage_date = :d AND tenant_id = :t"
+            ),
             {"d": _D5, "t": _TENANT},
         )
         week = AbsoluteRange(start=_mid(_TODAY - timedelta(days=7)), end=_mid(_TODAY))
-        rt = await _svc(session).request_total(True, None, None, week, tenant_id=str(_TENANT))
-        assert rt["fallback_requests"]["count"] == 3
+        fb = (await _svc(session).request_total(True, None, None, week, tenant_id=str(_TENANT)))["fallback_requests"]
+        assert (fb["count"], fb["successful"]["count"], fb["failed"]["count"]) == (3, 2, 1)
 
 
 async def _timed(session, corr: str, ms) -> None:
