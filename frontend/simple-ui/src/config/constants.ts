@@ -949,7 +949,6 @@ export const TABS = {
   traces: "traces",
   alertsManagement: "alerts-management",
   notificationsAlerts: "notifications-alerts",
-  piiManagement: "pii-management",
   tierManagement: "tier-management",
   policyManagement: "policy-management",
   nmt: "nmt",
