@@ -190,6 +190,37 @@ def test_build_traces_map_ignores_hits_without_trace_id():
     assert traces_map == {}
 
 
+def test_build_traces_map_model_only_trace_keeps_app_id_and_end_user():
+    """proxy_multipart (audio upload) opens no request span - the model span
+    is the only span, and it's the one carrying app_id/enduser.id (seeded via
+    get_context_attributes() in llm_service._seed_model_attrs). These must not
+    be dropped just because they showed up on a model span instead of a
+    request span."""
+    hits = [
+        _span_hit("t1", "model", {"task_type": "llm", "app_id": "app-7", "enduser.id": "user-9"}),
+    ]
+
+    traces_map = _build_traces_map(hits, tenant_filter="tenant-a")
+
+    assert traces_map["t1"]["app_id"] == "app-7"
+    assert traces_map["t1"]["end_user"] == "user-9"
+
+
+def test_build_traces_map_request_span_wins_app_id_and_end_user_over_model_span():
+    """When both spans carry these attrs (the normal case), the request span
+    must be authoritative - same rule as `status` - regardless of which span
+    happened to be processed first."""
+    hits = [
+        _span_hit("t1", "model", {"task_type": "llm", "app_id": "model-app", "enduser.id": "model-user"}),
+        _span_hit("t1", "request", {"status": "success", "app_id": "request-app", "enduser.id": "request-user"}),
+    ]
+
+    traces_map = _build_traces_map(hits, tenant_filter="tenant-a")
+
+    assert traces_map["t1"]["app_id"] == "request-app"
+    assert traces_map["t1"]["end_user"] == "request-user"
+
+
 def test_compute_full_breakdown_counts_each_trace_exactly_once():
     """Each trace has exactly one request span, so Success + Failures must
     reconcile with Total without double-counting."""
