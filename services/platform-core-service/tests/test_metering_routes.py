@@ -730,7 +730,7 @@ class TestOverviewFirstUsageAtHybrid:
     async def test_cache_key_is_v10(self, fake_usage_repo):
         redis = _empty_redis()
         await _call_overview(self._svc(), redis=redis)
-        assert _overview_keys(redis)[0].startswith("metering:overview:v10:")
+        assert _overview_keys(redis)[0].startswith("metering:overview:v11:")
 
 
 def _redis_with(entries: dict) -> AsyncMock:
@@ -1031,22 +1031,38 @@ def _request_total(fallback: Optional[dict] = None) -> dict:
     return rt
 
 
+def _figure(count: int, previous: Optional[int] = None, pct: Optional[float] = None) -> dict:
+    return {
+        "count": count, "formatted": str(count), "vs_previous_pct": pct,
+        "previous_count": previous, "previous_formatted": None if previous is None else str(previous),
+    }
+
+
 class TestFallbackRequestsKpi:
-    def test_last_kpi_and_total_unchanged(self):
+    def test_last_kpis_and_total_unchanged(self):
         kpis = _overview_kpis(_request_total({
-            "count": 12, "formatted": "12", "vs_previous_pct": 50.0,
-            "previous_count": 8, "previous_formatted": "8",
+            **_figure(12, 8, 50.0), "successful": _figure(9, 6, 50.0), "failed": _figure(3, 2, 50.0),
         }))
-        assert [k.key for k in kpis] == ["total_requests", "successful", "failed", "avg_rps", "fallback_requests"]
+        assert [k.key for k in kpis] == [
+            "total_requests", "successful", "failed", "avg_rps",
+            "fallback_requests", "fallback_successful", "fallback_failed",
+        ]
         assert kpis[0].value == "90"
-        assert (kpis[-1].value, kpis[-1].previous, kpis[-1].pct_change) == ("12", "8", 50.0)
+        fb, ok, failed = kpis[-3:]
+        assert (fb.value, fb.previous, fb.pct_change) == ("12", "8", 50.0)
+        assert (ok.label, ok.value, ok.previous, ok.helper) == ("Fallback Successful", "9", "6", "75.00% success rate")
+        assert (failed.label, failed.value, failed.previous, failed.helper) == (
+            "Fallback Failed", "3", "2", "25.00% failure rate",
+        )
 
     def test_zero_is_a_kpi_not_missing(self):
         kpis = _overview_kpis(_request_total({
-            "count": 0, "formatted": "0", "vs_previous_pct": None,
-            "previous_count": None, "previous_formatted": None,
+            **_figure(0), "successful": _figure(0), "failed": _figure(0),
         }))
-        assert (kpis[-1].key, kpis[-1].value) == ("fallback_requests", "0")
+        assert [(k.key, k.value) for k in kpis[-3:]] == [
+            ("fallback_requests", "0"), ("fallback_successful", "0"), ("fallback_failed", "0"),
+        ]
+        assert [k.helper for k in kpis[-2:]] == ["0.00% success rate", "0.00% failure rate"]
 
     def test_absent_when_the_source_does_not_record_fallbacks(self):
         assert [k.key for k in _overview_kpis(_request_total())] == [
