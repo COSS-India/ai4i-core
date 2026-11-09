@@ -68,8 +68,20 @@ export function modelListColumnsParam(visibleIds: readonly string[]): string {
 const KNOWN_MODEL_LIST_COLUMN_IDS = new Set(MODEL_LIST_COLUMNS.map((column) => column.id));
 
 /**
+ * Columns AI4IDS-3351 fixes as mandatory (Name, Version, Task Type, Provider
+ * Name) plus Actions. The config cannot make these optional.
+ */
+const LOCKED_MODEL_LIST_COLUMN_IDS = new Set(
+  MODEL_LIST_COLUMNS.filter((column) => column.mandatory).map((column) => column.id),
+);
+
+const ACTIONS_COLUMN = MODEL_LIST_COLUMNS.find((column) => column.id === "actions");
+
+/**
  * Catalogue from `model-column` config entries. Keys the table cannot render are
- * dropped; an empty result falls back to MODEL_LIST_COLUMNS.
+ * dropped; an empty result falls back to MODEL_LIST_COLUMNS. The config sets
+ * order and labels, but locked columns stay mandatory whatever `required` says,
+ * and Actions (the Deprecate / Activate switches) is appended if left out.
  */
 export function modelListColumnsFromConfig(
   entries: readonly { key: string; label: string; required: boolean }[] | null | undefined,
@@ -81,11 +93,15 @@ export function modelListColumnsFromConfig(
     catalogue.push({
       id: entry.key,
       label: entry.label,
-      mandatory: entry.required,
+      mandatory: entry.required || LOCKED_MODEL_LIST_COLUMN_IDS.has(entry.key),
       defaultVisible: true,
     });
   }
-  return catalogue.length > 0 ? catalogue : MODEL_LIST_COLUMNS;
+  if (catalogue.length === 0) return MODEL_LIST_COLUMNS;
+  if (ACTIONS_COLUMN && !catalogue.some((column) => column.id === ACTIONS_COLUMN.id)) {
+    catalogue.push(ACTIONS_COLUMN);
+  }
+  return catalogue;
 }
 
 export function defaultModelListColumnIds(

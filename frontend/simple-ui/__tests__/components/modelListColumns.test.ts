@@ -148,6 +148,30 @@ describe("model list columns (AI4IDS-3351)", () => {
     expect(defaultModelListColumnIds(catalogue)).toEqual(["name", "status", "actions"]);
   });
 
+  it("keeps the story's mandatory columns and Actions mandatory even if the config says otherwise", () => {
+    const catalogue = modelListColumnsFromConfig([
+      { key: "name", label: "Name", required: false },
+      { key: "version", label: "Version", required: false },
+      { key: "taskType", label: "Task Type", required: false },
+      { key: "providerName", label: "Provider Name", required: false },
+      { key: "status", label: "Status", required: false },
+      { key: "actions", label: "Actions", required: false },
+    ]);
+    expect(
+      catalogue.filter((column) => column.mandatory).map((column) => column.id),
+    ).toEqual(["name", "version", "taskType", "providerName", "actions"]);
+    expect(catalogue.find((column) => column.id === "status")?.mandatory).toBe(false);
+  });
+
+  it("appends Actions when the config leaves it out", () => {
+    const catalogue = modelListColumnsFromConfig([
+      { key: "name", label: "Name", required: true },
+      { key: "status", label: "Status", required: false },
+    ]);
+    expect(catalogue.map((column) => column.id)).toEqual(["name", "status", "actions"]);
+    expect(catalogue.at(-1)).toMatchObject({ id: "actions", mandatory: true });
+  });
+
   it("falls back to the built-in catalogue when the config is empty or unknown", () => {
     expect(modelListColumnsFromConfig(undefined)).toBe(MODEL_LIST_COLUMNS);
     expect(modelListColumnsFromConfig([])).toBe(MODEL_LIST_COLUMNS);
