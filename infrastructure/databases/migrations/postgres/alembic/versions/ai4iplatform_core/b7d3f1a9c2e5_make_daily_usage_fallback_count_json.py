@@ -1,7 +1,7 @@
 """make daily_usage.fallback_count a JSON of fallback count, success and failure
 
 Revision ID: b7d3f1a9c2e5
-Revises: f1b2c3d4e5f6
+Revises: 7229140c5c89
 Create Date: 2026-11-09
 
 fallback_count becomes {"count": N, "success": S, "failure": F}: the request
@@ -16,7 +16,7 @@ from typing import Sequence, Union
 from alembic import op
 
 revision: str = "b7d3f1a9c2e5"
-down_revision: Union[str, None] = "f1b2c3d4e5f6"
+down_revision: Union[str, None] = "7229140c5c89"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
