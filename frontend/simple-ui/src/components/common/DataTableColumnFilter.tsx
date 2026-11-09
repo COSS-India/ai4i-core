@@ -278,12 +278,9 @@ function TextColumnFilterInput({
     commit("");
   };
   const name = `Search ${label}`.trim();
-  // Validation errors always show; the helper / native title only when allowed.
-  const hint = config.hideHoverHint ? undefined : config.helper;
-  const nativeTitle = error || hint || config.hideHoverHint ? undefined : name;
 
   return (
-    <Tooltip label={error ?? hint} isDisabled={!error && !hint} hasArrow>
+    <Tooltip label={error ?? config.helper} isDisabled={!error && !config.helper} hasArrow>
       <InputGroup size="sm" w="full" minW={0} maxW="100%">
         <Input
           {...FILTER_CONTROL_STYLE}
@@ -292,7 +289,7 @@ function TextColumnFilterInput({
           value={draft}
           placeholder={config.placeholder ?? "Search"}
           aria-label={name}
-          title={nativeTitle}
+          title={error || config.helper ? undefined : name}
           isInvalid={Boolean(error)}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={() => commit(draft)}

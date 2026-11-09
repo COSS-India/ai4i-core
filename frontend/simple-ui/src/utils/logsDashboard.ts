@@ -28,6 +28,10 @@ export const COLUMN_STORAGE_KEY = "logs-dashboard-columns";
  * Column catalogue for the Logs Dashboard picker. Mirrors platform-core
  * COLUMN_DEFINITIONS (AI4IDS-3529) — keep keys in sync, since traces/search
  * rejects unknown keys in `columns`.
+ *
+ * Exception: `service` is left out on purpose (removed from the Logs Dashboard
+ * after demo feedback), even though platform-core still lists it. Do not add
+ * it back when syncing.
  */
 export const LOGS_COLUMN_DEFS: TelemetryTraceColumnDef[] = [
   { key: "status", label: "Status", default: true, filterable: true, sortable: false, keyword_searchable: true },
@@ -211,9 +215,7 @@ export const logsColumnFilterConfig = (
     if (!reason) return false;
     return { type: "text", placeholder: "Search", disabledReason: reason };
   }
-  const config = LOGS_COLUMN_FILTERS[def.key] ?? { type: "text", placeholder: "Search" };
-  // Logs column searches show no hover tooltips (validation errors still do).
-  return config.type === "text" ? { ...config, hideHoverHint: true } : config;
+  return LOGS_COLUMN_FILTERS[def.key] ?? { type: "text", placeholder: "Search" };
 };
 
 /** traces/search params for per-column searches; keys follow the column catalogue. */

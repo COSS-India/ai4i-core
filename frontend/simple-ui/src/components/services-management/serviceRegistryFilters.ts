@@ -11,28 +11,8 @@ import {
 
 type SelectOption = { label: string; value: string };
 
-/** Toolbar keeps only Status and Task Type — everything else is column search. */
+/** Toolbar select filters: Status and Task Type (name has its own search box). */
 const TOOLBAR_FILTER_ORDER = ["status", "task"] as const;
-
-/** Sent when a tier name search matches nothing, so the list stays empty. */
-export const UNMATCHED_TIER_FILTER = "__no_tier__";
-
-/** Tier column search is a name. The list API filters by tier id. */
-export function tierIdsForColumnSearch(
-  query: string,
-  tiers: readonly { id: string; name: string }[],
-): string {
-  const q = query.trim().toLowerCase();
-  if (!q) return "";
-  const ids = tiers
-    .filter((tier) => {
-      const name = tier.name.trim().toLowerCase();
-      return name.includes(q) || tier.id.trim().toLowerCase() === q;
-    })
-    .map((tier) => tier.id);
-  if (ids.length === 0) return UNMATCHED_TIER_FILTER;
-  return ids.join(",");
-}
 
 function selectOptionsForColumn(
   column: ServiceListColumnDef,

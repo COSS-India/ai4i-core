@@ -84,7 +84,8 @@ export default function SearchableMultiSelect({
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") {
                 e.preventDefault();
-                onToggle();
+                if (isOpen) onClose();
+                else onToggle();
               }
             }}
             align="center"

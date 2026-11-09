@@ -486,8 +486,6 @@ const ServicesManagement: React.FC = () => {
         header: "Name",
         sortable: true,
         minWidth: "9rem",
-        // Toolbar search owns this field.
-        filter: false,
         sortAccessor: (service) => service.name ?? "",
         cell: renderServiceNameCell,
       },
@@ -495,8 +493,6 @@ const ServicesManagement: React.FC = () => {
         id: "task",
         header: "Task Type",
         sortable: true,
-        // Toolbar select owns filter; column stays sortable.
-        filter: false,
         cell: renderServiceTaskTypeCell,
       },
       {
@@ -512,8 +508,6 @@ const ServicesManagement: React.FC = () => {
         header: "Status",
         hint: FIELD_HINTS.service.col.status,
         sortable: true,
-        // Toolbar select owns filter; column stays sortable.
-        filter: false,
         cell: renderServiceStatusCell,
       },
       {
