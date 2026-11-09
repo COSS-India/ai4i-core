@@ -310,7 +310,7 @@ async def get_trace_by_id(
         trace_response = TraceResponse(
             trace_id=trace_id,
             service=service,
-            tenant_id=tenant_scope or "system",
+            tenant_id=tenant_scope,
             environment=settings.environment,
             hostname="unknown",
             spans=spans,
