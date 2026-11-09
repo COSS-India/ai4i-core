@@ -17,10 +17,9 @@ type ModelListColumnPickerProps = {
 
 function mandatoryColumnsHint(columns: readonly ModelListColumnDef[]): string {
   const labels = columns.filter((column) => column.mandatory).map((column) => column.label);
-  const rest = "At least one other column must remain.";
-  if (labels.length === 0) return rest;
-  if (labels.length === 1) return `${labels[0]} stays visible. ${rest}`;
-  return `${labels.slice(0, -1).join(", ")}, and ${labels.at(-1)} stay visible. ${rest}`;
+  if (labels.length === 0) return "";
+  if (labels.length === 1) return `${labels[0]} stays visible.`;
+  return `${labels.slice(0, -1).join(", ")}, and ${labels.at(-1)} stay visible.`;
 }
 
 const ModelListColumnPicker: React.FC<

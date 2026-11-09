@@ -113,63 +113,45 @@ export function defaultModelListColumnIds(
 }
 
 /**
- * Keep mandatory columns, drop unknown ids, and restore defaults when nothing
- * besides the mandatory columns would remain. Result is catalogue order.
+ * Keep mandatory columns and drop unknown ids. Optional columns may all be
+ * hidden; defaults apply only when nothing usable is stored (first visit, or
+ * every stored id is gone from the catalogue). Result is catalogue order.
  */
 export function resolveModelListColumns(
   selected: readonly string[] | null | undefined,
   catalogue: readonly ModelListColumnDef[] = MODEL_LIST_COLUMNS,
 ): string[] {
-  const defaults = defaultModelListColumnIds(catalogue);
-  const mandatory = new Set(
-    catalogue.filter((column) => column.mandatory).map((column) => column.id),
-  );
   const known = new Set(catalogue.map((column) => column.id));
-  if (selected && selected.length > 0) {
-    const picked = new Set(
-      selected.filter((id) => known.has(id) && !mandatory.has(id)),
-    );
-    if (picked.size > 0) {
-      return catalogue
-        .filter((column) => column.mandatory || picked.has(column.id))
-        .map((column) => column.id);
-    }
-  }
-  return defaults;
+  const picked = new Set((selected ?? []).filter((id) => known.has(id)));
+  if (picked.size === 0) return defaultModelListColumnIds(catalogue);
+  return catalogue
+    .filter((column) => column.mandatory || picked.has(column.id))
+    .map((column) => column.id);
 }
 
+/** Only mandatory columns are locked; every optional column can be turned off. */
 export function canToggleOffModelListColumn(
-  current: readonly string[],
+  _current: readonly string[],
   id: string,
   catalogue: readonly ModelListColumnDef[] = MODEL_LIST_COLUMNS,
 ): boolean {
   const column = catalogue.find((entry) => entry.id === id);
-  if (column == null || column.mandatory) return false;
-  if (current.includes(id) === false) return true;
-  const mandatory = new Set(
-    catalogue.filter((entry) => entry.mandatory).map((entry) => entry.id),
-  );
-  const flexibleCount = current.filter((columnId) => !mandatory.has(columnId)).length;
-  return flexibleCount > 1;
+  return column != null && !column.mandatory;
 }
 
-/** Turn a column on or off. Mandatory columns and the last flexible column stay. */
+/** Turn an optional column on or off. Mandatory columns stay. */
 export function toggleModelListColumn(
   current: readonly string[],
   id: string,
   catalogue: readonly ModelListColumnDef[] = MODEL_LIST_COLUMNS,
 ): string[] {
-  const isVisible = current.includes(id);
-  if (isVisible) {
-    if (canToggleOffModelListColumn(current, id, catalogue)) {
-      return resolveModelListColumns(
-        current.filter((columnId) => columnId !== id),
-        catalogue,
-      );
-    }
+  if (!canToggleOffModelListColumn(current, id, catalogue)) {
     return resolveModelListColumns(current, catalogue);
   }
-  return resolveModelListColumns([...current, id], catalogue);
+  const next = current.includes(id)
+    ? current.filter((columnId) => columnId !== id)
+    : [...current, id];
+  return resolveModelListColumns(next, catalogue);
 }
 
 export type ModelListColumnPreferenceStore = {
