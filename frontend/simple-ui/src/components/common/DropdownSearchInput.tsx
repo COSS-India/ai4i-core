@@ -2,6 +2,13 @@ import React from "react";
 import { Box, Input, InputGroup, InputLeftElement } from "@chakra-ui/react";
 import { SearchIcon } from "@chakra-ui/icons";
 
+/** "Search domains..." -> "Search domains". A loop, not a regex, so it stays linear. */
+function withoutTrailingDots(text: string): string {
+  let end = text.length;
+  while (end > 0 && (text[end - 1] === "." || text[end - 1] === "…")) end--;
+  return text.slice(0, end);
+}
+
 /** Case-insensitive "label contains query"; an empty query matches everything. */
 export function matchesDropdownSearch(label: string, query: string): boolean {
   const q = query.trim().toLowerCase();
@@ -34,7 +41,7 @@ export default function DropdownSearchInput({
         <Input
           ref={inputRef}
           placeholder={placeholder}
-          aria-label={ariaLabel ?? placeholder.replace(/[.…]+$/, "")}
+          aria-label={ariaLabel ?? withoutTrailingDots(placeholder)}
           value={value}
           onChange={(e) => onChange(e.target.value)}
           bg="white"

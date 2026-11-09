@@ -620,7 +620,7 @@ function truncatedSelectLabel(select: HTMLSelectElement): string {
   selectMeasureCanvas ??= document.createElement("canvas");
   const ctx = selectMeasureCanvas.getContext("2d");
   if (!ctx) return "";
-  const style = window.getComputedStyle(select);
+  const style = globalThis.getComputedStyle(select);
   ctx.font =
     style.font || `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
   const available =
