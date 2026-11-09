@@ -163,11 +163,13 @@ class TestRouteRegistration:
     """All expected routes are registered."""
 
     def test_all_routers_included(self):
+        from fastapi import FastAPI
         from app.routes import api_router
-        paths = set()
-        for route in api_router.routes:
-            if hasattr(route, "path"):
-                paths.add(route.path)
+        # Read the paths from the OpenAPI schema: FastAPI >= 0.137 keeps included
+        # routers nested, so router.routes no longer lists every path.
+        app = FastAPI()
+        app.include_router(api_router)
+        paths = set(app.openapi()["paths"])
         # Core auth endpoints
         assert "/api/v1/auth/login" in paths
         assert "/api/v1/auth/register" in paths

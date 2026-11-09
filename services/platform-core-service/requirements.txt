@@ -21,7 +21,7 @@ alembic==1.20.1
 redis==8.1.0
 
 # ── Kafka (notification producer) ──
-kafka-python==2.3.2
+kafka-python==2.3.3
 
 # ── HTTP client (endpoint validation probing + alert-sync reloads) ──
 httpx==0.28.1

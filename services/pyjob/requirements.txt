@@ -4,7 +4,7 @@
 # (linux/amd64), run `pip check`, and update any transitive pins pip reports.
 
 # ── Shared platform library (consolidated) ──
-ai4i-core==1.0.52
+ai4i-core==1.0.54
 
 sqlalchemy[asyncio]==2.1.8
 asyncpg==0.32.0
