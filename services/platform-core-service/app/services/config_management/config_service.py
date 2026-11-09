@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.exceptions import DuplicateEntityError, EntityNotFoundError
+from app.core.exceptions import AppError, DuplicateEntityError, EntityNotFoundError
 from app.models.config_management.config import Config
 from app.schemas.config_management.config_schema import (
     ConfigCreate,
@@ -13,12 +13,39 @@ from app.schemas.config_management.config_schema import (
 )
 
 
-async def list_configs(session: AsyncSession, *, type_filter: str | None = None) -> List[ConfigItem]:
+def _sorted_by_label(data: object, *, reverse: bool) -> object:
+    """Sort data's items by their 'label' when it's a list of {label: ...} dicts.
+
+    Only a single row's data is reordered — this is applied when a specific
+    type is requested, not across the row listing itself. Any other shape
+    (dict, string, list without a label on every item, etc.) is returned
+    unchanged since there is no defined sort key for it.
+    """
+    if isinstance(data, list) and data and all(isinstance(item, dict) and "label" in item for item in data):
+        return sorted(data, key=lambda item: str(item["label"]).lower(), reverse=reverse)
+    return data
+
+
+async def list_configs(
+    session: AsyncSession, *, type_filter: str | None = None, sort_order: str = "asc"
+) -> List[ConfigItem]:
     query = select(Config)
     if type_filter is not None:
         query = query.where(Config.type == type_filter.strip())
-    result = await session.execute(query.order_by(Config.id))
-    return [ConfigItem.model_validate(row) for row in result.scalars().all()]
+        query = query.order_by(Config.id)
+    else:
+        order_column = Config.id.desc() if sort_order == "desc" else Config.id.asc()
+        query = query.order_by(order_column)
+
+    result = await session.execute(query)
+    items = [ConfigItem.model_validate(row) for row in result.scalars().all()]
+
+    if type_filter is not None:
+        reverse = sort_order == "desc"
+        for item in items:
+            item.data = _sorted_by_label(item.data, reverse=reverse)
+
+    return items
 
 
 async def get_config(session: AsyncSession, config_id: int) -> ConfigItem:
@@ -83,6 +110,13 @@ async def delete_config(session: AsyncSession, config_id: int) -> int:
     row = await session.get(Config, config_id)
     if row is None:
         raise EntityNotFoundError(f"Config {config_id}")
+
+    if row.is_default:
+        raise AppError(
+            message="Config marked as default cannot be deleted.",
+            code="DEFAULT_CONFIG_PROTECTED",
+            status_code=409,
+        )
 
     await session.delete(row)
     await session.commit()

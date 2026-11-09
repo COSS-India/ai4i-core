@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
-from app.core.exceptions import DuplicateEntityError, EntityNotFoundError, InsufficientPermissionsError
+from app.core.exceptions import AppError, DuplicateEntityError, EntityNotFoundError, InsufficientPermissionsError, ValidationError
 from app.schemas.config_management.config_schema import ConfigCreate, ConfigItem, ConfigUpdate
 
 # ── Load route module by file path ───────────────────────────────────────────
@@ -31,11 +31,12 @@ _NOW = datetime(2026, 11, 4, 10, 0, 0, tzinfo=timezone.utc)
 _DOMAIN_DATA = ["healthcare", "global", "general"]
 
 
-def _config_item(id: int = 1, type: str = "domain", data=None) -> ConfigItem:
+def _config_item(id: int = 1, type: str = "domain", data=None, is_default: bool = False) -> ConfigItem:
     return ConfigItem(
         id=id,
         type=type,
         data=data if data is not None else _DOMAIN_DATA,
+        is_default=is_default,
         created_by="user-1",
         created_at=_NOW,
         updated_by="user-1",
@@ -53,12 +54,13 @@ def _request(*, is_admin: bool = True) -> MagicMock:
     return req
 
 
-def _orm_row(id: int = 1, type: str = "domain", data=None) -> MagicMock:
+def _orm_row(id: int = 1, type: str = "domain", data=None, is_default: bool = False) -> MagicMock:
     """Fake ORM Config row that ConfigItem.model_validate(from_attributes) can read."""
     row = MagicMock()
     row.id = id
     row.type = type
     row.data = data if data is not None else _DOMAIN_DATA
+    row.is_default = is_default
     row.created_by = "user-1"
     row.created_at = _NOW
     row.updated_by = "user-1"
@@ -200,6 +202,81 @@ class TestConfigService:
         assert result[0].id == 1
         assert result[1].type == "settings"
 
+    async def test_list_defaults_to_ascending_order(self):
+        from app.services.config_management import config_service as svc
+
+        session = _session(rows=[])
+        await svc.list_configs(session)
+        query = session.execute.call_args[0][0]
+        assert "ORDER BY configs.id ASC" in str(query)
+
+    async def test_list_sort_order_desc_sorts_descending(self):
+        from app.services.config_management import config_service as svc
+
+        session = _session(rows=[])
+        await svc.list_configs(session, sort_order="desc")
+        query = session.execute.call_args[0][0]
+        assert "ORDER BY configs.id DESC" in str(query)
+
+    async def test_type_filter_sorts_data_items_by_label_asc(self):
+        from app.services.config_management import config_service as svc
+
+        row = _orm_row(
+            type="domain",
+            data=[
+                {"key": "news", "label": "News", "required": False},
+                {"key": "general", "label": "General", "required": False},
+                {"key": "education", "label": "Education", "required": False},
+            ],
+        )
+        result = await svc.list_configs(_session(rows=[row]), type_filter="domain")
+        assert [item["label"] for item in result[0].data] == ["Education", "General", "News"]
+
+    async def test_type_filter_sorts_data_items_by_label_desc(self):
+        from app.services.config_management import config_service as svc
+
+        row = _orm_row(
+            type="domain",
+            data=[
+                {"key": "news", "label": "News", "required": False},
+                {"key": "general", "label": "General", "required": False},
+                {"key": "education", "label": "Education", "required": False},
+            ],
+        )
+        result = await svc.list_configs(_session(rows=[row]), type_filter="domain", sort_order="desc")
+        assert [item["label"] for item in result[0].data] == ["News", "General", "Education"]
+
+    async def test_type_filter_sort_is_case_insensitive(self):
+        from app.services.config_management import config_service as svc
+
+        row = _orm_row(
+            type="domain",
+            data=[
+                {"key": "news", "label": "news", "required": False},
+                {"key": "general", "label": "General", "required": False},
+            ],
+        )
+        result = await svc.list_configs(_session(rows=[row]), type_filter="domain")
+        assert [item["label"] for item in result[0].data] == ["General", "news"]
+
+    async def test_no_type_filter_leaves_data_untouched(self):
+        from app.services.config_management import config_service as svc
+
+        data = [
+            {"key": "news", "label": "News", "required": False},
+            {"key": "general", "label": "General", "required": False},
+        ]
+        row = _orm_row(type="domain", data=data)
+        result = await svc.list_configs(_session(rows=[row]), sort_order="desc")
+        assert [item["label"] for item in result[0].data] == ["News", "General"]
+
+    async def test_non_sortable_data_shape_is_left_unchanged(self):
+        from app.services.config_management import config_service as svc
+
+        row = _orm_row(type="settings", data={"theme": "dark"})
+        result = await svc.list_configs(_session(rows=[row]), type_filter="settings")
+        assert result[0].data == {"theme": "dark"}
+
     async def test_get_returns_matching_item(self):
         from app.services.config_management import config_service as svc
 
@@ -224,6 +301,7 @@ class TestConfigService:
             row.id = 1
             row.type = "domain"
             row.data = _DOMAIN_DATA
+            row.is_default = False
             row.created_by = "user-1"
             row.created_at = _NOW
             row.updated_by = "user-1"
@@ -247,6 +325,7 @@ class TestConfigService:
             row.id = 1
             row.type = row.type
             row.data = row.data
+            row.is_default = False
             row.created_by = row.created_by
             row.created_at = _NOW
             row.updated_by = row.updated_by
@@ -339,6 +418,17 @@ class TestConfigService:
         session.delete.assert_awaited_once()
         session.commit.assert_awaited_once()
 
+    async def test_delete_default_config_is_rejected(self):
+        from app.services.config_management import config_service as svc
+
+        session = _session(get_return=_orm_row(id=5, is_default=True))
+        session.delete = AsyncMock()
+        with pytest.raises(AppError) as exc_info:
+            await svc.delete_config(session, 5)
+        assert exc_info.value.status_code == 409
+        session.delete.assert_not_awaited()
+        session.commit.assert_not_awaited()
+
 
 # ── Route handlers ────────────────────────────────────────────────────────────
 
@@ -374,6 +464,27 @@ class TestListConfigsRoute:
         await _config_routes.list_configs(type=None, session=MagicMock())
         _, kwargs = stub.call_args
         assert kwargs.get("type_filter") is None
+
+    async def test_sort_order_defaults_to_asc(self, monkeypatch):
+        stub = AsyncMock(return_value=[])
+        monkeypatch.setattr(_config_routes.config_service, "list_configs", stub)
+        await _config_routes.list_configs(type=None, session=MagicMock())
+        _, kwargs = stub.call_args
+        assert kwargs.get("sort_order") == "asc"
+
+    async def test_sort_order_desc_passes_to_service(self, monkeypatch):
+        stub = AsyncMock(return_value=[])
+        monkeypatch.setattr(_config_routes.config_service, "list_configs", stub)
+        await _config_routes.list_configs(type=None, sort_order="desc", session=MagicMock())
+        _, kwargs = stub.call_args
+        assert kwargs.get("sort_order") == "desc"
+
+    async def test_invalid_sort_order_is_rejected(self, monkeypatch):
+        stub = AsyncMock(return_value=[])
+        monkeypatch.setattr(_config_routes.config_service, "list_configs", stub)
+        with pytest.raises(ValidationError):
+            await _config_routes.list_configs(type=None, sort_order="sideways", session=MagicMock())
+        stub.assert_not_awaited()
 
     async def test_all_roles_can_list(self, monkeypatch):
         # No permission check on list — any authenticated user passes through.
@@ -569,6 +680,21 @@ class TestDeleteConfigRoute:
                 request=_request(is_admin=False), config_id=1, session=MagicMock()
             )
         stub.assert_not_awaited()
+
+    async def test_default_config_propagates_protected_error(self, monkeypatch):
+        monkeypatch.setattr(
+            _config_routes.config_service, "delete_config",
+            AsyncMock(side_effect=AppError(
+                message="Config marked as default cannot be deleted.",
+                code="DEFAULT_CONFIG_PROTECTED",
+                status_code=409,
+            )),
+        )
+        with pytest.raises(AppError) as exc_info:
+            await _config_routes.delete_config(
+                request=_request(), config_id=1, session=MagicMock()
+            )
+        assert exc_info.value.status_code == 409
 
 
 # ── Gateway permissions ───────────────────────────────────────────────────────

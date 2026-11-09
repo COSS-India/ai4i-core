@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Path, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
-from app.core.exceptions import InsufficientPermissionsError
+from app.core.exceptions import InsufficientPermissionsError, ValidationError
 from app.core.permissions import is_admin
 from app.schemas.common import MessageMeta, error_responses
 from app.schemas.config_management.config_schema import (
@@ -30,10 +30,21 @@ _CONFIG_ID_DESC = "Config ID."
 @router.get("")
 async def list_configs(
     type: Annotated[Optional[str], Query(max_length=255, description="Filter by config type (e.g. 'domain').")] = None,
+    sort_order: Annotated[
+        str,
+        Query(
+            description=(
+                "Sort direction: asc (default) or desc. Without 'type', sorts the "
+                "config rows by id. With 'type', sorts that config's data items by label."
+            )
+        ),
+    ] = "asc",
     session: Annotated[AsyncSession, Depends(get_db)] = None,
 ) -> ListConfigResponse:
     """List all config entries, optionally filtered by type. All authenticated roles."""
-    items = await config_service.list_configs(session, type_filter=type)
+    if sort_order not in {"asc", "desc"}:
+        raise ValidationError(message="sort_order must be 'asc' or 'desc'", code="INVALID_SORT_ORDER")
+    items = await config_service.list_configs(session, type_filter=type, sort_order=sort_order)
     return ListConfigResponse(success=True, data=ConfigListData(items=items))
 
 
