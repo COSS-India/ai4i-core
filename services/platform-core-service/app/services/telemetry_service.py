@@ -192,14 +192,16 @@ def _metadata_kv_match(key: str, value: str) -> dict:
     """
     field = "attributes.metadata_kv"
     composite = f"{key}={value}"
-    if len(composite) > _KEYWORD_IGNORE_ABOVE:
-        return {"match_phrase": {field: composite}}
     return {
-        "wildcard": {
-            f"{field}.keyword": {
-                "value": f"{_escape_wildcard(key)}=*{_escape_wildcard(value)}*",
-                "case_insensitive": True,
-            }
+        "bool": {
+            "should": [
+                {"wildcard": {f"{field}.keyword": {
+                    "value": f"{_escape_wildcard(key)}=*{_escape_wildcard(value)}*",
+                    "case_insensitive": True,
+                }}},
+                {"match_phrase": {field: composite}},
+            ],
+            "minimum_should_match": 1,
         }
     }
 

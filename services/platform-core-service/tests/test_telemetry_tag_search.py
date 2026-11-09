@@ -147,12 +147,24 @@ def _metadata_contains(key, value):
     """The clause a metadata key/value search must send: unlike other tag
     filters, the key is anchored (not wildcarded) so a search for key="env"
     can't also match an unrelated key like "dev_env" that merely contains
-    the same substring — only the value half is a contains-match."""
+    the same substring — only the value half is a contains-match.
+
+    Both the wildcard and match_phrase clauses are sent unconditionally
+    (regardless of the typed search's length), because whether `.keyword`
+    has the stored entry depends on that document's own value length, not
+    on what was typed — a short search still needs the match_phrase half
+    to find documents whose stored "key=value" was too long for .keyword."""
     return {
-        "wildcard": {
-            "attributes.metadata_kv.keyword": {
-                "value": f"{key}=*{value}*", "case_insensitive": True,
-            }
+        "bool": {
+            "should": [
+                {"wildcard": {
+                    "attributes.metadata_kv.keyword": {
+                        "value": f"{key}=*{value}*", "case_insensitive": True,
+                    }
+                }},
+                {"match_phrase": {"attributes.metadata_kv": f"{key}={value}"}},
+            ],
+            "minimum_should_match": 1,
         }
     }
 
@@ -220,26 +232,26 @@ def test_no_tag_params_adds_no_tag_clauses():
 
 def test_value_over_keyword_cap_falls_back_to_match_phrase():
     """Metadata values may be up to 512 chars, but `.keyword` only indexes
-    up to 256 — a wildcard query against .keyword would silently find
-    nothing, so values over the cap fall back to a plain match_phrase
-    (same fallback shape as the old exact-match implementation)."""
+    up to 256 — whether a given stored entry made it into .keyword depends
+    on that document, not on this search, so the match_phrase clause is
+    always present alongside the wildcard to catch documents over the cap."""
     long_value = "v" * 300
     client = _client(["t1"])
 
     _search(client, metadata_key="note", metadata_value=long_value)
 
-    assert {"match_phrase": {"attributes.metadata_kv": "note=" + long_value}} in _clauses(client)
+    assert _metadata_contains("note", long_value) in _clauses(client)
 
 
 def test_pair_crossing_keyword_cap_falls_back_even_when_value_alone_fits():
     """The cap applies to the stored entry "key=value", not the value alone:
-    10 + 1 + 250 = 261 chars is past it, so wildcard on .keyword would miss."""
+    10 + 1 + 250 = 261 chars is past it, so wildcard on .keyword would miss
+    a document that long — match_phrase is sent alongside it regardless."""
     client = _client(["t1"])
 
     _search(client, metadata_key="k" * 10, metadata_value="v" * 250)
 
-    entry = "k" * 10 + "=" + "v" * 250
-    assert {"match_phrase": {"attributes.metadata_kv": entry}} in _clauses(client)
+    assert _metadata_contains("k" * 10, "v" * 250) in _clauses(client)
 
 
 def test_value_at_keyword_cap_still_uses_wildcard_match():
