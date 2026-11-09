@@ -213,8 +213,6 @@ const TelemetryTraceDetailModal: React.FC<TelemetryTraceDetailModalProps> = ({
                     p={3}
                     borderRadius="md"
                     bg="gray.50"
-                    maxH="200px"
-                    overflowY="auto"
                   >
                     {formatAttributes(span.attributes ?? {})}
                   </Code>

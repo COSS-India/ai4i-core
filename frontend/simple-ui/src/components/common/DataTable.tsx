@@ -611,6 +611,25 @@ export function TableDateField({
   );
 }
 
+let selectMeasureCanvas: HTMLCanvasElement | null = null;
+
+/** Selected option text when it is wider than the select can show, else "". */
+function truncatedSelectLabel(select: HTMLSelectElement): string {
+  const label = select.selectedOptions[0]?.text ?? "";
+  if (!label) return "";
+  selectMeasureCanvas ??= document.createElement("canvas");
+  const ctx = selectMeasureCanvas.getContext("2d");
+  if (!ctx) return "";
+  const style = window.getComputedStyle(select);
+  ctx.font =
+    style.font || `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+  const available =
+    select.clientWidth -
+    Number.parseFloat(style.paddingLeft) -
+    Number.parseFloat(style.paddingRight);
+  return ctx.measureText(label).width > available ? label : "";
+}
+
 /** Select field wired to reset pagination when the value changes. */
 export function TableSelectField({
   label,
@@ -654,6 +673,13 @@ export function TableSelectField({
         bg={inputBg}
         aria-label={label}
         {...selectProps}
+        onMouseEnter={(e) => {
+          // Show the full selected value on hover only when it is cut off.
+          if (selectProps?.title === undefined) {
+            e.currentTarget.title = truncatedSelectLabel(e.currentTarget);
+          }
+          selectProps?.onMouseEnter?.(e);
+        }}
       >
         {children}
       </Select>

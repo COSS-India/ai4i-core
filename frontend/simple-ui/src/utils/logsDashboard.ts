@@ -30,14 +30,13 @@ export const COLUMN_STORAGE_KEY = "logs-dashboard-columns";
  * rejects unknown keys in `columns`.
  */
 export const LOGS_COLUMN_DEFS: TelemetryTraceColumnDef[] = [
-  { key: "timestamp", label: "Timestamp", default: true, filterable: false, sortable: true, keyword_searchable: false },
   { key: "status", label: "Status", default: true, filterable: true, sortable: false, keyword_searchable: true },
+  { key: "timestamp", label: "Timestamp", default: true, filterable: false, sortable: true, keyword_searchable: false },
   { key: "task_type", label: "Task Type", default: true, filterable: true, sortable: false, keyword_searchable: true },
   { key: "url", label: "URL", default: true, filterable: false, sortable: true, keyword_searchable: true },
   { key: "institution", label: INSTITUTION, default: true, filterable: true, sortable: false, keyword_searchable: false },
   { key: "status_code", label: "Status Code", default: false, filterable: true, sortable: true, keyword_searchable: true },
   { key: "error", label: "Error", default: false, filterable: false, sortable: false, keyword_searchable: true },
-  { key: "service", label: "Service", default: false, filterable: true, sortable: false, keyword_searchable: true },
   { key: "model", label: "Model", default: false, filterable: false, sortable: false, keyword_searchable: true },
   { key: "latency", label: "Latency (ms)", default: false, filterable: false, sortable: true, keyword_searchable: false },
   { key: "application", label: "Application", default: false, filterable: false, sortable: false, keyword_searchable: true },
@@ -158,7 +157,6 @@ const containsFilter = (label: string): DataTableColumnFilterConfig => ({
  */
 const LOGS_COLUMN_FILTERS: Record<string, DataTableColumnFilterConfig> = {
   end_user: { type: "text", placeholder: "Search", helper: "Exact match on end-user ID" },
-  service: { type: "text", placeholder: "Search", helper: "Matches service name" },
   status_code: {
     type: "text",
     placeholder: "Search",
@@ -184,21 +182,43 @@ const LOGS_COLUMN_FILTERS: Record<string, DataTableColumnFilterConfig> = {
   },
 };
 
+/** Why a toolbar-owned column shows a greyed-out search box. */
+const toolbarFilterReason = (
+  key: string,
+  canPickTenant: boolean,
+): string | undefined => {
+  if (key === "timestamp") return "Use Time range, Start Time and End Time above";
+  if (key === "task_type") return "Use the Task Type filter above";
+  if (key === "institution") {
+    return canPickTenant
+      ? `Use the ${INSTITUTION} filter above`
+      : `Logs are limited to your ${INSTITUTION}`;
+  }
+  return undefined;
+};
+
 /**
- * `false` opts the column out of column search (toolbar already filters it).
+ * Toolbar-owned columns get a disabled search box so the search row stays
+ * even; Status stays empty (icon-only, narrow column). `false` opts out.
  * Any other known column gets its config; unknown keys get a plain text search.
  */
 export const logsColumnFilterConfig = (
   def: TelemetryTraceColumnDef,
+  options: { canPickTenant?: boolean } = {},
 ): DataTableColumnFilterConfig | false => {
-  if (TOOLBAR_FILTERED_COLUMN_KEYS.has(def.key)) return false;
-  return LOGS_COLUMN_FILTERS[def.key] ?? { type: "text", placeholder: "Search" };
+  if (TOOLBAR_FILTERED_COLUMN_KEYS.has(def.key)) {
+    const reason = toolbarFilterReason(def.key, options.canPickTenant ?? true);
+    if (!reason) return false;
+    return { type: "text", placeholder: "Search", disabledReason: reason };
+  }
+  const config = LOGS_COLUMN_FILTERS[def.key] ?? { type: "text", placeholder: "Search" };
+  // Logs column searches show no hover tooltips (validation errors still do).
+  return config.type === "text" ? { ...config, hideHoverHint: true } : config;
 };
 
 /** traces/search params for per-column searches; keys follow the column catalogue. */
 export type LogsColumnFilterParams = {
   user?: string;
-  service?: string;
   statusCode?: string;
   metadataKey?: string;
   metadataValue?: string;
@@ -221,7 +241,6 @@ export const columnFiltersToTraceParams = (
     .join(",");
   return {
     user: filters.end_user,
-    service: filters.service,
     statusCode: statusCode || undefined,
     metadataKey: metadata?.key,
     metadataValue: metadata?.value,

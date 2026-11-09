@@ -505,9 +505,6 @@ const ServicesManagement: React.FC = () => {
         hint: FIELD_HINTS.service.col.tier,
         sortable: true,
         minWidth: "7rem",
-        filter: { type: "text", placeholder: "Search" },
-        filterAccessor: (service) =>
-          (service.tierNames ?? service.tiers ?? []).join(" "),
         cell: renderServiceTierCell,
       },
       {
@@ -531,7 +528,6 @@ const ServicesManagement: React.FC = () => {
         header: "Model Name",
         sortable: true,
         minWidth: "7rem",
-        filter: { type: "text", placeholder: "Search" },
         cell: renderServiceModelNameCell,
       },
       {
@@ -539,7 +535,6 @@ const ServicesManagement: React.FC = () => {
         header: "Service ID",
         sortable: true,
         minWidth: "7rem",
-        filter: { type: "text", placeholder: "Search" },
         cell: renderServiceIdCell,
       },
       {

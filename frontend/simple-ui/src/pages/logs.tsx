@@ -421,7 +421,6 @@ const TRACE_CELL_BY_KEY: Record<
   ),
   status_code: (row) => plainTraceCell(row.status_code ?? "—"),
   error: (row) => renderErrorCell(row),
-  service: (row) => plainTraceCell(row.service),
   model: (row) => plainTraceCell(row.model),
   latency: (row) => plainTraceCell(row.latency ?? "—"),
   application: (row) => plainTraceCell(row.application, { mono: true }),
@@ -522,7 +521,8 @@ function buildLogsFilterDefs(options: {
       onChange: (v) =>
         replaceDraft({ ...draftRef.current, selectedTenantId: v }),
       hint: FIELD_HINTS.logs.tenant.tip,
-      ...logsControlLayout(120, 152),
+      // Institution names run long; keep enough room to read them.
+      ...logsControlLayout(220, 280),
       options: tenantFilterOptions(
         tenantsLoading,
         tenantsError,
@@ -539,7 +539,8 @@ function buildLogsFilterDefs(options: {
       param: "task_types",
       value: draft.taskType,
       onChange: (v) => replaceDraft({ ...draftRef.current, taskType: v }),
-      ...logsControlLayout(88, 120),
+      // Room for longer task types such as PIPELINE or TRANSLITERATION.
+      ...logsControlLayout(150, 180),
       options: [
         { label: "All", value: "" },
         ...taskTypeNames.map((tt) => ({
@@ -607,7 +608,8 @@ function buildLogsFilterDefs(options: {
       error: timeRangeError,
       inputType: "datetime-local",
       hint: FIELD_HINTS.logs.startTime.tip,
-      ...logsControlLayout(156, 172),
+      // Wide enough for "dd/mm/yyyy, hh:mm AM" plus the picker icon.
+      ...logsControlLayout(180, 188),
       cluster: "log-time",
     },
     {
@@ -628,7 +630,7 @@ function buildLogsFilterDefs(options: {
       error: timeRangeError,
       inputType: "datetime-local",
       hint: FIELD_HINTS.logs.endTime.tip,
-      ...logsControlLayout(156, 172),
+      ...logsControlLayout(180, 188),
       cluster: "log-time",
     },
   );
@@ -1031,7 +1033,8 @@ function LogsDashboardMain(props: LogsDashboardMainProps) {
           placeholder: props.searchPlaceholder,
           hint: props.searchHint,
           error: props.searchError,
-          ...logsControlLayout(120, 152),
+          // Free-text keywords: the widest control in the row, so terms stay readable.
+          ...logsControlLayout(260, 320),
         }}
         filterDefs={props.filterDefs}
         filterToolbarSingleRow
@@ -1542,10 +1545,12 @@ const LogsPage: React.FC = () => {
     return visible.map((def) => ({
       id: def.key,
       header: def.label,
-      filter: logsColumnFilterConfig(def),
+      filter: logsColumnFilterConfig(def, { canPickTenant }),
+      // Status is an icon only; narrower than the shared status-badge default.
+      ...(def.key === "status" ? { width: "6.5rem" } : {}),
       cell: (row) => cellForColumn(def.key, row),
     }));
-  }, [columnDefs, selectedColumns, cellForColumn]);
+  }, [columnDefs, selectedColumns, cellForColumn, canPickTenant]);
 
   // API sorts the full result set; other columns sort the loaded page only.
   const displayTraceRows = useMemo(

@@ -111,6 +111,13 @@ export type DataTableColumnFilterConfig =
       helper?: string;
       /** Return a message to block Apply while the value is invalid. */
       validate?: (value: string) => string | undefined;
+      /** No hover tooltip / title for `helper`; validation errors still show. */
+      hideHoverHint?: boolean;
+      /**
+       * Render a greyed-out, non-editable box (keeps the search row even when
+       * another control owns this field). Read out to screen readers only.
+       */
+      disabledReason?: string;
     }
   | {
       type: "select";

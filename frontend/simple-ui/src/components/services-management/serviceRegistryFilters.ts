@@ -14,17 +14,6 @@ type SelectOption = { label: string; value: string };
 /** Toolbar keeps only Status and Task Type — everything else is column search. */
 const TOOLBAR_FILTER_ORDER = ["status", "task"] as const;
 
-/**
- * Column search that maps to server filter params.
- * Name is the toolbar search. Status and task type stay on the toolbar selects.
- * Date and price columns use page-only text search (no list API filter params).
- */
-export const SERVICE_COLUMN_SEARCH_KEYS = new Set([
-  "tier",
-  "modelName",
-  "serviceId",
-]);
-
 /** Sent when a tier name search matches nothing, so the list stays empty. */
 export const UNMATCHED_TIER_FILTER = "__no_tier__";
 
