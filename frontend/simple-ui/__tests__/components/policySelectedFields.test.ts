@@ -42,8 +42,8 @@ import {
   type PolicyRecord,
 } from "../../src/services/dto/schemas/policyHierarchy";
 
-jest.mock("../../src/services/piiService", () => ({
-  piiService: { getSupportedEntities: jest.fn() },
+jest.mock("../../src/services/policyHierarchyService", () => ({
+  getPiiSupportedEntities: jest.fn(),
 }));
 
 const domains: Domain[] = [
@@ -492,7 +492,9 @@ describe("GET /pii/entities cache", () => {
     let getSupportedEntities!: jest.Mock;
     jest.isolateModules(() => {
       ({ loadModelEntities } = jest.requireActual("../../src/components/policy/pii/modelEntities"));
-      ({ getSupportedEntities } = jest.requireMock("../../src/services/piiService").piiService);
+      ({ getPiiSupportedEntities: getSupportedEntities } = jest.requireMock(
+        "../../src/services/policyHierarchyService",
+      ));
     });
     getSupportedEntities.mockReset();
     return { loadModelEntities, getSupportedEntities };
