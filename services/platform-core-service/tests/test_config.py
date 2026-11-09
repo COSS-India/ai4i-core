@@ -229,8 +229,19 @@ class TestConfigService:
                 {"key": "education", "label": "Education", "required": False},
             ],
         )
-        result = await svc.list_configs(_session(rows=[row]), type_filter="domain")
+        result = await svc.list_configs(_session(rows=[row]), type_filter="domain", sort_order="asc")
         assert [item["label"] for item in result[0].data] == ["Education", "General", "News"]
+
+    async def test_type_filter_without_sort_order_leaves_data_untouched(self):
+        from app.services.config_management import config_service as svc
+
+        data = [
+            {"key": "news", "label": "News", "required": False},
+            {"key": "general", "label": "General", "required": False},
+        ]
+        row = _orm_row(type="domain", data=data)
+        result = await svc.list_configs(_session(rows=[row]), type_filter="domain")
+        assert [item["label"] for item in result[0].data] == ["News", "General"]
 
     async def test_type_filter_sorts_data_items_by_label_desc(self):
         from app.services.config_management import config_service as svc
@@ -256,7 +267,7 @@ class TestConfigService:
                 {"key": "general", "label": "General", "required": False},
             ],
         )
-        result = await svc.list_configs(_session(rows=[row]), type_filter="domain")
+        result = await svc.list_configs(_session(rows=[row]), type_filter="domain", sort_order="asc")
         assert [item["label"] for item in result[0].data] == ["General", "news"]
 
     async def test_no_type_filter_leaves_data_untouched(self):
@@ -465,12 +476,12 @@ class TestListConfigsRoute:
         _, kwargs = stub.call_args
         assert kwargs.get("type_filter") is None
 
-    async def test_sort_order_defaults_to_asc(self, monkeypatch):
+    async def test_sort_order_defaults_to_none(self, monkeypatch):
         stub = AsyncMock(return_value=[])
         monkeypatch.setattr(_config_routes.config_service, "list_configs", stub)
         await _config_routes.list_configs(type=None, session=MagicMock())
         _, kwargs = stub.call_args
-        assert kwargs.get("sort_order") == "asc"
+        assert kwargs.get("sort_order") is None
 
     async def test_sort_order_desc_passes_to_service(self, monkeypatch):
         stub = AsyncMock(return_value=[])

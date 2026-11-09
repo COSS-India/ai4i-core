@@ -31,18 +31,19 @@ _CONFIG_ID_DESC = "Config ID."
 async def list_configs(
     type: Annotated[Optional[str], Query(max_length=255, description="Filter by config type (e.g. 'domain').")] = None,
     sort_order: Annotated[
-        str,
+        Optional[str],
         Query(
             description=(
-                "Sort direction: asc (default) or desc. Without 'type', sorts the "
-                "config rows by id. With 'type', sorts that config's data items by label."
+                "Sort direction: asc or desc. Without 'type', sorts the config rows by id "
+                "(id ascending if omitted). With 'type', sorts that config's data items by "
+                "label only when explicitly provided; omitted means no reordering."
             )
         ),
-    ] = "asc",
+    ] = None,
     session: Annotated[AsyncSession, Depends(get_db)] = None,
 ) -> ListConfigResponse:
     """List all config entries, optionally filtered by type. All authenticated roles."""
-    if sort_order not in {"asc", "desc"}:
+    if sort_order is not None and sort_order not in {"asc", "desc"}:
         raise ValidationError(message="sort_order must be 'asc' or 'desc'", code="INVALID_SORT_ORDER")
     items = await config_service.list_configs(session, type_filter=type, sort_order=sort_order)
     return ListConfigResponse(success=True, data=ConfigListData(items=items))

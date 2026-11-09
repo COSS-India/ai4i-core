@@ -6,7 +6,9 @@ suspend-reasons, deactivate-reasons). Rows seeded here are protected: the
 DELETE /config/{id} endpoint refuses to delete a row with is_default=true.
 
 Seeding is skipped per-type if a row with that type already exists, so
-re-running upgrade() is safe.
+re-running upgrade() is safe. downgrade() only removes rows with
+is_default=true, so a pre-existing row of the same type that upgrade()
+skipped (and therefore never marked as default) is left untouched.
 
 Revision ID: a3c5e7f9b1d4
 Revises: b7d3f1a9c2e5
@@ -119,5 +121,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     conn = op.get_bind()
     for config_type in _SEED_CONFIGS:
-        conn.execute(sa.text("DELETE FROM configs WHERE type = :t"), {"t": config_type})
+        conn.execute(
+            sa.text("DELETE FROM configs WHERE type = :t AND is_default"), {"t": config_type}
+        )
     op.drop_column("configs", "is_default")

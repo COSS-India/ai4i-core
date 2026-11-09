@@ -27,7 +27,7 @@ def _sorted_by_label(data: object, *, reverse: bool) -> object:
 
 
 async def list_configs(
-    session: AsyncSession, *, type_filter: str | None = None, sort_order: str = "asc"
+    session: AsyncSession, *, type_filter: str | None = None, sort_order: str | None = None
 ) -> List[ConfigItem]:
     query = select(Config)
     if type_filter is not None:
@@ -40,7 +40,7 @@ async def list_configs(
     result = await session.execute(query)
     items = [ConfigItem.model_validate(row) for row in result.scalars().all()]
 
-    if type_filter is not None:
+    if type_filter is not None and sort_order is not None:
         reverse = sort_order == "desc"
         for item in items:
             item.data = _sorted_by_label(item.data, reverse=reverse)
