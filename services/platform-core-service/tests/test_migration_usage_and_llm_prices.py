@@ -16,7 +16,7 @@ NULLS NOT DISTINCT are Postgres behaviour a mock can't stand in for.
 Connection settings come from the environment, falling back to the alembic
 .env: CORE_SERVICE_DB_*, then POSTGRES_*. The tests skip when no database is
 reachable. The database must be migrated at least to f4a8c2d6e1b7 (the
-fallback_count JSON tests: to f1b2c3d4e5f6).
+fallback_count JSON tests: to 7229140c5c89).
 """
 
 import importlib.util
