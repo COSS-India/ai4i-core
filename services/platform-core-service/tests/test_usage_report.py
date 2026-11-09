@@ -341,7 +341,7 @@ class TestCollector:
         h = d.platform_health
         assert (h.requests, h.server_errors, h.tracked_from, h.fallbacks) == (1000, 4, SEP_START, 21)
         assert (h.error_rate_pct, h.fallback_rate_pct) == (pytest.approx(0.4), pytest.approx(2.1))
-        assert h.latency_p95_ms == 639.6
+        assert h.latency_p95_ms is None                      # commented out pending a decision
         assert (d.total_requests, d.prev_total_requests) == (1000, 800)
         assert d.requests_change_pct == pytest.approx(25.0)
         assert (d.total_models, d.active_models, d.inactive_models) == (10, 2, 8)
@@ -426,8 +426,8 @@ class TestCollector:
             for part in mime.walk():
                 if part.get_content_type() in ("text/plain", "text/html"):
                     body = part.get_content()
-                    assert ("Platform health: response time (P95) 640 ms, "
-                            "error rate 0.4%, fallback rate 2.1%.") in body
+                    assert "Platform health: error rate 0.4%, fallback rate 2.1%." in body
+                    assert "P95" not in body
                     assert body.index("Platform health:") < body.index("Model portfolio:")
         assert "Platform Health" in attached[0] and "Error rate" in attached[0]
 
@@ -716,7 +716,7 @@ class TestRenderEmail:
         assert msg.subject == "AI Switch – Monthly programme report – September 2026"
         lines = mailer.summary_lines(_full_data())
         assert lines == [
-            "Platform health: response time (P95) 640 ms, error rate 0.4%, fallback rate 2.1%.",
+            "Platform health: error rate 0.4%, fallback rate 2.1%.",
             "Model portfolio: 42 Models; 31 were used in September.",
             "Adoption: 26 of 36 Institutions were live (+3 vs August). 18.40M requests were served (+17.9%).",
         ]
@@ -739,8 +739,7 @@ class TestRenderEmail:
 
     def test_failed_figures_show_na_and_drop_the_comparison(self, portal):
         lines = mailer.summary_lines(ReportData(period=SEP, generated_at=AFTER_SEP))
-        assert lines[0] == ("Platform health: response time (P95) Not available, "
-                            "error rate Not available, fallback rate Not available.")
+        assert lines[0] == "Platform health: error rate Not available, fallback rate Not available."
         assert lines[1] == "Model portfolio: Not available."
         assert lines[2] == "Adoption: Live Institutions: Not available. Requests served: Not available."
         assert " vs " not in lines[2]
@@ -863,9 +862,8 @@ class TestReportHtml:
             "Platform Health", "Model Portfolio", "Adoption Ratio", "Budget Utilisation",
         ]
         cards = report_context(_full_data())["health"]["cards"]
-        assert [(c["label"], c["value"]) for c in cards] == [
-            ("Latency P95", "640 ms"), ("Error rate", "0.4%"), ("Fallback rate", "2.1%"),
-        ]
+        assert [(c["label"], c["value"]) for c in cards] == [("Error rate", "0.4%"), ("Fallback rate", "2.1%")]
+        assert "Latency P95" not in html     # commented out pending a decision
         assert "recorded from" not in html   # recorded for the whole period
 
     def test_legends_give_every_count(self):
@@ -1268,14 +1266,22 @@ class TestPlatformHealth:
         assert h.error_rate_pct == pytest.approx(0.4)          # still the whole month
         d = _full_data()
         d.platform_health = h
-        assert report_context(d)["health"]["since"] == "Latency P95 and fallback rate are recorded from 20 Sep 2026."
+        assert report_context(d)["health"]["since"] == "Fallback rate is recorded from 20 Sep 2026."
         assert "recorded from 20 Sep 2026" in render_report_html(d)
+
+    @pytest.mark.asyncio
+    async def test_latency_p95_is_not_queried_while_commented_out(self, retention_90d, repo):
+        from app.repositories.pay_per_use.metering_usage import MeteringUsageRepository
+
+        d = await self._collector().collect(SEP, now=AFTER_SEP)
+        MeteringUsageRepository.response_time_p95.assert_not_called()
+        assert d.platform_health.latency_p95_ms is None
 
     @pytest.mark.asyncio
     async def test_a_failed_query_marks_health_failed_and_the_rest_still_load(self, retention_90d, repo):
         from app.repositories.pay_per_use.metering_usage import MeteringUsageRepository
 
-        MeteringUsageRepository.response_time_p95.side_effect = RuntimeError("db down")
+        MeteringUsageRepository.server_errors.side_effect = RuntimeError("db down")
         d = await self._collector().collect(SEP, now=AFTER_SEP)
         assert d.failed == ["platform_health"] and d.platform_health is None
         assert d.total_requests == 1000
