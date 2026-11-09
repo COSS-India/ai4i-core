@@ -1,11 +1,11 @@
 """Where a Usage Dashboard period's Postgres figures come from.
 
-usage_events (occurred_at in [start, end)) serves ``today``, and every other
-period too until the daily_usage rollup is switched on
-(USAGE_DAILY_ROLLUP_ENABLED, off by default). With it on, a period's whole
-past days read daily_usage (usage_date, the IST day), and today, when the
-period runs up to now (last 7 days, a custom range ending today), reads
-usage_events: the rollup only has a day once it has ended. Callers query
+A period's whole past days read the daily_usage rollup (usage_date, the IST
+day): pyjob's daily_usage_consolidation drops usage_events days once they
+are past its retention, so daily_usage is the only table that keeps them.
+usage_events (occurred_at in [start, end)) serves ``today``, and today's
+part of a period that runs up to now (last 7 days, a custom range ending
+today): the rollup only has a day once it has ended. Callers query
 each of period_sources(period) and add the results up; nothing read here is
 written back. Both tables carry the same unit and cost columns; only the
 time column, the total-cost column and the unit-label column are named
@@ -27,7 +27,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.core.config import settings
 from app.models.pay_per_use.daily_usage import DailyUsage
 from app.models.pay_per_use.usage_event import REQUEST_ROWS, UsageEvent
 from app.utils.usage_period import IST, UsagePeriod, ist_midnight
@@ -40,10 +39,6 @@ class PeriodSource:
     in_period: ColumnElement        # WHERE clause selecting the period's usage rows
     total_cost: ColumnElement       # total_cost / cost (generated)
     unit: ColumnElement             # unit_of_measurement / unit
-
-
-def daily_rollup_enabled() -> bool:
-    return settings.usage_daily_rollup_enabled
 
 
 def _daily_usage_source(first_day: date, last_day: date) -> PeriodSource:
@@ -71,11 +66,11 @@ def _usage_events_source(start: datetime, end: datetime) -> PeriodSource:
 
 
 def period_sources(period: UsagePeriod) -> list[PeriodSource]:
-    """Where the period's usage is, earliest first. Without the rollup (or
-    for ``today``): usage_events for the whole period. With it: daily_usage
+    """Where the period's usage is, earliest first. ``today`` (and a report's
+    sub-day block): usage_events for the whole period. Otherwise daily_usage
     for the period's whole days, and usage_events for its last day when that
     is today, up to now (the period's end) — that day isn't rolled up yet."""
-    if not (period.uses_daily_usage and daily_rollup_enabled()):
+    if not period.uses_daily_usage:
         return [_usage_events_source(period.start, period.end)]
     last_day_whole = period.end >= ist_midnight(period.to_date + timedelta(days=1))
     last_rolled_day = period.to_date if last_day_whole else period.to_date - timedelta(days=1)
