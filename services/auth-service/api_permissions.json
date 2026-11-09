@@ -87,16 +87,6 @@
     { "endpoint": "POST:/api/v1/audio-lang-detection/inference",           "permissionRequired": 70, "description": "Audio-lang-detection inference (audio-lang-detection.inference)" },
     { "endpoint": "POST:/api/v1/pipeline/inference",                       "permissionRequired": 71, "description": "Pipeline inference (pipeline.inference)" },
 
-    { "endpoint": "POST:/api/v1/pii/redact",                               "permissionRequired": 90, "description": "PII redaction (pii_guard.inference)" },
-    { "endpoint": "GET:/api/v1/pii/admin/all-domains",                     "permissionRequired": 91, "description": "List PII domains (pii_guard.admin)" },
-    { "endpoint": "POST:/api/v1/pii/admin/deploy",                         "permissionRequired": 91, "description": "Deploy PII policy (pii_guard.admin)" },
-    { "endpoint": "POST:/api/v1/pii/admin/activate-domains",               "permissionRequired": 91, "description": "Activate PII domains (pii_guard.admin)" },
-    { "endpoint": "POST:/api/v1/pii/admin/domain",                         "permissionRequired": 91, "description": "Create PII domain (pii_guard.admin)" },
-    { "endpoint": "POST:/api/v1/pii/admin/generate-regex",                 "permissionRequired": 91, "description": "Generate regex for PII policy (pii_guard.admin)" },
-    { "endpoint": "GET:/api/v1/pii/admin/tenant-domains",                  "permissionRequired": 91, "description": "List tenant→PII-domain mappings (pii_guard.admin)" },
-    { "endpoint": "POST:/api/v1/pii/admin/tenant-domain",                  "permissionRequired": 91, "description": "Upsert tenant→PII-domain mapping (pii_guard.admin)" },
-    { "endpoint": "POST:/api/v1/pii/admin/tenant-domain/delete",           "permissionRequired": 91, "description": "Delete tenant→PII-domain mapping (pii_guard.admin)" },
-    { "endpoint": "GET:/api/v1/pii/admin/audit-logs",                      "permissionRequired": 92, "description": "List PII audit logs (pii_guard.audit.read)" },
     { "endpoint": "GET:/api/v1/pii/entities",                              "permissionRequired": 105, "description": "List supported PII entities (pii_types.read — ADMIN only)" },
 
     { "endpoint": "GET:/api/v1/policy-service/pii-types",                  "permissionRequired": 105, "description": "List PII types (pii_types.read)" },

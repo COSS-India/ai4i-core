@@ -12,10 +12,9 @@ import pytest
 import importlib
 
 # ── Module-level stubs ───────────────────────────────────────────────────────
-# test_pii_management.py (collected before this file, p < s) inserts an empty
-# stub for the 'sqlalchemy' package into sys.modules.  service_service.py
-# imports SQLAlchemy-backed ORM model/repo classes at module level; stubbing
-# those classes here lets the service module load without hitting the stub.
+# service_service.py imports SQLAlchemy-backed ORM model/repo classes at
+# module level; stubbing those classes here lets the service module load
+# without a real database.
 
 
 def _stub_svc(name: str, **attrs) -> types.ModuleType:

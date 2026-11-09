@@ -23,7 +23,6 @@ from app.routes.monitoring_catalog import router as monitoring_catalog_router
 from app.routes.notification import router as notification_router
 from app.routes.notification_subscription import router as notification_subscription_router
 from app.routes.pay_per_use import router as pay_per_use_router
-from app.routes.pii import router as pii_router
 from app.routes.policy import router as policy_router
 from app.routes.user_preferences import router as user_preferences_router
 from app.routes.config import router as config_router
@@ -54,7 +53,6 @@ v1_router.include_router(service_columns_router)
 v1_router.include_router(service_router)
 v1_router.include_router(alert_router)
 v1_router.include_router(alert_catalog_router)
-v1_router.include_router(pii_router)
 v1_router.include_router(telemetry_router)
 v1_router.include_router(metering_router)
 v1_router.include_router(usage_router)
