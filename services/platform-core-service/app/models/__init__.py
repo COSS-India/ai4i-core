@@ -3,14 +3,13 @@ SQLAlchemy ORM models for platform-core-service.
 
 All tables live in the `ai4iplatform_core` database and share the single
 `Base` declared here. The sub-packages (`model_management/`, `alert_management/`,
-`pii_management/`, `pay_per_use/`) exist for organisation only — Alembic
+`pay_per_use/`) exist for organisation only — Alembic
 autogenerate picks up everything that imports `Base`.
 
 Import order:
   - Model first (FK dependency for Service).
   - Alert tables next — AlertDefinition before AlertAnnotation (FK), then
     NotificationReceiver before RoutingRule (FK), then AlertHistory (no FKs).
-  - PII tables last (no FKs into other domains).
   - Pay-per-use tables last (Tier before TierQuota FK).
 """
 
@@ -32,12 +31,6 @@ from app.models.alert_management.notification_receiver import (  # noqa: E402
 )
 from app.models.alert_management.routing_rule import RoutingRule  # noqa: E402
 from app.models.alert_management.alert_history import AlertHistory  # noqa: E402
-
-# PII-management tables (pii_ prefix, no cross-domain FKs)
-from app.models.pii_management.audit_log import AuditLog  # noqa: E402
-from app.models.pii_management.domain_policy import DomainPolicy  # noqa: E402
-from app.models.pii_management.pattern import GeoLibrary, PatternLibrary  # noqa: E402
-from app.models.pii_management.tenant_map import TenantPiiDomainMap  # noqa: E402
 
 # Policy-management tables (Category before SubCategory before Policy FKs)
 from app.models.policy_management.category import Category  # noqa: E402
@@ -90,12 +83,6 @@ __all__ = [
     "AlertHistory",
     "NotificationReceiver",
     "RoutingRule",
-    # pii-management
-    "AuditLog",
-    "DomainPolicy",
-    "PatternLibrary",
-    "GeoLibrary",
-    "TenantPiiDomainMap",
     # policy-management
     "Category",
     "SubCategory",
