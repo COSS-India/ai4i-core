@@ -173,6 +173,86 @@ class MeteringUsageRepository:
         )
         return {row.d for row in rows}
 
+    async def _split_days(
+        self, start: datetime, end: datetime,
+    ) -> tuple[list[date], list[tuple[date, datetime, datetime]], set[date]]:
+        """[start, end) as (whole days for the rollup, partial pieces, dropped
+        partial days). A partial day whose usage_events rows are gone counts
+        whole when the range runs to its end, else not at all (see the module
+        docstring), so it joins the whole days or is left out."""
+        today = _ist_day(datetime.now(timezone.utc))
+        pieces = self._day_pieces(start, end)
+        # Whole days before today (complete): the days the rollup can answer.
+        days = [
+            d for d, s, e in pieces
+            if d < today and s == _ist_midnight(d) and e == _ist_midnight(d + timedelta(days=1))
+        ]
+        partial = [(d, s, e) for d, s, e in pieces if d not in days]
+        # Only edge days matter: a whole day the rollup has is read from it.
+        dropped = await self._dropped({d for d, _, _ in partial if d < today})
+        days = sorted(days + [
+            d for d, _, e in partial if d in dropped and e == _ist_midnight(d + timedelta(days=1))
+        ])
+        return days, partial, dropped
+
+    async def _add_rollup(
+        self, result: dict[tuple, UsageAgg], days: list[date], group_by: tuple[str, ...],
+        tenant_id: Optional[int], type_ids: Optional[list[int]],
+    ) -> set[date]:
+        """Add ``days``' daily_usage rows to ``result``; the days it had rows for."""
+        if not days:
+            return set()
+        params: dict = {"days": days}
+        where = self._filters(tenant_id, type_ids, params)
+        cols = [_GROUPS[g][0] for g in group_by]
+        select_cols = ", ".join(f"{c} AS g{i}" for i, c in enumerate(cols))
+        rows = await self._all(
+            f"SELECT usage_date AS d{', ' + select_cols if cols else ''},"
+            " sum(request_count) AS requests, sum(failed_count) AS failed,"
+            " sum((fallback_count->>'count')::bigint) AS fallback,"
+            " sum((fallback_count->>'failure')::bigint) AS fallback_failed,"
+            " sum(total_units) AS units, sum(cached_input_units) AS cached_units,"
+            " sum(output_units) AS output_units"
+            f" FROM daily_usage WHERE usage_date = ANY(:days){where}"
+            f" GROUP BY usage_date{''.join(', ' + c for c in cols)}",
+            params,
+        )
+        for row in rows:
+            key = tuple(getattr(row, f"g{i}") for i in range(len(cols)))
+            result.setdefault(key, UsageAgg()).add(row)
+        return {row.d for row in rows}
+
+    async def _add_usage_events(
+        self, result: dict[tuple, UsageAgg], intervals: list[tuple[datetime, datetime]],
+        group_by: tuple[str, ...], tenant_id: Optional[int], type_ids: Optional[list[int]],
+    ) -> None:
+        """Add the usage_events rows inside ``intervals`` to ``result``."""
+        if not intervals:
+            return
+        params: dict = {}
+        ranges = []
+        for i, (s, e) in enumerate(intervals):
+            ranges.append(f"(occurred_at >= :s{i} AND occurred_at < :e{i})")
+            params[f"s{i}"], params[f"e{i}"] = s, e
+        where = self._filters(tenant_id, type_ids, params)
+        exprs = [_GROUPS[g][1] for g in group_by]
+        select_cols = "".join(f"{e} AS g{i}, " for i, e in enumerate(exprs))
+        group_clause = f" GROUP BY {', '.join(exprs)}" if exprs else ""
+        rows = await self._all(
+            f"SELECT {select_cols}"
+            f" {_REQUESTS} AS requests, {_FAILED} AS failed, {_FALLBACK} AS fallback,"
+            f" {_FALLBACK_FAILED} AS fallback_failed,"
+            " sum(total_units) AS units, sum(cached_input_units) AS cached_units,"
+            " sum(output_units) AS output_units"
+            f" FROM usage_events WHERE ({' OR '.join(ranges)}){where}{group_clause}",
+            params,
+        )
+        for row in rows:
+            if not exprs and row.requests == 0 and row.units is None:
+                continue  # the ungrouped aggregate over no rows
+            key = tuple(getattr(row, f"g{i}") for i in range(len(exprs)))
+            result.setdefault(key, UsageAgg()).add(row)
+
     async def aggregate(
         self,
         start: datetime,
@@ -186,44 +266,8 @@ class MeteringUsageRepository:
         (any of tenant_id, service_id, inference_type_id, day — the IST day).
         ``type_ids`` keeps those catalogue types only ([] matches nothing)."""
         result: dict[tuple, UsageAgg] = {}
-        today = _ist_day(datetime.now(timezone.utc))
-        pieces = self._day_pieces(start, end)
-        # Whole days before today (complete): the days the rollup can answer.
-        days = [
-            d for d, s, e in pieces
-            if d < today and s == _ist_midnight(d) and e == _ist_midnight(d + timedelta(days=1))
-        ]
-        partial = [(d, s, e) for d, s, e in pieces if d not in days]
-        # Only edge days matter: a whole day the rollup has is read from it.
-        dropped = await self._dropped({d for d, _, _ in partial if d < today})
-        # A partial day whose usage_events rows are gone: whole when the
-        # range runs to its end, else left out (see the module docstring).
-        days = sorted(days + [
-            d for d, _, e in partial if d in dropped and e == _ist_midnight(d + timedelta(days=1))
-        ])
-        rolled: set[date] = set()
-
-        if days:
-            params: dict = {"days": days}
-            where = self._filters(tenant_id, type_ids, params)
-            cols = [_GROUPS[g][0] for g in group_by]
-            select_cols = ", ".join(f"{c} AS g{i}" for i, c in enumerate(cols))
-            rows = await self._all(
-                f"SELECT usage_date AS d{', ' + select_cols if cols else ''},"
-                " sum(request_count) AS requests, sum(failed_count) AS failed,"
-                " sum((fallback_count->>'count')::bigint) AS fallback,"
-                " sum((fallback_count->>'failure')::bigint) AS fallback_failed,"
-                " sum(total_units) AS units, sum(cached_input_units) AS cached_units,"
-                " sum(output_units) AS output_units"
-                f" FROM daily_usage WHERE usage_date = ANY(:days){where}"
-                f" GROUP BY usage_date{''.join(', ' + c for c in cols)}",
-                params,
-            )
-            for row in rows:
-                rolled.add(row.d)
-                key = tuple(getattr(row, f"g{i}") for i in range(len(cols)))
-                result.setdefault(key, UsageAgg()).add(row)
-
+        days, partial, dropped = await self._split_days(start, end)
+        rolled = await self._add_rollup(result, days, group_by, tenant_id, type_ids)
         # Everything the rollup didn't answer: partial days at the edges, today,
         # and whole days it has no rows for (not rolled up yet, or no usage).
         # Dropped days have no usage_events rows to add.
@@ -231,30 +275,7 @@ class MeteringUsageRepository:
             *((s, e) for d, s, e in partial if d not in dropped),
             *((_ist_midnight(d), _ist_midnight(d + timedelta(days=1))) for d in days if d not in rolled),
         ])
-        if intervals:
-            params = {}
-            ranges = []
-            for i, (s, e) in enumerate(intervals):
-                ranges.append(f"(occurred_at >= :s{i} AND occurred_at < :e{i})")
-                params[f"s{i}"], params[f"e{i}"] = s, e
-            where = self._filters(tenant_id, type_ids, params)
-            exprs = [_GROUPS[g][1] for g in group_by]
-            select_cols = "".join(f"{e} AS g{i}, " for i, e in enumerate(exprs))
-            group_clause = f" GROUP BY {', '.join(exprs)}" if exprs else ""
-            rows = await self._all(
-                f"SELECT {select_cols}"
-                f" {_REQUESTS} AS requests, {_FAILED} AS failed, {_FALLBACK} AS fallback,"
-                f" {_FALLBACK_FAILED} AS fallback_failed,"
-                " sum(total_units) AS units, sum(cached_input_units) AS cached_units,"
-                " sum(output_units) AS output_units"
-                f" FROM usage_events WHERE ({' OR '.join(ranges)}){where}{group_clause}",
-                params,
-            )
-            for row in rows:
-                if not exprs and row.requests == 0 and row.units is None:
-                    continue  # the ungrouped aggregate over no rows
-                key = tuple(getattr(row, f"g{i}") for i in range(len(exprs)))
-                result.setdefault(key, UsageAgg()).add(row)
+        await self._add_usage_events(result, intervals, group_by, tenant_id, type_ids)
         return result
 
     async def request_buckets(
