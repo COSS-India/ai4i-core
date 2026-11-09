@@ -159,7 +159,7 @@ export const telemetrySpanSchema = z
 
 export const telemetryTraceDetailSchema = z.object({
   trace_id: z.string(),
-  service: z.string().optional().default(''),
+  service: z.string().nullable().optional(),
   tenant_id: z.string().nullable().optional(),
   service_version: z.string().nullable().optional(),
   environment: z.string().nullable().optional(),

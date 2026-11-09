@@ -53,11 +53,11 @@ async def _partition(day: date) -> None:
     )
 
 
-async def _request(day: date, corr: str, status: int = 200, hour: int = 10) -> None:
+async def _request(day: date, corr: str, status: int = 200, hour: int = 10, fallback: bool = False) -> None:
     await _sql(
         "INSERT INTO usage_events (correlation_id, occurred_at, tenant_id, status_code, total_units,"
-        " response_time_ms) VALUES (:c, :at, :t, :s, 0, 100)",
-        {"c": corr, "at": _at(day, hour), "t": _TENANT, "s": status},
+        " response_time_ms, sent_to_fallback) VALUES (:c, :at, :t, :s, 0, 100, :f)",
+        {"c": corr, "at": _at(day, hour), "t": _TENANT, "s": status, "f": fallback},
     )
 
 
@@ -78,6 +78,18 @@ async def _daily(day: date) -> tuple:
         {"d": day, "t": _TENANT},
     )
     return tuple(int(v) if i < 3 else float(v) for i, v in enumerate(row))
+
+
+async def _fallbacks(day: date) -> tuple:
+    """(count, success, failure) of the test tenant's daily_usage fallback_count on ``day``."""
+    (row,) = await _sql(
+        "SELECT coalesce(sum((fallback_count->>'count')::bigint), 0),"
+        " coalesce(sum((fallback_count->>'success')::bigint), 0),"
+        " coalesce(sum((fallback_count->>'failure')::bigint), 0)"
+        " FROM daily_usage WHERE usage_date = :d AND tenant_id = :t",
+        {"d": day, "t": _TENANT},
+    )
+    return tuple(int(v) for v in row)
 
 
 async def _has_partition(day: date) -> bool:
@@ -224,6 +236,22 @@ async def test_rows_arriving_for_a_dropped_day_are_added_not_rolled_up_again():
     assert await _daily(OLD) == (2, 1, 100, 1.5)     # added to what was there
     assert not await _has_partition(OLD)             # the partition step didn't recreate it
     assert await _raw_rows(OLD) == 0
+
+
+@pytest.mark.asyncio
+async def test_late_fallback_rows_add_to_each_part_of_fallback_count():
+    await _partition(OLD)
+    await _request(OLD, "ret-fb-1", fallback=True)
+    await _request(OLD, "ret-fb-2", status=502, fallback=True)
+    await job.consolidate(TODAY)
+    assert await _fallbacks(OLD) == (2, 1, 1)
+
+    await _request(OLD, "ret-fb-late-ok", hour=21, fallback=True)
+    await _request(OLD, "ret-fb-late-fail", status=500, hour=22, fallback=True)
+    await job.consolidate(TODAY + timedelta(days=1))
+
+    assert await _fallbacks(OLD) == (4, 2, 2)
+    assert await _daily(OLD) == (4, 2, 0, 0.0)
 
 
 @pytest.mark.asyncio

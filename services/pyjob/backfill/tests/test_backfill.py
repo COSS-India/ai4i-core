@@ -103,7 +103,8 @@ def test_server_errors_and_response_time_but_no_fallbacks():
     (row,) = build_day_rows(DAY, results, _lookups())
     assert (row["failed_count"], row["server_error_count"]) == (3, 2)
     assert (row["total_response_time_ms"], row["response_time_count"]) == (12346, 20)
-    assert row["fallback_count"] == 0   # Prometheus has no record of fallbacks
+    # Prometheus has no record of fallbacks
+    assert (row["fallback_count"], row["fallback_success"], row["fallback_failure"]) == (0, 0, 0)
 
     # Server errors are part of the failures, never more than them.
     results["server_errors"] = [_series(5, **labels)]

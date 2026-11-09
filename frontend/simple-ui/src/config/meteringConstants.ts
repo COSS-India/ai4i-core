@@ -60,14 +60,13 @@ export const METERING = {
     },
     LABELS: {
       total_requests: "Total Requests",
-      fallback_requests: "Fallback-served Requests",
+      fallback_requests: "Fallback Requests",
       avg_rps: "Average RPS",
     },
     HELPERS: {
       total_requests: `Across all ${INSTITUTIONS}`,
       successful: "Of all requests",
       failed: "Of all requests",
-      fallback_requests: "Served by secondary Services",
       avg_rps: "Requests per second",
     },
     TOOLTIPS: {

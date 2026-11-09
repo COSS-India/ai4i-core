@@ -1,15 +1,15 @@
 import { z } from "zod";
 
-/** Platform-core config row. `data` is free-form JSON whose shape depends on `type`. */
+/** Platform-core config row. `data` is free-form JSON (object, array, …) whose shape depends on `type`. */
 export const configItemSchema = z
   .object({
-    id: z.string(),
+    id: z.number(),
     type: z.string(),
-    data: z.record(z.unknown()),
+    data: z.unknown(),
   })
   .passthrough();
 
-/** GET /api/v1/configs */
+/** GET /api/v1/config */
 export const configListResponseSchema = z.object({
   success: z.boolean(),
   data: z.object({
@@ -18,9 +18,36 @@ export const configListResponseSchema = z.object({
   }),
 });
 
-/** `data` of the `domains` config: domain codes in display order. */
-export const domainsConfigDataSchema = z.object({
-  allowed: z.array(z.string()),
-});
+/** `data` of the `domain` config: domains in display order. */
+export const domainsConfigDataSchema = z.array(
+  z
+    .object({
+      key: z.string(),
+      label: z.string().optional(),
+      required: z.boolean().optional(),
+    })
+    .passthrough(),
+);
 
 export type ConfigItem = z.infer<typeof configItemSchema>;
+
+/** `data` of the `suspend-reasons` / `deactivate-reasons` configs: reasons in display order. */
+export const statusReasonsConfigDataSchema = z.array(
+  z
+    .object({
+      key: z.string(),
+      label: z.string().optional(),
+    })
+    .passthrough(),
+);
+
+/** `data` of the `model-column` config: Model List columns in display order. */
+export const modelColumnsConfigDataSchema = z.array(
+  z
+    .object({
+      key: z.string(),
+      label: z.string().optional(),
+      required: z.boolean().optional(),
+    })
+    .passthrough(),
+);

@@ -191,7 +191,8 @@ class TenantUpdate(BaseSchema):
 
 
 _TENANT_STATUS_UPDATE_EXAMPLE = {
-    "status": "ACTIVE",
+    "status": "SUSPENDED",
+    "reason": "Agreement renewal pending",
 }
 
 
@@ -199,6 +200,19 @@ class TenantStatusUpdate(BaseSchema):
     model_config = ConfigDict(json_schema_extra={"examples": [_TENANT_STATUS_UPDATE_EXAMPLE]})
 
     status: TenantStatus
+    # The selected Suspend / Deactivate reason label, the admin's own text
+    # when they pick Other, or the description when activating. Required for
+    # SUSPENDED, DEACTIVATED and ACTIVE, rejected for PENDING: enforced by
+    # assert_status_reason so the error carries a code.
+    reason: Optional[str] = Field(None, max_length=255)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def _clean_reason(cls, v: Any) -> Any:
+        # Only a blank string means "no reason"; other types fall through to
+        # pydantic's str check and get a type error.
+        v = _clean_text(v)
+        return None if v == "" else v
 
 
 class TierQuotaLimit(BaseSchema):
@@ -232,6 +246,9 @@ class TenantResponse(BaseSchema):
             return value.value
         return str(value).strip().upper()
 
+    # Reason given with the latest status change (Suspend / Deactivate, or
+    # the description on Activate); null when none was given.
+    reason: Optional[str] = None
     created_at: datetime
     created_by: Optional[UUID] = None
     updated_at: Optional[datetime] = None

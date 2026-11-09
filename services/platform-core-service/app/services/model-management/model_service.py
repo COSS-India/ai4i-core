@@ -39,7 +39,7 @@ from app.core.exceptions import (
     ValidationError,
 )
 from app.models.model_management.model import Model, VersionStatus
-from app.repositories.model_management.model_repository import ModelRepository
+from app.repositories.model_management.model_repository import ModelListFilters, ModelRepository
 from app.repositories.model_management.service_repository import ServiceRepository
 from app.schemas.enums.model_management import VersionStatusEnum
 from app.schemas.model_management.model import ModelCreateRequest, ModelUpdateRequest
@@ -120,29 +120,44 @@ class ModelService:
     async def list_models(
         self,
         *,
+        filters: Optional[ModelListFilters] = None,
+        sort_by: Optional[str] = None,
+        sort_order: str = "asc",
+        include_service_count: bool = False,
+        offset: int = 0,
+        limit: Optional[int] = None,
         task_types: Optional[List[str]] = None,
         include_deprecated: bool = True,
         version_status: Optional[str] = None,
-        model_name: Optional[str] = None,
         created_by: Optional[str] = None,
-        offset: int = 0,
-        limit: Optional[int] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         rows = await self._models.list_models(
+            filters=filters,
+            sort_by=sort_by,
+            sort_order=sort_order,
             task_types=task_types,
             include_deprecated=include_deprecated,
             version_status=version_status,
-            model_name=model_name,
             created_by=created_by,
             offset=offset,
             limit=limit,
         )
-        items = [model_to_dict(m) for m in rows]
+        service_count_map: Optional[Dict[str, int]] = None
+        if include_service_count:
+            model_ids = [m.model_id for m in rows]
+            service_count_map = await self._models.get_service_counts_by_model_ids(model_ids)
+        items = [
+            model_to_dict(
+                m,
+                service_count=service_count_map.get(m.model_id, 0) if service_count_map is not None else None,
+            )
+            for m in rows
+        ]
         if offset > 0 or limit is not None:
             total = await self._models.count_models(
+                filters=filters,
                 task_types=task_types,
                 version_status=version_status,
-                model_name=model_name,
                 created_by=created_by,
             )
         else:

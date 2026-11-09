@@ -9,7 +9,9 @@ usage rows it has. Rows from before the cut-over (PRE_CUTOVER_ROWS) are
 counted by distinct correlation id, as the request they stand in for may have
 several. A request is failed when its status is 400 or above. Fallback
 requests (sent to a fallback service) are request rows with sent_to_fallback (daily_usage.fallback_count
-in the rollup); they are part of the request total, never added to it.
+in the rollup, a JSON of count / success / failure); they are part of the
+request total, never added to it. A fallback request failed when its status
+is 400 or above; it is part of the failures too.
 
 Whole IST days read the daily_usage rollup when it has the day; everything
 else — today, partial days at a range's edges, days not rolled up yet —
@@ -50,8 +52,15 @@ _FAILED = (
     f"count(*) FILTER (WHERE {REQUEST_ROWS} AND status_code >= 400)"
     f" + count(DISTINCT correlation_id) FILTER (WHERE {PRE_CUTOVER_ROWS} AND status_code >= 400)"
 )
+# Server errors and timeouts (status 500 or above): part of the failures.
+_SERVER_ERRORS = (
+    f"count(*) FILTER (WHERE {REQUEST_ROWS} AND status_code >= 500)"
+    f" + count(DISTINCT correlation_id) FILTER (WHERE {PRE_CUTOVER_ROWS} AND status_code >= 500)"
+)
 # Requests sent to a fallback service: request rows only (older rows predate the flag).
 _FALLBACK = f"count(*) FILTER (WHERE {REQUEST_ROWS} AND sent_to_fallback)"
+# Fallback requests that still failed: part of both _FALLBACK and _FAILED.
+_FALLBACK_FAILED = f"count(*) FILTER (WHERE {REQUEST_ROWS} AND sent_to_fallback AND status_code >= 400)"
 
 # Grouping dimensions: (daily_usage expression, usage_events expression).
 _GROUPS = {
@@ -68,6 +77,7 @@ class UsageAgg:
     requests: int = 0
     failed: int = 0
     fallback: int = 0
+    fallback_failed: int = 0
     units: Decimal = field(default_factory=Decimal)
     cached_units: Decimal = field(default_factory=Decimal)
     output_units: Decimal = field(default_factory=Decimal)
@@ -76,10 +86,15 @@ class UsageAgg:
     def successful(self) -> int:
         return self.requests - self.failed
 
+    @property
+    def fallback_successful(self) -> int:
+        return self.fallback - self.fallback_failed
+
     def add(self, row: Any) -> None:
         self.requests += int(row.requests or 0)
         self.failed += int(row.failed or 0)
         self.fallback += int(row.fallback or 0)
+        self.fallback_failed += int(row.fallback_failed or 0)
         self.units += Decimal(row.units or 0)
         self.cached_units += Decimal(row.cached_units or 0)
         self.output_units += Decimal(row.output_units or 0)
@@ -196,7 +211,8 @@ class MeteringUsageRepository:
             rows = await self._all(
                 f"SELECT usage_date AS d{', ' + select_cols if cols else ''},"
                 " sum(request_count) AS requests, sum(failed_count) AS failed,"
-                " sum(fallback_count) AS fallback,"
+                " sum((fallback_count->>'count')::bigint) AS fallback,"
+                " sum((fallback_count->>'failure')::bigint) AS fallback_failed,"
                 " sum(total_units) AS units, sum(cached_input_units) AS cached_units,"
                 " sum(output_units) AS output_units"
                 f" FROM daily_usage WHERE usage_date = ANY(:days){where}"
@@ -228,6 +244,7 @@ class MeteringUsageRepository:
             rows = await self._all(
                 f"SELECT {select_cols}"
                 f" {_REQUESTS} AS requests, {_FAILED} AS failed, {_FALLBACK} AS fallback,"
+                f" {_FALLBACK_FAILED} AS fallback_failed,"
                 " sum(total_units) AS units, sum(cached_input_units) AS cached_units,"
                 " sum(output_units) AS output_units"
                 f" FROM usage_events WHERE ({' OR '.join(ranges)}){where}{group_clause}",
@@ -322,6 +339,38 @@ class MeteringUsageRepository:
             " AND usage_date < :before LIMIT 1",
             {"before": _ist_day(at)},
         ) is not None
+
+    async def server_errors(self, start: datetime, end: datetime) -> tuple[int, int]:
+        """(requests, server errors) in [start, end), both from usage_events,
+        which has every day's status codes. Not from daily_usage: days rolled
+        up before migration ea3961c258e4 keep server_error_count at 0."""
+        row = (await self._all(
+            f"SELECT {_REQUESTS} AS requests, {_SERVER_ERRORS} AS server_errors FROM usage_events"
+            " WHERE occurred_at >= :start AND occurred_at < :end",
+            {"start": start, "end": end},
+        ))[0]
+        return int(row.requests or 0), int(row.server_errors or 0)
+
+    async def response_times_from(self, end: datetime) -> Optional[datetime]:
+        """When request rows began carrying a response time (and the fallback
+        flag, written with it), if before ``end``; None when not yet. Walks
+        the request-row index (ix_usage_events_request_rows) in time order."""
+        return await self._scalar(
+            f"SELECT occurred_at FROM usage_events WHERE occurred_at < :end AND {REQUEST_ROWS}"
+            " AND response_time_ms IS NOT NULL ORDER BY occurred_at LIMIT 1",
+            {"end": end},
+        )
+
+    async def response_time_p95(self, start: datetime, end: datetime) -> Optional[float]:
+        """The 95th-percentile response time (ms) of the requests in
+        [start, end), failed ones included; None when none has one. Read from
+        usage_events: a percentile can't be combined from daily figures."""
+        return await self._scalar(
+            "SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY response_time_ms) FROM usage_events"
+            f" WHERE occurred_at >= :start AND occurred_at < :end AND {REQUEST_ROWS}"
+            " AND response_time_ms IS NOT NULL",
+            {"start": start, "end": end},
+        )
 
     async def first_usage(self, tenant_id: Optional[int]) -> Optional[datetime]:
         """When API-key usage begins: the first day in the rollup (the

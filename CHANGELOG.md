@@ -6,6 +6,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/).
 
 
+## [Unreleased]
+
+### Added
+- `GET /models/list`: new query filters — `name` (contains), `version` (contains),
+  `task_types` (comma-separated), `provider_name` (contains), `version_status`,
+  `created_from`, `created_to`, `include_deprecated`, `created_by`
+- `GET /models/list`: sorting via `sort_by` / `sort_order` query params
+- `GET /models/list`: `providerName` and `noOfServices` fields in list items
+- `GET /models/list`: column projection via `?columns=` (returns only the fields
+  needed by the requested display columns; `modelId` is always included)
+
+### Changed
+- **Breaking** — `GET /models/list`: the `model_name` exact-match query parameter
+  has been removed. Use `?name=` (case-insensitive contains match) instead.
+  Previously, passing `?model_name=X` was silently ignored; it now has no effect
+  because FastAPI drops unknown query params — callers must migrate to `?name=`.
+
+---
+
 ## [2.2.0] - 2026-06-08
 
 ### Security

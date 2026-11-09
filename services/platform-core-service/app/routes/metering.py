@@ -428,7 +428,8 @@ def _overview_kpis(rt: Optional[dict]) -> list[Cell]:
     sub-text (helper); both are colored on the frontend (green / red).
     Fallback requests (sent to a fallback service) come last, only from a
     source that records fallbacks (usage_events); they are part of Total
-    Requests, not added."""
+    Requests, not added. Fallback Successful / Fallback Failed split them,
+    with their rate of the fallbacks as sub-text."""
     if not rt:
         return []
     success_rate = rt["success_rate"]["rate_pct"]
@@ -475,6 +476,23 @@ def _overview_kpis(rt: Optional[dict]) -> list[Cell]:
             previous=fallback["previous_formatted"],
             pct_change=fallback["vs_previous_pct"],
         ))
+        fb_total = fallback["count"]
+        for key, label, rate_label in (
+            ("successful", "Fallback Successful", "success rate"),
+            ("failed", "Fallback Failed", "failure rate"),
+        ):
+            part = fallback.get(key)
+            if part is None:
+                continue
+            rate = round(part["count"] / fb_total * 100, 2) if fb_total else 0.0
+            kpis.append(Cell(
+                key=f"fallback_{key}",
+                label=label,
+                value=part["formatted"],
+                previous=part["previous_formatted"],
+                pct_change=part["vs_previous_pct"],
+                helper=f"{rate:.2f}% {rate_label}",
+            ))
     return kpis
 
 
@@ -660,9 +678,9 @@ async def get_overview(
     auth_type_filter = API_KEY_AUTH_TYPE
 
     ranking_active = is_admin and not scope_tenant
-    # v10: fallback_requests; v9: usage_events source (v8: period.dataFrom/partial; v7: onboarded_at; v6: period filter).
+    # v11: fallback_successful / fallback_failed; v10: fallback_requests; v9: usage_events source (v8: period.dataFrom/partial; v7: onboarded_at; v6: period filter).
     cache_key = (
-        f"metering:overview:v10:{usage_period.cache_part}:{scope_tenant_name or 'all'}:"
+        f"metering:overview:v11:{usage_period.cache_part}:{scope_tenant_name or 'all'}:"
         f"{_caller_role_label(request)}:{','.join(task_type_filter) if task_type_filter else 'all'}"
         + (f":{limit}" if ranking_active else "")
     )

@@ -104,7 +104,6 @@ export function PiiDrawers() {
     <>
       <TypeDrawer />
       <TypeViewDrawer />
-      <DomainDrawer />
       <PolicyDrawer />
       <PolicyViewDrawer />
     </>
@@ -571,73 +570,6 @@ function TypeViewDrawer() {
             </Box>
           ))}
         </Stack>
-      </Stack>
-    </FormDrawer>
-  );
-}
-
-function DomainDrawer() {
-  const { drawer, closeDrawer, addDomain } = usePiiPolicies();
-  if (drawer.kind !== "add-domain") return null;
-  return <DomainForm onClose={closeDrawer} onSave={addDomain} />;
-}
-
-function DomainForm({
-  onClose,
-  onSave,
-}: {
-  onClose: () => void;
-  onSave: (name: string, description: string) => Promise<string | null>;
-}) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
-  const submit = async () => {
-    if (saving) return;
-    if (!name.trim()) {
-      setError("Domain name is required.");
-      return;
-    }
-    setSaving(true);
-    setError("");
-    try {
-      const message = await onSave(name.trim(), description.trim());
-      if (message) setError(message);
-      else onClose();
-    } finally {
-      setSaving(false);
-    }
-  };
-  return (
-    <FormDrawer
-      isOpen
-      onClose={onClose}
-      title="Create Domain"
-      lockDismiss={saving}
-      footer={
-        <FormActions
-          submitLabel="Create Domain"
-          onCancel={onClose}
-          onSubmit={() => {
-            void submit();
-          }}
-          isLoading={saving}
-          loadingText="Saving"
-        />
-      }
-    >
-      <Stack spacing={4}>
-        <FormField label="Domain Name" required error={error}>
-          <Input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Insurance"
-          />
-        </FormField>
-        <FormField label="Domain Description">
-          <Textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} />
-        </FormField>
       </Stack>
     </FormDrawer>
   );
@@ -1304,7 +1236,7 @@ function ModelEntityStatus({
   );
 }
 
-/** Domain picker over the platform's standard domain list (GET /api/v1/configs?type=domains). */
+/** Domain picker over the platform's standard domain list (GET /api/v1/config?type=domain). */
 function DomainPicker({
   error,
   selected,
@@ -1314,7 +1246,7 @@ function DomainPicker({
   selected: string[];
   onChange: (ids: string[]) => void;
 }>) {
-  const domainOptions = useQuery({ queryKey: ["configs", "domains"], queryFn: getDomainOptions });
+  const domainOptions = useQuery({ queryKey: ["configs", "domain"], queryFn: getDomainOptions });
   const loadError = domainOptions.isError ? apiErrorMessage(domainOptions.error, "Couldn't load domains.") : undefined;
   const listed = domainOptions.data ?? [];
   // Saved domains missing from the list (or every one while it loads) still show as chips, so they can be removed.

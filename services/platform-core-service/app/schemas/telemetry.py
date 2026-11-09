@@ -67,7 +67,7 @@ class TraceSpan(BaseModel):
 class TraceResponse(BaseModel):
     """Complete trace response with all spans."""
     trace_id: str
-    service: str
+    service: Optional[str] = None
     tenant_id: Optional[str] = None
     service_version: Optional[str] = None
     environment: Optional[str] = None

@@ -22,7 +22,7 @@ from app.core.database import (
 )
 from app.core.exceptions import register_exception_handlers
 from app.core.database import get_auth_session_factory
-from app.core.database import get_primary_session_factory as _get_pii_session_factory
+from app.core.database import get_primary_session_factory
 from app.core.redis import close_redis, get_redis_client, init_redis
 from ai4i_core.kafka import (
     Producer,
@@ -110,43 +110,7 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Alert config sync disabled (ALERT_SYNC_ENABLED=false)")
 
-    # ── PII singletons ────────────────────────────────────────────────────
-    # Import via importlib because the services directory uses a hyphenated name.
-    _pii_svc = _importlib.import_module("app.services.pii-management")
-    kb_svc        = _pii_svc.KnowledgeBaseService()
-    policy_sync   = _pii_svc.PolicySyncService()
-    audit_svc     = _pii_svc.AuditService()
-    detection_eng = _pii_svc.DetectionEngine(kb=kb_svc, ner_service_url=settings.ner_service_url)
-    redaction_svc = _pii_svc.RedactionService(
-        policy_sync=policy_sync,
-        detection_engine=detection_eng,
-        audit_service=audit_svc,
-    )
-
-    # Expose on app.state so routes can access them without DI re-instantiation.
-    app.state.pii_kb            = kb_svc
-    app.state.pii_policy_sync   = policy_sync
-    app.state.pii_redaction_service = redaction_svc
-
-    # Also expose redis client for policy pub/sub broadcast in admin routes.
     app.state.redis_client = get_redis_client()
-
-    # Initial load from DB.
-    async with _get_pii_session_factory()() as db:
-        await kb_svc.refresh(db)
-        await policy_sync.refresh(db)
-
-    # Start Redis pub/sub listener (background task — auto-cancelled on shutdown).
-    async def _pii_db_factory():
-        async with _get_pii_session_factory()() as session:
-            yield session
-
-    policy_sync.start_listener(
-        redis_client=app.state.redis_client,
-        db_factory=_pii_db_factory,
-    )
-
-    logger.info("PII guard ready (kb=%s, policy_sync=%s)", kb_svc.ready, policy_sync.ready)
 
     init_kafka_producer(
         bootstrap_servers=settings.kafka_server,
@@ -168,7 +132,7 @@ async def lifespan(app: FastAPI):
     else:
         configure_notifications(
             producer=Producer.PLATFORM_CORE_SERVICE,
-            core_session_factory=_get_pii_session_factory(),
+            core_session_factory=get_primary_session_factory(),
             auth_session_factory=auth_session_factory,
             redis=app.state.redis_client,
             decrypt_email=pii_crypto.decrypt_email,
@@ -196,7 +160,6 @@ async def lifespan(app: FastAPI):
 
     # ── Shutdown ──────────────────────────────────────────────────────────
     await app.state.http_client.aclose()
-    await policy_sync.stop_listener()
     await close_redis()
     await close_auth_database()
     await close_database()

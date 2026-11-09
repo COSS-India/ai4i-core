@@ -136,7 +136,7 @@ export const apiEndpoints = {
     },
     inferenceTypes: `${API_V1}/inference-types`,
     /** Platform-core config table. GET list (filter with `?type=`), POST, PATCH/DELETE by id. */
-    configs: `${API_V1}/configs`,
+    configs: `${API_V1}/config`,
   },
 
   telemetry: {
@@ -225,26 +225,13 @@ export const apiEndpoints = {
     inference: `${API_V1}/ner/inference`,
     health: `${API_V1}/ner/health`,
   },
+  /** Inference service PII routes used by Policy Management. */
   pii: {
     base: `${API_V1}/pii`,
-    redact: `${API_V1}/pii/redact`,
+    /** Entity types the model detects for a language. */
     entities: `${API_V1}/pii/entities`,
-    domains: `${API_V1}/pii/domains`,
-    /** Inference service. Runs a policy's PII definitions on sample text. */
+    /** Runs a policy's PII definitions on sample text. */
     simulate: `${API_V1}/pii/simulate`,
-    policyByDomain: (domainId: string) =>
-      `${API_V1}/pii/policy/${encodeURIComponent(domainId)}`,
-    admin: {
-      allDomains: `${API_V1}/pii/admin/all-domains`,
-      activateDomains: `${API_V1}/pii/admin/activate-domains`,
-      domain: `${API_V1}/pii/admin/domain`,
-      deploy: `${API_V1}/pii/admin/deploy`,
-      generateRegex: `${API_V1}/pii/admin/generate-regex`,
-      tenantDomains: `${API_V1}/pii/admin/tenant-domains`,
-      tenantDomain: `${API_V1}/pii/admin/tenant-domain`,
-      tenantDomainDelete: `${API_V1}/pii/admin/tenant-domain/delete`,
-      auditLogs: `${API_V1}/pii/admin/audit-logs`,
-    },
   },
   policy: {
     /** Gateway prefix; service mounts routes at /v1 (see policy-service main.py). */

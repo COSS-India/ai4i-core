@@ -44,7 +44,9 @@ boundaries are IST midnight.
    once per correlation id, as one request can have several. Rows without a
    status_code add units and cost only. A request is failed when its status
    is 400 or above, and a server error (server_error_count, the platform's
-   own failures: 5xx and timeouts) when it is 500 or above. fallback_count,
+   own failures: 5xx and timeouts) when it is 500 or above. fallback_count
+   is a JSON {"count", "success", "failure"} of the request rows sent to a
+   fallback, split by status (failure when 400 or above). It,
    total_response_time_ms and response_time_count come from request rows
    only, which carry sent_to_fallback and response_time_ms;
    response_time_count is the average's divisor, as rows from before
@@ -101,6 +103,13 @@ MEASURES = (
     "fallback_count", "server_error_count", "total_response_time_ms", "response_time_count",
     "total_units", "cached_input_units", "output_units",
     "input_units_cost", "cached_input_units_cost", "output_units_cost",
+)
+# fallback_count is JSONB: the aggregate returns its parts as integers
+# (fallback_count, fallback_success, fallback_failure) and the upsert builds it.
+FALLBACK_PARTS = ("fallback_success", "fallback_failure")
+FALLBACK_JSON = (
+    "jsonb_build_object('count', CAST(:fallback_count AS bigint),"
+    " 'success', CAST(:fallback_success AS bigint), 'failure', CAST(:fallback_failure AS bigint))"
 )
 NAMES = (
     "tenant_name", "allocated_budget", "application_name", "tier_name",
@@ -312,6 +321,10 @@ _AGGREGATE = text(
             -- set on request rows only; pre-cutover rows carry neither
             count(*) FILTER (WHERE sent_to_fallback AND status_code IS NOT NULL AND total_units = 0)
               AS fallback_count,
+            count(*) FILTER (WHERE sent_to_fallback AND status_code < 400 AND total_units = 0)
+              AS fallback_success,
+            count(*) FILTER (WHERE sent_to_fallback AND status_code >= 400 AND total_units = 0)
+              AS fallback_failure,
             coalesce(sum(response_time_ms) FILTER (WHERE status_code IS NOT NULL AND total_units = 0), 0)
               AS total_response_time_ms,
             count(response_time_ms) FILTER (WHERE status_code IS NOT NULL AND total_units = 0)
@@ -343,7 +356,7 @@ _AGGREGATE = text(
 _UPSERT = text(
     f"""
     INSERT INTO daily_usage ({", ".join(DIMENSIONS + NAMES + MEASURES)})
-    VALUES ({", ".join(f":{c}" for c in DIMENSIONS + NAMES + MEASURES)})
+    VALUES ({", ".join(FALLBACK_JSON if c == "fallback_count" else f":{c}" for c in DIMENSIONS + NAMES + MEASURES)})
     ON CONFLICT ({", ".join(DIMENSIONS)}) DO UPDATE SET
         {", ".join(f"{c} = EXCLUDED.{c}" for c in NAMES + MEASURES)},
         updated_at = now()
@@ -362,13 +375,22 @@ _DELETE_STALE = text(
 # Late rows of a dropped day (in DEFAULT, as the day has no partition any
 # more): added to what its rows already count. Names
 # stay as rolled up, filled in only where the earlier row had none.
+# fallback_count's parts are added one by one.
+_FALLBACK_ADD = "jsonb_build_object({})".format(", ".join(
+    f"'{k}', coalesce((daily_usage.fallback_count->>'{k}')::bigint, 0)"
+    f" + coalesce((EXCLUDED.fallback_count->>'{k}')::bigint, 0)"
+    for k in ("count", "success", "failure")
+))
 _UPSERT_ADD = text(
     f"""
     INSERT INTO daily_usage ({", ".join(DIMENSIONS + NAMES + MEASURES)})
-    VALUES ({", ".join(f":{c}" for c in DIMENSIONS + NAMES + MEASURES)})
+    VALUES ({", ".join(FALLBACK_JSON if c == "fallback_count" else f":{c}" for c in DIMENSIONS + NAMES + MEASURES)})
     ON CONFLICT ({", ".join(DIMENSIONS)}) DO UPDATE SET
         {", ".join(f"{c} = coalesce(daily_usage.{c}, EXCLUDED.{c})" for c in NAMES)},
-        {", ".join(f"{c} = daily_usage.{c} + EXCLUDED.{c}" for c in MEASURES)},
+        {", ".join(
+            f"{c} = {_FALLBACK_ADD}" if c == "fallback_count" else f"{c} = daily_usage.{c} + EXCLUDED.{c}"
+            for c in MEASURES
+        )},
         updated_at = now()
     """
 )
@@ -420,7 +442,7 @@ async def _summarise(session: AsyncSession, day: date) -> list[dict]:
     for g in groups:
         tenant_name, allocated_budget = tenants.get(g["tenant_id"], (None, None))
         rows.append({
-            **{c: g[c] for c in DIMENSIONS[1:-1] + MEASURES},
+            **{c: g[c] for c in DIMENSIONS[1:-1] + MEASURES + FALLBACK_PARTS},
             "usage_date": day,
             "billing_month": g["billing_month"],
             "tenant_name": tenant_name,

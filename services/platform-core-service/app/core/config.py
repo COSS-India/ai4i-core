@@ -113,12 +113,6 @@ class CoreSettings(BaseSettings):
     smtp_auth_username: Optional[str] = None
     smtp_auth_password: Optional[str] = None
 
-    # ── NER service (used by PII DetectionEngine for AI-based entity extraction) ──
-    ner_service_url: str
-
-    # ── LLM service (used by PII /admin/generate-regex to produce regex patterns) ──
-    pii_llm_url: str
-
     # ── Redis ──
     redis_host: str
     redis_port: int
