@@ -116,7 +116,8 @@ async def test_request_counts_in_its_own_group_only(conn):
 
 async def _health(conn) -> dict:
     """{tier_id: (server_error_count, fallback_count, total_response_time_ms, response_time_count)}
-    for the test tenant."""
+    for the test tenant. fallback_count is the aggregate's integer part; the
+    upsert builds the JSON from it and fallback_success / fallback_failure."""
     rows = (await conn.execute(_AGGREGATE, {"start": _START, "end": _START + timedelta(days=1)})).mappings().all()
     return {
         str(r["tier_id"]): (
@@ -135,6 +136,24 @@ async def test_server_errors_fallbacks_and_response_time_from_request_rows(conn)
     await _row(conn, "rollup-h1", -1, units=100)                    # h1's usage row: adds nothing here
     assert await _groups(conn) == {_TIER_A: (4, 2, 2, 100)}
     assert await _health(conn) == {_TIER_A: (1, 1, 4135, 3)}   # h4 has no time: not in the divisor
+
+
+async def _fallbacks(conn) -> dict:
+    """{tier_id: (fallback_count, fallback_success, fallback_failure)} for the test tenant."""
+    rows = (await conn.execute(_AGGREGATE, {"start": _START, "end": _START + timedelta(days=1)})).mappings().all()
+    return {
+        str(r["tier_id"]): (r["fallback_count"], r["fallback_success"], r["fallback_failure"])
+        for r in rows if r["tenant_id"] == _TENANT
+    }
+
+
+@pytest.mark.asyncio
+async def test_fallbacks_split_into_success_and_failure_by_status(conn):
+    await _row(conn, "rollup-f1", 0, status=200, fallback=True)
+    await _row(conn, "rollup-f2", 1, status=503, fallback=True)    # the fallback failed too
+    await _row(conn, "rollup-f3", 2, status=429, fallback=True)
+    await _row(conn, "rollup-f4", 3, status=500)                   # not sent to a fallback
+    assert await _fallbacks(conn) == {_TIER_A: (3, 1, 2)}
 
 
 @pytest.mark.asyncio
