@@ -1,203 +1,284 @@
-"""AuditLogWriter — records one ``audit_logs`` row per audited change.
+"""AuditLogWriter: record one ``audit_logs`` row per audited change.
 
-Usage (entity stored in another database, e.g. ai4iplatform_auth)::
+Two calls around the real operation::
 
-    async with audit.track(AuditEntity.TENANT, tenant, AuditAction.STATUS_CHANGE,
-                           performed_by=current_user.id) as t:
-        tenant.status = new_status
-        t.message = tenant_status_changed(t.before, t.after_now(), users_affected)
-    await tenants.save_and_refresh(tenant)   # 1. commit the entity
-    await audit.commit()                     # 2. commit the audit row
+    trace = await audit.track(db, AuditEntity.TENANT, tenant_id, ["organisation", "status", "reason"])
+    ...                                    # the endpoint's own DB work
+    await db.commit()                      # the change is saved
+    audit.log(                             # not awaited
+        trace,
+        AuditAction.STATUS_CHANGE,
+        "Tenant '{organisation}' suspended by {performed_by} on {at}. Reason: {reason}.",
+        {"status": "SUSPENDED", "reason": "Agreement renewal pending"},
+        performed_by=current_user.id,
+    )
 
-If the entity commit raises, ``audit.commit()`` is never reached and the row is
-dropped with the session. If ``audit.commit()`` fails it logs an ERROR with the
-trace id and returns: the entity change is already committed and stays.
+``track`` reads the old values of ``properties`` from the database (the
+entity's own session, before the change). ``log`` is called only after the
+change is committed. It records the time and trace id right away and
+schedules the insert to run after the response is sent, on its own
+``ai4iplatform_core`` session, so the endpoint never waits for it.
 
-For an entity stored in ``ai4iplatform_core`` itself, build the writer on the
-entity's own session with ``isolated=False`` and skip ``audit.commit()``: the
-service's commit covers both rows, and errors propagate as usual.
+Auditing never breaks the operation it records: ``track`` and ``log`` do not
+raise for audit problems, and a failed insert is logged with the trace id.
 """
 
 from __future__ import annotations
 
 import logging
-from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Optional
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Mapping, Optional, Protocol, Sequence
 from uuid import UUID
 
-from sqlalchemy import inspect as sa_inspect
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ai4i_core.audit.enums import AuditAction, AuditEntity
 from ai4i_core.audit.models import AuditLog
-from ai4i_core.audit.snapshot import snapshot
+from ai4i_core.audit.snapshot import get_audit_model, snapshot_query, to_json_value
 from ai4i_core.context import get_trace_id
 
 logger = logging.getLogger(__name__)
 
-#: Async callable returning extra snapshot keys that need a query, e.g. a
-#: user's roles. Called on enter (except for CREATE) and on exit.
-ExtraLoader = Callable[[], Awaitable[Mapping[str, Any]]]
+#: How ``{at}`` is shown in messages. Always UTC.
+MESSAGE_TIME_FORMAT = "%Y-%m-%d %H:%M:%S UTC"
+#: Shown in a message for a placeholder whose value is None or missing.
+MESSAGE_EMPTY_VALUE = "none"
+#: Added after the template: who made the change (when known) and when.
+MESSAGE_ACTOR_SUFFIX = " by {performed_by}"
+MESSAGE_TIME_SUFFIX = " on {at}"
+#: Appended to every message whose new state has a non-empty ``reason``.
+MESSAGE_REASON_SUFFIX = " Reason: {reason}."
 
 
-class AuditTracker:
-    """Handle yielded by ``AuditLogWriter.track``.
+class BackgroundTaskRunner(Protocol):
+    """Anything with ``add_task(func, *args)``, e.g. FastAPI ``BackgroundTasks``."""
 
-    ``before`` is the snapshot taken on enter (None for CREATE). Set
-    ``message`` inside the block to store a readable summary with the row.
+    def add_task(self, func: Any, *args: Any, **kwargs: Any) -> None: ...
+
+
+@dataclass(frozen=True)
+class AuditTrace:
+    """Returned by ``track``: the entity and its values before the change.
+
+    ``before`` is None when the row was not found. ``enabled`` is False when
+    the old values could not be read; ``log`` then records nothing.
+    """
+
+    entity_name: AuditEntity
+    entity_id: str
+    properties: tuple[str, ...]
+    before: Optional[dict[str, Any]]
+    enabled: bool = True
+
+
+@dataclass(frozen=True)
+class _AuditRecord:
+    entity_name: str
+    entity_id: str
+    action: str
+    previous_state: Optional[dict[str, Any]]
+    new_state: dict[str, Any]
+    message_template: Optional[str]
+    performed_by: Optional[UUID]
+    created_at: datetime
+    trace_id: Optional[str]
+
+
+class _MessageValues(dict):
+    def __missing__(self, key: str) -> str:
+        return MESSAGE_EMPTY_VALUE
+
+
+def _is_blank(value: Any) -> bool:
+    return value is None or str(value).strip() == ""
+
+
+def build_message(template: Optional[str], values: Mapping[str, Any]) -> Optional[str]:
+    """Build the readable message for one row.
+
+    ``template`` says what happened (``str.format`` placeholders, no trailing
+    period needed). The library then adds, in order: `` by <performed_by>``
+    (when set), `` on <at>`` (when set), a period, and `` Reason: <reason>.``
+    when ``values`` has a non-empty ``reason``. Missing or None placeholder
+    values show as ``MESSAGE_EMPTY_VALUE``; a broken template is used as is.
+    """
+    if template is None:
+        return None
+    message = _fill(template, values).rstrip().rstrip(".")
+    if not _is_blank(values.get("performed_by")):
+        message += MESSAGE_ACTOR_SUFFIX.format(performed_by=values["performed_by"])
+    if not _is_blank(values.get("at")):
+        message += MESSAGE_TIME_SUFFIX.format(at=values["at"])
+    message += "."
+    if not _is_blank(values.get("reason")):
+        message += MESSAGE_REASON_SUFFIX.format(reason=values["reason"])
+    return message
+
+
+def _fill(template: str, values: Mapping[str, Any]) -> str:
+    filled = _MessageValues(
+        {k: (MESSAGE_EMPTY_VALUE if v is None or v == "" else v) for k, v in values.items()}
+    )
+    try:
+        return template.format_map(filled)
+    except (ValueError, IndexError, AttributeError) as exc:
+        logger.error("Audit message template could not be filled: %r error=%s", template, exc)
+        return template
+
+
+class AuditLogWriter:
+    """``session_factory`` makes ``ai4iplatform_core`` sessions and
+    ``background_tasks`` (FastAPI's ``BackgroundTasks``) runs each insert
+    after the response. Without either, nothing is recorded and a warning
+    is logged.
     """
 
     def __init__(
         self,
-        entity_name: AuditEntity,
-        obj: Any,
-        before: Optional[dict],
-        extra: Optional[Mapping[str, Any]],
+        session_factory: Optional[async_sessionmaker[AsyncSession]],
+        background_tasks: Optional[BackgroundTaskRunner] = None,
     ) -> None:
-        self.entity_name = entity_name
-        self.obj = obj
-        self.before = before
-        self.message: Optional[str] = None
-        self._extra = extra
+        self._session_factory = session_factory
+        self._background_tasks = background_tasks
 
-    def after_now(self) -> dict:
-        """Snapshot of the object as it is right now, inside the block.
-
-        Extra keys from an ``extra`` loader are the ones read on enter; the
-        exit snapshot re-reads them.
-        """
-        return snapshot(self.entity_name, self.obj, extra=self._extra)
-
-
-def _entity_id_of(obj: Any) -> Optional[str]:
-    if isinstance(obj, Mapping):
-        value = obj.get("id")
-        return None if value is None else str(value)
-    state = sa_inspect(obj)
-    keys = [col.key for col in state.mapper.primary_key]
-    values = [state.dict.get(k) for k in keys]
-    if any(v is None for v in values):
-        return None
-    return ":".join(str(v) for v in values)
-
-
-class AuditLogWriter:
-    """Writes audit rows on an ``ai4iplatform_core`` session.
-
-    ``session`` may be None (platform-core DB not configured): ``track`` then
-    still runs the block but records nothing, and logs a warning.
-
-    ``isolated=True`` (default) means the session holds nothing but audit
-    rows, so a failure to write is logged and swallowed — auditing never
-    breaks the operation it records. ``isolated=False`` is for a session
-    shared with the audited entity, where a failure must propagate.
-    """
-
-    def __init__(self, session: Optional[AsyncSession], *, isolated: bool = True) -> None:
-        self._session = session
-        self._isolated = isolated
-
-    @asynccontextmanager
     async def track(
         self,
+        db: AsyncSession,
         entity_name: AuditEntity,
-        obj: Any,
-        action: AuditAction,
-        performed_by: Optional[UUID] = None,
-        *,
-        entity_id: Optional[str] = None,
-        extra: Optional[ExtraLoader] = None,
-    ) -> AsyncIterator[AuditTracker]:
+        entity_id: Any,
+        properties: Sequence[str],
+    ) -> AuditTrace:
+        """Read the current values of ``properties`` for one entity row.
+
+        ``db`` is the session the entity lives in (and will be changed in).
+        Call it before the change.
+        """
         if not isinstance(entity_name, AuditEntity):
             raise TypeError(f"entity_name must be an AuditEntity, got {entity_name!r}")
+        props = tuple(properties)
+        try:
+            stmt = snapshot_query(get_audit_model(entity_name), entity_id, props)
+        except (LookupError, ValueError) as exc:
+            logger.error(
+                "Audit track disabled for %s %s: %s trace_id=%s",
+                entity_name.value, entity_id, exc, get_trace_id(),
+            )
+            return AuditTrace(entity_name, str(entity_id), props, None, enabled=False)
+        try:
+            row = (await db.execute(stmt)).mappings().first()
+        except Exception as exc:
+            logger.error(
+                "Audit track could not read %s %s: %s trace_id=%s",
+                entity_name.value, entity_id, exc, get_trace_id(), exc_info=True,
+            )
+            return AuditTrace(entity_name, str(entity_id), props, None, enabled=False)
+        before = None if row is None else {k: to_json_value(row[k]) for k in props}
+        return AuditTrace(entity_name, str(entity_id), props, before)
+
+    def log(
+        self,
+        trace: AuditTrace,
+        action: AuditAction,
+        message_template: Optional[str],
+        new_values: Mapping[str, Any],
+        performed_by: Optional[UUID] = None,
+    ) -> None:
+        """Record the change. Call only after it is committed. Not awaited.
+
+        ``new_values`` holds the tracked properties that changed; any tracked
+        property not in it keeps its old value. ``message_template`` says what
+        happened and may use every tracked property (new value),
+        and ``previous_<property>`` (old value); the library
+        adds who, when and the reason (see ``build_message``). Nothing is
+        recorded when no value changed.
+        """
+        try:
+            record = self._build_record(trace, action, message_template, new_values, performed_by)
+            if record is None:
+                return
+            if self._session_factory is None or self._background_tasks is None:
+                logger.warning(
+                    "Audit row not written (platform-core DB or background tasks "
+                    "not configured): %s %s %s trace_id=%s",
+                    record.entity_name, record.entity_id, record.action, record.trace_id,
+                )
+                return
+            self._background_tasks.add_task(self._write, record)
+        except Exception as exc:
+            logger.error(
+                "Audit log failed for %s %s: %s trace_id=%s",
+                getattr(trace, "entity_name", None), getattr(trace, "entity_id", None),
+                exc, get_trace_id(), exc_info=True,
+            )
+
+    def _build_record(
+        self,
+        trace: AuditTrace,
+        action: AuditAction,
+        message_template: Optional[str],
+        new_values: Mapping[str, Any],
+        performed_by: Optional[UUID],
+    ) -> Optional[_AuditRecord]:
+        if not trace.enabled:
+            return None
         if not isinstance(action, AuditAction):
             raise TypeError(f"action must be an AuditAction, got {action!r}")
-
-        if action is AuditAction.CREATE:
-            before_extra, before = None, None
-        else:
-            before_extra = dict(await extra()) if extra else None
-            before = snapshot(entity_name, obj, extra=before_extra)
-
-        tracker = AuditTracker(entity_name, obj, before, before_extra)
-        # An exception in the block propagates from here, so nothing is recorded.
-        yield tracker
-
-        after_extra = dict(await extra()) if extra else None
-        after = snapshot(entity_name, obj, extra=after_extra)
+        unknown = set(new_values) - set(trace.properties)
+        if unknown:
+            raise ValueError(f"new_values has properties not tracked: {sorted(unknown)}")
+        before = trace.before
+        after = dict(before or {})
+        after.update({k: to_json_value(v) for k, v in new_values.items()})
         if before == after:
-            return
-
-        resolved_id = entity_id or _entity_id_of(obj)
-        trace_id = get_trace_id()
-        if self._session is None:
-            logger.warning(
-                "Audit row not written (platform-core DB not configured): %s %s %s trace_id=%s",
-                entity_name.value, resolved_id, action.value, trace_id,
-            )
-            return
-        if resolved_id is None:
-            logger.error(
-                "Audit row not written: %s has no primary key yet (flush before the "
-                "block ends or pass entity_id) action=%s trace_id=%s",
-                entity_name.value, action.value, trace_id,
-            )
-            return
-
-        row = AuditLog(
-            entity_name=entity_name.value,
-            entity_id=resolved_id,
+            return None
+        return _AuditRecord(
+            entity_name=trace.entity_name.value,
+            entity_id=trace.entity_id,
             action=action.value,
             previous_state=before,
             new_state=after,
-            message=tracker.message,
+            message_template=message_template,
             performed_by=performed_by,
-            trace_id=trace_id,
+            created_at=datetime.now(timezone.utc),
+            trace_id=get_trace_id(),
+        )
+
+    async def _write(self, record: _AuditRecord) -> None:
+        """Insert one row on its own session. Never raises: an exception here
+        would stop later background tasks of the same request (e.g. emails)."""
+        values: dict[str, Any] = {
+            f"previous_{k}": v for k, v in (record.previous_state or {}).items()
+        }
+        values.update(record.new_state)
+        values.update(
+            performed_by=record.performed_by,
+            at=record.created_at.strftime(MESSAGE_TIME_FORMAT),
+        )
+        row = AuditLog(
+            created_at=record.created_at,
+            entity_name=record.entity_name,
+            entity_id=record.entity_id,
+            action=record.action,
+            previous_state=record.previous_state,
+            new_state=record.new_state,
+            message=build_message(record.message_template, values),
+            performed_by=record.performed_by,
+            trace_id=record.trace_id,
         )
         try:
-            self._session.add(row)
-            await self._session.flush()
-        except Exception as exc:
-            if not self._isolated:
-                raise
-            logger.error(
-                "Audit row flush failed: %s %s %s trace_id=%s error=%s",
-                entity_name.value, resolved_id, action.value, trace_id, exc,
-                exc_info=True,
-            )
-            await self._safe_rollback()
-
-    async def commit(self) -> bool:
-        """Commit the audit session. Returns False (after logging) on failure.
-
-        Never raises: the audited entity is already committed in its own
-        database, and a missing audit row must not turn that into an error.
-        """
-        if self._session is None:
-            return False
-        try:
-            await self._session.commit()
-            return True
+            async with self._session_factory() as session:
+                session.add(row)
+                await session.commit()
         except Exception as exc:
             logger.error(
-                "Audit log commit failed; entity change kept. trace_id=%s error=%s",
-                get_trace_id(), exc,
+                "Audit row insert failed: %s %s %s trace_id=%s error=%s",
+                record.entity_name, record.entity_id, record.action, record.trace_id, exc,
                 exc_info=True,
             )
-            await self._safe_rollback()
-            return False
-
-    async def _safe_rollback(self) -> None:
-        try:
-            await self._session.rollback()
-        except Exception:
-            logger.exception("Audit session rollback failed trace_id=%s", get_trace_id())
 
 
 def noop_audit_writer() -> AuditLogWriter:
-    """Writer with no session: ``track`` blocks run, nothing is recorded.
-
-    Default for services built outside request DI (scripts, tests), e.g.
-    ``self._audit = audit or noop_audit_writer()``.
-    """
+    """Writer that records nothing. Default for services built outside
+    request DI (scripts, tests)."""
     return AuditLogWriter(None)
