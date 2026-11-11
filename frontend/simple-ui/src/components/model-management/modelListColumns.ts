@@ -26,20 +26,21 @@ export type ModelListColumnDef = {
 
 /**
  * Fallback when the `model-column` config is missing or fails to load.
- * Display order. Mandatory set from AI4IDS-3351 (+ Actions, same as services).
+ * Display order. Mandatory columns match the config's `required` flags.
+ * `defaultVisible` is the first-visit and "Reset to default" set.
  */
 export const MODEL_LIST_COLUMNS: readonly ModelListColumnDef[] = [
   { id: "name", label: "Name", mandatory: true, defaultVisible: true },
-  { id: "version", label: "Version", mandatory: true, defaultVisible: true },
-  { id: "taskType", label: "Task Type", mandatory: true, defaultVisible: true },
-  { id: "providerName", label: "Provider Name", mandatory: true, defaultVisible: true },
-  { id: "status", label: "Status", mandatory: false, defaultVisible: true },
-  { id: "createdAt", label: "Created At", mandatory: false, defaultVisible: true },
+  { id: "version", label: "Version", mandatory: false, defaultVisible: true },
+  { id: "taskType", label: "Task Type", mandatory: false, defaultVisible: true },
+  { id: "providerName", label: "Provider Name", mandatory: false, defaultVisible: true },
+  { id: "status", label: "Status", mandatory: false, defaultVisible: false },
+  { id: "createdAt", label: "Created At", mandatory: false, defaultVisible: false },
   {
     id: "noOfServices",
     label: "No. of Services",
     mandatory: false,
-    defaultVisible: true,
+    defaultVisible: false,
   },
   { id: "actions", label: "Actions", mandatory: true, defaultVisible: true },
 ];
@@ -65,14 +66,8 @@ export function modelListColumnsParam(visibleIds: readonly string[]): string {
   return Array.from(ids).join(",");
 }
 
-const KNOWN_MODEL_LIST_COLUMN_IDS = new Set(MODEL_LIST_COLUMNS.map((column) => column.id));
-
-/**
- * Columns AI4IDS-3351 fixes as mandatory (Name, Version, Task Type, Provider
- * Name) plus Actions. The config cannot make these optional.
- */
-const LOCKED_MODEL_LIST_COLUMN_IDS = new Set(
-  MODEL_LIST_COLUMNS.filter((column) => column.mandatory).map((column) => column.id),
+const BUILT_IN_MODEL_LIST_COLUMNS = new Map(
+  MODEL_LIST_COLUMNS.map((column) => [column.id, column]),
 );
 
 const ACTIONS_COLUMN = MODEL_LIST_COLUMNS.find((column) => column.id === "actions");
@@ -80,21 +75,27 @@ const ACTIONS_COLUMN = MODEL_LIST_COLUMNS.find((column) => column.id === "action
 /**
  * Catalogue from `model-column` config entries. Keys the table cannot render are
  * dropped; an empty result falls back to MODEL_LIST_COLUMNS. The config sets
- * order and labels, but locked columns stay mandatory whatever `required` says,
- * and Actions (the Deprecate / Activate switches) is appended if left out.
+ * order, labels and which columns are mandatory (`required`). A column is
+ * visible by default when it is mandatory or the entry's `defaultVisible` says
+ * so; without that flag the built-in default applies. Actions (the Deprecate /
+ * Activate switches) is appended, as mandatory, if left out.
  */
 export function modelListColumnsFromConfig(
-  entries: readonly { key: string; label: string; required: boolean }[] | null | undefined,
+  entries:
+    | readonly { key: string; label: string; required: boolean; defaultVisible?: boolean }[]
+    | null
+    | undefined,
 ): readonly ModelListColumnDef[] {
   const catalogue: ModelListColumnDef[] = [];
   for (const entry of entries ?? []) {
-    if (!KNOWN_MODEL_LIST_COLUMN_IDS.has(entry.key)) continue;
+    const builtIn = BUILT_IN_MODEL_LIST_COLUMNS.get(entry.key);
+    if (builtIn == null) continue;
     if (catalogue.some((column) => column.id === entry.key)) continue;
     catalogue.push({
       id: entry.key,
       label: entry.label,
-      mandatory: entry.required || LOCKED_MODEL_LIST_COLUMN_IDS.has(entry.key),
-      defaultVisible: true,
+      mandatory: entry.required,
+      defaultVisible: entry.defaultVisible ?? builtIn.defaultVisible,
     });
   }
   if (catalogue.length === 0) return MODEL_LIST_COLUMNS;

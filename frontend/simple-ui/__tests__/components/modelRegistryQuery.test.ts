@@ -48,9 +48,11 @@ describe("model registry query (GET /models/list)", () => {
     expect(
       buildModelListParams({ ...base, sort: { key: "createdAt", direction: "desc" } }),
     ).toMatchObject({ sortBy: "createdAt", sortOrder: "desc" });
-    expect(
-      buildModelListParams({ ...base, sort: { key: "noOfServices", direction: "asc" } }).sortBy,
-    ).toBeUndefined();
+    for (const key of ["taskType", "status", "noOfServices"]) {
+      expect(
+        buildModelListParams({ ...base, sort: { key, direction: "asc" } }),
+      ).toMatchObject({ sortBy: key, sortOrder: "asc" });
+    }
     expect(
       buildModelListParams({ ...base, sort: { key: "actions", direction: "asc" } }).sortBy,
     ).toBeUndefined();

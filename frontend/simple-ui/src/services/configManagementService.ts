@@ -42,6 +42,8 @@ export interface ModelColumnConfigEntry {
   key: string;
   label: string;
   required: boolean;
+  /** Omitted when the config does not say; the built-in default applies. */
+  defaultVisible?: boolean;
 }
 
 /** Model List columns from the `model-column` config, in display order. */
@@ -50,10 +52,17 @@ export async function getModelColumnConfig(): Promise<ModelColumnConfigEntry[]> 
   const config = items.find((item) => item.type === "model-column");
   if (!config) return [];
   const entries = new Map<string, ModelColumnConfigEntry>();
-  for (const { key, label, required } of modelColumnsConfigDataSchema.parse(config.data)) {
+  for (const { key, label, required, defaultVisible } of modelColumnsConfigDataSchema.parse(
+    config.data,
+  )) {
     const id = key.trim();
     if (!id || entries.has(id)) continue;
-    entries.set(id, { key: id, label: label?.trim() || id, required: required === true });
+    entries.set(id, {
+      key: id,
+      label: label?.trim() || id,
+      required: required === true,
+      ...(typeof defaultVisible === "boolean" ? { defaultVisible } : {}),
+    });
   }
   return Array.from(entries.values());
 }

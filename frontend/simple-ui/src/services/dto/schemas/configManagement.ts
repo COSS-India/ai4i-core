@@ -48,6 +48,8 @@ export const modelColumnsConfigDataSchema = z.array(
       key: z.string(),
       label: z.string().optional(),
       required: z.boolean().optional(),
+      /** Shown on first visit and after "Reset to default"; omitted → built-in default. */
+      defaultVisible: z.boolean().optional(),
     })
     .passthrough(),
 );
