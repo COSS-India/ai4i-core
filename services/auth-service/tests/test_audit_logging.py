@@ -256,8 +256,8 @@ def _row(**overrides) -> AuditLog:
         entity_name="TENANT",
         entity_id="7",
         action="STATUS_CHANGE",
-        previous_state={"status": "ACTIVE", "reason": None},
-        new_state={"status": "SUSPENDED", "reason": "Agreement renewal pending"},
+        previous_state={"status": "ACTIVE", "reason": None, "email": _enc_email("asha@acme.edu")},
+        new_state={"status": "SUSPENDED", "reason": "Agreement renewal pending", "email": _enc_email("asha@acme.edu")},
         message="Tenant 'Acme' suspended. Reason: Agreement renewal pending.",
         performed_by=uuid4(),
         trace_id="abc",
@@ -291,10 +291,20 @@ class TestListAuditLogs:
         assert item["message"] == "Tenant 'Acme' suspended. Reason: Agreement renewal pending."
         assert item["performed_by"] == row.performed_by
         assert item["created_at"] == row.created_at
-        assert item["changes"] == [
-            {"field": "reason", "from": None, "to": "Agreement renewal pending"},
-            {"field": "status", "from": "ACTIVE", "to": "SUSPENDED"},
-        ]
+        assert item["previous_state"]["status"] == "ACTIVE"
+        assert item["previous_state"]["reason"] is None
+        assert item["new_state"]["status"] == "SUSPENDED"
+        assert item["new_state"]["reason"] == "Agreement renewal pending"
+
+    @pytest.mark.asyncio
+    async def test_states_show_masked_email_not_ciphertext(self) -> None:
+        repo = MagicMock()
+        repo.list = AsyncMock(return_value=[_row()])
+        item = (await _list(repo)).data[0]
+        for state in (item.previous_state, item.new_state):
+            assert not state["email"].startswith("enc:")
+            assert "asha@acme.edu" != state["email"]
+            assert "***" in state["email"]
 
     @pytest.mark.asyncio
     async def test_entity_id_without_entity_name_is_422(self) -> None:

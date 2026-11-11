@@ -7,19 +7,42 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 
-from ai4i_core.audit import AuditAction, AuditEntity, AuditLog, AuditLogRepository, diff
+from ai4i_core.audit import AuditAction, AuditEntity, AuditLog, AuditLogRepository
 
+from app.core import pii_crypto
 from app.core.exceptions import ValidationError
 from app.dependencies.auth import get_current_user_id
 from app.dependencies.services import get_audit_log_repository
-from app.schemas.audit_log import AuditChange, AuditLogResponse, ListAuditLogsResponse
+from app.schemas.audit_log import AuditLogResponse, ListAuditLogsResponse
 from app.schemas.common import error_responses
+from app.utils.masking import mask_pii_in_dict
 
 router = APIRouter(
     prefix="/auth/audit-logs",
     tags=["Audit Logs"],
     responses=error_responses(401),
 )
+
+
+# Snapshots store email / phone as ciphertext (bound column values).
+_PII_CONTEXTS = {
+    "email": pii_crypto.EMAIL_CONTEXT,
+    "phone_number": pii_crypto.PHONE_CONTEXT,
+}
+
+
+def _readable_state(state: Optional[dict]) -> Optional[dict]:
+    """Snapshot for the response: PII decrypted, then masked as in GET /tenants."""
+    if state is None:
+        return None
+    out = dict(state)
+    for key, context in _PII_CONTEXTS.items():
+        if out.get(key) is not None:
+            try:
+                out[key] = pii_crypto.decrypt(out[key], context)
+            except Exception:  # wrong key / corrupt value: never leak ciphertext
+                out[key] = None
+    return mask_pii_in_dict(out)
 
 
 def to_audit_log_response(row: AuditLog) -> AuditLogResponse:
@@ -31,7 +54,8 @@ def to_audit_log_response(row: AuditLog) -> AuditLogResponse:
         action=row.action,
         message=row.message,
         performed_by=row.performed_by,
-        changes=[AuditChange(**c) for c in diff(row.previous_state, row.new_state)],
+        previous_state=_readable_state(row.previous_state),
+        new_state=_readable_state(row.new_state),
         trace_id=row.trace_id,
     )
 

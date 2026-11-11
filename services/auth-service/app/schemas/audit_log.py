@@ -12,14 +12,6 @@ from app.schemas.base import BaseSchema
 from app.schemas.common import SuccessResponse
 
 
-class AuditChange(BaseSchema):
-    """One field that differs between ``previous_state`` and ``new_state``."""
-
-    field: str
-    from_: Any = Field(None, alias="from")  # `from` is a Python keyword
-    to: Any = None
-
-
 class AuditLogResponse(BaseSchema):
     """One audit row. ``message`` is the readable summary (it includes the
     reason); ``performed_by`` is the acting user's id and ``created_at`` is
@@ -32,8 +24,11 @@ class AuditLogResponse(BaseSchema):
     action: AuditAction
     message: Optional[str] = None
     performed_by: Optional[UUID] = None
-    changes: list[AuditChange] = Field(
-        default_factory=list, description="Fields changed, from previous_state to new_state"
+    previous_state: Optional[dict[str, Any]] = Field(
+        None, description="Entity before the change (email / phone masked)"
+    )
+    new_state: Optional[dict[str, Any]] = Field(
+        None, description="Entity after the change (email / phone masked)"
     )
     trace_id: Optional[str] = None
 
@@ -48,10 +43,32 @@ class AuditLogResponse(BaseSchema):
                     "action": "STATUS_CHANGE",
                     "message": "Tenant 'Acme University' suspended. Reason: Agreement renewal pending.",
                     "performed_by": "<place your id here>",
-                    "changes": [
-                        {"field": "reason", "from": None, "to": "Agreement renewal pending"},
-                        {"field": "status", "from": "ACTIVE", "to": "SUSPENDED"},
-                    ],
+                    "previous_state": {
+                        "id": 7,
+                        "name": "Asha Rao",
+                        "organisation": "Acme University",
+                        "email": "a***@a***.edu",
+                        "phone_number": None,
+                        "status": "ACTIVE",
+                        "reason": None,
+                        "tier_id": None,
+                        "allocated_budget": None,
+                        "budget_effective_from": None,
+                        "budget_effective_to": None,
+                    },
+                    "new_state": {
+                        "id": 7,
+                        "name": "Asha Rao",
+                        "organisation": "Acme University",
+                        "email": "a***@a***.edu",
+                        "phone_number": None,
+                        "status": "SUSPENDED",
+                        "reason": "Agreement renewal pending",
+                        "tier_id": None,
+                        "allocated_budget": None,
+                        "budget_effective_from": None,
+                        "budget_effective_to": None,
+                    },
                     "trace_id": "a1b2c3d4e5f6",
                 }
             ]
