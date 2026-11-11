@@ -7,6 +7,7 @@ session, so the rows asserted on are exactly what would be inserted.
 import base64
 import logging
 import os
+from contextlib import asynccontextmanager
 import re
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
@@ -17,7 +18,8 @@ import pytest
 _TEST_KEY = base64.b64encode(b"\x01" * 64).decode("ascii")
 os.environ.setdefault("PII_ENCRYPTION_KEY", _TEST_KEY)
 
-from ai4i_core.audit import AuditEntity, AuditLog, AuditLogWriter, diff  # noqa: E402
+from ai4i_core.audit import AuditEntity, AuditLog, AuditLogWriter, AuditTrace  # noqa: E402
+from ai4i_core.audit.snapshot import get_audit_model  # noqa: E402
 from ai4i_core.context import reset_trace_id, set_trace_id  # noqa: E402
 
 from app.core import pii_crypto  # noqa: E402
@@ -28,6 +30,7 @@ from app.models.user import User  # noqa: E402
 from app.routes.audit_logs import list_audit_logs  # noqa: E402
 from app.schemas.tenant import TenantStatusUpdate  # noqa: E402
 from app.services import audit_messages as am  # noqa: E402
+from app.services.auth_service import AuthService  # noqa: E402
 from app.services.tenant_service import TenantService  # noqa: E402
 
 pii_crypto.configure_key(_TEST_KEY)
@@ -40,17 +43,52 @@ def _enc_email(value: str) -> str:
 # ── Fixtures ────────────────────────────────────────────────────────────
 
 
-def _audit_session() -> MagicMock:
+class _Tasks:
+    """Stand-in for the request's FastAPI BackgroundTasks."""
+
+    def __init__(self) -> None:
+        self.tasks = []
+
+    def add_task(self, func, *args):
+        self.tasks.append((func, args))
+
+    async def run(self) -> None:
+        for func, args in self.tasks:
+            await func(*args)
+
+
+def _factory():
+    """ai4iplatform_core session factory; ``factory.session`` records rows."""
     session = MagicMock()
     session.add = MagicMock()
-    session.flush = AsyncMock()
     session.commit = AsyncMock()
-    session.rollback = AsyncMock()
-    return session
+
+    @asynccontextmanager
+    async def make():
+        yield session
+
+    make.session = session
+    return make
 
 
-def _rows(session: MagicMock) -> list[AuditLog]:
-    return [c.args[0] for c in session.add.call_args_list]
+def _rows(factory) -> list[AuditLog]:
+    return [c.args[0] for c in factory.session.add.call_args_list]
+
+
+def _auth_db(tenant: Tenant) -> MagicMock:
+    """ai4iplatform_auth session: answers track()'s SELECT from ``tenant``."""
+    db = MagicMock()
+
+    async def execute(stmt):
+        names = [c.name for c in stmt.selected_columns]
+        result = MagicMock()
+        result.mappings.return_value.first.return_value = {
+            n: getattr(tenant, n) for n in names
+        }
+        return result
+
+    db.execute = AsyncMock(side_effect=execute)
+    return db
 
 
 async def _apply(obj, data: dict):
@@ -59,7 +97,7 @@ async def _apply(obj, data: dict):
     return obj
 
 
-def _service(audit_session: MagicMock) -> TenantService:
+def _service(tenant: Tenant, factory=None, tasks=None) -> TenantService:
     user_repo = MagicMock()
     user_repo.lock_tenant_users_for_status = AsyncMock()
     user_repo.unlock_tenant_users_for_status = AsyncMock()
@@ -67,13 +105,15 @@ def _service(audit_session: MagicMock) -> TenantService:
     user_repo.save_and_refresh = AsyncMock()
     user_repo.commit = AsyncMock()
     tenant_repo = MagicMock()
+    tenant_repo._db = _auth_db(tenant)
+    tenant_repo.get_by_id_for_update = AsyncMock(return_value=tenant)
     tenant_repo.update = AsyncMock(side_effect=_apply)
     tenant_repo.save_and_refresh = AsyncMock()
     tenant_repo.commit = AsyncMock()
     tenant_repo.refresh = AsyncMock()
     role_service = MagicMock()
     role_service.get_user_roles = AsyncMock(return_value=["ADMIN"])  # caller is ADMIN
-    svc = TenantService(
+    return TenantService(
         tenant_repo=tenant_repo,
         user_repo=user_repo,
         role_service=role_service,
@@ -82,9 +122,8 @@ def _service(audit_session: MagicMock) -> TenantService:
         token_service=MagicMock(),
         email_client=MagicMock(),
         api_key_service=AsyncMock(),
-        audit=AuditLogWriter(audit_session),
+        audit=AuditLogWriter(factory or _factory(), background_tasks=tasks or _Tasks()),
     )
-    return svc
 
 
 def _tenant(status: TenantStatus = TenantStatus.ACTIVE, **kw) -> Tenant:
@@ -104,65 +143,34 @@ def _admin() -> User:
     return User(id=uuid4(), email="admin@example.invalid", username="admin", tenant_id=1)
 
 
-# ── Messages ────────────────────────────────────────────────────────────
+_TIME = r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC"
 
 
-_AT = datetime(2026, 11, 11, 7, 11, 21, tzinfo=timezone.utc)
+# ── Message templates ───────────────────────────────────────────────────
 
 
-class TestTenantMessages:
+class TestTenantStatusTemplate:
     def test_suspend(self) -> None:
-        message = am.tenant_status_changed(
-            {"organisation": "Acme", "status": "ACTIVE"},
-            {"organisation": "Acme", "status": "SUSPENDED", "reason": "Audit pending"},
-            at=_AT,
-        )
-        assert message == "Tenant 'Acme' suspended on 2026-11-11 07:11:21 UTC. Reason: Audit pending."
+        assert am.tenant_status_template("ACTIVE", "SUSPENDED") == "Tenant '{organisation}' suspended"
 
-    def test_deactivate(self) -> None:
-        message = am.tenant_status_changed(
-            {"organisation": "Acme", "status": "SUSPENDED"},
-            {"organisation": "Acme", "status": "DEACTIVATED", "reason": "Agreement or engagement ended"},
-            at=_AT,
+    def test_deactivate_and_activate(self) -> None:
+        assert am.tenant_status_template(TenantStatus.SUSPENDED, TenantStatus.DEACTIVATED) == (
+            "Tenant '{organisation}' deactivated"
         )
-        assert message == "Tenant 'Acme' deactivated on 2026-11-11 07:11:21 UTC. Reason: Agreement or engagement ended."
-
-    def test_reactivate(self) -> None:
-        message = am.tenant_status_changed(
-            {"organisation": "Acme", "status": "DEACTIVATED"},
-            {"organisation": "Acme", "status": "ACTIVE", "reason": "New agreement signed"},
-            at=_AT,
-        )
-        assert message == "Tenant 'Acme' activated on 2026-11-11 07:11:21 UTC. Reason: New agreement signed."
+        assert am.tenant_status_template("DEACTIVATED", "ACTIVE") == "Tenant '{organisation}' activated"
 
     def test_setup_completed(self) -> None:
-        message = am.tenant_status_changed(
-            {"organisation": "Acme", "status": "PENDING"},
-            {"organisation": "Acme", "status": "ACTIVE"},
-            at=_AT,
+        assert am.tenant_status_template("PENDING", "ACTIVE") == (
+            "Tenant '{organisation}' activated after the contact admin completed setup"
         )
-        assert message == "Tenant 'Acme' activated on 2026-11-11 07:11:21 UTC. Contact admin completed setup."
 
-    def test_naive_time_is_treated_as_utc_and_default_is_now(self) -> None:
-        naive = am.tenant_status_changed(
-            {"organisation": "Acme", "status": "ACTIVE"},
-            {"organisation": "Acme", "status": "SUSPENDED"},
-            at=datetime(2026, 11, 11, 7, 11, 21),
-        )
-        assert naive == "Tenant 'Acme' suspended on 2026-11-11 07:11:21 UTC."
-        now = am.tenant_status_changed(
-            {"organisation": "Acme", "status": "ACTIVE"},
-            {"organisation": "Acme", "status": "SUSPENDED"},
-        )
-        assert re.fullmatch(r"Tenant 'Acme' suspended on \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC\.", now)
+    def test_who_when_and_reason_are_left_to_the_library(self) -> None:
+        template = am.tenant_status_template("ACTIVE", "SUSPENDED")
+        for placeholder in ("{performed_by}", "{at}", "{reason}"):
+            assert placeholder not in template
 
-    def test_blank_reason_is_left_out(self) -> None:
-        message = am.tenant_status_changed(
-            {"organisation": "Acme", "status": "ACTIVE"},
-            {"organisation": "Acme", "status": "SUSPENDED", "reason": "  "},
-            at=_AT,
-        )
-        assert message == "Tenant 'Acme' suspended on 2026-11-11 07:11:21 UTC."
+    def test_tenant_model_is_registered(self) -> None:
+        assert get_audit_model(AuditEntity.TENANT) is Tenant
 
 
 # ── Tenant status change ────────────────────────────────────────────────
@@ -170,11 +178,9 @@ class TestTenantMessages:
 
 class TestTenantStatusChangeAudit:
     @pytest.mark.asyncio
-    async def test_suspend_writes_status_change_row(self) -> None:
-        session = _audit_session()
-        svc = _service(session)
-        tenant = _tenant()
-        svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
+    async def test_suspend_writes_row_after_response(self) -> None:
+        factory, tasks = _factory(), _Tasks()
+        svc = _service(_tenant(), factory, tasks)
         admin = _admin()
         token = set_trace_id("trace-suspend")
         try:
@@ -186,70 +192,88 @@ class TestTenantStatusChangeAudit:
         finally:
             reset_trace_id(token)
 
-        (row,) = _rows(session)
+        # Scheduled, not yet written: the insert runs after the response.
+        assert len(tasks.tasks) == 1
+        assert _rows(factory) == []
+        await tasks.run()
+
+        (row,) = _rows(factory)
         assert (row.entity_name, row.entity_id, row.action) == ("TENANT", "7", "STATUS_CHANGE")
         assert row.performed_by == admin.id
         assert row.trace_id == "trace-suspend"
-        assert diff(row.previous_state, row.new_state) == [
-            {"field": "reason", "from": None, "to": "Agreement renewal pending"},
-            {"field": "status", "from": "ACTIVE", "to": "SUSPENDED"},
-        ]
+        assert row.previous_state == {
+            "organisation": "Acme University", "status": "ACTIVE", "reason": None,
+        }
+        assert row.new_state == {
+            "organisation": "Acme University", "status": "SUSPENDED",
+            "reason": "Agreement renewal pending",
+        }
         assert re.fullmatch(
-            r"Tenant 'Acme University' suspended on \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC\. "
+            rf"Tenant 'Acme University' suspended by {admin.id} on {_TIME}\. "
             r"Reason: Agreement renewal pending\.",
             row.message,
         )
-        # The reason lives in the snapshot (design doc 2.2 / 8), not a column.
-        assert row.new_state["reason"] == "Agreement renewal pending"
-        # PII is stored as ciphertext, never plaintext.
-        assert "contact@acme.edu" not in str(row.new_state)
-        assert row.new_state["email"] == _enc_email("contact@acme.edu")
-        session.commit.assert_awaited_once()
+        # The time in the message is the row's created_at.
+        assert row.created_at.strftime("%Y-%m-%d %H:%M:%S UTC") in row.message
+        # Only the tracked properties are stored: no PII.
+        assert "email" not in row.new_state
 
     @pytest.mark.asyncio
-    async def test_entity_commits_before_audit(self) -> None:
-        session = _audit_session()
-        svc = _service(session)
-        svc._tenants.get_by_id_for_update = AsyncMock(return_value=_tenant())
+    async def test_old_values_read_before_change_and_logged_after_commit(self) -> None:
+        tasks = _Tasks()
+        svc = _service(_tenant(), tasks=tasks)
         order: list[str] = []
-        svc._tenants.save_and_refresh.side_effect = lambda *_: order.append("entity")
-        session.commit.side_effect = lambda: order.append("audit")
+        read = svc._tenants._db.execute.side_effect
+
+        async def track_read(stmt):
+            order.append("track")
+            return await read(stmt)
+
+        async def update(obj, data):
+            order.append("update")
+            return await _apply(obj, data)
+
+        svc._tenants._db.execute.side_effect = track_read
+        svc._tenants.update.side_effect = update
+        svc._tenants.save_and_refresh.side_effect = lambda *_: order.append("commit")
+        real_add = tasks.add_task
+        tasks.add_task = lambda *a: order.append("log") or real_add(*a)
 
         await svc.update_tenant_status(
             _admin(), 7, TenantStatusUpdate(status=TenantStatus.SUSPENDED, reason="R")
         )
-        assert order == ["entity", "audit"]
+        assert order == ["track", "update", "commit", "log"]
 
     @pytest.mark.asyncio
     async def test_reactivation_row_stores_description_as_reason(self) -> None:
-        session = _audit_session()
-        svc = _service(session)
-        tenant = _tenant(TenantStatus.DEACTIVATED, reason="Merged")
-        svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
+        factory, tasks = _factory(), _Tasks()
+        svc = _service(_tenant(TenantStatus.DEACTIVATED, reason="Merged"), factory, tasks)
 
         await svc.update_tenant_status(
             _admin(), 7, TenantStatusUpdate(status=TenantStatus.ACTIVE, reason="New agreement")
         )
+        await tasks.run()
 
-        (row,) = _rows(session)
+        (row,) = _rows(factory)
         assert row.previous_state["reason"] == "Merged"
         assert row.new_state["reason"] == "New agreement"
+        assert row.message.endswith("Reason: New agreement.")
 
     @pytest.mark.asyncio
-    async def test_audit_commit_failure_keeps_entity_change(self, caplog) -> None:
-        session = _audit_session()
-        session.commit.side_effect = RuntimeError("platform-core unavailable")
-        svc = _service(session)
+    async def test_audit_insert_failure_keeps_entity_change(self, caplog) -> None:
+        factory, tasks = _factory(), _Tasks()
+        factory.session.commit.side_effect = RuntimeError("platform-core unavailable")
         tenant = _tenant()
-        svc._tenants.get_by_id_for_update = AsyncMock(return_value=tenant)
+        svc = _service(tenant, factory, tasks)
         token = set_trace_id("trace-fail")
         try:
-            with caplog.at_level(logging.ERROR, logger="ai4i_core.audit.writer"):
-                result = await svc.update_tenant_status(
-                    _admin(), 7, TenantStatusUpdate(status=TenantStatus.SUSPENDED, reason="R")
-                )
+            result = await svc.update_tenant_status(
+                _admin(), 7, TenantStatusUpdate(status=TenantStatus.SUSPENDED, reason="R")
+            )
         finally:
             reset_trace_id(token)
+        with caplog.at_level(logging.ERROR, logger="ai4i_core.audit.writer"):
+            await tasks.run()  # must not raise
 
         assert result is tenant
         assert tenant.status == TenantStatus.SUSPENDED
@@ -259,17 +283,60 @@ class TestTenantStatusChangeAudit:
         assert any("trace_id=trace-fail" in m and "platform-core unavailable" in m for m in errors)
 
     @pytest.mark.asyncio
-    async def test_entity_commit_failure_never_commits_audit(self) -> None:
-        session = _audit_session()
-        svc = _service(session)
-        svc._tenants.get_by_id_for_update = AsyncMock(return_value=_tenant())
+    async def test_track_read_failure_does_not_break_status_change(self) -> None:
+        tasks = _Tasks()
+        tenant = _tenant()
+        svc = _service(tenant, tasks=tasks)
+        svc._tenants._db.execute.side_effect = RuntimeError("select failed")
+
+        result = await svc.update_tenant_status(
+            _admin(), 7, TenantStatusUpdate(status=TenantStatus.SUSPENDED, reason="R")
+        )
+        assert result.status == TenantStatus.SUSPENDED
+        assert tasks.tasks == []
+
+    @pytest.mark.asyncio
+    async def test_entity_commit_failure_logs_nothing(self) -> None:
+        tasks = _Tasks()
+        svc = _service(_tenant(), tasks=tasks)
         svc._tenants.save_and_refresh.side_effect = RuntimeError("auth db down")
 
         with pytest.raises(RuntimeError):
             await svc.update_tenant_status(
                 _admin(), 7, TenantStatusUpdate(status=TenantStatus.SUSPENDED, reason="R")
             )
-        session.commit.assert_not_awaited()
+        assert tasks.tasks == []
+
+
+class TestContactAdminActivationAudit:
+    @pytest.mark.asyncio
+    async def test_setup_completed_row(self) -> None:
+        factory, tasks = _factory(), _Tasks()
+        svc = AuthService.__new__(AuthService)
+        svc._audit = AuditLogWriter(factory, background_tasks=tasks)
+        user = User(id=uuid4(), email="c@acme.edu", username="c", tenant_id=7)
+        trace = AuditTrace(
+            AuditEntity.TENANT, "7", am.TENANT_STATUS_AUDIT_PROPERTIES,
+            {"organisation": "Acme", "status": "PENDING", "reason": None},
+        )
+
+        svc._log_contact_admin_activation(trace, user)
+        await tasks.run()
+
+        (row,) = _rows(factory)
+        assert row.new_state["status"] == "ACTIVE"
+        assert row.performed_by == user.id
+        assert re.fullmatch(
+            rf"Tenant 'Acme' activated after the contact admin completed setup by {user.id} on {_TIME}\.",
+            row.message,
+        )
+
+    def test_no_trace_logs_nothing(self) -> None:
+        tasks = _Tasks()
+        svc = AuthService.__new__(AuthService)
+        svc._audit = AuditLogWriter(_factory(), background_tasks=tasks)
+        svc._log_contact_admin_activation(None, MagicMock())
+        assert tasks.tasks == []
 
 
 # ── Read API: GET /auth/audit-logs ──────────────────────────────────────
