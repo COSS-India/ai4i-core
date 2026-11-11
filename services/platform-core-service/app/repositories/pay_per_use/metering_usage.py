@@ -176,6 +176,15 @@ class MeteringUsageRepository:
         )
         return {row.d for row in rows}
 
+    async def ends_mid_dropped_day(self, end: datetime) -> bool:
+        """Whether a range ending at ``end`` ends partway through a day whose
+        usage_events rows were dropped: that day's part counts as nothing
+        (see the module docstring), so the range comes up short."""
+        day = _ist_day(end)
+        if end == _ist_midnight(day) or day >= _ist_day(datetime.now(timezone.utc)):
+            return False
+        return day in await self._dropped([day])
+
     async def _split_days(
         self, start: datetime, end: datetime,
     ) -> tuple[list[date], list[tuple[date, datetime, datetime]], set[date]]:

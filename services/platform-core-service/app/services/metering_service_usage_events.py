@@ -155,7 +155,11 @@ class UsageEventsMeteringService(MeteringService):
         """Total / successful / failed requests and average RPS, against the
         same span shifted back (for `today`, yesterday's same clock span).
         The previous figures are None when request rows don't cover that span,
-        as Prometheus reported them past its retention.
+        as Prometheus reported them past its retention, and when the span ends
+        partway through a day whose usage_events rows were dropped (e.g. last
+        7 days' previous span, ending 7 days back at this hour): that day's
+        part can't be counted, so the span would come up short and inflate
+        the growth %.
 
         Also fallback_requests: the requests sent to a fallback service,
         already part of the total (0 when there were none), with how many of
@@ -169,7 +173,7 @@ class UsageEventsMeteringService(MeteringService):
         cur = await self._counts(start, end, tid, type_ids)
         prev_start, prev_end = start - timedelta(seconds=shift), end - timedelta(seconds=shift)
         previous = prev_fb = None
-        if await self._covered(prev_start, prev_end):
+        if await self._covered(prev_start, prev_end) and not await self._usage.ends_mid_dropped_day(prev_end):
             prev = await self._counts(prev_start, prev_end, tid, type_ids)
             previous = (prev.requests, prev.successful, prev.requests / seconds)
             if await self._usage.fallbacks_recorded_by(prev_start):
