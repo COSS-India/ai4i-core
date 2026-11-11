@@ -119,13 +119,16 @@ async def _usage(session, corr: str, at: datetime, type_id, units, cached=0, out
     ), {"c": corr, "at": at, "t": _TENANT, "s": _SERVICE, "ty": type_id, "u": units, "cu": cached, "ou": output})
 
 
-async def _daily(session, day: date, type_id, requests: int, failed: int, units) -> None:
+async def _daily(
+    session, day: date, type_id, requests: int, failed: int, units, server_errors: int = 0, timed: int = 0,
+) -> None:
     await session.execute(text(
         "INSERT INTO daily_usage (usage_date, billing_month, tenant_id, service_id, inference_type_id, task_type,"
-        " request_count, success_count, failed_count, total_units, input_units_cost)"
-        " VALUES (:d, :m, :t, :s, :ty, 'llm', :r, :ok, :f, :u, 1)"
+        " request_count, success_count, failed_count, server_error_count, response_time_count, total_units,"
+        " input_units_cost)"
+        " VALUES (:d, :m, :t, :s, :ty, 'llm', :r, :ok, :f, :se, :rt, :u, 1)"
     ), {"d": day, "m": day.strftime("%Y-%m"), "t": _TENANT, "s": _SERVICE, "ty": type_id,
-        "r": requests, "ok": requests - failed, "f": failed, "u": units})
+        "r": requests, "ok": requests - failed, "f": failed, "se": server_errors, "rt": timed, "u": units})
 
 
 async def _seed(session) -> int:
@@ -279,16 +282,21 @@ class TestPlatformHealthReads:
     """The Adoption report's Platform Health reads (MeteringUsageRepository)."""
 
     @staticmethod
-    async def _seeded_server_errors(session, day: date, rolled_up: bool = False) -> tuple[int, int]:
-        """What _seed adds to server_errors() for ``day``: the read is
-        platform-wide, so other rows in the DB are subtracted. rolled_up adds
-        the day to daily_usage as rolled up before server_error_count existed."""
+    async def _seeded_server_errors(
+        session, day: date, rolled_up: bool = False, dropped: bool = False,
+    ) -> tuple[int, int]:
+        """What _seed adds to server_errors() for ``day``:
+        the read is platform-wide, so other rows in the DB are subtracted.
+        rolled_up adds ``day`` to daily_usage (3 requests, 1 server error);
+        dropped then deletes its usage_events rows, as retention does."""
         repo = MeteringUsageRepository(session)
         rng = (_mid(day), _mid(day + timedelta(days=1)))
         before = await repo.server_errors(*rng)
         llm = await _seed(session)
         if rolled_up:
-            await _daily(session, day, llm, requests=3, failed=1, units=Decimal("400"))
+            await _daily(session, day, llm, requests=3, failed=1, units=Decimal("400"), server_errors=1)
+        if dropped:
+            await _drop(session, day)
         after = await repo.server_errors(*rng)
         return after[0] - before[0], after[1] - before[1]
 
@@ -300,10 +308,20 @@ class TestPlatformHealthReads:
         # D4: 200, 429 (the client's error)
         assert await self._seeded_server_errors(session, _D4) == (2, 0)
 
-    async def test_read_from_usage_events_even_on_rolled_up_days(self, session):
-        """A day rolled up before server_error_count existed keeps it at 0;
-        the 502 is still counted, from usage_events."""
-        assert await self._seeded_server_errors(session, _D3, rolled_up=True) == (3, 1)
+    async def test_a_rolled_up_day_reads_daily_usage(self, session):
+        """A whole day the rollup has: server_error_count, as aggregate() reads."""
+        assert await self._seeded_server_errors(session, _D3, rolled_up=True, dropped=True) == (3, 1)
+
+    async def test_a_report_longer_than_a_day_counts_a_dropped_day(self, session):
+        repo = MeteringUsageRepository(session)
+        rng = (_mid(_D4), _mid(_D3 + timedelta(days=1)))
+        before = await repo.server_errors(*rng)
+        llm = await _seed(session)
+        await _daily(session, _D3, llm, requests=3, failed=1, units=Decimal("400"), server_errors=1)
+        await _drop(session, _D3)
+        after = await repo.server_errors(*rng)
+        # D3 from daily_usage (3, 1), D4 from usage_events (200, 429 -> 2, 0)
+        assert (after[0] - before[0], after[1] - before[1]) == (5, 1)
 
     async def test_p95_and_when_response_times_begin(self, session):
         await _seed(session)
@@ -319,6 +337,20 @@ class TestPlatformHealthReads:
         first = await repo.response_times_from(day[1])
         assert first is not None and first <= day[0] + timedelta(hours=1, minutes=10)   # mue-1
         assert await repo.response_times_from(datetime(2000, 1, 1, tzinfo=timezone.utc)) is None
+
+    async def test_response_times_begin_on_an_earlier_rolled_up_day(self, session):
+        """Retention dropped the day's rows: its rollup rows (with response
+        times) begin it, so the report's fallback rate isn't cut to the
+        days usage_events keeps."""
+        llm = await _seed(session)
+        repo = MeteringUsageRepository(session)
+        end = _mid(_D3 + timedelta(days=1))
+        for corr in ("mue-1", "mue-2", "mue-3"):
+            await _timed(session, corr, 100)
+        await _daily(session, _D6, llm, requests=1, failed=0, units=Decimal("1"), timed=1)
+        await _drop(session, _D6)
+        first = await repo.response_times_from(end)
+        assert first is not None and first <= _mid(_D6)
 
 
 @pytest.mark.asyncio

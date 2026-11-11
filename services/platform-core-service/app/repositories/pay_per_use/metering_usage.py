@@ -73,9 +73,11 @@ _GROUPS = {
 
 @dataclass
 class UsageAgg:
-    """Requests, failures, requests sent to a fallback and units for one group."""
+    """Requests, failures (server errors among them), requests sent to a
+    fallback and units for one group."""
     requests: int = 0
     failed: int = 0
+    server_errors: int = 0
     fallback: int = 0
     fallback_failed: int = 0
     units: Decimal = field(default_factory=Decimal)
@@ -93,6 +95,7 @@ class UsageAgg:
     def add(self, row: Any) -> None:
         self.requests += int(row.requests or 0)
         self.failed += int(row.failed or 0)
+        self.server_errors += int(row.server_errors or 0)
         self.fallback += int(row.fallback or 0)
         self.fallback_failed += int(row.fallback_failed or 0)
         self.units += Decimal(row.units or 0)
@@ -209,6 +212,7 @@ class MeteringUsageRepository:
         rows = await self._all(
             f"SELECT usage_date AS d{', ' + select_cols if cols else ''},"
             " sum(request_count) AS requests, sum(failed_count) AS failed,"
+            " sum(server_error_count) AS server_errors,"
             " sum((fallback_count->>'count')::bigint) AS fallback,"
             " sum((fallback_count->>'failure')::bigint) AS fallback_failed,"
             " sum(total_units) AS units, sum(cached_input_units) AS cached_units,"
@@ -240,7 +244,8 @@ class MeteringUsageRepository:
         group_clause = f" GROUP BY {', '.join(exprs)}" if exprs else ""
         rows = await self._all(
             f"SELECT {select_cols}"
-            f" {_REQUESTS} AS requests, {_FAILED} AS failed, {_FALLBACK} AS fallback,"
+            f" {_REQUESTS} AS requests, {_FAILED} AS failed, {_SERVER_ERRORS} AS server_errors,"
+            f" {_FALLBACK} AS fallback,"
             f" {_FALLBACK_FAILED} AS fallback_failed,"
             " sum(total_units) AS units, sum(cached_input_units) AS cached_units,"
             " sum(output_units) AS output_units"
@@ -362,25 +367,36 @@ class MeteringUsageRepository:
         ) is not None
 
     async def server_errors(self, start: datetime, end: datetime) -> tuple[int, int]:
-        """(requests, server errors) in [start, end), both from usage_events,
-        which has every day's status codes. Not from daily_usage: days rolled
-        up before migration ea3961c258e4 keep server_error_count at 0."""
-        row = (await self._all(
-            f"SELECT {_REQUESTS} AS requests, {_SERVER_ERRORS} AS server_errors FROM usage_events"
-            " WHERE occurred_at >= :start AND occurred_at < :end",
-            {"start": start, "end": end},
-        ))[0]
-        return int(row.requests or 0), int(row.server_errors or 0)
+        """(requests, server errors) in [start, end), platform-wide, read as
+        aggregate() reads: whole past days from daily_usage
+        (server_error_count), the rest from usage_events — so a range of more
+        than a day still counts the days whose usage_events rows were dropped.
+        Days rolled up before migration ea3961c258e4 keep server_error_count
+        at 0."""
+        total = (await self.aggregate(start, end)).get((), UsageAgg())
+        return total.requests, total.server_errors
 
     async def response_times_from(self, end: datetime) -> Optional[datetime]:
         """When request rows began carrying a response time (and the fallback
         flag, written with it), if before ``end``; None when not yet. Walks
-        the request-row index (ix_usage_events_request_rows) in time order."""
-        return await self._scalar(
+        the request-row index (ix_usage_events_request_rows) in time order.
+        An earlier rolled-up day with response times (its usage_events rows
+        dropped) begins it at that day's midnight, as in
+        fallbacks_recorded_by (the backfill's estimates don't count)."""
+        first = await self._scalar(
             f"SELECT occurred_at FROM usage_events WHERE occurred_at < :end AND {REQUEST_ROWS}"
             " AND response_time_ms IS NOT NULL ORDER BY occurred_at LIMIT 1",
             {"end": end},
         )
+        last_day = _ist_day(first) - timedelta(days=1) if first else _ist_day(end - timedelta(microseconds=1))
+        rolled_first = await self._scalar(
+            "SELECT min(usage_date) FROM daily_usage WHERE source = 'rollup' AND response_time_count > 0"
+            " AND usage_date <= :last_day",
+            {"last_day": last_day},
+        )
+        if rolled_first is not None:
+            return min(end, _ist_midnight(rolled_first))
+        return first
 
     async def response_time_p95(self, start: datetime, end: datetime) -> Optional[float]:
         """The 95th-percentile response time (ms) of the requests in
