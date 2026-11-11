@@ -10,7 +10,6 @@ from enum import Enum
 
 class AuditEntity(str, Enum):
     TENANT = "TENANT"
-    TENANT_USER = "TENANT_USER"
 
 
 class AuditAction(str, Enum):

@@ -133,12 +133,8 @@ class TestSnapshot:
         assert snap == {"id": 1, "name": "x"}
 
     def test_extra_is_merged_and_normalised(self) -> None:
-        snap = snapshot(AuditEntity.TENANT_USER, Widget(id=1), extra={"roles": ("A", "B")})
+        snap = snapshot(AuditEntity.TENANT, Widget(id=1), extra={"roles": ("A", "B")})
         assert snap == {"id": 1, "roles": ["A", "B"]}
-
-    def test_tenant_user_rule_excludes_last_login(self) -> None:
-        snap = snapshot(AuditEntity.TENANT_USER, {"id": 1, "last_login": "x", "name": "n"})
-        assert snap == {"id": 1, "name": "n"}
 
     def test_equal_objects_give_equal_snapshots(self) -> None:
         assert snapshot(AuditEntity.TENANT, _widget()) == snapshot(AuditEntity.TENANT, _widget())
@@ -255,7 +251,7 @@ class TestTrack:
         loader = AsyncMock(side_effect=lambda: {"roles": roles.pop(0)})
         widget = _widget()
         async with AuditLogWriter(session).track(
-            AuditEntity.TENANT_USER, widget, AuditAction.UPDATE, extra=loader
+            AuditEntity.TENANT, widget, AuditAction.UPDATE, extra=loader
         ):
             pass
         (row,) = _added_rows(session)

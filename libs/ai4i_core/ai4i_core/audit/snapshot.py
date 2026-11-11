@@ -49,8 +49,6 @@ class SnapshotRule:
 
 _RULES: dict[AuditEntity, SnapshotRule] = {
     AuditEntity.TENANT: SnapshotRule(),
-    # last_login changes on every sign-in; it is not an audited change.
-    AuditEntity.TENANT_USER: SnapshotRule(exclude=BOOKKEEPING_COLUMNS | {"last_login"}),
 }
 
 
