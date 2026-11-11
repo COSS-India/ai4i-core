@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
-from typing import Optional, Union
+from typing import Callable, Optional, Union
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -67,6 +67,38 @@ def _tenant_pk(tenant_id, tenant: Optional[str] = None) -> Optional[int]:
     if tenant_id is not None or tenant:
         raise PermissionError(f"tenant scope without a usable tenant id (tenant_id={tenant_id!r})")
     return None
+
+
+def _seconds(start: datetime, end: datetime) -> int:
+    return max(1, round((end - start).total_seconds()))
+
+
+def _use_previous_of(result: dict, versus: dict) -> None:
+    """Take request_total's vs-previous figures from ``versus`` (the
+    whole-day comparison), keeping the counts shown."""
+    for key, shown in result.items():
+        if key != "filters":
+            shown.update({k: v for k, v in versus[key].items() if "previous" in k})
+
+
+def _fallback_figures(
+    fmt: Callable[[int], str], cur: UsageAgg, compared: Optional[UsageAgg], prev_fb: Optional[UsageAgg],
+) -> dict:
+    """request_total's fallback_requests: ``cur``'s counts, the vs-previous
+    % of ``compared`` against ``prev_fb`` (None without it)."""
+    def figure(attr: str) -> dict:
+        current = getattr(cur, attr)
+        previous = getattr(prev_fb, attr) if prev_fb is not None else None
+        against = getattr(compared, attr) if compared is not None else current
+        return {
+            "count": current,
+            "formatted": fmt(current),
+            "vs_previous_pct": round((against - previous) / previous * 100, 1) if previous else None,
+            "previous_count": previous,
+            "previous_formatted": fmt(previous) if previous is not None else None,
+        }
+
+    return {**figure("fallback"), "successful": figure("fallback_successful"), "failed": figure("fallback_failed")}
 
 
 class UsageEventsMeteringService(MeteringService):
@@ -173,23 +205,14 @@ class UsageEventsMeteringService(MeteringService):
         were recorded."""
         start, end, shift = self._bounds(time_range)
         tid, type_ids = _tenant_pk(tenant_id, tenant), await self._type_ids(task_types)
-        seconds = max(1, round((end - start).total_seconds()))
+        seconds = _seconds(start, end)
         cur = await self._counts(start, end, tid, type_ids)
         prev_start, prev_end = start - timedelta(seconds=shift), end - timedelta(seconds=shift)
-        # What the previous span is compared with: the current one, or both
-        # cut to whole days (see the docstring).
-        compared, compared_seconds = cur, seconds
-        if await self._usage.ends_mid_dropped_day(prev_end):
-            prev_end = ist_midnight(prev_end.astimezone(IST).date())
-            compared_end = prev_end + timedelta(seconds=shift)
-            compared_seconds = max(1, round((compared_end - start).total_seconds()))
-            compared = await self._counts(start, compared_end, tid, type_ids) if prev_end > prev_start else None
-        previous = prev_fb = None
-        if compared is not None and await self._covered(prev_start, prev_end):
-            prev = await self._counts(prev_start, prev_end, tid, type_ids)
-            previous = (prev.requests, prev.successful, prev.requests / compared_seconds)
-            if await self._usage.fallbacks_recorded_by(prev_start):
-                prev_fb = prev
+        prev_end, compared, compared_seconds = await self._compared_span(
+            start, prev_start, prev_end, shift, cur, tid, type_ids,
+        )
+        prev, prev_fb = await self._previous_counts(prev_start, prev_end, compared, tid, type_ids)
+        previous = (prev.requests, prev.successful, prev.requests / compared_seconds) if prev is not None else None
         filters = {
             "inference_only": inference_only, "tenant": tenant,
             "service_id": service_id, "time_range": time_range or "all",
@@ -198,42 +221,40 @@ class UsageEventsMeteringService(MeteringService):
             cur.requests, cur.successful, round(cur.requests / seconds, 4), previous, filters=filters,
         )
         if compared is not cur and previous is not None:
-            # The vs-previous figures from the whole-day comparison.
-            versus = request_total_result(
+            _use_previous_of(result, request_total_result(
                 compared.requests, compared.successful, round(compared.requests / compared_seconds, 4),
                 previous, filters=filters,
-            )
-            for key, shown in result.items():
-                if key != "filters":
-                    shown.update({k: v for k, v in versus[key].items() if "previous" in k})
-        fmt = self._format_count
-
-        def figure(current: int, previous_v: Optional[int], compared_v: Optional[int] = None) -> dict:
-            compared_v = current if compared_v is None else compared_v
-            return {
-                "count": current,
-                "formatted": fmt(current),
-                "vs_previous_pct": (
-                    round((compared_v - previous_v) / previous_v * 100, 1) if previous_v else None
-                ),
-                "previous_count": previous_v,
-                "previous_formatted": fmt(previous_v) if previous_v is not None else None,
-            }
-
-        def prev_of(attr: str) -> Optional[int]:
-            return getattr(prev_fb, attr) if prev_fb is not None else None
-
-        def compared_of(attr: str) -> Optional[int]:
-            return getattr(compared, attr) if compared is not None else None
-
-        result["fallback_requests"] = {
-            **figure(cur.fallback, prev_of("fallback"), compared_of("fallback")),
-            "successful": figure(
-                cur.fallback_successful, prev_of("fallback_successful"), compared_of("fallback_successful"),
-            ),
-            "failed": figure(cur.fallback_failed, prev_of("fallback_failed"), compared_of("fallback_failed")),
-        }
+            ))
+        result["fallback_requests"] = _fallback_figures(self._format_count, cur, compared, prev_fb)
         return result
+
+    async def _compared_span(
+        self, start: datetime, prev_start: datetime, prev_end: datetime, shift: int,
+        cur: UsageAgg, tid: Optional[int], type_ids: Optional[list[int]],
+    ) -> tuple[datetime, Optional[UsageAgg], int]:
+        """(previous span's end, what it's compared with, that span's seconds)
+        for request_total: the current span as is, or — when the previous one
+        ends mid a dropped day — both cut to whole days (see request_total).
+        None to compare with when no whole day is left."""
+        if not await self._usage.ends_mid_dropped_day(prev_end):
+            return prev_end, cur, _seconds(start, prev_end + timedelta(seconds=shift))
+        prev_end = ist_midnight(prev_end.astimezone(IST).date())
+        if prev_end <= prev_start:
+            return prev_end, None, 1
+        compared_end = prev_end + timedelta(seconds=shift)
+        return prev_end, await self._counts(start, compared_end, tid, type_ids), _seconds(start, compared_end)
+
+    async def _previous_counts(
+        self, prev_start: datetime, prev_end: datetime, compared: Optional[UsageAgg],
+        tid: Optional[int], type_ids: Optional[list[int]],
+    ) -> tuple[Optional[UsageAgg], Optional[UsageAgg]]:
+        """(previous span's counts, the same for its fallback figures): None
+        when there's nothing to compare with, or request rows don't cover the
+        span; fallbacks None too when it starts before they were recorded."""
+        if compared is None or not await self._covered(prev_start, prev_end):
+            return None, None
+        prev = await self._counts(prev_start, prev_end, tid, type_ids)
+        return prev, (prev if await self._usage.fallbacks_recorded_by(prev_start) else None)
 
     async def request_volume_chart(
         self,
