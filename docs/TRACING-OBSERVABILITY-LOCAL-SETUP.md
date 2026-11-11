@@ -1,22 +1,22 @@
 # Tracing and Observability — Local Setup
 
-Companion to [`END-TO-END-SETUP-GUIDE.md`](END-TO-END-SETUP-GUIDE.md). The minimal NMT path in that guide **does not require** this stack — inference works without Kafka. Use this document when you want traces, metrics, and dashboards locally.
+Companion to [`docker-compose/SETUP-GUIDE.md`](../docker-compose/SETUP-GUIDE.md). The core Compose path **does not require** the logging/monitoring profiles — inference works without OpenSearch. Use this document when you want traces, metrics, and dashboards locally.
 
-**OS:** Linux only (same as the end-to-end guide).
+**OS:** Linux only (same as the setup guide).
 
 ---
 
 ## What the full stack adds
 
-| Component | Role |
-|-----------|------|
-| **Kafka** | OTEL span transport from `inference-service` |
-| **OpenSearch** | Trace and log storage |
-| **Fluent Bit** | Kafka → OpenSearch pipeline |
-| **Prometheus** | Metrics scrape and storage |
-| **Grafana** | Dashboards |
-| **Alertmanager** | Alert routing |
-| **OpenSearch Dashboards** | Trace/log UI |
+| Component | Role | Compose |
+|-----------|------|---------|
+| **Kafka** | OTEL span transport from `inference-service` | **Core** (always on with `docker compose up -d`) |
+| **OpenSearch** | Trace and log storage | `--profile logging` |
+| **Fluent Bit** | Kafka → OpenSearch pipeline | `--profile logging` |
+| **Prometheus** | Metrics scrape and storage | `--profile monitoring` |
+| **Grafana** | Dashboards | `--profile monitoring` |
+| **Alertmanager** | Alert routing | `--profile monitoring` |
+| **OpenSearch Dashboards** | Trace/log UI | `--profile logging` |
 
 See [`docs/architecture/00-overview.md`](architecture/00-overview.md) for how the telemetry lane fits the platform.
 
@@ -24,25 +24,15 @@ See [`docs/architecture/00-overview.md`](architecture/00-overview.md) for how th
 
 ## Start the observability stack
 
-From the `ai4i-core` repo root (in addition to or instead of the minimal Part B3 services):
+From `ai4i-core/docker-compose/` (after core infra is up):
 
 ```bash
-cd "$AI4I_LOCAL/ai4i-core"
-docker compose -f docker-compose-local.yml up -d \
-  postgres redis \
-  zookeeper kafka \
-  opensearch opensearch-init \
-  prometheus alertmanager grafana node-exporter \
-  fluent-bit opensearch-dashboards
+cd docker-compose
+docker compose --profile monitoring --profile logging up -d
+docker compose ps
 ```
 
-Wait until core services are healthy:
-
-```bash
-docker compose -f docker-compose-local.yml ps
-```
-
-`postgres`, `redis`, and (if started) `kafka` / `opensearch` should be **healthy** before relying on tracing.
+`postgres`, `redis`, and `kafka` should be **healthy** before relying on tracing. OpenSearch may take a minute to become healthy.
 
 ---
 
@@ -52,16 +42,16 @@ docker compose -f docker-compose-local.yml ps
 |----------|----------------|
 | Grafana | http://localhost:3001 |
 | Prometheus | http://localhost:9090 |
-| OpenSearch Dashboards | http://localhost:5602 |
+| OpenSearch Dashboards | http://localhost:5601 |
 | Alertmanager | http://localhost:9095 |
 
-Credentials and overrides are in `docker-compose-local.yml` and root `.env` (`GRAFANA_*`, etc.).
+Credentials and overrides are in `docker-compose/.env` (`GRAFANA_*`, etc.). See [`docker-compose/README.md`](../docker-compose/README.md).
 
 ---
 
 ## Application services
 
-Keep running **auth** (`:8081`), **platform-core** (`:8095`), and **inference** (`:8090`) as in the end-to-end guide Part C.
+Keep running **auth** (`:8081`), **platform-core** (`:8095`), and **inference** (`:8090`) as in the [setup guide Part C](../docker-compose/SETUP-GUIDE.md#part-c--application-services-one-by-one).
 
 ### Turn on trace export (required)
 
@@ -71,9 +61,11 @@ Keep running **auth** (`:8081`), **platform-core** (`:8095`), and **inference** 
 sed -i 's/^KAFKA_ENABLED=.*/KAFKA_ENABLED=true/' services/inference-service/.env
 ```
 
+Also ensure `KAFKA_SERVER=localhost:9092` (this Compose pack maps Kafka to **9092**, not 9093).
+
 Restart inference-service (`--reload` doesn't pick up `.env` changes). It's working when the startup log shows `✓ Kafka span exporter initialized`. If it shows `Kafka span export disabled`, the flag is still `false`.
 
-> Re-running `setup-env.sh` resets this to `false`, so set it again afterwards.
+> Re-running `docker-compose/scripts/setup-env.sh` resets `KAFKA_ENABLED` to `false`, so set it again afterwards.
 
 ---
 
@@ -91,7 +83,7 @@ See `frontend/simple-ui/env.template` for defaults.
 
 | Document | Link |
 |----------|------|
-| End-to-end NMT setup (minimal infra) | [END-TO-END-SETUP-GUIDE.md](END-TO-END-SETUP-GUIDE.md) |
-| Docker Compose local reference | [DOCKER-COMPOSE-LOCAL-REFERENCE.md](DOCKER-COMPOSE-LOCAL-REFERENCE.md) |
+| Canonical local setup | [docker-compose/SETUP-GUIDE.md](../docker-compose/SETUP-GUIDE.md) |
+| Compose quick reference | [docker-compose/README.md](../docker-compose/README.md) |
 | Architecture overview | [architecture/00-overview.md](architecture/00-overview.md) |
 | Inference telemetry path | [architecture/03-inference-service.md](architecture/03-inference-service.md) |

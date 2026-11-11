@@ -23,7 +23,7 @@ Profiles (each builds on core):
   core           postgres + redis + auth/platform/inference (default; no UI)
   frontend       core + simple-ui  (UI for the inference services)
   observability  core + prometheus/alertmanager/grafana/node-exporter
-  logging        core + kafka/zookeeper/opensearch/fluent-bit (KAFKA_ENABLED=true)
+  logging        core + OpenSearch/Fluent Bit profile (KAFKA_ENABLED=true; Kafka is always in core)
   all            everything above
 
 Flags:

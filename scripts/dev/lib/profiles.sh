@@ -34,8 +34,11 @@ resolve_profile() {
             START_FRONTEND="true"
             ;;
 
-        observability)
-            COMPOSE_PROFILE_ARGS=(--profile observability)
+        observability|monitoring)
+            # Alias: observability → compose profile "monitoring"
+            COMPOSE_PROFILE_ARGS=(--profile monitoring)
+            ENABLE_KAFKA="true"
+            WAIT_KAFKA="true"
             ;;
 
         logging)
@@ -46,7 +49,7 @@ resolve_profile() {
             ;;
 
         all)
-            COMPOSE_PROFILE_ARGS=(--profile observability --profile logging)
+            COMPOSE_PROFILE_ARGS=(--profile monitoring --profile logging)
             START_FRONTEND="true"
             ENABLE_KAFKA="true"
             WAIT_KAFKA="true"
@@ -54,11 +57,11 @@ resolve_profile() {
             ;;
 
         *)
-            die "Unsupported profile: '$profile' (use: core | frontend | observability | logging | all)"
+            die "Unsupported profile: '$profile' (use: core | frontend | observability | monitoring | logging | all)"
             ;;
     esac
 }
 
 # Every docker-compose profile we know about — used by `down` to stop
 # whatever might be running regardless of which profile started it.
-ALL_COMPOSE_PROFILE_ARGS=(--profile observability --profile logging)
+ALL_COMPOSE_PROFILE_ARGS=(--profile monitoring --profile logging)

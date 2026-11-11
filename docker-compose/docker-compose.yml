@@ -1,0 +1,495 @@
+# AI4I local platform infra — ai4i-core/docker-compose/
+#
+# Profiles:
+#   (none)        Core platform infra — always started
+#   monitoring    Prometheus, Grafana, Alertmanager, node-exporter, kafka-exporter
+#   logging       OpenSearch, Dashboards, Fluent Bit
+#
+# Usage (from this directory):
+#   docker compose up -d
+#   docker compose --profile monitoring up -d
+#   docker compose --profile logging up -d
+#   docker compose --profile monitoring --profile logging up -d
+#
+# App-only minimal:
+#   docker compose up -d postgres redis
+#
+# Generate per-service .env files:
+#   ./scripts/setup-env.sh
+#
+# Full walkthrough: SETUP-GUIDE.md
+
+name: ai4i-infra
+
+services:
+
+  # ── Core (compulsory) ───────────────────────────────────────────────────────
+
+  postgres:
+    image: postgres:18.6-alpine
+    container_name: ai4i-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-ai4i_platform_db}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./config/postgres/init:/docker-entrypoint-initdb.d:ro
+    command:
+      - postgres
+      - -c
+      - password_encryption=scram-sha-256
+      - -c
+      - listen_addresses=*
+    networks:
+      - ai4i-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB} -h localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.80"
+          memory: 1G
+        reservations:
+          cpus: "0.20"
+          memory: 512M
+
+  redis:
+    image: redis:8.10.3
+    container_name: ai4i-redis
+    command:
+      - redis-server
+      - /usr/local/etc/redis/redis.conf
+      - --requirepass
+      - ${REDIS_PASSWORD:-changeme}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme}
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+      - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      - ai4i-network
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.40"
+          memory: 512M
+        reservations:
+          cpus: "0.10"
+          memory: 256M
+
+  # Apache Kafka 4.3.1 KRaft (no ZooKeeper)
+  kafka:
+    image: apache/kafka:4.3.1
+    container_name: ai4i-kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:9094
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://localhost:${KAFKA_EXTERNAL_PORT:-9092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data/kafka-logs
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID:-evbOm0XBSEKL8QpMsHNG3Q}
+      KAFKA_HEAP_OPTS: ${KAFKA_HEAP_OPTS:--Xms512m -Xmx512m}
+    ports:
+      - "${KAFKA_EXTERNAL_PORT:-9092}:9094"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks:
+      - ai4i-network
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 45s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 1536M
+        reservations:
+          cpus: "0.25"
+          memory: 768M
+
+  kafka-init:
+    image: apache/kafka:4.3.1
+    container_name: ai4i-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    volumes:
+      - ./scripts/init-kafka-topics.sh:/init-kafka-topics.sh:ro
+    entrypoint: ["/bin/bash", "/init-kafka-topics.sh"]
+    environment:
+      KAFKA_BOOTSTRAP: kafka:9092
+    networks:
+      - ai4i-network
+    restart: "no"
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.9
+    container_name: ai4i-etcd
+    environment:
+      ETCD_NAME: etcd0
+      ETCD_DATA_DIR: /etcd-data
+      ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+      ETCD_ADVERTISE_CLIENT_URLS: http://etcd:2379
+      ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd:2380
+      ETCD_INITIAL_CLUSTER: etcd0=http://etcd:2380
+      ETCD_INITIAL_CLUSTER_TOKEN: ai4i-etcd-token
+      ETCD_INITIAL_CLUSTER_STATE: new
+      ETCD_ENABLE_V2: "true"
+    ports:
+      - "${ETCD_PORT:-2379}:2379"
+    volumes:
+      - etcd-data:/etcd-data
+    networks:
+      - ai4i-network
+    healthcheck:
+      test: ["CMD", "etcdctl", "--endpoints=http://127.0.0.1:2379", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.40"
+          memory: 512M
+        reservations:
+          cpus: "0.10"
+          memory: 256M
+
+  apisix:
+    image: apache/apisix:3.7.0-debian
+    container_name: ai4i-apisix
+    depends_on:
+      etcd:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DRL_REDIS_HOST: redis
+      DRL_REDIS_PORT: "6379"
+      DRL_REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme}
+      DRL_TIME_WINDOW: "60"
+      DRL_DEFAULT_LIMIT: "10"
+      DRL_FAIL_OPEN: "true"
+      DRL_LIMIT_HEADER: X-Rate-Limit
+    volumes:
+      - ./config/apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
+    ports:
+      - "${APISIX_HTTP_PORT:-9080}:9080"
+      - "${APISIX_HTTPS_PORT:-9443}:9443"
+      - "${APISIX_ADMIN_PORT:-9180}:9180"
+      - "${APISIX_PROMETHEUS_PORT:-9091}:9091"
+    networks:
+      - ai4i-network
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/9080'"]
+      interval: 15s
+      timeout: 10s
+      retries: 6
+      start_period: 40s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.40"
+          memory: 512M
+        reservations:
+          cpus: "0.10"
+          memory: 256M
+
+  # ── Optional: monitoring ────────────────────────────────────────────────────
+
+  prometheus:
+    profiles: ["monitoring"]
+    image: quay.io/prometheus/prometheus:v3.2.1
+    container_name: ai4i-prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
+      - --web.enable-lifecycle
+      - --web.external-url=http://localhost:${PROMETHEUS_PORT:-9090}
+    networks:
+      - ai4i-network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.80"
+          memory: 1G
+        reservations:
+          cpus: "0.20"
+          memory: 512M
+
+  alertmanager:
+    profiles: ["monitoring"]
+    image: quay.io/prometheus/alertmanager:v0.28.1
+    container_name: ai4i-alertmanager
+    ports:
+      - "${ALERTMANAGER_PORT:-9095}:9093"
+    volumes:
+      - ./config/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    networks:
+      - ai4i-network
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9093/-/healthy"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.20"
+          memory: 256M
+        reservations:
+          cpus: "0.05"
+          memory: 128M
+
+  grafana:
+    profiles: ["monitoring"]
+    image: grafana/grafana:11.6.0
+    container_name: ai4i-grafana
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - ai4i-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health | grep -q ok"]
+      interval: 15s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.40"
+          memory: 512M
+        reservations:
+          cpus: "0.10"
+          memory: 256M
+
+  node-exporter:
+    profiles: ["monitoring"]
+    image: prom/node-exporter:v1.7.0
+    container_name: ai4i-node-exporter
+    ports:
+      - "${NODE_EXPORTER_PORT:-9100}:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/rootfs
+      - --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)
+    networks:
+      - ai4i-network
+    pid: host
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.20"
+          memory: 128M
+        reservations:
+          cpus: "0.05"
+          memory: 64M
+
+  kafka-exporter:
+    profiles: ["monitoring"]
+    image: danielqsj/kafka-exporter:v1.8.0
+    container_name: ai4i-kafka-exporter
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command:
+      - --kafka.server=kafka:9092
+    ports:
+      - "${KAFKA_EXPORTER_PORT:-9308}:9308"
+    networks:
+      - ai4i-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.20"
+          memory: 256M
+        reservations:
+          cpus: "0.05"
+          memory: 128M
+
+  # ── Optional: logging ───────────────────────────────────────────────────────
+
+  opensearch:
+    profiles: ["logging"]
+    image: opensearchproject/opensearch:2.11.0
+    container_name: ai4i-opensearch
+    environment:
+      discovery.type: single-node
+      plugins.security.disabled: "true"
+      OPENSEARCH_JAVA_OPTS: ${OPENSEARCH_JAVA_OPTS:--Xms512m -Xmx768m}
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+      - ./config/opensearch/opensearch.yml:/usr/share/opensearch/config/opensearch.yml:ro
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "${OPENSEARCH_PORT:-9200}:9200"
+      - "${OPENSEARCH_PERF_PORT:-9600}:9600"
+    networks:
+      - ai4i-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 60s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 1536M
+        reservations:
+          cpus: "0.25"
+          memory: 768M
+
+  opensearch-dashboards:
+    profiles: ["logging"]
+    image: opensearchproject/opensearch-dashboards:2.11.0
+    container_name: ai4i-opensearch-dashboards
+    depends_on:
+      opensearch:
+        condition: service_healthy
+    environment:
+      OPENSEARCH_HOSTS: '["http://opensearch:9200"]'
+      DISABLE_SECURITY_DASHBOARDS_PLUGIN: "true"
+    ports:
+      - "${OPENSEARCH_DASHBOARDS_PORT:-5601}:5601"
+    networks:
+      - ai4i-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5601/api/status || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 45s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.40"
+          memory: 512M
+        reservations:
+          cpus: "0.10"
+          memory: 256M
+
+  fluent-bit:
+    profiles: ["logging"]
+    image: fluent/fluent-bit:2.2.0
+    container_name: ai4i-fluent-bit
+    depends_on:
+      opensearch:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    volumes:
+      - ./config/fluent-bit/fluent-bit.conf:/fluent-bit/etc/fluent-bit.conf:ro
+      - ./config/fluent-bit/parsers.conf:/fluent-bit/etc/parsers.conf:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - ai4i-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.40"
+          memory: 512M
+        reservations:
+          cpus: "0.10"
+          memory: 256M
+
+volumes:
+  postgres-data:
+  redis-data:
+  kafka-data:
+  etcd-data:
+  prometheus-data:
+  alertmanager-data:
+  grafana-data:
+  opensearch-data:
+
+networks:
+  ai4i-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${COMPOSE_SUBNET:-172.31.0.0/16}

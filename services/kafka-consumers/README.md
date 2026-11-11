@@ -200,25 +200,17 @@ records a failure that was actually hit.
 
 ### 3. Bring up local infrastructure (optional)
 
-`docker-compose-local.yml` lives at the **repo root**, not in this service — run
-these from there, not from the directory step 1 left you in:
+Platform infra lives under **`docker-compose/`** at the repo root — run from there,
+not from the directory step 1 left you in:
 
 ```bash
-cd ../..    # repo root
-docker compose -f docker-compose-local.yml --profile streaming up -d kafka zookeeper
+cd ../../docker-compose
+docker compose up -d          # postgres, redis, kafka (KRaft), etcd, apisix
 ```
 
-The broker is reachable at `localhost:9093` and runs
-`infrastructure/kafka/local-init-kafka.sh` on startup, which creates a default
-set of topics and consumer groups. Note that `kafka-topic-otel-trace` is **not**
-among them — it is auto-created on first produce
-(`KAFKA_AUTO_CREATE_TOPICS_ENABLE=true`) with broker-default partitioning.
-
-Postgres and Redis come from the same compose file:
-
-```bash
-docker compose -f docker-compose-local.yml up -d postgres redis
-```
+The broker is reachable at **`localhost:9092`**. Topics are created by
+`docker-compose/scripts/init-kafka-topics.sh` (`kafka-init`). See
+[`docker-compose/SETUP-GUIDE.md`](../../docker-compose/SETUP-GUIDE.md).
 
 ---
 
@@ -441,21 +433,21 @@ consumer lines by `trace_id`. Setting it per message from the span's
 
 ### Kafka
 
-Against the local broker (container `ai4v-kafka`, `localhost:9093`):
+Against the local broker (container `ai4i-kafka`, host `localhost:9092`):
 
 ```bash
-# List topics
-docker exec ai4v-kafka kafka-topics --list --bootstrap-server localhost:9093
+# List topics (inside the container, use the internal listener)
+docker exec ai4i-kafka /opt/kafka/bin/kafka-topics.sh --list --bootstrap-server localhost:9092
 
 # Describe a topic (partitions, replication)
-docker exec ai4v-kafka kafka-topics --describe --topic <topic> --bootstrap-server localhost:9093
+docker exec ai4i-kafka /opt/kafka/bin/kafka-topics.sh --describe --topic <topic> --bootstrap-server localhost:9092
 
 # Tail a topic
-docker exec ai4v-kafka kafka-console-consumer --bootstrap-server localhost:9093 \
+docker exec ai4i-kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 \
     --topic <topic> --from-beginning
 
 # Lag and offsets for one consumer — group ids are per-consumer now
-docker exec ai4v-kafka kafka-consumer-groups --bootstrap-server localhost:9093 \
+docker exec ai4i-kafka /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 \
     --group <that-consumer's-group-id> --describe
 ```
 
@@ -521,7 +513,7 @@ loudly rather than quietly succeeding against whatever is running locally. Note
 that the intent is only partly realised: `KAFKA_SERVER=localhost:1` and
 `AUTH_SERVICE_URL=http://auth.invalid` are genuinely unreachable, but
 `POSTGRES_HOST` and `REDIS_HOST` are `localhost` on the default ports — i.e. the
-same endpoints `docker-compose-local.yml` exposes. No current test opens a
+same endpoints local Compose exposes. No current test opens a
 connection, so this has not bitten yet; a new test that does would silently hit
 the developer's real Postgres or Redis. Worth fixing before this is committed.
 

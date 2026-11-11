@@ -5,12 +5,12 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
 # Refuse to run in a native Windows shell (git-bash / MSYS / Cygwin). Windows
-# contributors go through WSL2 — see SETUP_GUIDE.md § Windows (WSL).
+# contributors go through WSL2 / Linux — see docker-compose/SETUP-GUIDE.md.
 check_os() {
 
     case "$(uname -s 2>/dev/null)" in
         MINGW*|MSYS*|CYGWIN*)
-            die "Native Windows shell detected. Open a WSL2 terminal and re-run (see SETUP_GUIDE.md § Windows)."
+            die "Native Windows shell detected. Open a WSL2 terminal and re-run (see docker-compose/SETUP-GUIDE.md)."
             ;;
     esac
 

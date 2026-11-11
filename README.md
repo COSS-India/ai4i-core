@@ -79,22 +79,19 @@ lane** (dotted) so they never touch the business-data path.
 ## 📦 What's Included
 
 - ✅ **Source code** for all backend services and the frontend
-- ✅ **Docker Compose** (`docker-compose-local.yml`) for local infrastructure
+- ✅ **Docker Compose pack** (`docker-compose/`) for local platform infrastructure
 - ✅ **Alembic migrations** for the PostgreSQL schemas
 - ✅ **Shared Python library** (`libs/ai4i_core`): logging + request middleware,
   observability (OpenTelemetry + Prometheus ASGI), bootstrap (API versioning, async DB),
   email, exceptions, request-scoped context
 - ✅ **Code-anchored documentation** — every non-obvious claim links to a source path
 
-> **Note on gateways:** the production infrastructure uses
-> **APISIX** (external to this repo) for path routing and forward-auth.
-> In the **local development setup** defined by `docker-compose-local.yml`
-> there is no gateway container — the Simple UI's Next.js dev server proxies
-> every `/api/v1/*` request through a catch-all API route
-> (`frontend/simple-ui/src/pages/api/v1/[...proxy].ts`) that performs the same
-> path routing and forward-auth (calling auth-service `/api/v1/auth/validate`)
-> and forwards to the backend services directly. See
-> [`docs/SETUP_GUIDE.md`](./docs/SETUP_GUIDE.md) for local-setup specifics.
+> **Note on gateways:** production / staging use **APISIX** for path routing and
+> forward-auth. The local Compose pack also includes APISIX (`:9080`). For day-to-day
+> local UI work, Simple UI’s Next.js catch-all
+> (`frontend/simple-ui/src/pages/api/v1/[...proxy].ts`) can still proxy `/api/v1/*`
+> with the same forward-auth pattern. Full walkthrough:
+> [`docker-compose/SETUP-GUIDE.md`](./docker-compose/SETUP-GUIDE.md).
 
 ## 🎯 Core Services
 
@@ -107,10 +104,8 @@ The AI/ML capabilities (NMT, ASR, TTS, NER, OCR, …) are **consolidated into a 
 | **platform-core-service** | `8095` | PostgreSQL `ai4iplatform_core` | Model & service registry, alerts, telemetry (trace) query | [README](./services/platform-core-service/README.md) · [Architecture](./docs/architecture/02-platform-core-service.md) |
 | **inference-service** | `8090` | stateless | Unified inference orchestration over Triton / OpenAI-compatible backends (tasks below) | [README](./services/inference-service/README.md) · [Architecture](./docs/architecture/03-inference-service.md) |
 
-> In local development all three application services run **natively** on the host (Docker
-> hosts only the infrastructure). The `docker-compose-local.yml` file also includes
-> container definitions for them, used by the alternative all-in-Docker workflow in
-> `docs/SETUP_GUIDE.md` (where platform-core is published on host `8102`).
+> In local development all three application services run **natively** on the host;
+> Docker Compose hosts only platform infrastructure (see `docker-compose/`).
 
 ### Inference services
 
@@ -151,9 +146,9 @@ PII inference requests fail loudly instead of falling through.
 ## 🛠️ Technology Stack
 
 ### Backend
-- **FastAPI** · **Python 3.11** — async microservices
-- **PostgreSQL 15** — primary relational store (per-service databases)
-- **Redis 7** — cache, rate-limit/session state, resolution cache
+- **FastAPI** · **Python 3.11+** — async microservices
+- **PostgreSQL 18** — primary relational store (per-service databases)
+- **Redis 8** — cache, rate-limit/session state, resolution cache
 - **SQLAlchemy (async)** + **Alembic** — ORM & migrations
 - **Pydantic** — validation/serialization
 - **NVIDIA Triton** / OpenAI-compatible **LLM** backends — model serving
@@ -162,57 +157,68 @@ PII inference requests fail loudly instead of falling through.
 - **Next.js 14** · **React 18** · **TypeScript** · **zod**
 
 ### Gateway & Infrastructure
-- **APISIX** — API gateway in production / staging / dev (forward-auth via `/auth/validate`; external to this repo). For local development there is no gateway container — the Simple UI's Next.js dev server proxies `/api/v1/*` through `frontend/simple-ui/src/pages/api/v1/[...proxy].ts`, which handles path routing and forward-auth.
-- **Docker Compose** — local infrastructure (`docker-compose-local.yml`)
-- **Kafka + Zookeeper** — OpenTelemetry span transport (telemetry lane)
-- **Prometheus · Grafana · Alertmanager · Node Exporter** — metrics & alerting
-- **OpenSearch + Dashboards · Fluent Bit** — logs & trace (`traces-*`) storage
+- **APISIX** — API gateway (included in local Compose; also used in shared cluster envs)
+- **Docker Compose** — local platform infra under [`docker-compose/`](./docker-compose/)
+- **Kafka (KRaft)** — OpenTelemetry span transport (telemetry lane); host port **9092**
+- **Prometheus · Grafana · Alertmanager · Node Exporter** — metrics & alerting (`--profile monitoring`)
+- **OpenSearch + Dashboards · Fluent Bit** — logs & trace (`traces-*`) storage (`--profile logging`)
 
 ## 🚀 Deploy Your Own Instance
 
-Get started by installing the prerequisites, then follow **Install → Configure → Run**. For
-the full walkthrough (per-service `.env` files, seed data, model endpoints), see
-**[docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)**.
+Get started with **Install → Configure → Run**. Full walkthrough (architecture, sizing,
+env/migrations, apps one-by-one, optional NMT E2E):
+**[docker-compose/SETUP-GUIDE.md](./docker-compose/SETUP-GUIDE.md)**.
+
+Quick reference: **[docker-compose/README.md](./docker-compose/README.md)** ·
+sizing: **[docker-compose/MINIMAL-INFRA-REQUIREMENTS.md](./docker-compose/MINIMAL-INFRA-REQUIREMENTS.md)**.
 
 ### Prerequisites
-Docker runs the **infrastructure only**; the application services run **natively** on the host.
-- **Docker 20.10+ / Docker Compose 2.0+** — for infrastructure (PostgreSQL, Redis, Kafka, OpenSearch, Prometheus, …)
-- **Python 3.11 + pip** — for the application services (auth, platform-core, inference)
-- **Node 18+** — for the Simple UI frontend
-- ~16 GB RAM recommended for the full stack; Linux / macOS; **Windows requires WSL2** — run Docker, services, and frontend entirely inside WSL (see [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md#windows-wsl))
+Docker runs the **infrastructure only**; application services run **natively** on the host.
+- **Docker Engine 24+ / Compose v2.20+** — platform infra (Postgres, Redis, Kafka, APISIX, …)
+- **Python 3.11+** (`python3.11`) + pip — app services (**required**; PyPI `ai4i-core` needs ≥3.11)
+- **Node 18+** — Simple UI frontend
+- ~8–16 GB RAM depending on mode; **Linux** (Ubuntu tested). See the setup guide sizing section.
 
 ### Install
-Clone the repository. Python and Node dependencies are installed per service in the [Run](#run) step.
 ```bash
 git clone https://github.com/COSS-India/ai4i-core.git
 cd ai4i-core
 ```
 
 ### Configure
-Generate the environment files. This creates the root `.env` and per-service `.env` files.
+Start core infra, then generate per-service `.env` files from the Compose pack
+(credentials sync from `docker-compose/.env`):
 ```bash
-./scripts/setup-env.sh
+cd docker-compose
+cp -n .env.example .env   # edit secrets if needed
+docker compose up -d      # postgres, redis, kafka, etcd, apisix
+./scripts/setup-env.sh    # or from repo root: ./scripts/setup-env.sh
+cd ..
 ```
-Set your model-server endpoints (`TRITON_ENDPOINT_*`) and any secrets before running. The full
-list of variables and defaults is in [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md).
 
 ### Run
 ```bash
-# 1. Start INFRASTRUCTURE in Docker (not the app services)
-#    (add opensearch fluent-bit prometheus grafana for the full observability stack)
-docker compose -f docker-compose-local.yml up -d postgres redis kafka zookeeper
-
-# 2. Run database migrations and seed data (see docs/SETUP_GUIDE.md, Step 5)
+# 1. Migrations (Postgres must already be up)
 ./scripts/migrate.sh all upgrade
 
-# 3. Run each application service NATIVELY (separate terminals)
-cd services/auth-service          && pip install -r requirements.txt && uvicorn app.main:app --port 8081
-cd services/platform-core-service && pip install -r requirements.txt && uvicorn app.main:app --port 8095
-cd services/inference-service     && pip install -r requirements.txt && python main.py          # :8090
+# 2. Application services — one terminal each (use python3.11 venvs)
+cd services/auth-service && python3.11 -m venv .venv && source .venv/bin/activate \
+  && pip install -r requirements.txt && uvicorn app.main:app --port 8081
+cd services/platform-core-service && python3.11 -m venv .venv && source .venv/bin/activate \
+  && pip install -r requirements.txt && uvicorn app.main:app --port 8095
+cd services/inference-service && python3.11 -m venv .venv && source .venv/bin/activate \
+  && pip install -r requirements.txt && python main.py   # :8090
 
-# 4. Run the frontend natively
-cd frontend/simple-ui && npm install && npm run dev                                              # :3000
+# 3. Frontend (optional)
+cd frontend/simple-ui && npm install && npm run dev      # :3000
+
+# Optional observability (from docker-compose/):
+#   docker compose --profile monitoring up -d
+#   docker compose --profile logging up -d
 ```
+
+For a local **NMT** model (simple E2E inference test), see
+[SETUP-GUIDE Part G](./docker-compose/SETUP-GUIDE.md#part-g--local-nmt-model-simple-e2e-test).
 
 ### Service URLs (local)
 | URL | What |
@@ -221,24 +227,23 @@ cd frontend/simple-ui && npm install && npm run dev                             
 | http://localhost:8081 | auth-service |
 | http://localhost:8095 | platform-core-service |
 | http://localhost:8090 | inference-service |
-| http://localhost:3001 | Grafana |
-| http://localhost:9090 | Prometheus |
-| http://localhost:5602 | OpenSearch Dashboards |
+| http://localhost:9080 | APISIX gateway |
+| http://localhost:3001 | Grafana (`--profile monitoring`) |
+| http://localhost:9090 | Prometheus (`--profile monitoring`) |
+| http://localhost:5601 | OpenSearch Dashboards (`--profile logging`) |
 
 ### Troubleshoot
-Common local-setup issues and fixes. Full details in the setup guides linked below.
+Common local-setup issues. Full table: [SETUP-GUIDE Troubleshooting](./docker-compose/SETUP-GUIDE.md#troubleshooting).
 
 | Issue | Solution |
 |-------|----------|
-| Frontend loads at `:3000` but API calls fail (Windows) | Run Docker, the Python services, and `npm run dev` all from the **same WSL2 environment** so they share `localhost`. See [SETUP_GUIDE.md#troubleshooting](./docs/SETUP_GUIDE.md#troubleshooting). |
-| Service errors with connection refused on startup | The service `.env` must use `localhost`, not the Docker-internal hostnames `postgres`/`redis`. Check `grep -E "HOST\|PORT" services/<svc>/.env`. |
-| `migrate.sh` fails with a database connection error | Ensure Postgres is running (`docker compose -f docker-compose-local.yml ps postgres`) and `POSTGRES_HOST=localhost` in the migrations `.env`. |
-| Inference call returns an error for a seeded service | The service was seeded with a blank `endpoint`. `PATCH /api/v1/services` with a reachable model-server URL. See [SETUP_GUIDE.md](./docs/SETUP_GUIDE.md), Step 10. |
+| `No matching distribution found for ai4i-core` | Use **Python 3.11+** for venvs (`python3.11 -m venv`), not system 3.10 |
+| Service connection refused on startup | Service `.env` must use `localhost`, not Docker hostnames `postgres`/`redis`/`kafka` |
+| `migrate.sh` DB connection error | `cd docker-compose && docker compose up -d postgres`; `POSTGRES_HOST=localhost` |
+| Kafka `ECONNREFUSED` on `:9093` | This pack maps Kafka to **9092**. Set `KAFKA_SERVER=localhost:9092` (or re-run `setup-env.sh`) |
+| Inference error for a seeded service | Seeded `endpoint` may be blank — `PATCH` a reachable Triton/LLM URL (SETUP-GUIDE Part G for NMT) |
 
-Other troubleshooting support:
-- [docs/SETUP_GUIDE.md#troubleshooting](./docs/SETUP_GUIDE.md#troubleshooting) — local native setup
-- [docs/END-TO-END-SETUP-GUIDE.md#troubleshooting](./docs/END-TO-END-SETUP-GUIDE.md#troubleshooting) — end-to-end setup
-- [GitHub Issues](https://github.com/COSS-India/ai4i-core/issues)
+Other support: [GitHub Issues](https://github.com/COSS-India/ai4i-core/issues)
 
 ## 📖 Documentation
 
@@ -249,15 +254,12 @@ Other troubleshooting support:
 - [docs/architecture/03-inference-service.md](./docs/architecture/03-inference-service.md) — inference orchestration over Triton/LLM
 
 ### Setup & deployment
-- [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md) — comprehensive local setup (Windows/WSL covered)
-- [docs/END-TO-END-SETUP-GUIDE.md](./docs/END-TO-END-SETUP-GUIDE.md) — end-to-end setup walkthrough
-- [docs/SINGLE_COMMAND_SETUP.md](./docs/SINGLE_COMMAND_SETUP.md) — single-command setup
-- [docs/DEPLOYMENT.md](./docs/DEPLOYMENT.md) — production deployment guide
-- [docs/DOCKER-COMPOSE-LOCAL-REFERENCE.md](./docs/DOCKER-COMPOSE-LOCAL-REFERENCE.md) — `docker-compose-local.yml` reference
-- [docs/TRACING-OBSERVABILITY-LOCAL-SETUP.md](./docs/TRACING-OBSERVABILITY-LOCAL-SETUP.md) — local tracing & observability
-
-### Usage
-- [docs/USER_GUIDE.md](./docs/USER_GUIDE.md) — end-user guide (auth, inference requests, Simple UI, FAQ)
+- [docker-compose/SETUP-GUIDE.md](./docker-compose/SETUP-GUIDE.md) — **canonical local setup** (Compose + native apps)
+- [docker-compose/README.md](./docker-compose/README.md) — Compose tiers, images, ports
+- [docker-compose/MINIMAL-INFRA-REQUIREMENTS.md](./docker-compose/MINIMAL-INFRA-REQUIREMENTS.md) — host sizing
+- [docs/TRACING-OBSERVABILITY-LOCAL-SETUP.md](./docs/TRACING-OBSERVABILITY-LOCAL-SETUP.md) — local tracing & observability profiles
+- [docs/PPU-LOCAL-SETUP.md](./docs/PPU-LOCAL-SETUP.md) — pay-per-use locally
+- [docs/NOTIFICATIONS-ALERTS-LOCAL-SETUP.md](./docs/NOTIFICATIONS-ALERTS-LOCAL-SETUP.md) — notification emails locally
 
 ### Codebase & API
 - [docs/CODEBASE_GUIDE.md](./docs/CODEBASE_GUIDE.md) — how the codebase is organized
@@ -325,7 +327,7 @@ Licensed under the **MIT License** — see [LICENSE](./LICENSE).
 Open-source project — support is community-based:
 - **Issues:** [GitHub Issues](https://github.com/COSS-India/ai4i-core/issues)
 - **Docs:** the [`docs/`](./docs/) directory
-- **Debugging:** infrastructure logs via `docker compose -f docker-compose-local.yml logs <service>`;
+- **Debugging:** infrastructure logs via `cd docker-compose && docker compose logs <service>`;
   app-service logs appear in the terminal running each service; check per-service `/health` endpoints
 
 > Provided as-is; no commercial SLA.

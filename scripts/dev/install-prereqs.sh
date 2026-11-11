@@ -23,7 +23,7 @@ node_major() {
 # ── Refuse native Windows shells — use WSL2 ──────────────────────────────────
 case "$(uname -s 2>/dev/null)" in
     MINGW*|MSYS*|CYGWIN*)
-        echo "Native Windows shell detected. Run this inside WSL2 (see SETUP_GUIDE.md § Windows)." >&2
+        echo "Native Windows shell detected. Run this inside WSL2 (see docker-compose/SETUP-GUIDE.md)." >&2
         exit 1
         ;;
 esac

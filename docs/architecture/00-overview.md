@@ -72,36 +72,38 @@ Permission enforcement is centralized: auth-service loads `api_permissions.json`
 Downstream services do **not** re-check permissions in-process
 (`services/auth-service/app/routes/__init__.py`).
 
-> The gateway is **APISIX** and is **external to this repository** (not a
-> container in `docker-compose-local.yml`). `/auth/validate` is invoked as
-> a forward-auth subrequest (`GET`), and auth-service returns `X-User-ID` /
-> `X-Tenant-ID` headers that the gateway injects into the upstream request
-> (`services/auth-service/app/routes/validation.py`).
+> The gateway is **APISIX**. Locally it ships in
+> [`docker-compose/`](../../docker-compose/) (`ai4i-apisix`, host `:9080`).
+> `/auth/validate` is invoked as a forward-auth subrequest (`GET`), and
+> auth-service returns `X-User-ID` / `X-Tenant-ID` headers that the gateway
+> injects into the upstream request
+> (`services/auth-service/app/routes/validation.py`). For UI-only local work,
+> Simple UI’s Next.js proxy can perform the same forward-auth pattern without
+> going through APISIX.
 
 ## Infrastructure inventory
 
-Defined in [`docker-compose-local.yml`](../../docker-compose-local.yml). Network:
-`microservices-network` (bridge, `172.30.0.0/16`).
+Defined in [`docker-compose/docker-compose.yml`](../../docker-compose/docker-compose.yml).
+Network: `ai4i-network`. Application services and the portal run **natively** on
+the host (not as Compose app containers). See
+[`docker-compose/SETUP-GUIDE.md`](../../docker-compose/SETUP-GUIDE.md).
 
-| Component | Container | Host port | Role |
-|-----------|-----------|-----------|------|
-| PostgreSQL 15 | `ai4v-postgres` | 5432 | Primary relational store (SCRAM-SHA-256) |
-| Redis 7 | `ai4v-redis` | 6379 | Cache, rate-limit state, OAuth state, resolution cache |
-| Zookeeper | `ai4v-zookeeper` | — (internal 2181) | Kafka coordination |
-| Kafka | `ai4v-kafka` | 9093 (`9093:9092`) | OTEL span transport (telemetry lane); services connect via the broker host listener configured in `KAFKA_SERVER` |
-| Prometheus | `ai4v-prometheus` | 9090 | Metrics scrape + time-series store |
-| Grafana | `ai4v-grafana` | 3001 | Dashboards |
-| Alertmanager | `ai4v-alertmanager` | 9095 | Alert routing / notifications |
-| Node Exporter | `ai4v-node-exporter` | 9100 | Host metrics |
-| OpenSearch | `ai4v-opensearch` | 9204 | Trace (`traces-*`) + log storage |
-| OpenSearch Dashboards | `ai4v-opensearch-dashboards` | 5602 | Trace/log visualization |
-| Fluent Bit | `ai4v-fluent-bit` | — | Log/span shipper → OpenSearch |
-| migration-runner | `ai4v-migration-runner` | — | On-demand Alembic migrations |
-| Portal (simple-ui) | `ai4v-simple-ui` | 3000 | Next.js web UI |
+| Component | Container | Host port | Role | Profile |
+|-----------|-----------|-----------|------|---------|
+| PostgreSQL 18 | `ai4i-postgres` | 5432 | Primary relational store (SCRAM-SHA-256) | core |
+| Redis 8 | `ai4i-redis` | 6379 | Cache, rate-limit state, OAuth state, resolution cache | core |
+| Kafka (KRaft) | `ai4i-kafka` | 9092 | OTEL span transport; apps use `KAFKA_SERVER=localhost:9092` | core |
+| etcd | `ai4i-etcd` | 2379 | APISIX config store | core |
+| APISIX | `ai4i-apisix` | 9080 / 9180 | Gateway + admin | core |
+| Prometheus | `ai4i-prometheus` | 9090 | Metrics scrape + time-series store | `monitoring` |
+| Grafana | `ai4i-grafana` | 3001 | Dashboards | `monitoring` |
+| Alertmanager | `ai4i-alertmanager` | 9095 | Alert routing / notifications | `monitoring` |
+| Node Exporter | `ai4i-node-exporter` | 9100 | Host metrics | `monitoring` |
+| OpenSearch | `ai4i-opensearch` | 9200 | Trace (`traces-*`) + log storage | `logging` |
+| OpenSearch Dashboards | `ai4i-opensearch-dashboards` | 5601 | Trace/log visualization | `logging` |
+| Fluent Bit | `ai4i-fluent-bit` | — | Log/span shipper → OpenSearch | `logging` |
 
-Application services (`auth-service`, `platform-core-service`) are also defined in compose
-for convenience; `inference-service` runs natively and is reached via
-`inference-service:host-gateway`.
+Migrations: `./scripts/migrate.sh` on the host (not a Compose service).
 
 ## Databases
 
