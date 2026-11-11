@@ -395,15 +395,19 @@ class UsageEventsMeteringService(MeteringService):
         }
 
     async def model_usage_growth_pct(self) -> Optional[float]:
-        """LLM requests, last 30 days vs the 30 before. None until request
-        rows cover the whole 60 days, or with no traffic in the earlier 30."""
-        now = datetime.now(timezone.utc)
+        """LLM requests, the last 30 whole IST days (up to today's midnight)
+        vs the 30 before. Whole days: windows ending now would start and end
+        partway through days whose usage_events rows were dropped, which
+        can't be cut at the hour (see MeteringUsageRepository), so the two
+        would count different lengths. None until request rows cover the
+        whole 60 days, or with no traffic in the earlier 30."""
+        today = ist_midnight(datetime.now(IST).date())
         month = timedelta(days=30)
-        if not await self._covered(now - 2 * month, now):
+        if not await self._covered(today - 2 * month, today):
             return None
         type_ids = await self._type_ids(["llm"])
-        cur = await self._counts(now - month, now, None, type_ids)
-        prev = await self._counts(now - 2 * month, now - month, None, type_ids)
+        cur = await self._counts(today - month, today, None, type_ids)
+        prev = await self._counts(today - 2 * month, today - month, None, type_ids)
         if prev.requests <= 0:
             return None
         return round((cur.requests - prev.requests) / prev.requests * 100, 1)

@@ -562,6 +562,29 @@ class TestDroppedDays:
         assert await repo.ends_mid_dropped_day(_mid(_D5)) is False
         assert await repo.ends_mid_dropped_day(_mid(_D5) + timedelta(hours=20)) is True
 
+    async def test_model_usage_growth_compares_whole_days(self, session):
+        """Last 30 whole days vs the 30 before, both from midnight: not
+        windows ending now, whose edge days (dropped) would make the current
+        one longer. Today's request isn't counted."""
+        if await session.scalar(text(
+            "SELECT 1 FROM daily_usage WHERE usage_date >= :d UNION ALL"
+            " SELECT 1 FROM usage_events WHERE occurred_at >= :at LIMIT 1"
+        ), {"d": _TODAY - timedelta(days=61), "at": _mid(_TODAY - timedelta(days=61))}):
+            pytest.skip("the database already holds usage from the last 61 days")
+        llm = await _llm_id(session)
+        await _add_service(session)
+        day = lambda n: _TODAY - timedelta(days=n)  # noqa: E731
+        await _daily(session, day(61), llm, requests=1, failed=0, units=0)    # covers the 60 days
+        await _daily(session, day(60), llm, requests=1, failed=0, units=0)    # previous
+        await _daily(session, day(31), llm, requests=1, failed=0, units=0)    # previous
+        await _daily(session, day(30), llm, requests=2, failed=0, units=0)    # current
+        await _daily(session, day(1), llm, requests=2, failed=0, units=0)     # current
+        now = datetime.now(timezone.utc)
+        await _request(session, "mue-today", max(_mid(_TODAY), now - timedelta(minutes=1)), 200, llm)
+        # 4 against 2. Windows ending now would count today's request too, and
+        # day 30 (dropped, cut mid-day) in the current window only: 5 vs 2, +150%.
+        assert await _svc(session).model_usage_growth_pct() == 100.0
+
     async def test_fallbacks_recorded_by_from_dropped_days(self, session):
         llm = await _llm_id(session)
         await _add_service(session)
