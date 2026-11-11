@@ -54,8 +54,10 @@ boundaries are IST midnight.
 
 3. Retention: every usage_events day before the last
    USAGE_EVENTS_RETENTION_DAYS closed days is dropped, oldest first, one
-   transaction per day with usage_events locked ACCESS EXCLUSIVE, so no row
-   can land in the day between its last rollup and the drop. A day that
+   transaction per day with the day's partition (or DEFAULT, for a day with
+   no partition) locked EXCLUSIVE, so no row can land in the day between
+   its last rollup and the drop, while other days' writes and all reads go
+   on; the parent is locked only by DETACH, at the end. A day that
    still has its partition is rolled up a last time (picking up anything
    that arrived since the lookback last read it), then its partition and
    any DEFAULT rows of it are dropped; a failure rolls the whole day back,
@@ -528,9 +530,12 @@ async def _drop_day(day: date, partition: str | None, has_default: bool) -> None
                 logger.warning("Rollup already running, retention skipped | usage_date=%s", day)
                 return
             # Taken before the day is read: a row written between the rollup
-            # and the drop would be lost with the partition.
+            # and the drop would be lost with it. Only the table the day's
+            # rows are in is locked, and EXCLUSIVE lets reads through: writes
+            # of other days (today's billing) and dashboard reads go on. The
+            # parent's ACCESS EXCLUSIVE lock is DETACH's, taken at the end.
             await session.execute(text("SET LOCAL lock_timeout = '30s'"))
-            await session.execute(text(f'LOCK TABLE "{TABLE}" IN ACCESS EXCLUSIVE MODE'))
+            await session.execute(text(f'LOCK TABLE "{partition or DEFAULT}" IN EXCLUSIVE MODE'))
 
             if await session.scalar(_HAS_BACKFILL, {"usage_date": day}) is not None:
                 mode, rows = "backfill", []
