@@ -7,6 +7,7 @@ session, so the rows asserted on are exactly what would be inserted.
 import base64
 import logging
 import os
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -15,12 +16,15 @@ import pytest
 _TEST_KEY = base64.b64encode(b"\x01" * 64).decode("ascii")
 os.environ.setdefault("PII_ENCRYPTION_KEY", _TEST_KEY)
 
-from ai4i_core.audit import AuditLog, AuditLogWriter, diff  # noqa: E402
+from ai4i_core.audit import AuditEntity, AuditLog, AuditLogWriter, diff  # noqa: E402
 from ai4i_core.context import reset_trace_id, set_trace_id  # noqa: E402
 
 from app.core import pii_crypto  # noqa: E402
+from app.core.exceptions import ServiceUnavailableError, ValidationError  # noqa: E402
+from app.dependencies.services import get_audit_log_repository  # noqa: E402
 from app.models.tenant import Tenant, TenantStatus  # noqa: E402
 from app.models.user import User  # noqa: E402
+from app.routes.audit_logs import list_audit_logs  # noqa: E402
 from app.schemas.tenant import TenantStatusUpdate  # noqa: E402
 from app.services import audit_messages as am  # noqa: E402
 from app.services.tenant_service import TenantService  # noqa: E402
@@ -108,21 +112,21 @@ class TestTenantMessages:
             {"organisation": "Acme", "status": "ACTIVE"},
             {"organisation": "Acme", "status": "SUSPENDED", "reason": "Audit pending"},
         )
-        assert message == "Tenant 'Acme' suspended."
+        assert message == "Tenant 'Acme' suspended. Reason: Audit pending."
 
     def test_deactivate(self) -> None:
         message = am.tenant_status_changed(
             {"organisation": "Acme", "status": "SUSPENDED"},
             {"organisation": "Acme", "status": "DEACTIVATED", "reason": "Agreement or engagement ended"},
         )
-        assert message == "Tenant 'Acme' deactivated."
+        assert message == "Tenant 'Acme' deactivated. Reason: Agreement or engagement ended."
 
     def test_reactivate(self) -> None:
         message = am.tenant_status_changed(
             {"organisation": "Acme", "status": "DEACTIVATED"},
             {"organisation": "Acme", "status": "ACTIVE", "reason": "New agreement signed"},
         )
-        assert message == "Tenant 'Acme' activated."
+        assert message == "Tenant 'Acme' activated. Reason: New agreement signed."
 
     def test_setup_completed(self) -> None:
         message = am.tenant_status_changed(
@@ -130,6 +134,13 @@ class TestTenantMessages:
             {"organisation": "Acme", "status": "ACTIVE"},
         )
         assert message == "Tenant 'Acme' activated. Contact admin completed setup."
+
+    def test_blank_reason_is_left_out(self) -> None:
+        message = am.tenant_status_changed(
+            {"organisation": "Acme", "status": "ACTIVE"},
+            {"organisation": "Acme", "status": "SUSPENDED", "reason": "  "},
+        )
+        assert message == "Tenant 'Acme' suspended."
 
 
 # ── Tenant status change ────────────────────────────────────────────────
@@ -161,7 +172,7 @@ class TestTenantStatusChangeAudit:
             {"field": "reason", "from": None, "to": "Agreement renewal pending"},
             {"field": "status", "from": "ACTIVE", "to": "SUSPENDED"},
         ]
-        assert row.message == "Tenant 'Acme University' suspended."
+        assert row.message == "Tenant 'Acme University' suspended. Reason: Agreement renewal pending."
         # The reason lives in the snapshot (design doc 2.2 / 8), not a column.
         assert row.new_state["reason"] == "Agreement renewal pending"
         # PII is stored as ciphertext, never plaintext.
@@ -233,3 +244,79 @@ class TestTenantStatusChangeAudit:
                 _admin(), 7, TenantStatusUpdate(status=TenantStatus.SUSPENDED, reason="R")
             )
         session.commit.assert_not_awaited()
+
+
+# ── Read API: GET /auth/audit-logs ──────────────────────────────────────
+
+
+def _row(**overrides) -> AuditLog:
+    values = dict(
+        id=5,
+        created_at=datetime(2026, 11, 3, 10, 15, 31, tzinfo=timezone.utc),
+        entity_name="TENANT",
+        entity_id="7",
+        action="STATUS_CHANGE",
+        previous_state={"status": "ACTIVE", "reason": None},
+        new_state={"status": "SUSPENDED", "reason": "Agreement renewal pending"},
+        message="Tenant 'Acme' suspended. Reason: Agreement renewal pending.",
+        performed_by=uuid4(),
+        trace_id="abc",
+    )
+    values.update(overrides)
+    return AuditLog(**values)
+
+
+async def _list(repo, **params):
+    query = dict(
+        entity_name=None, entity_id=None, action=None,
+        from_=None, to=None, offset=0, limit=100,
+    )
+    query.update(params)
+    return await list_audit_logs(**query, _user_id=uuid4(), repo=repo)
+
+
+class TestListAuditLogs:
+    @pytest.mark.asyncio
+    async def test_returns_message_actor_and_time(self) -> None:
+        row = _row()
+        repo = MagicMock()
+        repo.list = AsyncMock(return_value=[row])
+
+        response = await _list(repo, entity_name=AuditEntity.TENANT, entity_id="7")
+
+        repo.list.assert_awaited_once_with(
+            AuditEntity.TENANT, "7", None, None, None, 0, 100
+        )
+        item = response.model_dump(by_alias=True)["data"][0]
+        assert item["message"] == "Tenant 'Acme' suspended. Reason: Agreement renewal pending."
+        assert item["performed_by"] == row.performed_by
+        assert item["created_at"] == row.created_at
+        assert item["changes"] == [
+            {"field": "reason", "from": None, "to": "Agreement renewal pending"},
+            {"field": "status", "from": "ACTIVE", "to": "SUSPENDED"},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_entity_id_without_entity_name_is_422(self) -> None:
+        repo = MagicMock()
+        repo.list = AsyncMock()
+        with pytest.raises(ValidationError) as exc:
+            await _list(repo, entity_id="7")
+        assert exc.value.code == "INVALID_AUDIT_FILTER"
+        repo.list.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_from_after_to_is_422(self) -> None:
+        repo = MagicMock()
+        repo.list = AsyncMock()
+        with pytest.raises(ValidationError) as exc:
+            await _list(
+                repo,
+                from_=datetime(2026, 11, 2, tzinfo=timezone.utc),
+                to=datetime(2026, 11, 1, tzinfo=timezone.utc),
+            )
+        assert exc.value.code == "INVALID_AUDIT_FILTER"
+
+    def test_repository_dependency_is_503_without_platform_core_db(self) -> None:
+        with pytest.raises(ServiceUnavailableError):
+            get_audit_log_repository(platform_core_db=None)
