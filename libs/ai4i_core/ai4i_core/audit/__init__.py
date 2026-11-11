@@ -15,7 +15,7 @@ from ai4i_core.audit.snapshot import (
     snapshot,
     to_json_value,
 )
-from ai4i_core.audit.writer import AuditLogWriter, AuditTracker
+from ai4i_core.audit.writer import AuditLogWriter, AuditTracker, noop_audit_writer
 
 __all__ = [
     "AuditAction",
@@ -29,6 +29,7 @@ __all__ = [
     "SnapshotRule",
     "diff",
     "get_snapshot_rule",
+    "noop_audit_writer",
     "register_snapshot_rule",
     "snapshot",
     "to_json_value",

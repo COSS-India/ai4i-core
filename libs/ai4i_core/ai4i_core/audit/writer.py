@@ -192,3 +192,12 @@ class AuditLogWriter:
             await self._session.rollback()
         except Exception:
             logger.exception("Audit session rollback failed trace_id=%s", get_trace_id())
+
+
+def noop_audit_writer() -> AuditLogWriter:
+    """Writer with no session: ``track`` blocks run, nothing is recorded.
+
+    Default for services built outside request DI (scripts, tests), e.g.
+    ``self._audit = audit or noop_audit_writer()``.
+    """
+    return AuditLogWriter(None)

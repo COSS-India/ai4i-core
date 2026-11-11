@@ -21,6 +21,7 @@ from ai4i_core.audit import (
     AuditLogRepository,
     AuditLogWriter,
     diff,
+    noop_audit_writer,
     snapshot,
 )
 from ai4i_core.context import reset_trace_id, set_trace_id
@@ -281,6 +282,15 @@ class TestTrack:
         assert widget.name == "Changed"
         assert "not configured" in caplog.text
         assert await AuditLogWriter(None).commit() is False
+
+    @pytest.mark.asyncio
+    async def test_noop_audit_writer_runs_block_and_records_nothing(self) -> None:
+        writer = noop_audit_writer()
+        widget = _widget()
+        async with writer.track(AuditEntity.TENANT, widget, AuditAction.UPDATE):
+            widget.name = "Changed"
+        assert widget.name == "Changed"
+        assert await writer.commit() is False
 
     @pytest.mark.asyncio
     async def test_isolated_flush_failure_is_logged_not_raised(self, caplog) -> None:
