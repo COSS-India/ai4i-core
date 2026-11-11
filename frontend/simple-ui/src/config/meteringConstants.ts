@@ -56,6 +56,8 @@ export const METERING = {
       SUCCESSFUL: "successful",
       FAILED: "failed",
       FALLBACK_REQUESTS: "fallback_requests",
+      FALLBACK_SUCCESSFUL: "fallback_successful",
+      FALLBACK_FAILED: "fallback_failed",
       AVG_RPS: "avg_rps",
     },
     LABELS: {

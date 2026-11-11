@@ -21,7 +21,7 @@ interface OverviewKpiCardsProps {
   data: OverviewResponse;
   /** When false, omit the all-institutions helper on Total Requests. */
   isPlatformWide?: boolean;
-  /** Institution Admin only: show the Fallback Requests card after Failed. */
+  /** Institution Admin only: show the Fallback Requests / Successful / Failed cards after Failed. */
   showFallbackRequests?: boolean;
 }
 
@@ -31,6 +31,8 @@ const KPI_VALUE_COLORS: Record<string, string> = {
   successful: "green.500",
   failed: "red.500",
   fallback_requests: "orange.500",
+  fallback_successful: "green.500",
+  fallback_failed: "red.500",
   avg_rps: "gray.800",
 };
 
@@ -38,17 +40,25 @@ const KPI_VALUE_COLORS: Record<string, string> = {
 const INVERTED_TREND_KPIS = new Set<string>([
   METERING.KPI.KEYS.FAILED,
   METERING.KPI.KEYS.FALLBACK_REQUESTS,
+  METERING.KPI.KEYS.FALLBACK_FAILED,
 ]);
 
-/** Drop or reposition the fallback KPI so it sits right after Failed. */
+// Fallback KPIs, in display order. Shown only to Institution Admins.
+const FALLBACK_KPI_KEYS: readonly string[] = [
+  METERING.KPI.KEYS.FALLBACK_REQUESTS,
+  METERING.KPI.KEYS.FALLBACK_SUCCESSFUL,
+  METERING.KPI.KEYS.FALLBACK_FAILED,
+];
+
+/** Drop the fallback KPIs, or reposition them so they sit right after Failed. */
 function orderOverviewKpis(kpis: MeteringCell[], showFallbackRequests: boolean): MeteringCell[] {
-  const fallbackKey = METERING.KPI.KEYS.FALLBACK_REQUESTS;
-  const rest = kpis.filter((kpi) => kpi.key !== fallbackKey);
-  const fallback = kpis.find((kpi) => kpi.key === fallbackKey);
-  if (!showFallbackRequests || !fallback) return rest;
+  const rest = kpis.filter((kpi) => !FALLBACK_KPI_KEYS.includes(kpi.key));
+  if (!showFallbackRequests) return rest;
+  const fallbacks = FALLBACK_KPI_KEYS.flatMap((key) => kpis.filter((kpi) => kpi.key === key));
+  if (fallbacks.length === 0) return rest;
   const failedIndex = rest.findIndex((kpi) => kpi.key === METERING.KPI.KEYS.FAILED);
-  if (failedIndex === -1) return [...rest, fallback];
-  return [...rest.slice(0, failedIndex + 1), fallback, ...rest.slice(failedIndex + 1)];
+  if (failedIndex === -1) return [...rest, ...fallbacks];
+  return [...rest.slice(0, failedIndex + 1), ...fallbacks, ...rest.slice(failedIndex + 1)];
 }
 
 /** Top-row summary KPI cards (Total Requests, Successful, Failed, Average RPS). */
