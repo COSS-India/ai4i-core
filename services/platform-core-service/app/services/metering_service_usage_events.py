@@ -49,7 +49,7 @@ from app.utils.metering_promql_builder import (
     comparison_shift_seconds,
 )
 from app.utils.prometheus_client import PrometheusClient
-from app.utils.usage_period import IST
+from app.utils.usage_period import IST, ist_midnight
 
 logger = logging.getLogger(__name__)
 
@@ -155,11 +155,15 @@ class UsageEventsMeteringService(MeteringService):
         """Total / successful / failed requests and average RPS, against the
         same span shifted back (for `today`, yesterday's same clock span).
         The previous figures are None when request rows don't cover that span,
-        as Prometheus reported them past its retention, and when the span ends
-        partway through a day whose usage_events rows were dropped (e.g. last
-        7 days' previous span, ending 7 days back at this hour): that day's
-        part can't be counted, so the span would come up short and inflate
-        the growth %.
+        as Prometheus reported them past its retention.
+
+        When the previous span ends partway through a day whose usage_events
+        rows were dropped (last 7 days' previous span ends 7 days back at
+        this hour), that day's part can't be counted, and the span would come
+        up short and inflate the growth %. Both spans are then compared over
+        their whole days only (up to today's midnight, and the same shifted
+        back), all of them in daily_usage; the counts shown still cover the
+        whole range, only the vs-previous figures leave today's part out.
 
         Also fallback_requests: the requests sent to a fallback service,
         already part of the total (0 when there were none), with how many of
@@ -172,27 +176,45 @@ class UsageEventsMeteringService(MeteringService):
         seconds = max(1, round((end - start).total_seconds()))
         cur = await self._counts(start, end, tid, type_ids)
         prev_start, prev_end = start - timedelta(seconds=shift), end - timedelta(seconds=shift)
+        # What the previous span is compared with: the current one, or both
+        # cut to whole days (see the docstring).
+        compared, compared_seconds = cur, seconds
+        if await self._usage.ends_mid_dropped_day(prev_end):
+            prev_end = ist_midnight(prev_end.astimezone(IST).date())
+            compared_end = prev_end + timedelta(seconds=shift)
+            compared_seconds = max(1, round((compared_end - start).total_seconds()))
+            compared = await self._counts(start, compared_end, tid, type_ids) if prev_end > prev_start else None
         previous = prev_fb = None
-        if await self._covered(prev_start, prev_end) and not await self._usage.ends_mid_dropped_day(prev_end):
+        if compared is not None and await self._covered(prev_start, prev_end):
             prev = await self._counts(prev_start, prev_end, tid, type_ids)
-            previous = (prev.requests, prev.successful, prev.requests / seconds)
+            previous = (prev.requests, prev.successful, prev.requests / compared_seconds)
             if await self._usage.fallbacks_recorded_by(prev_start):
                 prev_fb = prev
+        filters = {
+            "inference_only": inference_only, "tenant": tenant,
+            "service_id": service_id, "time_range": time_range or "all",
+        }
         result = request_total_result(
-            cur.requests, cur.successful, round(cur.requests / seconds, 4), previous,
-            filters={
-                "inference_only": inference_only, "tenant": tenant,
-                "service_id": service_id, "time_range": time_range or "all",
-            },
+            cur.requests, cur.successful, round(cur.requests / seconds, 4), previous, filters=filters,
         )
+        if compared is not cur and previous is not None:
+            # The vs-previous figures from the whole-day comparison.
+            versus = request_total_result(
+                compared.requests, compared.successful, round(compared.requests / compared_seconds, 4),
+                previous, filters=filters,
+            )
+            for key, shown in result.items():
+                if key != "filters":
+                    shown.update({k: v for k, v in versus[key].items() if "previous" in k})
         fmt = self._format_count
 
-        def figure(current: int, previous_v: Optional[int]) -> dict:
+        def figure(current: int, previous_v: Optional[int], compared_v: Optional[int] = None) -> dict:
+            compared_v = current if compared_v is None else compared_v
             return {
                 "count": current,
                 "formatted": fmt(current),
                 "vs_previous_pct": (
-                    round((current - previous_v) / previous_v * 100, 1) if previous_v else None
+                    round((compared_v - previous_v) / previous_v * 100, 1) if previous_v else None
                 ),
                 "previous_count": previous_v,
                 "previous_formatted": fmt(previous_v) if previous_v is not None else None,
@@ -201,10 +223,15 @@ class UsageEventsMeteringService(MeteringService):
         def prev_of(attr: str) -> Optional[int]:
             return getattr(prev_fb, attr) if prev_fb is not None else None
 
+        def compared_of(attr: str) -> Optional[int]:
+            return getattr(compared, attr) if compared is not None else None
+
         result["fallback_requests"] = {
-            **figure(cur.fallback, prev_of("fallback")),
-            "successful": figure(cur.fallback_successful, prev_of("fallback_successful")),
-            "failed": figure(cur.fallback_failed, prev_of("fallback_failed")),
+            **figure(cur.fallback, prev_of("fallback"), compared_of("fallback")),
+            "successful": figure(
+                cur.fallback_successful, prev_of("fallback_successful"), compared_of("fallback_successful"),
+            ),
+            "failed": figure(cur.fallback_failed, prev_of("fallback_failed"), compared_of("fallback_failed")),
         }
         return result
 

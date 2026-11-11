@@ -538,23 +538,29 @@ class TestDroppedDays:
         rt = await svc.request_total(True, None, None, _day_range(_D5), tenant_id=str(_TENANT))
         assert rt["total_requests"]["previous_count"] == 2   # D6 vs D5: covered
 
-    async def test_no_previous_figures_when_the_previous_span_ends_mid_dropped_day(self, session):
-        """The previous span of a range ending mid-day (last 7 days at 20:00)
-        ends mid-day on a dropped day: that part can't be counted, so the
-        previous figures are None rather than short."""
+    async def test_previous_span_ending_mid_dropped_day_compares_whole_days(self, session):
+        """Like last 7 days at 20:00: D4 00:00 -> D3 20:00 against the 2 days
+        before, which ends at D5 20:00 — and D5 is dropped (only in
+        daily_usage), so its first 20 hours can't be counted. The vs-previous
+        figures compare whole days instead: D4 against D6. The counts shown
+        still cover the whole range."""
         llm = await _seed(session)
-        await _daily(session, _D4, llm, requests=2, failed=1, units=0)
-        # D4 20:00 -> D3 20:00; its previous span, D5 20:00 -> D4 20:00, ends mid D4.
-        rng = AbsoluteRange(start=_mid(_D4) + timedelta(hours=20), end=_mid(_D3) + timedelta(hours=20))
-        svc = _svc(session)
-        kept = await svc.request_total(True, None, None, rng, tenant_id=str(_TENANT))
-        assert kept["total_requests"]["previous_count"] is not None   # D4's rows still there
-        await _drop(session, _D4)
-        rt = await svc.request_total(True, None, None, rng, tenant_id=str(_TENANT))
-        assert (rt["total_requests"]["previous_count"], rt["total_requests"]["vs_previous_pct"]) == (None, None)
-        assert rt["fallback_requests"]["previous_count"] is None
-        # A previous span ending at a dropped day's midnight is whole: still compared.
-        assert await svc._usage.ends_mid_dropped_day(_mid(_D4 + timedelta(days=1))) is False
+        # Request rows cover the previous span from its start (D6).
+        await _daily(session, _D6 - timedelta(days=1), llm, requests=1, failed=0, units=0)
+        rng = AbsoluteRange(
+            start=_mid(_D4), end=_mid(_D3) + timedelta(hours=20), previous_shift_seconds=2 * 86_400,
+        )
+        rt = await _svc(session).request_total(True, None, None, rng, tenant_id=str(_TENANT))
+        total = rt["total_requests"]
+        # Shown: D4 (200, 429) + D3 until 20:00 (200, 502, 200).
+        assert (total["count"], rt["failed_requests"]["count"]) == (5, 2)
+        # Compared: D4's 2 requests against D6's 1 (not D6 + nothing of D5: +400%).
+        assert (total["previous_count"], total["vs_previous_pct"]) == (1, 100.0)
+        assert (rt["failed_requests"]["previous_count"], rt["failed_requests"]["vs_previous_pct"]) == (0, None)
+        # A span ending at a dropped day's midnight is whole: nothing to cut.
+        repo = MeteringUsageRepository(session)
+        assert await repo.ends_mid_dropped_day(_mid(_D5)) is False
+        assert await repo.ends_mid_dropped_day(_mid(_D5) + timedelta(hours=20)) is True
 
     async def test_fallbacks_recorded_by_from_dropped_days(self, session):
         llm = await _llm_id(session)
