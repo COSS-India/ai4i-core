@@ -7,6 +7,7 @@ Subpackages:
     exceptions         — Shared exception hierarchy, response envelope, FastAPI handlers
     logging            — Structured JSON logging with trace correlation
     observability      — Prometheus metrics, middleware
+    audit              — Generic audit log (audit_logs in ai4iplatform_core)
     ppu                — Pay-Per-Use quota guard and inference type registry
     telemetry          — OpenTelemetry tracing, OpenSearch query clients
 """
