@@ -6,7 +6,7 @@
 # from nothing to a running stack: it clones the repo (or updates an existing
 # clone), installs any missing prerequisites, and runs ./scripts/dev/up.
 #
-# Default profile is "core" (backend only). See docs/SINGLE_COMMAND_SETUP.md.
+# Default profile is "core" (backend only). Prefer docker-compose/SETUP-GUIDE.md for manual setup.
 #
 # Usage (once published as a Gist):
 #   curl -fsSL <GIST_RAW_URL> | bash                 # core profile, start immediately
@@ -47,7 +47,7 @@ done
 # ── 1. Native Windows shells are unsupported — use WSL2 ───────────────────────
 case "$(uname -s 2>/dev/null)" in
     MINGW*|MSYS*|CYGWIN*)
-        die "Native Windows shell detected. Run this inside WSL2 (see docs/SETUP_GUIDE.md § Windows)."
+        die "Native Windows shell detected. Run this inside WSL2 / Linux (see docker-compose/SETUP-GUIDE.md)."
         ;;
 esac
 

@@ -36,9 +36,9 @@ Full design, diagrams, and code-anchored detail live in the architecture docs:
 
 ## Run
 
-Runs **natively on the host** (not a `docker-compose-local.yml` service); other services
-reach it via `inference-service:host-gateway`. Infrastructure (Redis, Kafka, OpenSearch, …)
-still comes from compose at the repo root.
+Runs **natively on the host**. Infrastructure (Redis, Kafka, OpenSearch, …) comes from
+[`docker-compose/`](../../docker-compose/). See
+[`docker-compose/SETUP-GUIDE.md`](../../docker-compose/SETUP-GUIDE.md).
 
 ```bash
 pip install -r requirements.txt

@@ -2,7 +2,7 @@
 
 ## Documentation
 
-- **Setup & local development**: [docs/SETUP_GUIDE.md](../docs/SETUP_GUIDE.md)
+- **Setup & local development**: [docker-compose/SETUP-GUIDE.md](../docker-compose/SETUP-GUIDE.md)
 - **Architecture**: [docs/architecture/](../docs/architecture/)
 - **Contributing**: [CONTRIBUTING.md](../CONTRIBUTING.md)
 

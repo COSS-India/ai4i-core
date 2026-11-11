@@ -19,14 +19,14 @@ ai4i-core/
 ├── libs/                   ← shared Python library used by all services
 ├── infrastructure/         ← database migrations and observability configs
 ├── tests/                  ← cross-service integration and E2E tests
-├── scripts/                ← setup and migration helper scripts
-├── docs/                   ← architecture docs, setup guide, this file
-└── docker-compose-local.yml← one-command local stack
+├── scripts/                ← migration helpers (+ setup-env wrapper)
+├── docs/                   ← architecture docs, companions, this file
+└── docker-compose/         ← local platform infra + SETUP-GUIDE
 ```
 
 The full system architecture and request-flow diagrams live in
 [`docs/architecture/00-overview.md`](architecture/00-overview.md). The step-by-step
-local environment setup lives in [`docs/SETUP_GUIDE.md`](SETUP_GUIDE.md). Start with
+local environment setup lives in [`docker-compose/SETUP-GUIDE.md`](../docker-compose/SETUP-GUIDE.md). Start with
 those if you want the big picture before diving into code.
 
 ---
@@ -48,7 +48,8 @@ those if you want the big picture before diving into code.
 | `infrastructure/alertmanager/` | Alertmanager notification routing |
 | `tests/` | Cross-service integration tests and E2E browser tests |
 | `scripts/` | `setup-env.sh`, `migrate.sh`, `validate-migrations.py` |
-| `docs/` | Architecture docs, setup guide, images |
+| `docs/` | Architecture docs, feature companions, images |
+| `docker-compose/` | Local platform infra + SETUP-GUIDE |
 
 ---
 
@@ -317,7 +318,7 @@ Each service also has its own unit and integration test suite:
 
 | Script | Purpose |
 |--------|---------|
-| `setup-env.sh` | Copies `env.template` to `.env` and prompts for values |
+| `setup-env.sh` | Wrapper → `docker-compose/scripts/setup-env.sh` (sync Compose creds → service `.env`) |
 | `migrate.sh` | Runs Alembic migrations against all target databases |
 | `run-migration-cli.sh` | Thin wrapper around the migration CLI |
 | `validate-migrations.py` | Checks migration files for consistency (used as a pre-commit hook) |
@@ -328,7 +329,7 @@ Each service also has its own unit and integration test suite:
 
 1. **Understand the system** — read [`docs/architecture/00-overview.md`](architecture/00-overview.md) for the overall architecture and request flow.
 
-2. **Set up your local environment** — follow [`docs/SETUP_GUIDE.md`](SETUP_GUIDE.md) to bring up the full stack with `docker-compose-local.yml`.
+2. **Set up your local environment** — follow [`docker-compose/SETUP-GUIDE.md`](../docker-compose/SETUP-GUIDE.md) to bring up Compose infra and native app services.
 
 3. **Pick the service you are working on** and read its `README.md`:
    - `services/auth-service/README.md`
@@ -363,5 +364,5 @@ Each service also has its own unit and integration test suite:
 | [`docs/architecture/01-auth-service.md`](architecture/01-auth-service.md) | Auth service deep-dive: JWT, RBAC, multi-tenancy, data privacy |
 | [`docs/architecture/02-platform-core-service.md`](architecture/02-platform-core-service.md) | Model registry, alerting, PII, billing |
 | [`docs/architecture/03-inference-service.md`](architecture/03-inference-service.md) | Inference orchestration, task services, OpenTelemetry tracing |
-| [`docs/SETUP_GUIDE.md`](SETUP_GUIDE.md) | Step-by-step local development setup |
+| [`docker-compose/SETUP-GUIDE.md`](../docker-compose/SETUP-GUIDE.md) | Step-by-step local development setup |
 | [`CONTRIBUTING.md`](../CONTRIBUTING.md) | Contribution workflow, branching strategy, PR checklist |

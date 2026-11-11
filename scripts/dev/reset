@@ -23,8 +23,9 @@ then
 fi
 
 docker compose \
-    -f "$ROOT_DIR/docker-compose-local.yml" \
-    --profile frontend --profile observability --profile logging \
+    --project-directory "$ROOT_DIR/docker-compose" \
+    -f "$ROOT_DIR/docker-compose/docker-compose.yml" \
+    --profile monitoring --profile logging \
     down -v
 
 rm -rf "$ROOT_DIR/.run"

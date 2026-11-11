@@ -1,0 +1,39 @@
+# Minimal APISIX config for local Docker Compose (etcd + admin API + prometheus)
+
+apisix:
+  node_listen: 9080
+  enable_admin: true
+  enable_control: true
+  control:
+    ip: 0.0.0.0
+    port: 9092
+  ssl:
+    enable: true
+    listen:
+      - port: 9443
+
+deployment:
+  role: traditional
+  role_traditional:
+    config_provider: etcd
+  admin:
+    allow_admin:
+      - 0.0.0.0/0
+    admin_key:
+      - name: admin
+        key: edd1c9f034335f136f87ad84b625c8f1
+        role: admin
+    admin_listen:
+      ip: 0.0.0.0
+      port: 9180
+  etcd:
+    host:
+      - http://etcd:2379
+    prefix: /apisix
+    timeout: 30
+
+plugin_attr:
+  prometheus:
+    export_addr:
+      ip: 0.0.0.0
+      port: 9091

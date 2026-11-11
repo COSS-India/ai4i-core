@@ -4,19 +4,24 @@ set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
-COMPOSE_FILE="$ROOT_DIR/docker-compose-local.yml"
+COMPOSE_DIR="$ROOT_DIR/docker-compose"
+COMPOSE_FILE="$COMPOSE_DIR/docker-compose.yml"
 
 # Wrapper around `docker compose` that pins the project directory and env file to
-# the repo root. Without --env-file, compose resolves ${POSTGRES_PASSWORD} etc.
-# from the .env in the *current* directory — so running `up` from anywhere but
-# the repo root would start postgres/redis with the wrong (or empty) passwords.
+# docker-compose/. Without --env-file, compose resolves ${POSTGRES_PASSWORD} etc.
+# from the .env in the *current* directory — so running `up` from elsewhere would
+# start postgres/redis with the wrong (or empty) passwords.
 _compose() {
 
     local env_args=()
-    [[ -f "$ROOT_DIR/.env" ]] && env_args=(--env-file "$ROOT_DIR/.env")
+    if [[ -f "$COMPOSE_DIR/.env" ]]; then
+        env_args=(--env-file "$COMPOSE_DIR/.env")
+    elif [[ -f "$ROOT_DIR/.env" ]]; then
+        env_args=(--env-file "$ROOT_DIR/.env")
+    fi
 
     docker compose \
-        --project-directory "$ROOT_DIR" \
+        --project-directory "$COMPOSE_DIR" \
         ${env_args[@]+"${env_args[@]}"} \
         -f "$COMPOSE_FILE" \
         "$@"

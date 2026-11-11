@@ -1,9 +1,9 @@
 # Notifications & Alerts — Local Setup
 
-Companion to [`SETUP_GUIDE.md`](SETUP_GUIDE.md). Use this to get notification **emails** working locally.
+Companion to [`docker-compose/SETUP-GUIDE.md`](../docker-compose/SETUP-GUIDE.md). Use this to get notification **emails** working locally.
 
 **Before you start:**
-- Core setup done with the **full stack** (`SETUP_GUIDE.md` Step 4, Option B).
+- Core setup done via [`docker-compose/SETUP-GUIDE.md`](../docker-compose/SETUP-GUIDE.md) (Parts A–E); Kafka is part of core Compose.
 - auth-service, platform-core-service, inference-service and the Simple UI (`:3000`) running.
 - SMTP credentials available (e.g. Amazon SES SMTP).
 - For PPU notifications (budget/quota threshold and exhausted), also complete [`PPU-LOCAL-SETUP.md`](PPU-LOCAL-SETUP.md).

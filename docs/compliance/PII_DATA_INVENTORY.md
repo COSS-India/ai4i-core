@@ -205,7 +205,7 @@ Per `docs/architecture/00-overview.md`, GDPR/DPDPA data-subject rights are expli
 | Trace user/tenant attributes | `services/inference-service/trace/request_span.py` |
 | Frontend token/profile storage | `frontend/simple-ui/src/utils/tokenStorage.ts`, `src/services/authService.ts` |
 | Kafka retention | `infrastructure/kafka/init-kafka.sh` |
-| Prometheus retention | `docker-compose-local.yml` |
+| Prometheus retention | `docker-compose/docker-compose.yml` / `docker-compose/config/prometheus/` |
 | RBAC roles and permissions seed | `infrastructure/databases/migrations/postgres/alembic/versions/ai4iplatform_auth/2362774ac241_seed_default_data.py` |
 | Gateway permission map | `services/auth-service/api_permissions.json` |
 | Compliance architecture notes | `docs/architecture/00-overview.md` |

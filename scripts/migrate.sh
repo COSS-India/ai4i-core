@@ -70,7 +70,7 @@ Usage:
   ./scripts/migrate.sh [database|all] [command] [alembic args...]
 
 Prerequisite:
-  Postgres must be running and reachable (e.g. docker compose -f docker-compose-local.yml up -d postgres).
+  Postgres must be running and reachable (e.g. cd docker-compose && docker compose up -d postgres).
   For host/WSL runs, set POSTGRES_HOST=localhost and POSTGRES_PORT=5434 in
   infrastructure/databases/migrations/postgres/alembic/.env .
 

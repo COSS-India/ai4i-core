@@ -1,10 +1,10 @@
 # Pay-Per-Use (PPU) — Local Setup
 
-Companion to [`SETUP_GUIDE.md`](SETUP_GUIDE.md). The core setup **does not** bill anything: inference works, but no budget is deducted and no quota is counted. Use this document when you want Pay-Per-Use (tiers, budgets, quotas and per-request billing) working locally.
+Companion to [`docker-compose/SETUP-GUIDE.md`](../docker-compose/SETUP-GUIDE.md). The core setup **does not** bill anything: inference works, but no budget is deducted and no quota is counted. Use this document when you want Pay-Per-Use (tiers, budgets, quotas and per-request billing) working locally.
 
-**Before you start:** complete `SETUP_GUIDE.md` Steps 1–9 with the **full stack (Step 4, Option B)**. Kafka is required. auth-service (`:8081`), platform-core-service (`:8095`), inference-service (`:8090`) and the Simple UI (`:3000`) must all be running, and at least one model service must have a working endpoint (Step 10).
+**Before you start:** complete the [setup guide](../docker-compose/SETUP-GUIDE.md) through Parts A–D (Compose core includes Kafka). auth-service (`:8081`), platform-core-service (`:8095`), inference-service (`:8090`) and the Simple UI (`:3000`) must all be running, and at least one model service must have a working endpoint ([Part G](../docker-compose/SETUP-GUIDE.md#part-g--local-nmt-model-simple-e2e-test) for local NMT).
 
-**OS:** Linux / WSL2 only (same as the main guide).
+**OS:** Linux only (same as the setup guide).
 
 ## How billing works
 
@@ -41,7 +41,7 @@ All three services and the consumer must use the **same Redis host and `REDIS_DB
 
 ## Step 2: Run the PPU consumer
 
-`services/kafka-consumers` is a separate service that `SETUP_GUIDE.md` does not start. Without it, inference works but nothing is ever billed.
+`services/kafka-consumers` is a separate service that the setup guide does not start. Without it, inference works but nothing is ever billed.
 
 ### Step 2.1: Install
 
@@ -236,7 +236,7 @@ docker exec ai4v-redis redis-cli -a "$RP" --no-auth-warning HGETALL 'auth:apikey
 
 | Document | |
 |---|---|
-| [`SETUP_GUIDE.md`](SETUP_GUIDE.md) | Core local setup |
+| [`docker-compose/SETUP-GUIDE.md`](../docker-compose/SETUP-GUIDE.md) | Core local setup |
 | [`TRACING-OBSERVABILITY-LOCAL-SETUP.md`](TRACING-OBSERVABILITY-LOCAL-SETUP.md) | Kafka, OpenSearch, traces |
 | [`services/kafka-consumers/README.md`](../services/kafka-consumers/README.md) | Consumer internals (parts are out of date: it describes a service-root `env.template` and `config.py` that no longer exist) |
 | [`services/kafka-consumers/ARCHITECTURE.md`](../services/kafka-consumers/ARCHITECTURE.md) | Offset handling and the double-billing guards |
