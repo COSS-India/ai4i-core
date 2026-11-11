@@ -37,6 +37,7 @@
     { "endpoint": "PATCH:/api/v1/auth/tenants/{tenant_id}/users/{user_id}/status", "permissionRequired": 46, "description": "Toggle tenant user status (tenant.users.update)" },
     { "endpoint": "PATCH:/api/v1/auth/tenants/{tenant_id}/users/{user_id}", "permissionRequired": 46, "description": "Update tenant user profile (tenant.users.update)" },
     { "endpoint": "DELETE:/api/v1/auth/tenants/{tenant_id}/users/{user_id}", "permissionRequired": 47, "description": "Soft-delete tenant user (tenant.users.delete)" },
+    { "endpoint": "GET:/api/v1/auth/audit-logs",                          "permissionRequired": 1,  "description": "List audit logs (admin sentinel — ADMIN only)" },
 
     { "endpoint": "POST:/api/v1/auth/tenants/{tenant_id}/applications",           "permissionRequired": 43, "description": "Create Application (application.create); ADMIN and TENANT ADMIN only" },
     { "endpoint": "GET:/api/v1/auth/tenants/{tenant_id}/applications",            "permissionRequired": 48, "description": "List Applications (application.read); ADMIN and TENANT ADMIN only" },

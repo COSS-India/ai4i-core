@@ -8,7 +8,7 @@ This is the ONLY place where repositories are imported and wired into services.
 from functools import lru_cache
 from typing import Optional
 
-from ai4i_core.audit import AuditLogWriter
+from ai4i_core.audit import AuditLogRepository, AuditLogWriter
 from ai4i_core.email import EmailClient
 from ai4i_core.email.providers.factory import build_provider
 from ai4i_core.email.settings import EmailSettings
@@ -18,7 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import redis.asyncio as aioredis
 
 from app.core.config import settings
-from app.core.database import get_audit_db, get_db
+from app.core.database import get_audit_db, get_db, get_platform_core_db
+from app.core.exceptions import ServiceUnavailableError
 from app.core.redis import get_redis
 from app.repositories.api_key_repository import APIKeyRepository
 from app.repositories.application_repository import ApplicationRepository
@@ -72,6 +73,19 @@ def get_audit_writer(
 ) -> AuditLogWriter:
     """One writer per request, shared by every service that request builds."""
     return AuditLogWriter(audit_db)
+
+
+def get_audit_log_repository(
+    platform_core_db: Optional[AsyncSession] = Depends(get_platform_core_db),
+) -> AuditLogRepository:
+    """Read side of audit_logs (ai4iplatform_core). 503 when that DB is not
+    configured, since there is nothing to read from."""
+    if platform_core_db is None:
+        raise ServiceUnavailableError(
+            "Audit logs are unavailable: platform core database is not configured.",
+            service_name="ai4iplatform_core",
+        )
+    return AuditLogRepository(platform_core_db)
 
 
 def get_role_service(
