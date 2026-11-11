@@ -2,7 +2,7 @@
 api_permissions.json). Reads ai4iplatform_core.audit_logs; no business logic."""
 
 from datetime import datetime
-from typing import Optional
+from typing import Annotated, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
@@ -66,15 +66,15 @@ def to_audit_log_response(row: AuditLog) -> AuditLogResponse:
     responses=error_responses(403, 422, 503),
 )
 async def list_audit_logs(
-    entity_name: Optional[AuditEntity] = Query(None),
-    entity_id: Optional[str] = Query(None),
-    action: Optional[AuditAction] = Query(None),
-    from_: Optional[datetime] = Query(None, alias="from"),
-    to: Optional[datetime] = Query(None),
-    offset: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=500),
-    _user_id: UUID = Depends(get_current_user_id),
-    repo: AuditLogRepository = Depends(get_audit_log_repository),
+    _user_id: Annotated[UUID, Depends(get_current_user_id)],
+    repo: Annotated[AuditLogRepository, Depends(get_audit_log_repository)],
+    entity_name: Annotated[Optional[AuditEntity], Query()] = None,
+    entity_id: Annotated[Optional[str], Query()] = None,
+    action: Annotated[Optional[AuditAction], Query()] = None,
+    from_: Annotated[Optional[datetime], Query(alias="from")] = None,
+    to: Annotated[Optional[datetime], Query()] = None,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
 ):
     """List audit log rows, newest first.
 
