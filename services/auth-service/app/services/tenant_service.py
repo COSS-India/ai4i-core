@@ -16,6 +16,7 @@ from uuid import UUID
 
 import httpx
 
+from ai4i_core.audit import AuditAction, AuditEntity, AuditLogWriter, noop_audit_writer
 from ai4i_core.email import EmailClient, EmailMessage
 from fastapi import BackgroundTasks, HTTPException, status
 
@@ -77,6 +78,7 @@ from app.services.tenant_lifecycle import (
     is_default_tenant,
     sync_tenant_users_for_status,
 )
+from app.services.audit_messages import tenant_status_changed
 from app.services.email_helpers import (
     enqueue_email,
     persist_token_verification,
@@ -428,6 +430,7 @@ class TenantService:
         api_key_service: Optional[APIKeyService] = None,
         refresh_token_repo: Optional[RefreshTokenRepository] = None,
         allocation_service: Optional[AllocationService] = None,
+        audit: Optional[AuditLogWriter] = None,
     ) -> None:
         self._tenants = tenant_repo
         self._users = user_repo
@@ -439,6 +442,9 @@ class TenantService:
         self._api_keys = api_key_service
         self._refresh_tokens = refresh_token_repo
         self._allocations = allocation_service
+        # Status changes are audited to ai4iplatform_core: each one commits
+        # ai4iplatform_auth first, then calls self._audit.commit().
+        self._audit = audit or noop_audit_writer()
 
     # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -1311,17 +1317,23 @@ class TenantService:
         await sync_tenant_users_for_status(
             self._users, tenant_id, body.status, updated_by=current_user.id
         )
-        # Every status change carries a reason (assert_status_reason), which
-        # replaces the previous one.
-        await self._tenants.update(
-            tenant,
-            {
-                "status": body.status,
-                "reason": body.reason,
-                "updated_by": current_user.id,
-            },
-        )
-        await self._tenants.save_and_refresh(tenant)
+        async with self._audit.track(
+            AuditEntity.TENANT, tenant, AuditAction.STATUS_CHANGE, performed_by=current_user.id
+        ) as t:
+            # Every status change carries a reason (assert_status_reason),
+            # which replaces the previous one; earlier reasons stay in the
+            # audit rows.
+            await self._tenants.update(
+                tenant,
+                {
+                    "status": body.status,
+                    "reason": body.reason,
+                    "updated_by": current_user.id,
+                },
+            )
+            t.message = tenant_status_changed(t.before, t.after_now())
+        await self._tenants.save_and_refresh(tenant)  # 1. commit ai4iplatform_auth
+        await self._audit.commit()  # 2. commit the audit row in ai4iplatform_core
         if self._api_keys is not None:
             if body.status == TenantStatus.SUSPENDED:
                 # Keep is_active=True (Inactive): same key auto-resumes on reactivation.

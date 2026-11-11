@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
+from ai4i_core.audit import AuditAction, AuditEntity, AuditLogWriter, noop_audit_writer
 from ai4i_core.email import EmailClient
 from fastapi import BackgroundTasks
 
@@ -58,6 +59,7 @@ from app.services.email_helpers import (
     setup_token_expires_at,
 )
 from app.services.api_key_service import APIKeyService
+from app.services.audit_messages import tenant_status_changed
 from app.services.cache_service import CacheService
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
@@ -125,6 +127,7 @@ class AuthService:
         email_client: EmailClient,
         cache_service: CacheService,
         api_key_service: Optional[APIKeyService] = None,
+        audit: Optional[AuditLogWriter] = None,
     ) -> None:
         self._users = user_repo
         self._roles = role_service
@@ -136,6 +139,7 @@ class AuthService:
         self._email = email_client
         self._cache = cache_service
         self._api_keys = api_key_service
+        self._audit = audit or noop_audit_writer()
 
     def _validate_token_of_type(self, token: str, expected_type: str):
         """Validate a JWT and assert its type. Raises TokenExpiredError / TokenInvalidError on failure."""
@@ -428,7 +432,13 @@ class AuthService:
         tenant = await self._tenants.get_by_id(user.tenant_id)
         if tenant is None:
             raise EntityNotFoundError(f"Tenant {user.tenant_id}")
-        await self._tenants.update(tenant, {"status": TenantStatus.ACTIVE, "reason": None})
+        # Audited here, committed by the caller: set_password_with_token
+        # commits ai4iplatform_auth, then the audit row.
+        async with self._audit.track(
+            AuditEntity.TENANT, tenant, AuditAction.STATUS_CHANGE, performed_by=user.id
+        ) as t:
+            await self._tenants.update(tenant, {"status": TenantStatus.ACTIVE, "reason": None})
+            t.message = tenant_status_changed(t.before, t.after_now())
         await sync_tenant_users_for_status(
             self._users, tenant.id, TenantStatus.ACTIVE, updated_by=user.id
         )
@@ -599,6 +609,7 @@ class AuthService:
         await self._verifications.deactivate(token_obj)
         await self._activate_pending_tenant_for_contact_admin(user)
         await self._users.commit()
+        await self._audit.commit()
         # No per-user API key cache refresh here: API keys belong to
         # Applications, not Users (migration e9f0a1b2c3d4) — a user setting
         # their password has no bearing on any key's cache. The tenant-level
