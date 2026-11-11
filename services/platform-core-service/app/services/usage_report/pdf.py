@@ -105,15 +105,17 @@ def _health(d: ReportData) -> dict:
     """The Platform Health cards: label and value only, so the section costs
     one row. ``since`` is a caption for a period in which response times and
     fallbacks began being recorded (latency P95 and fallback rate cover only
-    the days since); None otherwise."""
+    the days since); None otherwise. Latency P95 is commented out pending a
+    decision (see collector._platform_health)."""
     h = d.platform_health
     v = fmt.platform_health(h)
     since = None
     if h is not None and h.tracked_from is not None and h.tracked_from > d.period.start:
-        since = f"Latency P95 and fallback rate are recorded from {h.tracked_from.astimezone(IST):%d %b %Y}."
+        # With latency P95 back: "Latency P95 and fallback rate are recorded from …"
+        since = f"Fallback rate is recorded from {h.tracked_from.astimezone(IST):%d %b %Y}."
     return {
         "cards": [
-            _card("Latency P95", v["latency_p95"]),
+            # _card("Latency P95", v["latency_p95"]),
             _card("Error rate", v["error_rate"]),
             _card("Fallback rate", v["fallback_rate"]),
         ],
