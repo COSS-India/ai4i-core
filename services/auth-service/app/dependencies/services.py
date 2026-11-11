@@ -6,7 +6,9 @@ This is the ONLY place where repositories are imported and wired into services.
 """
 
 from functools import lru_cache
+from typing import Optional
 
+from ai4i_core.audit import AuditLogWriter
 from ai4i_core.email import EmailClient
 from ai4i_core.email.providers.factory import build_provider
 from ai4i_core.email.settings import EmailSettings
@@ -16,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import redis.asyncio as aioredis
 
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import get_audit_db, get_db
 from app.core.redis import get_redis
 from app.repositories.api_key_repository import APIKeyRepository
 from app.repositories.application_repository import ApplicationRepository
@@ -65,6 +67,13 @@ def get_token_service() -> TokenService:
     return TokenService()
 
 
+def get_audit_writer(
+    audit_db: Optional[AsyncSession] = Depends(get_audit_db),
+) -> AuditLogWriter:
+    """One writer per request, shared by every service that request builds."""
+    return AuditLogWriter(audit_db)
+
+
 def get_role_service(
     db: AsyncSession = Depends(get_db),
 ) -> RoleService:
@@ -102,6 +111,7 @@ def get_auth_service(
     email_client: EmailClient = Depends(get_email_client),
     cache_service: CacheService = Depends(get_cache_service),
     api_key_service: APIKeyService = Depends(get_api_key_service),
+    audit: AuditLogWriter = Depends(get_audit_writer),
 ) -> AuthService:
     return AuthService(
         user_repo=UserRepository(db),
@@ -114,6 +124,7 @@ def get_auth_service(
         email_client=email_client,
         cache_service=cache_service,
         api_key_service=api_key_service,
+        audit=audit,
     )
 
 
@@ -154,6 +165,7 @@ def get_tenant_service(
     email_client: EmailClient = Depends(get_email_client),
     api_key_service: APIKeyService = Depends(get_api_key_service),
     allocation_service: AllocationService = Depends(get_allocation_service),
+    audit: AuditLogWriter = Depends(get_audit_writer),
 ) -> TenantService:
     """Lightweight tenant service — only injects what's needed for user provisioning.
 
@@ -173,6 +185,7 @@ def get_tenant_service(
         api_key_service=api_key_service,
         refresh_token_repo=RefreshTokenRepository(db),
         allocation_service=allocation_service,
+        audit=audit,
     )
 
 

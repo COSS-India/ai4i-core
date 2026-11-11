@@ -83,3 +83,21 @@ async def get_platform_core_db() -> AsyncIterator[Optional[AsyncSession]]:
         return
     async with _platform_core_session_factory() as session:
         yield session
+
+
+async def get_audit_db() -> AsyncIterator[Optional[AsyncSession]]:
+    """FastAPI dependency: a platform-core session used only for audit rows.
+
+    Kept apart from ``get_platform_core_db`` on purpose. The audited tenant and
+    user rows live in ai4iplatform_auth, so nothing needs the audit row in the
+    same transaction as other platform-core writes, and code that commits or
+    rolls back that shared session (budget snapshots, notification seeding)
+    would otherwise commit or drop a pending audit row with it. The session
+    only takes a connection when a row is actually written. None when
+    platform-core DB is not configured.
+    """
+    if _platform_core_session_factory is None:
+        yield None
+        return
+    async with _platform_core_session_factory() as session:
+        yield session
