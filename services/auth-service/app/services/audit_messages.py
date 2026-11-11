@@ -1,67 +1,37 @@
-"""Readable ``audit_logs.message`` for TENANT status changes.
+"""Audit setup for TENANT status changes.
 
-``tenant_status_changed`` takes the audit snapshots (``t.before`` /
-``t.after_now()``) and returns a short text built from the templates in
-``app.core.messages``: what happened, then the reason.
+Registers the Tenant model with ai4i_core.audit, names the properties that
+are tracked, and picks the message template for a change. The template is
+filled (with the acting user and the time) when the audit row is written.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Optional
+
+from ai4i_core.audit import AuditEntity, register_audit_entity
 
 from app.core import messages as msg
-from app.models.tenant import TenantStatus
+from app.models.tenant import Tenant, TenantStatus
+
+register_audit_entity(AuditEntity.TENANT, Tenant)
+
+#: Tenant columns read by ``track`` and stored in previous_state / new_state.
+TENANT_STATUS_AUDIT_PROPERTIES = ("organisation", "status", "reason")
 
 
-def _display(value: Any) -> str:
-    return msg.AUDIT_EMPTY_VALUE if value is None or value == "" else str(value)
-
-
-def _tenant_name(*states: Optional[dict]) -> str:
-    for state in states:
-        if state and state.get("organisation"):
-            return str(state["organisation"])
-    return msg.AUDIT_EMPTY_VALUE
-
-
-def _with_reason(message: str, after: dict) -> str:
-    reason = after.get("reason")
-    if reason is None or str(reason).strip() == "":
-        return message
-    return message + msg.AUDIT_REASON_SUFFIX.format(reason=reason)
-
-
-def _format_time(at: Optional[datetime]) -> str:
-    at = at or datetime.now(timezone.utc)
-    if at.tzinfo is None:
-        at = at.replace(tzinfo=timezone.utc)
-    return at.astimezone(timezone.utc).strftime(msg.AUDIT_TIME_FORMAT)
-
-
-def tenant_status_changed(
-    before: Optional[dict], after: dict, at: Optional[datetime] = None
-) -> str:
-    """Suspend / deactivate / activate, or PENDING -> ACTIVE (contact admin
-    completed setup), with the time of the change (``at``, default now, shown
-    in UTC), followed by the reason given with the change
-    (``after["reason"]``) when there is one."""
-    name = _tenant_name(after, before)
-    old = (before or {}).get("status")
-    new = after.get("status")
-    when = _format_time(at)
+def tenant_status_template(old_status: Optional[str], new_status: str) -> str:
+    """Template for a suspend / deactivate / activate, or PENDING -> ACTIVE
+    (contact admin completed setup). The library appends the reason."""
+    old = getattr(old_status, "value", old_status)
+    new = getattr(new_status, "value", new_status)
 
     if new == TenantStatus.ACTIVE.value and old == TenantStatus.PENDING.value:
-        return msg.AUDIT_TENANT_SETUP_COMPLETED.format(name=name, at=when)
-
+        return msg.AUDIT_TENANT_SETUP_COMPLETED
     if new == TenantStatus.SUSPENDED.value:
-        message = msg.AUDIT_TENANT_SUSPENDED.format(name=name, at=when)
-    elif new == TenantStatus.DEACTIVATED.value:
-        message = msg.AUDIT_TENANT_DEACTIVATED.format(name=name, at=when)
-    elif new == TenantStatus.ACTIVE.value:
-        message = msg.AUDIT_TENANT_REACTIVATED.format(name=name, at=when)
-    else:
-        message = msg.AUDIT_TENANT_STATUS_CHANGED.format(
-            name=name, old=_display(old), new=_display(new), at=when
-        )
-    return _with_reason(message, after)
+        return msg.AUDIT_TENANT_SUSPENDED
+    if new == TenantStatus.DEACTIVATED.value:
+        return msg.AUDIT_TENANT_DEACTIVATED
+    if new == TenantStatus.ACTIVE.value:
+        return msg.AUDIT_TENANT_REACTIVATED
+    return msg.AUDIT_TENANT_STATUS_CHANGED

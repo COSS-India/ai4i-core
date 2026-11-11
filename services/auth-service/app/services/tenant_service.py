@@ -78,7 +78,10 @@ from app.services.tenant_lifecycle import (
     is_default_tenant,
     sync_tenant_users_for_status,
 )
-from app.services.audit_messages import tenant_status_changed
+from app.services.audit_messages import (
+    TENANT_STATUS_AUDIT_PROPERTIES,
+    tenant_status_template,
+)
 from app.services.email_helpers import (
     enqueue_email,
     persist_token_verification,
@@ -442,8 +445,8 @@ class TenantService:
         self._api_keys = api_key_service
         self._refresh_tokens = refresh_token_repo
         self._allocations = allocation_service
-        # Status changes are audited to ai4iplatform_core: each one commits
-        # ai4iplatform_auth first, then calls self._audit.commit().
+        # Status changes are audited to ai4iplatform_core: track() before the
+        # change, log() after ai4iplatform_auth is committed.
         self._audit = audit or noop_audit_writer()
 
     # ── Helpers ──────────────────────────────────────────────────────────
@@ -1317,23 +1320,30 @@ class TenantService:
         await sync_tenant_users_for_status(
             self._users, tenant_id, body.status, updated_by=current_user.id
         )
-        async with self._audit.track(
-            AuditEntity.TENANT, tenant, AuditAction.STATUS_CHANGE, performed_by=current_user.id
-        ) as t:
-            # Every status change carries a reason (assert_status_reason),
-            # which replaces the previous one; earlier reasons stay in the
-            # audit rows.
-            await self._tenants.update(
-                tenant,
-                {
-                    "status": body.status,
-                    "reason": body.reason,
-                    "updated_by": current_user.id,
-                },
-            )
-            t.message = tenant_status_changed(t.before, t.after_now())
-        await self._tenants.save_and_refresh(tenant)  # 1. commit ai4iplatform_auth
-        await self._audit.commit()  # 2. commit the audit row in ai4iplatform_core
+        # Audit: old values are read before the change; the row is written
+        # after the commit, in the background (not awaited).
+        trace = await self._audit.track(
+            self._tenants._db, AuditEntity.TENANT, tenant_id, TENANT_STATUS_AUDIT_PROPERTIES
+        )
+        old_status = tenant.status
+        # Every status change carries a reason (assert_status_reason), which
+        # replaces the previous one; earlier reasons stay in the audit rows.
+        await self._tenants.update(
+            tenant,
+            {
+                "status": body.status,
+                "reason": body.reason,
+                "updated_by": current_user.id,
+            },
+        )
+        await self._tenants.save_and_refresh(tenant)
+        self._audit.log(
+            trace,
+            AuditAction.STATUS_CHANGE,
+            tenant_status_template(old_status, body.status),
+            {"status": body.status, "reason": body.reason},
+            performed_by=current_user.id,
+        )
         if self._api_keys is not None:
             if body.status == TenantStatus.SUSPENDED:
                 # Keep is_active=True (Inactive): same key auto-resumes on reactivation.

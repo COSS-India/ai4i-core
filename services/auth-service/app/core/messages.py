@@ -49,16 +49,19 @@ LOG_ERROR_OAUTH_TOKEN_EXCHANGE_STATUS = "OAuth token exchange failed: status={st
 LOG_ERROR_OAUTH_USERINFO = "OAuth user info request failed for {provider}: {error}"
 LOG_ERROR_CONFIG_OAUTH_REDIRECT_URL = "OAUTH_REDIRECT_BASE_URL must be configured for OAuth"
 
-# ── Audit log messages (audit_logs.message for TENANT status changes) ──
-# Built by app/services/audit_messages.py. Wording is product-owned.
-# {at} is when the change was made, in UTC (AUDIT_TIME_FORMAT).
-# AUDIT_REASON_SUFFIX is appended when the change carries a reason
-# (tenants.reason: the suspend / deactivate reason or activation description).
-AUDIT_TENANT_SUSPENDED = "Tenant '{name}' suspended on {at}."
-AUDIT_TENANT_DEACTIVATED = "Tenant '{name}' deactivated on {at}."
-AUDIT_TENANT_REACTIVATED = "Tenant '{name}' activated on {at}."
-AUDIT_TENANT_STATUS_CHANGED = "Tenant '{name}' status changed from {old} to {new} on {at}."
-AUDIT_TENANT_SETUP_COMPLETED = "Tenant '{name}' activated on {at}. Contact admin completed setup."
-AUDIT_TIME_FORMAT = "%Y-%m-%d %H:%M:%S UTC"
-AUDIT_REASON_SUFFIX = " Reason: {reason}."
-AUDIT_EMPTY_VALUE = "none"
+# ── Audit log message templates (audit_logs.message, TENANT status changes) ──
+# Picked by app/services/audit_messages.py and filled by ai4i_core.audit when
+# the row is written. Each one only says what happened; placeholders are the
+# tracked tenant properties ({organisation}, {status}, {reason}) and their old
+# values ({previous_status}, ...). ai4i_core.audit adds
+# " by <user id> on <time UTC>." and " Reason: <reason>." itself.
+# Wording is product-owned.
+AUDIT_TENANT_SUSPENDED = "Tenant '{organisation}' suspended"
+AUDIT_TENANT_DEACTIVATED = "Tenant '{organisation}' deactivated"
+AUDIT_TENANT_REACTIVATED = "Tenant '{organisation}' activated"
+AUDIT_TENANT_STATUS_CHANGED = (
+    "Tenant '{organisation}' status changed from {previous_status} to {status}"
+)
+AUDIT_TENANT_SETUP_COMPLETED = (
+    "Tenant '{organisation}' activated after the contact admin completed setup"
+)

@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
-from ai4i_core.audit import AuditAction, AuditEntity, AuditLogWriter, noop_audit_writer
+from ai4i_core.audit import AuditAction, AuditEntity, AuditLogWriter, AuditTrace, noop_audit_writer
 from ai4i_core.email import EmailClient
 from fastapi import BackgroundTasks
 
@@ -59,7 +59,10 @@ from app.services.email_helpers import (
     setup_token_expires_at,
 )
 from app.services.api_key_service import APIKeyService
-from app.services.audit_messages import tenant_status_changed
+from app.services.audit_messages import (
+    TENANT_STATUS_AUDIT_PROPERTIES,
+    tenant_status_template,
+)
 from app.services.cache_service import CacheService
 from app.services.role_service import RoleService
 from app.services.token_service import TokenService
@@ -425,20 +428,24 @@ class AuthService:
             return False
         return tenant.email.lower().strip() == user.email.lower().strip()
 
-    async def _activate_pending_tenant_for_contact_admin(self, user: User) -> None:
-        """After contact admin sets password, move tenant PENDING → ACTIVE."""
+    async def _activate_pending_tenant_for_contact_admin(
+        self, user: User
+    ) -> Optional[AuditTrace]:
+        """After contact admin sets password, move tenant PENDING → ACTIVE.
+
+        Returns the audit trace of the change (None when nothing changed).
+        The caller commits ai4iplatform_auth, then calls
+        ``_log_contact_admin_activation`` with it.
+        """
         if not await self._is_pending_tenant_contact_admin(user):
-            return
+            return None
         tenant = await self._tenants.get_by_id(user.tenant_id)
         if tenant is None:
             raise EntityNotFoundError(f"Tenant {user.tenant_id}")
-        # Audited here, committed by the caller: set_password_with_token
-        # commits ai4iplatform_auth, then the audit row.
-        async with self._audit.track(
-            AuditEntity.TENANT, tenant, AuditAction.STATUS_CHANGE, performed_by=user.id
-        ) as t:
-            await self._tenants.update(tenant, {"status": TenantStatus.ACTIVE, "reason": None})
-            t.message = tenant_status_changed(t.before, t.after_now())
+        trace = await self._audit.track(
+            self._tenants._db, AuditEntity.TENANT, tenant.id, TENANT_STATUS_AUDIT_PROPERTIES
+        )
+        await self._tenants.update(tenant, {"status": TenantStatus.ACTIVE, "reason": None})
         await sync_tenant_users_for_status(
             self._users, tenant.id, TenantStatus.ACTIVE, updated_by=user.id
         )
@@ -448,6 +455,19 @@ class AuthService:
             "Tenant %s activated after contact admin set password (user id=%s)",
             tenant.id,
             user.id,
+        )
+        return trace
+
+    def _log_contact_admin_activation(self, trace: Optional[AuditTrace], user: User) -> None:
+        """Audit PENDING → ACTIVE after the commit (written in the background)."""
+        if trace is None:
+            return
+        self._audit.log(
+            trace,
+            AuditAction.STATUS_CHANGE,
+            tenant_status_template(TenantStatus.PENDING, TenantStatus.ACTIVE),
+            {"status": TenantStatus.ACTIVE, "reason": None},
+            performed_by=user.id,
         )
 
     async def login(self, email: str, password: str) -> LoginResponse:
@@ -607,9 +627,9 @@ class AuthService:
         was_inactive = not user.is_active
         user.mark_activated()
         await self._verifications.deactivate(token_obj)
-        await self._activate_pending_tenant_for_contact_admin(user)
+        tenant_trace = await self._activate_pending_tenant_for_contact_admin(user)
         await self._users.commit()
-        await self._audit.commit()
+        self._log_contact_admin_activation(tenant_trace, user)
         # No per-user API key cache refresh here: API keys belong to
         # Applications, not Users (migration e9f0a1b2c3d4) — a user setting
         # their password has no bearing on any key's cache. The tenant-level

@@ -12,13 +12,17 @@ from ai4i_core.audit import AuditLogRepository, AuditLogWriter
 from ai4i_core.email import EmailClient
 from ai4i_core.email.providers.factory import build_provider
 from ai4i_core.email.settings import EmailSettings
-from fastapi import Depends
+from fastapi import BackgroundTasks, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import redis.asyncio as aioredis
 
 from app.core.config import settings
-from app.core.database import get_audit_db, get_db, get_platform_core_db
+from app.core.database import (
+    get_db,
+    get_platform_core_db,
+    get_platform_core_session_factory,
+)
 from app.core.exceptions import ServiceUnavailableError
 from app.core.redis import get_redis
 from app.repositories.api_key_repository import APIKeyRepository
@@ -68,11 +72,13 @@ def get_token_service() -> TokenService:
     return TokenService()
 
 
-def get_audit_writer(
-    audit_db: Optional[AsyncSession] = Depends(get_audit_db),
-) -> AuditLogWriter:
-    """One writer per request, shared by every service that request builds."""
-    return AuditLogWriter(audit_db)
+def get_audit_writer(background_tasks: BackgroundTasks) -> AuditLogWriter:
+    """One writer per request. Audit rows are inserted after the response is
+    sent (the request's BackgroundTasks), each on its own platform-core
+    session, so no DB session is opened here."""
+    return AuditLogWriter(
+        get_platform_core_session_factory(), background_tasks=background_tasks
+    )
 
 
 def get_audit_log_repository(
