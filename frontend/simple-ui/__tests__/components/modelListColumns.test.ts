@@ -1,8 +1,11 @@
 import {
   browserModelListColumnStore,
   canToggleOffModelListColumn,
+  MODEL_LIST_COLUMNS,
   defaultModelListColumnIds,
   loadModelListColumns,
+  modelListColumnsFromConfig,
+  modelListColumnsParam,
   modelListColumnStorageKey,
   resolveModelListColumns,
   saveModelListColumns,
@@ -32,24 +35,24 @@ describe("model list columns (AI4IDS-3351)", () => {
     expect(defaults).toEqual([
       "name",
       "version",
-      "task",
-      "provider",
+      "taskType",
+      "providerName",
       "status",
-      "created",
-      "serviceCount",
+      "createdAt",
+      "noOfServices",
       "actions",
     ]);
   });
 
   it("drops unknown ids and keeps catalogue order", () => {
     expect(
-      resolveModelListColumns(["serviceCount", "not-a-column", "name", "status"]),
-    ).toEqual(["name", "version", "task", "provider", "status", "serviceCount", "actions"]);
+      resolveModelListColumns(["noOfServices", "not-a-column", "name", "status"]),
+    ).toEqual(["name", "version", "taskType", "providerName", "status", "noOfServices", "actions"]);
   });
 
   it("restores defaults when only mandatory columns are stored", () => {
     expect(
-      resolveModelListColumns(["name", "version", "task", "provider", "actions"]),
+      resolveModelListColumns(["name", "version", "taskType", "providerName", "actions"]),
     ).toEqual(defaults);
     expect(resolveModelListColumns([])).toEqual(defaults);
     expect(resolveModelListColumns(null)).toEqual(defaults);
@@ -59,8 +62,8 @@ describe("model list columns (AI4IDS-3351)", () => {
     const onlyStatus: ModelListColumnId[] = [
       "name",
       "version",
-      "task",
-      "provider",
+      "taskType",
+      "providerName",
       "status",
       "actions",
     ];
@@ -73,31 +76,31 @@ describe("model list columns (AI4IDS-3351)", () => {
     const withoutServices = resolveModelListColumns([
       "name",
       "version",
-      "task",
-      "provider",
+      "taskType",
+      "providerName",
       "status",
-      "created",
+      "createdAt",
       "actions",
     ]);
-    const next = toggleModelListColumn(withoutServices, "serviceCount");
-    expect(next).toContain("serviceCount");
-    expect(next.indexOf("created")).toBeLessThan(next.indexOf("serviceCount"));
-    expect(next.indexOf("serviceCount")).toBeLessThan(next.indexOf("actions"));
-    expect(toggleModelListColumn(next, "serviceCount")).toEqual(withoutServices);
+    const next = toggleModelListColumn(withoutServices, "noOfServices");
+    expect(next).toContain("noOfServices");
+    expect(next.indexOf("createdAt")).toBeLessThan(next.indexOf("noOfServices"));
+    expect(next.indexOf("noOfServices")).toBeLessThan(next.indexOf("actions"));
+    expect(toggleModelListColumn(next, "noOfServices")).toEqual(withoutServices);
   });
 
   it("stores a selection per user and leaves another user's selection alone", () => {
     const store = memoryStore();
     const saved = saveModelListColumns(
       "user-a",
-      ["name", "version", "task", "provider", "status", "actions"],
+      ["name", "version", "taskType", "providerName", "status", "actions"],
       store,
     );
     expect(saved).toEqual([
       "name",
       "version",
-      "task",
-      "provider",
+      "taskType",
+      "providerName",
       "status",
       "actions",
     ]);
@@ -127,6 +130,61 @@ describe("model list columns (AI4IDS-3351)", () => {
       "status",
       "actions",
     ]);
+  });
+
+  it("builds the catalogue from the model-column config", () => {
+    const catalogue = modelListColumnsFromConfig([
+      { key: "name", label: "Model", required: true },
+      { key: "status", label: "State", required: false },
+      { key: "unknownColumn", label: "Unknown", required: false },
+      { key: "name", label: "Duplicate", required: false },
+      { key: "actions", label: "Actions", required: true },
+    ]);
+    expect(catalogue).toEqual([
+      { id: "name", label: "Model", mandatory: true, defaultVisible: true },
+      { id: "status", label: "State", mandatory: false, defaultVisible: true },
+      { id: "actions", label: "Actions", mandatory: true, defaultVisible: true },
+    ]);
+    expect(defaultModelListColumnIds(catalogue)).toEqual(["name", "status", "actions"]);
+  });
+
+  it("keeps the story's mandatory columns and Actions mandatory even if the config says otherwise", () => {
+    const catalogue = modelListColumnsFromConfig([
+      { key: "name", label: "Name", required: false },
+      { key: "version", label: "Version", required: false },
+      { key: "taskType", label: "Task Type", required: false },
+      { key: "providerName", label: "Provider Name", required: false },
+      { key: "status", label: "Status", required: false },
+      { key: "actions", label: "Actions", required: false },
+    ]);
+    expect(
+      catalogue.filter((column) => column.mandatory).map((column) => column.id),
+    ).toEqual(["name", "version", "taskType", "providerName", "actions"]);
+    expect(catalogue.find((column) => column.id === "status")?.mandatory).toBe(false);
+  });
+
+  it("appends Actions when the config leaves it out", () => {
+    const catalogue = modelListColumnsFromConfig([
+      { key: "name", label: "Name", required: true },
+      { key: "status", label: "Status", required: false },
+    ]);
+    expect(catalogue.map((column) => column.id)).toEqual(["name", "status", "actions"]);
+    expect(catalogue.at(-1)).toMatchObject({ id: "actions", mandatory: true });
+  });
+
+  it("falls back to the built-in catalogue when the config is empty or unknown", () => {
+    expect(modelListColumnsFromConfig(undefined)).toBe(MODEL_LIST_COLUMNS);
+    expect(modelListColumnsFromConfig([])).toBe(MODEL_LIST_COLUMNS);
+    expect(
+      modelListColumnsFromConfig([{ key: "nope", label: "Nope", required: true }]),
+    ).toBe(MODEL_LIST_COLUMNS);
+  });
+
+  it("requests the visible columns plus the ones the actions need", () => {
+    expect(modelListColumnsParam(["name", "status", "noOfServices"])).toBe(
+      "name,status,noOfServices,version,actions",
+    );
+    expect(modelListColumnsParam(defaults)).toBe(defaults.join(","));
   });
 
   it("builds a per-user storage key", () => {

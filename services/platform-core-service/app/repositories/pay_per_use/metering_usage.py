@@ -9,7 +9,9 @@ usage rows it has. Rows from before the cut-over (PRE_CUTOVER_ROWS) are
 counted by distinct correlation id, as the request they stand in for may have
 several. A request is failed when its status is 400 or above. Fallback
 requests (sent to a fallback service) are request rows with sent_to_fallback (daily_usage.fallback_count
-in the rollup); they are part of the request total, never added to it.
+in the rollup, a JSON of count / success / failure); they are part of the
+request total, never added to it. A fallback request failed when its status
+is 400 or above; it is part of the failures too.
 
 Whole IST days read the daily_usage rollup when it's enabled and has the day;
 everything else — today, partial days at a range's edges, days not rolled up
@@ -49,6 +51,8 @@ _SERVER_ERRORS = (
 )
 # Requests sent to a fallback service: request rows only (older rows predate the flag).
 _FALLBACK = f"count(*) FILTER (WHERE {REQUEST_ROWS} AND sent_to_fallback)"
+# Fallback requests that still failed: part of both _FALLBACK and _FAILED.
+_FALLBACK_FAILED = f"count(*) FILTER (WHERE {REQUEST_ROWS} AND sent_to_fallback AND status_code >= 400)"
 
 # Grouping dimensions: (daily_usage expression, usage_events expression).
 _GROUPS = {
@@ -65,6 +69,7 @@ class UsageAgg:
     requests: int = 0
     failed: int = 0
     fallback: int = 0
+    fallback_failed: int = 0
     units: Decimal = field(default_factory=Decimal)
     cached_units: Decimal = field(default_factory=Decimal)
     output_units: Decimal = field(default_factory=Decimal)
@@ -73,10 +78,15 @@ class UsageAgg:
     def successful(self) -> int:
         return self.requests - self.failed
 
+    @property
+    def fallback_successful(self) -> int:
+        return self.fallback - self.fallback_failed
+
     def add(self, row: Any) -> None:
         self.requests += int(row.requests or 0)
         self.failed += int(row.failed or 0)
         self.fallback += int(row.fallback or 0)
+        self.fallback_failed += int(row.fallback_failed or 0)
         self.units += Decimal(row.units or 0)
         self.cached_units += Decimal(row.cached_units or 0)
         self.output_units += Decimal(row.output_units or 0)
@@ -167,7 +177,8 @@ class MeteringUsageRepository:
             rows = await self._all(
                 f"SELECT usage_date AS d{', ' + select_cols if cols else ''},"
                 " sum(request_count) AS requests, sum(failed_count) AS failed,"
-                " sum(fallback_count) AS fallback,"
+                " sum((fallback_count->>'count')::bigint) AS fallback,"
+                " sum((fallback_count->>'failure')::bigint) AS fallback_failed,"
                 " sum(total_units) AS units, sum(cached_input_units) AS cached_units,"
                 " sum(output_units) AS output_units"
                 f" FROM daily_usage WHERE usage_date = ANY(:days){where}"
@@ -200,6 +211,7 @@ class MeteringUsageRepository:
             rows = await self._all(
                 f"SELECT {select_cols}"
                 f" {_REQUESTS} AS requests, {_FAILED} AS failed, {_FALLBACK} AS fallback,"
+                f" {_FALLBACK_FAILED} AS fallback_failed,"
                 " sum(total_units) AS units, sum(cached_input_units) AS cached_units,"
                 " sum(output_units) AS output_units"
                 f" FROM usage_events WHERE ({' OR '.join(ranges)}){where}{group_clause}",

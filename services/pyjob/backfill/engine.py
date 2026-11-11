@@ -37,7 +37,8 @@ daily_usage's DEFAULT partition; the dashboard and undo read them the same.
 The rows are estimates: Prometheus' daily counter growth, today's prices, the
 institution's current tier, and an API key only when the application has just
 one (Prometheus can't tell an application's keys apart). Prometheus has no
-record of which requests were sent to a fallback service, so fallback_count is 0.
+record of which requests were sent to a fallback service, so fallback_count is
+{"count": 0, "success": 0, "failure": 0}.
 """
 from __future__ import annotations
 
@@ -265,6 +266,8 @@ def _day_row(day: date, key: tuple, t: dict[str, Decimal], lookups: Lookups) -> 
         "success_count": requests - failed,
         "failed_count": failed,
         "fallback_count": 0,
+        "fallback_success": 0,
+        "fallback_failure": 0,
         "server_error_count": server_errors,
         "total_response_time_ms": int(_whole(t["duration"] * 1000)),
         # Prometheus times every request it counts; no duration, no timed requests.
@@ -298,9 +301,14 @@ _COLUMNS = (
     "input_units_cost", "cached_input_units_cost", "output_units_cost",
 )
 # source is a native enum: SOURCE is a fixed constant, written as a literal.
+# fallback_count is JSONB, built from its integer parts (all 0 here).
+_FALLBACK_JSON = (
+    "jsonb_build_object('count', CAST(:fallback_count AS bigint),"
+    " 'success', CAST(:fallback_success AS bigint), 'failure', CAST(:fallback_failure AS bigint))"
+)
 _INSERT = text(
     f"INSERT INTO daily_usage ({', '.join(_COLUMNS)}, source)"
-    f" VALUES ({', '.join(':' + c for c in _COLUMNS)}, '{SOURCE}')"
+    f" VALUES ({', '.join(_FALLBACK_JSON if c == 'fallback_count' else ':' + c for c in _COLUMNS)}, '{SOURCE}')"
 )
 _DELETE_DAY = text(f"DELETE FROM daily_usage WHERE source = '{SOURCE}' AND usage_date = :day")
 _LOCK = text("SELECT pg_try_advisory_xact_lock(hashtext('pyjob:usage_backfill'))")

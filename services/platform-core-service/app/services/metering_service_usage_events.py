@@ -156,7 +156,8 @@ class UsageEventsMeteringService(MeteringService):
         as Prometheus reported them past its retention.
 
         Also fallback_requests: the requests sent to a fallback service,
-        already part of the total (0 when there were none). Only this store
+        already part of the total (0 when there were none), with how many of
+        them succeeded and failed (status 400 or above). Only this store
         records fallbacks, so the other backends leave the key out. Its
         previous figures are None too when that span starts before fallbacks
         were recorded."""
@@ -165,12 +166,12 @@ class UsageEventsMeteringService(MeteringService):
         seconds = max(1, round((end - start).total_seconds()))
         cur = await self._counts(start, end, tid, type_ids)
         prev_start, prev_end = start - timedelta(seconds=shift), end - timedelta(seconds=shift)
-        previous = prev_fallback = None
+        previous = prev_fb = None
         if await self._covered(prev_start, prev_end):
             prev = await self._counts(prev_start, prev_end, tid, type_ids)
             previous = (prev.requests, prev.successful, prev.requests / seconds)
             if await self._usage.fallbacks_recorded_by(prev_start):
-                prev_fallback = prev.fallback
+                prev_fb = prev
         result = request_total_result(
             cur.requests, cur.successful, round(cur.requests / seconds, 4), previous,
             filters={
@@ -179,14 +180,25 @@ class UsageEventsMeteringService(MeteringService):
             },
         )
         fmt = self._format_count
+
+        def figure(current: int, previous_v: Optional[int]) -> dict:
+            return {
+                "count": current,
+                "formatted": fmt(current),
+                "vs_previous_pct": (
+                    round((current - previous_v) / previous_v * 100, 1) if previous_v else None
+                ),
+                "previous_count": previous_v,
+                "previous_formatted": fmt(previous_v) if previous_v is not None else None,
+            }
+
+        def prev_of(attr: str) -> Optional[int]:
+            return getattr(prev_fb, attr) if prev_fb is not None else None
+
         result["fallback_requests"] = {
-            "count": cur.fallback,
-            "formatted": fmt(cur.fallback),
-            "vs_previous_pct": (
-                round((cur.fallback - prev_fallback) / prev_fallback * 100, 1) if prev_fallback else None
-            ),
-            "previous_count": prev_fallback,
-            "previous_formatted": fmt(prev_fallback) if prev_fallback is not None else None,
+            **figure(cur.fallback, prev_of("fallback")),
+            "successful": figure(cur.fallback_successful, prev_of("fallback_successful")),
+            "failed": figure(cur.fallback_failed, prev_of("fallback_failed")),
         }
         return result
 

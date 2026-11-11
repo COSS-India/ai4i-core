@@ -26,8 +26,6 @@ os.environ.setdefault("SERVICE_NAME", "platform-core-service")
 os.environ.setdefault("SERVICE_VERSION", "0.0.0-test")
 os.environ.setdefault("API_VERSION", "v1")
 os.environ.setdefault("PLATFORM_NAME", "Test Platform")
-os.environ.setdefault("NER_SERVICE_URL", "http://localhost:9001")
-os.environ.setdefault("PII_LLM_URL", "http://localhost:9002")
 os.environ.setdefault("REDIS_HOST", "localhost")
 os.environ.setdefault("REDIS_PORT", "6379")
 

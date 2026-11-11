@@ -23,7 +23,7 @@ const protectedRoutes = new Set([
   '/asr', '/tts', '/pipeline', '/pipeline-builder', '/model-management',
   '/services-management', '/institution-management', '/api-key-management', '/profile',
   '/logs', '/usage-dashboard', '/traces',
-  // Restore '/alerts-management', '/pii-management' when re-enabling UI
+  // Restore '/alerts-management' when re-enabling UI
   '/policy-management',
   '/notifications-alerts',
 ]);
