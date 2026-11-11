@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 
@@ -12,6 +12,7 @@ class Config(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     type = Column(String(255), nullable=False)
     data = Column(JSONB, nullable=False)
+    is_default = Column(Boolean, nullable=False, server_default="false")
     created_by = Column(String(255), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_by = Column(String(255), nullable=True)

@@ -247,7 +247,7 @@ function TenantStatusFields({ tm, form }: TenantStatusFieldsProps) {
       )}
       {showRemarks && (
         <StatusRemarksField
-          label={form.isActivation ? "Description" : "Remarks"}
+          label={form.isActivation ? "Reason" : "Remarks"}
           isRequired={isRemarksMandatory}
           placeholder={
             form.isActivation

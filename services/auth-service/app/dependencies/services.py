@@ -6,17 +6,24 @@ This is the ONLY place where repositories are imported and wired into services.
 """
 
 from functools import lru_cache
+from typing import Optional
 
+from ai4i_core.audit import AuditLogRepository, AuditLogWriter
 from ai4i_core.email import EmailClient
 from ai4i_core.email.providers.factory import build_provider
 from ai4i_core.email.settings import EmailSettings
-from fastapi import Depends
+from fastapi import BackgroundTasks, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import redis.asyncio as aioredis
 
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import (
+    get_db,
+    get_platform_core_db,
+    get_platform_core_session_factory,
+)
+from app.core.exceptions import ServiceUnavailableError
 from app.core.redis import get_redis
 from app.repositories.api_key_repository import APIKeyRepository
 from app.repositories.application_repository import ApplicationRepository
@@ -65,6 +72,28 @@ def get_token_service() -> TokenService:
     return TokenService()
 
 
+def get_audit_writer(background_tasks: BackgroundTasks) -> AuditLogWriter:
+    """One writer per request. Audit rows are inserted after the response is
+    sent (the request's BackgroundTasks), each on its own platform-core
+    session, so no DB session is opened here."""
+    return AuditLogWriter(
+        get_platform_core_session_factory(), background_tasks=background_tasks
+    )
+
+
+def get_audit_log_repository(
+    platform_core_db: Optional[AsyncSession] = Depends(get_platform_core_db),
+) -> AuditLogRepository:
+    """Read side of audit_logs (ai4iplatform_core). 503 when that DB is not
+    configured, since there is nothing to read from."""
+    if platform_core_db is None:
+        raise ServiceUnavailableError(
+            "Audit logs are unavailable: platform core database is not configured.",
+            service_name="ai4iplatform_core",
+        )
+    return AuditLogRepository(platform_core_db)
+
+
 def get_role_service(
     db: AsyncSession = Depends(get_db),
 ) -> RoleService:
@@ -102,6 +131,7 @@ def get_auth_service(
     email_client: EmailClient = Depends(get_email_client),
     cache_service: CacheService = Depends(get_cache_service),
     api_key_service: APIKeyService = Depends(get_api_key_service),
+    audit: AuditLogWriter = Depends(get_audit_writer),
 ) -> AuthService:
     return AuthService(
         user_repo=UserRepository(db),
@@ -114,6 +144,7 @@ def get_auth_service(
         email_client=email_client,
         cache_service=cache_service,
         api_key_service=api_key_service,
+        audit=audit,
     )
 
 
@@ -154,6 +185,7 @@ def get_tenant_service(
     email_client: EmailClient = Depends(get_email_client),
     api_key_service: APIKeyService = Depends(get_api_key_service),
     allocation_service: AllocationService = Depends(get_allocation_service),
+    audit: AuditLogWriter = Depends(get_audit_writer),
 ) -> TenantService:
     """Lightweight tenant service — only injects what's needed for user provisioning.
 
@@ -173,6 +205,7 @@ def get_tenant_service(
         api_key_service=api_key_service,
         refresh_token_repo=RefreshTokenRepository(db),
         allocation_service=allocation_service,
+        audit=audit,
     )
 
 

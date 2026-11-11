@@ -50,15 +50,15 @@ describe("model list columns (AI4IDS-3351)", () => {
     ).toEqual(["name", "version", "taskType", "providerName", "status", "noOfServices", "actions"]);
   });
 
-  it("restores defaults when only mandatory columns are stored", () => {
-    expect(
-      resolveModelListColumns(["name", "version", "taskType", "providerName", "actions"]),
-    ).toEqual(defaults);
+  it("keeps a mandatory-only selection and restores defaults only when nothing usable is stored", () => {
+    const mandatoryOnly = ["name", "version", "taskType", "providerName", "actions"];
+    expect(resolveModelListColumns(mandatoryOnly)).toEqual(mandatoryOnly);
+    expect(resolveModelListColumns(["not-a-column"])).toEqual(defaults);
     expect(resolveModelListColumns([])).toEqual(defaults);
     expect(resolveModelListColumns(null)).toEqual(defaults);
   });
 
-  it("refuses to hide the last flexible column", () => {
+  it("locks only mandatory columns, so the last optional column can be hidden", () => {
     const onlyStatus: ModelListColumnId[] = [
       "name",
       "version",
@@ -67,9 +67,28 @@ describe("model list columns (AI4IDS-3351)", () => {
       "status",
       "actions",
     ];
-    expect(canToggleOffModelListColumn(onlyStatus, "status")).toBe(false);
-    expect(toggleModelListColumn(onlyStatus, "status")).toEqual(onlyStatus);
+    expect(canToggleOffModelListColumn(onlyStatus, "status")).toBe(true);
+    expect(toggleModelListColumn(onlyStatus, "status")).toEqual([
+      "name",
+      "version",
+      "taskType",
+      "providerName",
+      "actions",
+    ]);
     expect(canToggleOffModelListColumn(onlyStatus, "name")).toBe(false);
+    expect(toggleModelListColumn(onlyStatus, "name")).toEqual(onlyStatus);
+  });
+
+  it("can turn every optional column off and back on by hand", () => {
+    let visible = defaultModelListColumnIds();
+    for (const id of ["status", "createdAt", "noOfServices"]) {
+      visible = toggleModelListColumn(visible, id);
+    }
+    expect(visible).toEqual(["name", "version", "taskType", "providerName", "actions"]);
+    for (const id of ["status", "createdAt", "noOfServices"]) {
+      visible = toggleModelListColumn(visible, id);
+    }
+    expect(visible).toEqual(defaults);
   });
 
   it("adds and removes a column immediately, in catalogue order", () => {

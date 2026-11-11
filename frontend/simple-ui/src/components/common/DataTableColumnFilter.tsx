@@ -1,5 +1,6 @@
 import { CloseIcon } from "@chakra-ui/icons";
 import {
+  Box,
   HStack,
   IconButton,
   Input,
@@ -448,6 +449,39 @@ function DateRangeColumnFilterInput({
   );
 }
 
+/** Placeholder box for a column whose filter lives elsewhere (e.g. the toolbar). */
+function DisabledColumnFilterInput({
+  label,
+  placeholder,
+  reason,
+}: Readonly<{ label: string; placeholder?: string; reason: string }>) {
+  return (
+    // Disabled inputs swallow pointer events; the wrapper shows the cursor.
+    <Box w="full" minW={0} maxW="100%" cursor="not-allowed">
+      <Input
+        {...FILTER_CONTROL_STYLE}
+        size="sm"
+        pl={2}
+        pr={2}
+        isDisabled
+        pointerEvents="none"
+        // Chakra fades disabled inputs to 40%; keep the box visible, just muted.
+        _disabled={{
+          opacity: 1,
+          bg: "gray.50",
+          borderColor: "ink.200",
+          cursor: "not-allowed",
+        }}
+        value=""
+        readOnly
+        placeholder={placeholder ?? "Search"}
+        aria-label={`Search ${label}`.trim()}
+        aria-description={reason}
+      />
+    </Box>
+  );
+}
+
 function ColumnFilterInput({
   label,
   config,
@@ -477,6 +511,15 @@ function ColumnFilterInput({
           </option>
         ))}
       </Select>
+    );
+  }
+  if (config.type === "text" && config.disabledReason) {
+    return (
+      <DisabledColumnFilterInput
+        label={label}
+        placeholder={config.placeholder}
+        reason={config.disabledReason}
+      />
     );
   }
   if (config.type === "date_range") {

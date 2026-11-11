@@ -76,7 +76,7 @@ export const METERING = {
         "Total AI Model requests that completed without error in the selected window.",
       failed: "Total AI Model requests that returned an error in the selected window.",
       fallback_requests:
-        "AI Model requests served by a secondary (fallback) Service instead of the primary Service in the selected window. These are already included in Total Requests.",
+        "Count of requests served by a fallback Service instead of the primary Service during the selected period. This is also included in Total Requests.",
       avg_rps: "Average AI Model requests per second over the selected window.",
     },
   },

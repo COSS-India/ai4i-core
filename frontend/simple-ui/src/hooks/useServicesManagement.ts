@@ -768,8 +768,6 @@ export function useServicesManagement() {
       ),
     [availableTiers, services, filterTier, pinnedTier],
   );
-  const tierFilterOptionsRef = useRef(tierFilterOptions);
-  tierFilterOptionsRef.current = tierFilterOptions;
 
   /** Remembers the label as it is picked, so a later refetch cannot orphan it. */
   const handleFilterTierChange = useCallback(
@@ -970,7 +968,6 @@ export function useServicesManagement() {
           taskFilterColumnId,
           statusFilterColumnId,
           serviceListCatalogue,
-          tierOptions: tierFilterOptionsRef.current,
           registryPage,
           registryPageSize,
           sortMode: registrySort.mode,

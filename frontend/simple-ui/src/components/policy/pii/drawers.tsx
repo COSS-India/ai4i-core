@@ -7,14 +7,8 @@ import {
   Flex,
   FormControl,
   FormErrorMessage,
-  FormHelperText,
   HStack,
   Input,
-  Popover,
-  PopoverBody,
-  PopoverContent,
-  PopoverTrigger,
-  Portal,
   Radio,
   RadioGroup,
   Select,
@@ -25,7 +19,6 @@ import {
   TagLabel,
   Text,
   Textarea,
-  useDisclosure,
   Wrap,
 } from "@chakra-ui/react";
 import { useQuery } from "@tanstack/react-query";
@@ -35,6 +28,7 @@ import FormActions from "../../common/FormActions";
 import FormDrawer from "../../common/FormDrawer";
 import FormSection from "../../common/FormSection";
 import ReadOnlyField from "../../common/ReadOnlyField";
+import SearchableMultiSelect from "../../common/SearchableMultiSelect";
 import { domainCodeLabel, getDomainOptions } from "../../../services/configManagementService";
 import { getPolicyType } from "../../../services/policyHierarchyService";
 import { apiDomainName, definitionFromPolicyType, MIN_REGEX_EXAMPLES } from "./apiMap";
@@ -1253,121 +1247,19 @@ function DomainPicker({
   const unlisted = selected.filter((code) => !listed.some((d) => d.code === code));
   const unlistedSuffix = domainOptions.isSuccess ? " (unavailable)" : "";
   return (
-    <ChipPicker
+    <SearchableMultiSelect
       label="Domain"
       required
       error={error || loadError}
       placeholder={domainOptions.isPending ? "Loading domains…" : "Select domains"}
+      searchPlaceholder="Search domains..."
+      noMatchMessage="No domains match your search"
       options={[
         ...listed.map((d) => ({ value: d.code, label: d.label, checked: selected.includes(d.code) })),
         ...unlisted.map((code) => ({ value: code, label: `${domainCodeLabel(code)}${unlistedSuffix}`, checked: true })),
       ]}
       onCheck={(value, checked) => onChange(checked ? [...selected, value] : selected.filter((id) => id !== value))}
     />
-  );
-}
-
-/** Multi-select: the picked options sit as removable chips inside the field; the list opens below it. */
-function ChipPicker({
-  label,
-  required,
-  error,
-  helper,
-  placeholder,
-  options,
-  onCheck,
-}: {
-  label: string;
-  required?: boolean;
-  error?: string;
-  helper?: string;
-  placeholder: string;
-  options: { value: string; label: string; checked: boolean }[];
-  onCheck: (value: string, checked: boolean) => void;
-}) {
-  const { isOpen, onToggle, onClose } = useDisclosure();
-  const selected = options.filter((option) => option.checked);
-  return (
-    <FormField label={label} required={required} error={error}>
-      <Popover isOpen={isOpen} onClose={onClose} placement="bottom-start" matchWidth isLazy>
-        <PopoverTrigger>
-          <Flex
-            role="combobox"
-            aria-expanded={isOpen}
-            aria-haspopup="listbox"
-            aria-label={label}
-            tabIndex={0}
-            onClick={onToggle}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown") {
-                e.preventDefault();
-                onToggle();
-              }
-            }}
-            align="center"
-            gap={2}
-            minH="40px"
-            px={3}
-            py={1.5}
-            borderWidth="1px"
-            borderRadius="md"
-            borderColor={error ? "red.500" : isOpen ? "blue.500" : "ink.200"}
-            boxShadow={isOpen ? "0 0 0 1px var(--chakra-colors-blue-500)" : undefined}
-            bg="white"
-            cursor="pointer"
-            _hover={{ borderColor: error ? "red.500" : isOpen ? "blue.500" : "ink.300" }}
-            _focusVisible={{ borderColor: "blue.500", boxShadow: "0 0 0 1px var(--chakra-colors-blue-500)" }}
-          >
-            <Wrap flex="1" spacing={1.5}>
-              {selected.length === 0 ? (
-                <Text fontSize="md" color="ink.400">
-                  {placeholder}
-                </Text>
-              ) : (
-                selected.map((option) => (
-                  <Tag key={option.value} size="md" colorScheme="blue" borderRadius="full">
-                    <TagLabel>{option.label}</TagLabel>
-                    <TagCloseButton
-                      aria-label={`Remove ${option.label}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onCheck(option.value, false);
-                      }}
-                    />
-                  </Tag>
-                ))
-              )}
-            </Wrap>
-            <ChevronDownIcon color="ink.500" boxSize={5} transform={isOpen ? "rotate(180deg)" : undefined} />
-          </Flex>
-        </PopoverTrigger>
-        <Portal>
-          <PopoverContent w="auto" boxShadow="md" borderColor="ink.200" _focus={{ boxShadow: "md" }}>
-            <PopoverBody p={1} maxH="220px" overflowY="auto" role="listbox" aria-multiselectable>
-              {options.map((option) => (
-                <Checkbox
-                  key={option.value}
-                  display="flex"
-                  py={2}
-                  px={3}
-                  borderRadius="md"
-                  _hover={{ bg: "ink.50" }}
-                  isChecked={option.checked}
-                  onChange={(e) => onCheck(option.value, e.target.checked)}
-                >
-                  {option.label}
-                </Checkbox>
-              ))}
-            </PopoverBody>
-          </PopoverContent>
-        </Portal>
-      </Popover>
-      {helper && !error ? (
-        <FormHelperText fontSize="xs" color="ink.500" mt={1}>
-          {helper}
-        </FormHelperText>
-      ) : null}
-    </FormField>
   );
 }
 
