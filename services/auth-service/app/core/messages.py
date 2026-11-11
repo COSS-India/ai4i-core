@@ -48,3 +48,14 @@ LOG_ERROR_OAUTH_TOKEN_EXCHANGE = "OAuth token exchange request failed for {provi
 LOG_ERROR_OAUTH_TOKEN_EXCHANGE_STATUS = "OAuth token exchange failed: status={status}"
 LOG_ERROR_OAUTH_USERINFO = "OAuth user info request failed for {provider}: {error}"
 LOG_ERROR_CONFIG_OAUTH_REDIRECT_URL = "OAUTH_REDIRECT_BASE_URL must be configured for OAuth"
+
+# ── Audit log messages (audit_logs.message for TENANT status changes) ──
+# Built by app/services/audit_messages.py. Wording is product-owned.
+# The reason / activation description is not repeated here: it is in
+# previous_state / new_state ("reason").
+AUDIT_TENANT_SUSPENDED = "Tenant '{name}' suspended."
+AUDIT_TENANT_DEACTIVATED = "Tenant '{name}' deactivated."
+AUDIT_TENANT_REACTIVATED = "Tenant '{name}' activated."
+AUDIT_TENANT_STATUS_CHANGED = "Tenant '{name}' status changed from {old} to {new}."
+AUDIT_TENANT_SETUP_COMPLETED = "Tenant '{name}' activated. Contact admin completed setup."
+AUDIT_EMPTY_VALUE = "none"
