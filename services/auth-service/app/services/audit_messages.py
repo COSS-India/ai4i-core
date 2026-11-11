@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from app.core import messages as msg
@@ -31,26 +32,36 @@ def _with_reason(message: str, after: dict) -> str:
     return message + msg.AUDIT_REASON_SUFFIX.format(reason=reason)
 
 
-def tenant_status_changed(before: Optional[dict], after: dict) -> str:
+def _format_time(at: Optional[datetime]) -> str:
+    at = at or datetime.now(timezone.utc)
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    return at.astimezone(timezone.utc).strftime(msg.AUDIT_TIME_FORMAT)
+
+
+def tenant_status_changed(
+    before: Optional[dict], after: dict, at: Optional[datetime] = None
+) -> str:
     """Suspend / deactivate / activate, or PENDING -> ACTIVE (contact admin
-    completed setup), followed by the reason given with the change
-    (``after["reason"]``) when there is one. Who made the change and when
-    are the row's ``performed_by`` and ``created_at``."""
+    completed setup), with the time of the change (``at``, default now, shown
+    in UTC), followed by the reason given with the change
+    (``after["reason"]``) when there is one."""
     name = _tenant_name(after, before)
     old = (before or {}).get("status")
     new = after.get("status")
+    when = _format_time(at)
 
     if new == TenantStatus.ACTIVE.value and old == TenantStatus.PENDING.value:
-        return msg.AUDIT_TENANT_SETUP_COMPLETED.format(name=name)
+        return msg.AUDIT_TENANT_SETUP_COMPLETED.format(name=name, at=when)
 
     if new == TenantStatus.SUSPENDED.value:
-        message = msg.AUDIT_TENANT_SUSPENDED.format(name=name)
+        message = msg.AUDIT_TENANT_SUSPENDED.format(name=name, at=when)
     elif new == TenantStatus.DEACTIVATED.value:
-        message = msg.AUDIT_TENANT_DEACTIVATED.format(name=name)
+        message = msg.AUDIT_TENANT_DEACTIVATED.format(name=name, at=when)
     elif new == TenantStatus.ACTIVE.value:
-        message = msg.AUDIT_TENANT_REACTIVATED.format(name=name)
+        message = msg.AUDIT_TENANT_REACTIVATED.format(name=name, at=when)
     else:
         message = msg.AUDIT_TENANT_STATUS_CHANGED.format(
-            name=name, old=_display(old), new=_display(new)
+            name=name, old=_display(old), new=_display(new), at=when
         )
     return _with_reason(message, after)

@@ -7,6 +7,7 @@ session, so the rows asserted on are exactly what would be inserted.
 import base64
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -106,41 +107,62 @@ def _admin() -> User:
 # ── Messages ────────────────────────────────────────────────────────────
 
 
+_AT = datetime(2026, 11, 11, 7, 11, 21, tzinfo=timezone.utc)
+
+
 class TestTenantMessages:
     def test_suspend(self) -> None:
         message = am.tenant_status_changed(
             {"organisation": "Acme", "status": "ACTIVE"},
             {"organisation": "Acme", "status": "SUSPENDED", "reason": "Audit pending"},
+            at=_AT,
         )
-        assert message == "Tenant 'Acme' suspended. Reason: Audit pending."
+        assert message == "Tenant 'Acme' suspended on 2026-11-11 07:11:21 UTC. Reason: Audit pending."
 
     def test_deactivate(self) -> None:
         message = am.tenant_status_changed(
             {"organisation": "Acme", "status": "SUSPENDED"},
             {"organisation": "Acme", "status": "DEACTIVATED", "reason": "Agreement or engagement ended"},
+            at=_AT,
         )
-        assert message == "Tenant 'Acme' deactivated. Reason: Agreement or engagement ended."
+        assert message == "Tenant 'Acme' deactivated on 2026-11-11 07:11:21 UTC. Reason: Agreement or engagement ended."
 
     def test_reactivate(self) -> None:
         message = am.tenant_status_changed(
             {"organisation": "Acme", "status": "DEACTIVATED"},
             {"organisation": "Acme", "status": "ACTIVE", "reason": "New agreement signed"},
+            at=_AT,
         )
-        assert message == "Tenant 'Acme' activated. Reason: New agreement signed."
+        assert message == "Tenant 'Acme' activated on 2026-11-11 07:11:21 UTC. Reason: New agreement signed."
 
     def test_setup_completed(self) -> None:
         message = am.tenant_status_changed(
             {"organisation": "Acme", "status": "PENDING"},
             {"organisation": "Acme", "status": "ACTIVE"},
+            at=_AT,
         )
-        assert message == "Tenant 'Acme' activated. Contact admin completed setup."
+        assert message == "Tenant 'Acme' activated on 2026-11-11 07:11:21 UTC. Contact admin completed setup."
+
+    def test_naive_time_is_treated_as_utc_and_default_is_now(self) -> None:
+        naive = am.tenant_status_changed(
+            {"organisation": "Acme", "status": "ACTIVE"},
+            {"organisation": "Acme", "status": "SUSPENDED"},
+            at=datetime(2026, 11, 11, 7, 11, 21),
+        )
+        assert naive == "Tenant 'Acme' suspended on 2026-11-11 07:11:21 UTC."
+        now = am.tenant_status_changed(
+            {"organisation": "Acme", "status": "ACTIVE"},
+            {"organisation": "Acme", "status": "SUSPENDED"},
+        )
+        assert re.fullmatch(r"Tenant 'Acme' suspended on \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC\.", now)
 
     def test_blank_reason_is_left_out(self) -> None:
         message = am.tenant_status_changed(
             {"organisation": "Acme", "status": "ACTIVE"},
             {"organisation": "Acme", "status": "SUSPENDED", "reason": "  "},
+            at=_AT,
         )
-        assert message == "Tenant 'Acme' suspended."
+        assert message == "Tenant 'Acme' suspended on 2026-11-11 07:11:21 UTC."
 
 
 # ── Tenant status change ────────────────────────────────────────────────
@@ -172,7 +194,11 @@ class TestTenantStatusChangeAudit:
             {"field": "reason", "from": None, "to": "Agreement renewal pending"},
             {"field": "status", "from": "ACTIVE", "to": "SUSPENDED"},
         ]
-        assert row.message == "Tenant 'Acme University' suspended. Reason: Agreement renewal pending."
+        assert re.fullmatch(
+            r"Tenant 'Acme University' suspended on \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC\. "
+            r"Reason: Agreement renewal pending\.",
+            row.message,
+        )
         # The reason lives in the snapshot (design doc 2.2 / 8), not a column.
         assert row.new_state["reason"] == "Agreement renewal pending"
         # PII is stored as ciphertext, never plaintext.

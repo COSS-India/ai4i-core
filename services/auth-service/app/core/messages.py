@@ -51,12 +51,14 @@ LOG_ERROR_CONFIG_OAUTH_REDIRECT_URL = "OAUTH_REDIRECT_BASE_URL must be configure
 
 # ── Audit log messages (audit_logs.message for TENANT status changes) ──
 # Built by app/services/audit_messages.py. Wording is product-owned.
+# {at} is when the change was made, in UTC (AUDIT_TIME_FORMAT).
 # AUDIT_REASON_SUFFIX is appended when the change carries a reason
 # (tenants.reason: the suspend / deactivate reason or activation description).
-AUDIT_TENANT_SUSPENDED = "Tenant '{name}' suspended."
-AUDIT_TENANT_DEACTIVATED = "Tenant '{name}' deactivated."
-AUDIT_TENANT_REACTIVATED = "Tenant '{name}' activated."
-AUDIT_TENANT_STATUS_CHANGED = "Tenant '{name}' status changed from {old} to {new}."
-AUDIT_TENANT_SETUP_COMPLETED = "Tenant '{name}' activated. Contact admin completed setup."
+AUDIT_TENANT_SUSPENDED = "Tenant '{name}' suspended on {at}."
+AUDIT_TENANT_DEACTIVATED = "Tenant '{name}' deactivated on {at}."
+AUDIT_TENANT_REACTIVATED = "Tenant '{name}' activated on {at}."
+AUDIT_TENANT_STATUS_CHANGED = "Tenant '{name}' status changed from {old} to {new} on {at}."
+AUDIT_TENANT_SETUP_COMPLETED = "Tenant '{name}' activated on {at}. Contact admin completed setup."
+AUDIT_TIME_FORMAT = "%Y-%m-%d %H:%M:%S UTC"
 AUDIT_REASON_SUFFIX = " Reason: {reason}."
 AUDIT_EMPTY_VALUE = "none"
