@@ -1,4 +1,4 @@
-"""Schemas for GET /auth/audit-logs."""
+"""Schemas for GET /audit-logs."""
 
 from datetime import datetime
 from typing import Any, Optional
@@ -77,6 +77,6 @@ class AuditLogResponse(BaseSchema):
 
 
 class ListAuditLogsResponse(SuccessResponse):
-    """GET /auth/audit-logs"""
+    """GET /audit-logs"""
 
     data: list[AuditLogResponse]

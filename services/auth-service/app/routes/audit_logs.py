@@ -18,7 +18,7 @@ from app.schemas.common import error_responses
 from app.utils.masking import mask_pii_in_dict
 
 router = APIRouter(
-    prefix="/auth/audit-logs",
+    prefix="/audit-logs",
     tags=["Audit Logs"],
     responses=error_responses(401),
 )

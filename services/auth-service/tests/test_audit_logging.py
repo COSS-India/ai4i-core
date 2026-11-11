@@ -339,7 +339,7 @@ class TestContactAdminActivationAudit:
         assert tasks.tasks == []
 
 
-# ── Read API: GET /auth/audit-logs ──────────────────────────────────────
+# ── Read API: GET /audit-logs ──────────────────────────────────────
 
 
 def _row(**overrides) -> AuditLog:
