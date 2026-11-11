@@ -8,7 +8,7 @@ entity_name / action hold ai4i_core.audit enum values as plain VARCHAR so a
 new entity or action needs no migration.
 
 Revision ID: 97c3bf253272
-Revises: b7d3f1a9c2e5
+Revises: a3c5e7f9b1d4
 Create Date: 2026-11-09
 
 """
@@ -19,7 +19,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "97c3bf253272"
-down_revision: Union[str, None] = "b7d3f1a9c2e5"
+down_revision: Union[str, None] = "a3c5e7f9b1d4"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
