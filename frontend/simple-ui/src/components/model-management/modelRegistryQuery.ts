@@ -11,12 +11,15 @@ export const MODEL_SERVER_SEARCH_COLUMN_IDS: ReadonlySet<string> = new Set([
   "status",
 ]);
 
-/** Sortable columns on the Model List page, sent as `sort_by`. */
+/** Sortable columns on the Model List page, sent as `sort_by` (backend SORTABLE_KEYS). */
 const MODEL_SORTABLE_COLUMN_IDS: ReadonlySet<string> = new Set([
   "name",
   "version",
+  "taskType",
   "providerName",
+  "status",
   "createdAt",
+  "noOfServices",
 ]);
 
 /** Only the filters the API understands, so anything else never refetches. */

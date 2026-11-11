@@ -61,6 +61,7 @@ import { isRegistryReadOnlyUser, userHasRole } from "../utils/rbac";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
 import { parseError, showError } from "../utils/errorHandler";
 import { MODEL_SAMPLES, type ModelSampleKind } from "../utils/sampleModelJson";
+import { resolveTaskType } from "../utils/platformService";
 import { stripJsonComments } from "../utils/stripJsonComments";
 import { showToast } from "../utils/toast";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
@@ -648,6 +649,8 @@ const ModelManagementPage: React.FC = () => {
         id: "taskType",
         header: "Task Type",
         hint: FIELD_HINTS.model.col.task,
+        sortable: true,
+        sortAccessor: (model) => resolveTaskType(model),
         cell: renderModelTaskTypeCell,
       },
       {
@@ -662,6 +665,8 @@ const ModelManagementPage: React.FC = () => {
         id: "status",
         header: "Status",
         hint: FIELD_HINTS.model.col.status,
+        sortable: true,
+        sortAccessor: (model) => model.versionStatus ?? "",
         cell: renderModelStatusCell,
       },
       {
@@ -678,6 +683,8 @@ const ModelManagementPage: React.FC = () => {
         id: "noOfServices",
         header: "No. of Services",
         hint: FIELD_HINTS.model.col.services,
+        sortable: true,
+        sortAccessor: (model) => model.noOfServices ?? 0,
         // Row's own count; the services list is only for the action switches.
         cell: renderModelServiceCountCell,
       },

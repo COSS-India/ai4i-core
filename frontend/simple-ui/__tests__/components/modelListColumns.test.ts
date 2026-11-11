@@ -31,64 +31,51 @@ const memoryStore = (): ModelListColumnPreferenceStore & {
 describe("model list columns (AI4IDS-3351)", () => {
   const defaults = defaultModelListColumnIds();
 
-  it("starts with the default set, including mandatory columns", () => {
-    expect(defaults).toEqual([
-      "name",
-      "version",
-      "taskType",
-      "providerName",
-      "status",
-      "createdAt",
-      "noOfServices",
-      "actions",
-    ]);
+  it("starts with Name, Version, Task Type, Provider Name and Actions", () => {
+    expect(defaults).toEqual(["name", "version", "taskType", "providerName", "actions"]);
   });
 
   it("drops unknown ids and keeps catalogue order", () => {
     expect(
       resolveModelListColumns(["noOfServices", "not-a-column", "name", "status"]),
-    ).toEqual(["name", "version", "taskType", "providerName", "status", "noOfServices", "actions"]);
+    ).toEqual(["name", "status", "noOfServices", "actions"]);
   });
 
   it("keeps a mandatory-only selection and restores defaults only when nothing usable is stored", () => {
-    const mandatoryOnly = ["name", "version", "taskType", "providerName", "actions"];
+    const mandatoryOnly = ["name", "actions"];
     expect(resolveModelListColumns(mandatoryOnly)).toEqual(mandatoryOnly);
     expect(resolveModelListColumns(["not-a-column"])).toEqual(defaults);
     expect(resolveModelListColumns([])).toEqual(defaults);
     expect(resolveModelListColumns(null)).toEqual(defaults);
   });
 
+  it("locks only Name and Actions in the built-in catalogue", () => {
+    expect(
+      MODEL_LIST_COLUMNS.filter((column) => column.mandatory).map((column) => column.id),
+    ).toEqual(["name", "actions"]);
+  });
+
   it("locks only mandatory columns, so the last optional column can be hidden", () => {
-    const onlyStatus: ModelListColumnId[] = [
-      "name",
-      "version",
-      "taskType",
-      "providerName",
-      "status",
-      "actions",
-    ];
+    const onlyStatus: ModelListColumnId[] = ["name", "status", "actions"];
     expect(canToggleOffModelListColumn(onlyStatus, "status")).toBe(true);
-    expect(toggleModelListColumn(onlyStatus, "status")).toEqual([
-      "name",
-      "version",
-      "taskType",
-      "providerName",
-      "actions",
-    ]);
+    expect(toggleModelListColumn(onlyStatus, "status")).toEqual(["name", "actions"]);
+    expect(canToggleOffModelListColumn(onlyStatus, "version")).toBe(true);
     expect(canToggleOffModelListColumn(onlyStatus, "name")).toBe(false);
     expect(toggleModelListColumn(onlyStatus, "name")).toEqual(onlyStatus);
   });
 
   it("can turn every optional column off and back on by hand", () => {
-    let visible = defaultModelListColumnIds();
-    for (const id of ["status", "createdAt", "noOfServices"]) {
+    const optional = ["version", "taskType", "providerName", "status", "createdAt", "noOfServices"];
+    const all = MODEL_LIST_COLUMNS.map((column) => column.id);
+    let visible = resolveModelListColumns(all);
+    for (const id of optional) {
       visible = toggleModelListColumn(visible, id);
     }
-    expect(visible).toEqual(["name", "version", "taskType", "providerName", "actions"]);
-    for (const id of ["status", "createdAt", "noOfServices"]) {
+    expect(visible).toEqual(["name", "actions"]);
+    for (const id of optional) {
       visible = toggleModelListColumn(visible, id);
     }
-    expect(visible).toEqual(defaults);
+    expect(visible).toEqual(all);
   });
 
   it("adds and removes a column immediately, in catalogue order", () => {
@@ -161,25 +148,37 @@ describe("model list columns (AI4IDS-3351)", () => {
     ]);
     expect(catalogue).toEqual([
       { id: "name", label: "Model", mandatory: true, defaultVisible: true },
-      { id: "status", label: "State", mandatory: false, defaultVisible: true },
+      { id: "status", label: "State", mandatory: false, defaultVisible: false },
       { id: "actions", label: "Actions", mandatory: true, defaultVisible: true },
     ]);
-    expect(defaultModelListColumnIds(catalogue)).toEqual(["name", "status", "actions"]);
+    expect(defaultModelListColumnIds(catalogue)).toEqual(["name", "actions"]);
   });
 
-  it("keeps the story's mandatory columns and Actions mandatory even if the config says otherwise", () => {
+  it("takes mandatory columns from the config's required flag and the built-in default set", () => {
     const catalogue = modelListColumnsFromConfig([
-      { key: "name", label: "Name", required: false },
+      { key: "name", label: "Name", required: true },
       { key: "version", label: "Version", required: false },
       { key: "taskType", label: "Task Type", required: false },
       { key: "providerName", label: "Provider Name", required: false },
       { key: "status", label: "Status", required: false },
-      { key: "actions", label: "Actions", required: false },
+      { key: "actions", label: "Actions", required: true },
     ]);
     expect(
       catalogue.filter((column) => column.mandatory).map((column) => column.id),
-    ).toEqual(["name", "version", "taskType", "providerName", "actions"]);
-    expect(catalogue.find((column) => column.id === "status")?.mandatory).toBe(false);
+    ).toEqual(["name", "actions"]);
+    const reset = defaultModelListColumnIds(catalogue);
+    expect(reset).toEqual(["name", "version", "taskType", "providerName", "actions"]);
+    expect(canToggleOffModelListColumn(reset, "version", catalogue)).toBe(true);
+  });
+
+  it("lets the config's defaultVisible override the built-in default", () => {
+    const catalogue = modelListColumnsFromConfig([
+      { key: "name", label: "Name", required: true },
+      { key: "version", label: "Version", required: false, defaultVisible: false },
+      { key: "status", label: "Status", required: false, defaultVisible: true },
+      { key: "actions", label: "Actions", required: true },
+    ]);
+    expect(defaultModelListColumnIds(catalogue)).toEqual(["name", "status", "actions"]);
   });
 
   it("appends Actions when the config leaves it out", () => {

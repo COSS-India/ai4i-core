@@ -19,6 +19,7 @@ function mandatoryColumnsHint(columns: readonly ModelListColumnDef[]): string {
   const labels = columns.filter((column) => column.mandatory).map((column) => column.label);
   if (labels.length === 0) return "";
   if (labels.length === 1) return `${labels[0]} stays visible.`;
+  if (labels.length === 2) return `${labels[0]} and ${labels[1]} stay visible.`;
   return `${labels.slice(0, -1).join(", ")}, and ${labels.at(-1)} stay visible.`;
 }
 

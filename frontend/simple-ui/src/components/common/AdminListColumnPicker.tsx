@@ -2,16 +2,16 @@ import {
   Box,
   Button,
   Checkbox,
+  Flex,
   Menu,
   MenuButton,
-  MenuDivider,
   MenuItem,
   MenuList,
   Portal,
   Text,
   Tooltip,
 } from "@chakra-ui/react";
-import { ChevronDownIcon, SettingsIcon } from "@chakra-ui/icons";
+import { ChevronDownIcon, RepeatIcon, SettingsIcon } from "@chakra-ui/icons";
 import React from "react";
 
 export type AdminListColumnDef = {
@@ -71,18 +71,49 @@ function AdminListColumnPicker<T extends AdminListColumnDef>({
       </Tooltip>
       <Portal>
         <MenuList
-          maxH="360px"
+          maxH="min(520px, 70vh)"
           overflowY="auto"
-          minW="260px"
-          py={2}
+          minW="320px"
+          pt={0}
+          pb={2}
           zIndex="popover"
         >
-          <Text px={3} pb={1} fontSize="xs" color="ink.500" fontWeight="medium">
-            {helper}
-          </Text>
-          <Text px={3} pb={2} fontSize="xs" color="ink.400">
-            {mandatoryHint}
-          </Text>
+          {/* Pinned header: Reset stays reachable while the column list scrolls. */}
+          <Box
+            position="sticky"
+            top={0}
+            zIndex={1}
+            bg="inherit"
+            px={4}
+            pt={3}
+            pb={2}
+            borderBottomWidth="1px"
+            borderColor="gray.100"
+          >
+            <Flex align="center" justify="space-between" gap={3} mb={1}>
+              <Text fontSize="sm" fontWeight="semibold" color="ink.700">
+                Columns
+              </Text>
+              <Button
+                size="sm"
+                variant="outline"
+                colorScheme="blue"
+                fontSize="sm"
+                fontWeight="semibold"
+                leftIcon={<RepeatIcon boxSize={3.5} />}
+                onClick={onReset}
+              >
+                Reset to default
+              </Button>
+            </Flex>
+            <Text fontSize="xs" color="ink.500">
+              {helper}
+            </Text>
+            <Text fontSize="xs" color="ink.400">
+              {mandatoryHint}
+            </Text>
+          </Box>
+          <Box h={1} />
           {columns.map((column) => {
             const checked = visibleIds.includes(column.id);
             const canTurnOff = canToggleOff(visibleIds, column.id, columns);
@@ -120,10 +151,6 @@ function AdminListColumnPicker<T extends AdminListColumnDef>({
               </MenuItem>
             );
           })}
-          <MenuDivider />
-          <MenuItem onClick={onReset} fontSize="sm" color="blue.600">
-            Reset to default
-          </MenuItem>
         </MenuList>
       </Portal>
     </Menu>

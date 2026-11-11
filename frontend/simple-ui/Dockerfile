@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # ---------------- Stage 1: Dependencies ----------------
-FROM node:18-alpine AS deps
+FROM node:24-alpine AS deps
 WORKDIR /app
 
 RUN apk update && apk add --no-cache libc6-compat
@@ -11,7 +11,7 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 # ---------------- Stage 2: Builder ----------------
-FROM node:18-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
@@ -50,7 +50,7 @@ RUN --mount=type=secret,id=NEXT_PUBLIC_API_KEY \
     && npm run build
 
 # ---------------- Stage 3: Runner ----------------
-FROM node:18-alpine AS runner
+FROM node:24-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
