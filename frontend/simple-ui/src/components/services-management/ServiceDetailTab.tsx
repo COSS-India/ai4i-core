@@ -4,6 +4,7 @@ import {
   Box,
   HStack,
   IconButton,
+  SimpleGrid,
   Tooltip,
   VStack,
 } from "@chakra-ui/react";
@@ -19,6 +20,12 @@ import {
 } from "../../services/servicesManagementService";
 import { resolveTaskType } from "../../utils/platformService";
 import ServiceFormTab from "./ServiceFormTab";
+import {
+  formatServiceListDate,
+  serviceCreatedAtMillis,
+  servicePublishedOnMillis,
+  serviceUpdatedAtMillis,
+} from "./serviceListColumns";
 
 interface ServiceDetailTabProps {
   selectedService: Service;
@@ -205,21 +212,18 @@ const ServiceDetailTab: React.FC<Readonly<ServiceDetailTabProps>> = ({
       />
 
       <FormSection title="Record">
-        <ReadOnlyField label="Published On">
-          {selectedService.publishedOn
-            ? new Date(selectedService.publishedOn * 1000).toLocaleString()
-            : "N/A"}
-        </ReadOnlyField>
-        {selectedService.created_at ? (
+        {/* Same helpers as the list columns so the panel and table agree. */}
+        <SimpleGrid columns={{ base: 1, md: 2 }} spacing={4}>
+          <ReadOnlyField label="Published On">
+            {formatServiceListDate(servicePublishedOnMillis(selectedService))}
+          </ReadOnlyField>
           <ReadOnlyField label="Created At">
-            {new Date(selectedService.created_at).toLocaleString()}
+            {formatServiceListDate(serviceCreatedAtMillis(selectedService))}
           </ReadOnlyField>
-        ) : null}
-        {selectedService.updated_at ? (
           <ReadOnlyField label="Updated At">
-            {new Date(selectedService.updated_at).toLocaleString()}
+            {formatServiceListDate(serviceUpdatedAtMillis(selectedService))}
           </ReadOnlyField>
-        ) : null}
+        </SimpleGrid>
       </FormSection>
     </FormDrawer>
   );
