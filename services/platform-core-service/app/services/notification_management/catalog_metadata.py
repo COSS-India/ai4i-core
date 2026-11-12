@@ -134,7 +134,17 @@ NOTIFICATION_METADATA: dict[NotificationName, NotificationMetadata] = {
         module=NotificationModule.MONITORING,
         detail_line="P99 Latency at {observed}s (threshold {threshold}s)",
     ),
+    NotificationName.KEY_ROTATED: NotificationMetadata(
+        display_name="Key Rotated",
+        description="Fires when an API key of an Institution's application is rotated.",
+        module=NotificationModule.API_KEY,
+        detail_line="API key {key_name} of {application_name} rotated",
+    ),
 }
+
+#: Rows that stay GLOBAL: a catalog PATCH may not change their scope, so
+#: Institution Admins can never unsubscribe from them.
+FIXED_GLOBAL_SCOPE_NAMES = frozenset({NotificationName.KEY_ROTATED})
 
 
 # ── Catalog PATCH validation (code-side, per the design's 6.1 "Legal

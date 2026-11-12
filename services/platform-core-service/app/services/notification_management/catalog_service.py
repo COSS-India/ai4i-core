@@ -49,6 +49,7 @@ from app.services.notification_management.cache_refresh import (
     after_subscription_write,
 )
 from app.services.notification_management.catalog_metadata import (
+    FIXED_GLOBAL_SCOPE_NAMES,
     LEGAL_RECIPIENT_ROLES,
     MAX_THRESHOLD_PERCENT,
     MIN_THRESHOLD_PERCENT,
@@ -220,6 +221,16 @@ async def update_catalog(
         raise ValidationError(
             message=f"'{row.name}' is a {row.type}-type entry; thresholds do not apply to it.",
             code="INVALID_THRESHOLDS",
+        )
+
+    if (
+        payload.scope is not None
+        and row.name in FIXED_GLOBAL_SCOPE_NAMES
+        and payload.scope.value != NotificationScope.GLOBAL.value
+    ):
+        raise ValidationError(
+            message=f"'{row.name}' is always Global scope; its scope can't be changed.",
+            code="SCOPE_NOT_EDITABLE",
         )
 
     previous_scope = row.scope

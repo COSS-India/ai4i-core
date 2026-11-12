@@ -128,6 +128,16 @@ CASES = [
         "LATENCY_P99", ["3", WHEN, "3.5"], "P99 Latency — Threshold 3s",
         ["P99 Latency has reached the configured threshold of", "3s", WHEN, "Current Value: 3.5s"],
     ),
+    (
+        "KEY_ROTATED",
+        ["Chatbot", "prod-key (ID 42)", "Asha Rao", "12 Nov 2026, 03:00 PM IST", "19 Nov 2026, 03:00 PM IST"],
+        f"API Key Rotated for Chatbot — {TENANT}",
+        [f"An API key for {TENANT} has been rotated.", "Application: Chatbot",
+         "API Key: prod-key (ID 42)", "Initiated by: Asha Rao", "Rotated on: 12 Nov 2026, 03:00 PM IST",
+         "Old key will be revoked on: 19 Nov 2026, 03:00 PM IST",
+         "Move all applications to the new key before 19 Nov 2026, 03:00 PM IST.",
+         "If this rotation was not expected, confirm it with Asha Rao."],
+    ),
 ]
 
 

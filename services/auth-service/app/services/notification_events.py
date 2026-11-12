@@ -1,5 +1,5 @@
 """auth-service's notification events: TIER_ASSIGNED, TIER_CHANGED,
-BUDGET_ASSIGNED and BUDGET_UPDATED, plus the subscription refresh after a
+BUDGET_ASSIGNED, BUDGET_UPDATED and KEY_ROTATED, plus the subscription refresh after a
 new tenant's subscription rows are seeded.
 
 Each one runs through the shared producer pipeline (ai4i_core.kafka) after
@@ -15,6 +15,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Dict, List, Optional
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 
@@ -27,6 +28,8 @@ from ai4i_core.kafka import (
     refresh_subscriptions,
     run_in_background,
 )
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +161,37 @@ def publish_budget_event(
         }
         details = [BUDGET_CURRENCY, str(old_budget), str(new_budget), effective or date.today().isoformat()]
     run_in_background(emit_state(name, str(tenant_id), new_state, details=details))
+
+
+def _email_datetime(value: datetime) -> str:
+    """Display format of the notification emails, in NOTIFICATION_TIMEZONE."""
+    return value.astimezone(ZoneInfo(settings.notification_timezone)).strftime("%d %b %Y, %I:%M %p %Z")
+
+
+def publish_key_rotated(
+    tenant_id: int,
+    api_key_id: int,
+    key_name: str,
+    application_name: str,
+    initiator_name: str,
+    rotated_at: datetime,
+    revoked_at: datetime,
+) -> None:
+    """KEY_ROTATED, once per rotation. ``rotated_at`` is the committed
+    api_keys.rotated_at, so each rotation is a new state and a retry of the
+    same commit is a duplicate. Carries the key's name and id only, never
+    any part of its value."""
+    if not notifications_configured():
+        return
+    new_state = {"api_key_id": api_key_id, "rotated_at": rotated_at.isoformat()}
+    details = [
+        application_name,
+        f"{key_name} (ID {api_key_id})",
+        initiator_name,
+        _email_datetime(rotated_at),
+        _email_datetime(revoked_at),
+    ]
+    run_in_background(emit_state(NotificationName.KEY_ROTATED, str(tenant_id), new_state, details=details))
 
 
 def refresh_tenant_subscriptions(tenant_id: int) -> None:
