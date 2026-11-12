@@ -176,11 +176,13 @@ def publish_key_rotated(
     initiator_name: str,
     rotated_at: datetime,
     revoked_at: datetime,
+    revoked_immediately: bool,
 ) -> None:
     """KEY_ROTATED, once per rotation. ``rotated_at`` is the committed
     api_keys.rotated_at, so each rotation is a new state and a retry of the
-    same commit is a duplicate. Carries the key's name and id only, never
-    any part of its value."""
+    same commit is a duplicate. ``revoked_immediately`` is a zero-day grace
+    period: the old key stopped working at rotation. Carries the key's name
+    and id only, never any part of its value."""
     if not notifications_configured():
         return
     new_state = {"api_key_id": api_key_id, "rotated_at": rotated_at.isoformat()}
@@ -190,6 +192,7 @@ def publish_key_rotated(
         initiator_name,
         _email_datetime(rotated_at),
         _email_datetime(revoked_at),
+        revoked_immediately,
     ]
     run_in_background(emit_state(NotificationName.KEY_ROTATED, str(tenant_id), new_state, details=details))
 

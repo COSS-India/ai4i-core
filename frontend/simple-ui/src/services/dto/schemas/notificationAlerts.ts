@@ -23,7 +23,7 @@ export const catalogItemSchema = z
     display_name: z.string(),
     description: z.string(),
     type: z.enum(["NOTIFICATION", "ALERT"]),
-    module: z.enum(["TIER", "BUDGET", "QUOTA"]),
+    module: z.enum(["TIER", "BUDGET", "QUOTA", "API_KEY"]),
     channels: z.array(z.string()).min(1),
     recipient_roles: z.record(z.boolean()),
     scope: z.enum(["GLOBAL", "INSTITUTION"]),

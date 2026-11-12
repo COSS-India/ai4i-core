@@ -171,7 +171,7 @@ async def test_key_rotated_event(monkeypatch):
 
     rotated = datetime(2026, 11, 12, 9, 30, tzinfo=timezone.utc)
     revoked = datetime(2026, 11, 19, 9, 30, tzinfo=timezone.utc)
-    events.publish_key_rotated(3, 42, "prod-key", "Chatbot", "Asha Rao", rotated, revoked)
+    events.publish_key_rotated(3, 42, "prod-key", "Chatbot", "Asha Rao", rotated, revoked, False)
     for coroutine in pending:
         await coroutine
 
@@ -181,7 +181,7 @@ async def test_key_rotated_event(monkeypatch):
     # Each rotation commits a new rotated_at, so each one is a new state.
     assert event["new_state"] == {"api_key_id": 42, "rotated_at": "2026-11-12T09:30:00+00:00"}
     assert event["details"] == [
-        "Chatbot", "prod-key (ID 42)", "Asha Rao", "12 Nov 2026, 03:00 PM IST", "19 Nov 2026, 03:00 PM IST",
+        "Chatbot", "prod-key (ID 42)", "Asha Rao", "12 Nov 2026, 03:00 PM IST", "19 Nov 2026, 03:00 PM IST", False,
     ]
 
 
@@ -193,9 +193,9 @@ def test_key_rotated_times_follow_notification_timezone(monkeypatch):
     monkeypatch.setattr(events.settings, "notification_timezone", "UTC")
 
     when = datetime(2026, 11, 12, 9, 30, tzinfo=timezone.utc)
-    events.publish_key_rotated(3, 42, "prod-key", "Chatbot", "Asha Rao", when, when)
+    events.publish_key_rotated(3, 42, "prod-key", "Chatbot", "Asha Rao", when, when, True)
 
-    assert calls[0][3:] == ["12 Nov 2026, 09:30 AM UTC", "12 Nov 2026, 09:30 AM UTC"]
+    assert calls[0][3:] == ["12 Nov 2026, 09:30 AM UTC", "12 Nov 2026, 09:30 AM UTC", True]
 
 
 def test_missing_notification_timezone_fails_startup(monkeypatch):
