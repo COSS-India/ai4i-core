@@ -70,3 +70,13 @@ async def test_only_active_usage_viewers_get_the_report():
         _User("7", "tenant-deactivated@x.gov.in", tenant_status="DEACTIVATED"),
     ])
     assert await usage_viewer_emails(db, _decrypt) == ["active@x.gov.in", "platform@x.gov.in"]
+
+
+def test_uses_the_same_active_user_rule_as_the_notification_emails():
+    """One rule for who counts as Active, kept in ai4i_core, so the report
+    and the alert emails can't disagree."""
+    from ai4i_core.kafka import ACTIVE_USER_SQL
+
+    from app.services.usage_report.recipients import _ROLE_USERS_SQL
+
+    assert ACTIVE_USER_SQL in _ROLE_USERS_SQL.text

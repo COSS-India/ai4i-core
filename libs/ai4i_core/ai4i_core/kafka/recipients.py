@@ -38,7 +38,11 @@ DecryptEmail = Callable[[Optional[str]], Optional[str]]
 # Suspend/Deactivate cascade (is_tenant_active false), or in a tenant that is
 # SUSPENDED or DEACTIVATED gets no email. A user with no tenant (platform
 # ADMIN / MODERATOR) is judged on their own flags alone.
-_ACTIVE_USER = """u.is_active IS TRUE
+#
+# Public so every email recipient query uses the same rule (platform-core's
+# Usage Viewer report does). A WHERE-clause fragment: the query must alias
+# users as ``u``, and must not use the alias ``t_status`` itself.
+ACTIVE_USER_SQL = """u.is_active IS TRUE
        AND u.is_delete IS NOT TRUE
        AND u.is_tenant_active IS NOT FALSE
        AND NOT EXISTS (
@@ -55,7 +59,7 @@ _ONE_TENANT_SQL = text(
       FROM users u
       LEFT JOIN user_role ur ON ur.user_id = u.id
       LEFT JOIN roles r      ON r.id = ur.role_id
-     WHERE {_ACTIVE_USER}
+     WHERE {ACTIVE_USER_SQL}
        AND (    (:include_admin        AND r.name = :admin_role)
              OR (:include_tenant_admin AND r.name = :tenant_admin_role
                                        AND u.tenant_id = :tenant_id)
@@ -72,7 +76,7 @@ _MANY_TENANTS_SQL = text(
       FROM users u
       LEFT JOIN user_role ur ON ur.user_id = u.id
       LEFT JOIN roles r      ON r.id = ur.role_id
-     WHERE {_ACTIVE_USER}
+     WHERE {ACTIVE_USER_SQL}
        AND (    (:include_admin        AND r.name = :admin_role)
              OR (:include_tenant_admin AND r.name = :tenant_admin_role
                                        AND u.tenant_id::text = ANY(CAST(:tenant_ids AS varchar[])))
@@ -90,7 +94,7 @@ _ROLE_USERS_SQL = text(
       JOIN user_role ur ON ur.user_id = u.id
       JOIN roles r      ON r.id = ur.role_id
      WHERE r.name = ANY(CAST(:roles AS varchar[]))
-       AND {_ACTIVE_USER}
+       AND {ACTIVE_USER_SQL}
     """
 )
 
