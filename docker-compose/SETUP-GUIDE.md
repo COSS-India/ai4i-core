@@ -12,18 +12,6 @@ Complete walkthrough for running **platform infra with this Docker Compose pack*
 > **OS:** Linux only (Ubuntu tested).  
 > **Sizing:** [MINIMAL-INFRA-REQUIREMENTS.md](MINIMAL-INFRA-REQUIREMENTS.md)
 
-### One-shot reset → NMT E2E (optional)
-
-From a host terminal where Docker works:
-
-```bash
-export AI4I_LOCAL=/path/to/cloned-repos
-export HF_TOKEN=hf_...   # HuggingFace Read token (IndicTrans2 access)
-bash "$AI4I_LOCAL/ai4i-core/docker-compose/scripts/reset-and-setup-local.sh"
-```
-
-This tears down Compose volumes/apps/NMT, rebuilds core infra, migrates, starts services, builds/runs Triton NMT, patches the NMT endpoint, and curls a Hindi translation via inference.
-
 ---
 
 ## Table of contents
@@ -38,10 +26,11 @@ This tears down Compose volumes/apps/NMT, rebuilds core infra, migrates, starts 
 8. [Part E — Verify the stack](#part-e--verify-the-stack)
 9. [Part F — Frontend (optional)](#part-f--frontend-optional)
 10. [Part G — Optional Compose profiles](#part-g--optional-compose-profiles)
-11. [Part H — Wire NMT to the platform](#part-h--wire-nmt-to-the-platform)
+11. [Part H — Verify NMT via inference](#part-h--verify-nmt-via-inference)
 12. [Port reference](#port-reference)
 13. [Stopping and restarting](#stopping-and-restarting)
 14. [Troubleshooting](#troubleshooting)
+15. [Cleanup and fresh setup scripts](#cleanup-and-fresh-setup-scripts)
 
 ---
 
@@ -150,21 +139,25 @@ Same layering as the ai4i-core end-to-end local architecture:
 
 ### 2.3 Startup order (exact flow)
 
+Same sequence as a from-scratch install (Compose → env/migrate → apps → NMT → verify). Part A (NMT) may also be done **before** Part B if you want Triton ready early; either works as long as `TRITON_ENDPOINT_NMT` is set **before** migrations.
+
 ```
-1. (recommended)    →  Part A — NMT Triton        :8000   (build/run; direct curl)
-2. Docker Compose   →  postgres + redis                         (healthy)
-3. Docker Compose   →  kafka (+ kafka-init) + etcd + apisix     (healthy)
-4. setup-env.sh     →  per-service .env files
-5. migrate.sh       →  create/upgrade app databases
-6. Terminal 1       →  auth-service      :8081
-7. Terminal 2       →  platform-core     :8095
-8. Terminal 3       →  inference         :8090
-9. (optional)       →  Simple UI         :3000
-10. Part H          →  PATCH NMT endpoint + inference/UI test
-11.(optional LAST)  →  --profile monitoring and/or --profile logging
+0. (if re-installing) →  cleanup-local.sh   OR stop apps + Compose down -v   (clean slate)
+1. Docker Compose     →  postgres + redis                         (wait healthy)
+2. Docker Compose     →  kafka (+ kafka-init) + etcd + apisix     (wait healthy)
+3. setup-env.sh       →  per-service .env files
+4. repo-root .env     →  TRITON_ENDPOINT_NMT=http://127.0.0.1:8000   (before migrate)
+5. migrate.sh         →  auth → platform_db → core (upgrade heads)
+6. Terminal 1         →  auth-service      :8081
+7. Terminal 2         →  platform-core     :8095
+8. Terminal 3         →  inference         :8090   (first pip may take several minutes)
+9. Part A             →  NMT Triton        :8000   (build/run; direct curl)  — or earlier
+10. Part E / H        →  health → login → NMT via inference
+11. (optional)        →  Simple UI         :3000
+12. (optional LAST)   →  --profile monitoring and/or --profile logging
 ```
 
-Do **not** start inference before auth/platform-core are up if you rely on shared secrets / catalogue data; follow Parts C → D in order. NMT (Part A) can run before Compose; wire it to the platform in Part H after apps are up.
+Do **not** start inference before auth/platform-core are up if you rely on shared secrets / catalogue data; follow Parts C → D in order. Set `TRITON_ENDPOINT_NMT` in the repo-root `.env` **before** Part C migrations (see [C1b](#c1b-set-nmt-triton-endpoint-before-migrations-required-for-nmt-e2e)).
 
 ---
 
@@ -226,7 +219,9 @@ ls "$AI4I_LOCAL/model-hosting/nmt-triton/Dockerfile"   # must exist before Part 
 
 ## Part A — Local NMT (Triton)
 
-This is the **simple model to host locally** for an end-to-end inference test (same idea as the former end-to-end guide). It is **CPU NMT (IndicTrans2 on Triton)** — not LLM/chat. You can skip Part A if you only need Compose + apps without a model; for a real translation E2E, complete Part A **before** or in parallel with Compose, then [Part H](#part-h--wire-nmt-to-the-platform) after apps are up.
+This is the **simple model to host locally** for an end-to-end inference test. It is **CPU NMT (IndicTrans2 on Triton)** — not LLM/chat. You can skip Part A if you only need Compose + apps without a model.
+
+For a real translation E2E: set `TRITON_ENDPOINT_NMT` **before** migrations ([C1b](#c1b-set-nmt-triton-endpoint-before-migrations-required-for-nmt-e2e)), build/run Triton here (before Compose, during apps, or after Part D — same commands), then verify with [Part H](#part-h--verify-nmt-via-inference).
 
 | Item | Value |
 |------|--------|
@@ -262,6 +257,9 @@ docker build -t nmt-triton-cpu .
 Replace `hf_your_token_here` with your HuggingFace Read token:
 
 ```bash
+# Recreate if a previous container exists
+docker rm -f indictrans 2>/dev/null || true
+
 docker run -d \
   -p 8000:8000 -p 8002:8002 \
   -v hf-cache:/cache \
@@ -284,8 +282,8 @@ docker ps --filter name=indictrans
 docker logs indictrans 2>&1 | tail -20
 # Wait for: Started HTTPService at 0.0.0.0:8000
 
-curl -s -o /dev/null -w "HTTP %{http_code}\n" http://localhost:8000/v2/health/ready
-# Expected: HTTP 200
+curl -s -o /dev/null -w "triton:%{http_code}\n" http://127.0.0.1:8000/v2/health/ready
+# Expected: triton:200
 ```
 
 CUDA/GPU warnings at startup are **normal on CPU-only machines**.
@@ -293,7 +291,7 @@ CUDA/GPU warnings at startup are **normal on CPU-only machines**.
 ### A5. Test direct translation
 
 ```bash
-curl -X POST http://localhost:8000/v2/models/nmt/infer \
+curl -s -X POST http://127.0.0.1:8000/v2/models/nmt/infer \
   -H "Content-Type: application/json" \
   -d '{"inputs":[
     {"name":"INPUT_TEXT","shape":[1,1],"datatype":"BYTES","data":["Hello, how are you?"]},
@@ -333,10 +331,18 @@ Edit `.env` if those ports or passwords conflict on your machine.
 
 ### B2. Bring up core infra (in order)
 
+If you already have `ai4i-*` / `indictrans` containers or listeners on `8081` / `8095` / `8090` / `8000`, stop and wipe first ([Stopping and restarting](#stopping-and-restarting) or `cleanup-local.sh`) — then continue here.
+
 **Step 1 — Postgres + Redis:**
 
 ```bash
 docker compose up -d postgres redis
+
+# Wait until both are healthy (do not continue early)
+until [ "$(docker inspect -f '{{.State.Health.Status}}' ai4i-postgres 2>/dev/null)" = healthy ] \
+  && [ "$(docker inspect -f '{{.State.Health.Status}}' ai4i-redis 2>/dev/null)" = healthy ]; do
+  sleep 2
+done
 docker compose ps
 ```
 
@@ -348,7 +354,13 @@ Init creates databases `ai4iplatform_auth` and `ai4iplatform_core` on first Post
 
 ```bash
 docker compose up -d kafka kafka-init etcd apisix
-docker compose ps
+
+until [ "$(docker inspect -f '{{.State.Health.Status}}' ai4i-kafka 2>/dev/null)" = healthy ] \
+  && [ "$(docker inspect -f '{{.State.Health.Status}}' ai4i-etcd 2>/dev/null)" = healthy ] \
+  && [ "$(docker inspect -f '{{.State.Health.Status}}' ai4i-apisix 2>/dev/null)" = healthy ]; do
+  sleep 3
+done
+docker compose ps -a
 ```
 
 Expected: `ai4i-kafka`, `ai4i-etcd`, `ai4i-apisix` **Up (healthy)**; `ai4i-kafka-init` exits **0**.
@@ -389,27 +401,58 @@ The script:
 
 Host apps use `localhost` for Postgres/Redis (the script sets that).
 
+### C1b. Set NMT Triton endpoint **before** migrations (required for NMT E2E)
+
+The seed migration reads **`TRITON_ENDPOINT_NMT`** from the **ai4i-core repo-root** `.env` and writes it onto the seeded NMT service. **Do this before Part C3.** Do **not** rely on a later API PATCH (platform-core’s SSRF probe often blocks `localhost` / private IPs).
+
+```bash
+# Edit ai4i-core/.env (repo root — NOT docker-compose/.env)
+# Host apps call Triton on the same machine, so loopback is fine for local native setup:
+TRITON_ENDPOINT_NMT=http://127.0.0.1:8000
+```
+
+If Triton is only reachable on another host/IP that inference can call, use that instead:
+
+```bash
+TRITON_ENDPOINT_NMT=http://YOUR_REACHABLE_HOST:8000
+```
+
+Confirm before migrating:
+
+```bash
+grep '^TRITON_ENDPOINT_NMT=' "$AI4I_LOCAL/ai4i-core/.env"
+```
+
+> If you already migrated with a blank endpoint, wipe DBs (`docker compose down -v` + re-run Part B → C with the variable set) or ask the platform team how they prefer to re-seed. **This guide does not use PATCH `/api/v1/services` to set the NMT URL.**
+
 ### C2. Install migration dependencies
 
 ```bash
 cd "$AI4I_LOCAL/ai4i-core"
+rm -rf .venv
 python3.11 -m venv .venv
 source .venv/bin/activate
 python --version   # must be 3.11.x+
-cd infrastructure/databases
-python -m pip install -r requirements.txt
-cd ../..
+python -m pip install -U pip
+python -m pip install -r infrastructure/databases/requirements.txt
 ```
 
 ### C3. Run migrations
 
+Run databases **one by one**. Auth and platform_db use a single Alembic head; **core currently has two heads**, so use `upgrade heads` for core (not `upgrade` / `all upgrade`, which target a single `head` and fail).
+
 ```bash
 cd "$AI4I_LOCAL/ai4i-core"
 source .venv/bin/activate
-./scripts/migrate.sh all upgrade
+
+./scripts/migrate.sh ai4iplatform_auth upgrade
+./scripts/migrate.sh ai4i_platform_db upgrade
+./scripts/migrate.sh ai4iplatform_core upgrade heads
+
+deactivate
 ```
 
-Expected: upgrades for `ai4iplatform_auth`, `ai4i_platform_db`, and `ai4iplatform_core`.
+Expected: each command finishes without error; NMT service seed includes the `TRITON_ENDPOINT_NMT` value from C1b.
 
 **Default admin (seeded):**
 
@@ -432,6 +475,7 @@ Open **three separate terminals**. Start services in this order.
 
 ```bash
 cd "$AI4I_LOCAL/ai4i-core/services/auth-service"
+rm -rf .venv
 python3.11 -m venv .venv
 source .venv/bin/activate
 python --version   # must be 3.11.x+
@@ -441,12 +485,13 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8081 --reload
 ```
 
 **Expected:** `Application startup complete`  
-**Verify:** http://localhost:8081/docs
+**Verify:** `curl -s -o /dev/null -w "auth:%{http_code}\n" http://127.0.0.1:8081/docs` → `auth:200`
 
 ### D2. Platform core — Terminal 2 (`:8095`)
 
 ```bash
 cd "$AI4I_LOCAL/ai4i-core/services/platform-core-service"
+rm -rf .venv
 python3.11 -m venv .venv
 source .venv/bin/activate
 python --version   # must be 3.11.x+
@@ -456,12 +501,13 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8095 --reload
 ```
 
 **Expected:** `Application startup complete`  
-**Verify:** http://localhost:8095/docs
+**Verify:** `curl -s -o /dev/null -w "core:%{http_code}\n" http://127.0.0.1:8095/docs` → `core:200`
 
 ### D3. Inference — Terminal 3 (`:8090`)
 
 ```bash
 cd "$AI4I_LOCAL/ai4i-core/services/inference-service"
+rm -rf .venv
 python3.11 -m venv .venv
 source .venv/bin/activate
 python --version   # must be 3.11.x+
@@ -470,47 +516,61 @@ python -m pip install -r requirements.txt
 python -m uvicorn main:app --host 0.0.0.0 --port 8090 --reload
 ```
 
+> **First-time setup — wait for dependency download**  
+> The first `pip install -r requirements.txt` for inference is **slow**. It pulls spaCy’s
+> `en_core_web_lg` wheel (~**588 MB** from GitHub). You may see `ConnectionResetError` /
+> `Retrying` and a long `Downloading en_core_web_lg-…whl` line with little progress — that is
+> normal. **Do not interrupt**; leave the terminal until pip finishes and uvicorn prints
+> `Application startup complete`. Later installs reuse the venv/cache and are much faster.  
+> Until then, `http://localhost:8090/health` will fail / return connection refused — auth and
+> platform-core can already be up while inference is still installing.
+
 **Expected:** `Application startup complete`  
-**Verify:** http://localhost:8090/docs
+**Verify:** `curl -s http://127.0.0.1:8090/health` → healthy JSON / HTTP 200
 
 **Harmless on app-minimal infra:**
 
 - Kafka connection warnings if Kafka was not started — tracing/consumers may be limited; basic APIs still work.
 - Missing `ffmpeg` — only affects some ASR/TTS paths.
+- Prometheus / Alertmanager reload errors from platform-core — expected until `--profile monitoring`.
 
 ### D4. Model endpoints
 
-- **NMT (recommended local E2E model):** build/run in [Part A](#part-a--local-nmt-triton), then wire in [Part H](#part-h--wire-nmt-to-the-platform).
+- **NMT (recommended local E2E model):** build/run in [Part A](#part-a--local-nmt-triton), set `TRITON_ENDPOINT_NMT` before migrations ([C1b](#c1b-set-nmt-triton-endpoint-before-migrations-required-for-nmt-e2e)), then verify in [Part H](#part-h--verify-nmt-via-inference).
 - **LLM / chat completions:** needs a separate OpenAI-compatible server (e.g. vLLM). Not covered by the NMT path; without it, UI `/api/v1/chat/completions` will fail even when the platform is healthy.
 
 ---
 
 ## Part E — Verify the stack
 
-### E1. Health
+Run these **one by one** when each layer is ready (same checks as a completed from-scratch install).
+
+### E1. Auth / platform-core / inference
 
 ```bash
-curl -s http://localhost:8081/docs -o /dev/null -w "auth %{http_code}\n"
-curl -s http://localhost:8095/docs -o /dev/null -w "platform-core %{http_code}\n"
-curl -s http://localhost:8090/health
-```
+curl -s -o /dev/null -w "auth:%{http_code}\n" http://127.0.0.1:8081/docs
+# Expect: auth:200
 
-Expected inference health: `{"status":"healthy"}` (or equivalent healthy payload).
+curl -s -o /dev/null -w "core:%{http_code}\n" http://127.0.0.1:8095/docs
+# Expect: core:200
+
+curl -s http://127.0.0.1:8090/health
+# Expect: healthy JSON / HTTP 200
+```
 
 ### E2. Login (Bearer token)
 
 ```bash
-LOGIN=$(curl -s -X POST http://localhost:8081/api/v1/auth/login \
+TOKEN=$(curl -s -X POST http://127.0.0.1:8081/api/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"admin@ai4inclusion.org","password":"ADMIN_PASSWORD","remember_me":false}')
-
-export TOKEN=$(echo "$LOGIN" | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+  -d '{"email":"admin@ai4inclusion.org","password":"ADMIN_PASSWORD","remember_me":false}' \
+  | python3.11 -c 'import sys,json; print(json.load(sys.stdin)["access_token"])')
 echo "token length: ${#TOKEN}"
 ```
 
 ### E3. Platform-only check is enough here
 
-Login + health prove Compose + apps. For a **real translation** through inference/UI, complete [Part A](#part-a--local-nmt-triton) (NMT up) and [Part H](#part-h--wire-nmt-to-the-platform).
+Login + health prove Compose + apps. For a **real translation** through inference/UI, complete [Part A](#part-a--local-nmt-triton) (NMT up), ensure `TRITON_ENDPOINT_NMT` was set before migrations, and run [Part H](#part-h--verify-nmt-via-inference).
 
 ---
 
@@ -518,16 +578,40 @@ Login + health prove Compose + apps. For a **real translation** through inferenc
 
 ```bash
 cd "$AI4I_LOCAL/ai4i-core/frontend/simple-ui"
-grep -E '^(API_URL|AUTH_SERVICE_URL)=' .env
+grep -E '^(API_URL|AUTH_SERVICE_URL|ENABLED_TASK_TYPES)=' .env
 # Expected:
 #   API_URL=http://localhost:3000
 #   AUTH_SERVICE_URL=http://localhost:8081
+#   ENABLED_TASK_TYPES=…   (see below)
+```
 
+### F1. Enable NMT in the UI (required for local translation E2E)
+
+The home/catalog cards are gated by **`ENABLED_TASK_TYPES`** in `frontend/simple-ui/.env` (runtime; no rebuild). `./scripts/setup-env.sh` generates this from `frontend/simple-ui/env.template`.
+
+Local template default (after Part C `setup-env`):
+
+```bash
+ENABLED_TASK_TYPES=llm,nmt
+```
+
+| Value | UI shows |
+|-------|----------|
+| `llm` | LLM card only |
+| `llm,nmt` (local template default) | LLM + NMT |
+| unset / empty | Full catalog (all task types) |
+
+If your `.env` still has `llm` only (older generate), set `llm,nmt` and restart `npm run dev`. Backend NMT still works via curl ([Part H](#part-h--verify-nmt-via-inference)) even if the UI only lists LLM.
+
+### F2. Start Simple UI
+
+```bash
+cd "$AI4I_LOCAL/ai4i-core/frontend/simple-ui"
 npm install
 npm run dev
 ```
 
-Open http://localhost:3000 — sign in with `admin@ai4inclusion.org` / `ADMIN_PASSWORD` (literal string).
+Open http://localhost:3000 — sign in with `admin@ai4inclusion.org` / `ADMIN_PASSWORD` (literal string). Open the **NMT** card (not LLM) for translation.
 
 Browser calls stay on `:3000`; the Next.js proxy performs forward-auth and forwards to auth `:8081`, platform-core `:8095`, and inference `:8090`. You do **not** need APISIX for this local UI path.
 
@@ -557,42 +641,43 @@ docker compose --profile logging up -d
 
 ---
 
-## Part H — Wire NMT to the platform
+## Part H — Verify NMT via inference
 
-Prerequisites: [Part A](#part-a--local-nmt-triton) NMT healthy on `:8000`, and Parts B–E complete (platform-core + inference up).
+Prerequisites:
 
-### H1. Point platform-core at NMT
+- [Part A](#part-a--local-nmt-triton) — Triton NMT healthy on `:8000`
+- [C1b](#c1b-set-nmt-triton-endpoint-before-migrations-required-for-nmt-e2e) — `TRITON_ENDPOINT_NMT` set in **repo-root** `.env` **before** migrations
+- Parts B–E — Compose, migrate, apps up
 
-If you set `TRITON_ENDPOINT_NMT=http://localhost:8000` in the **repo root** `.env` **before** migrations, the seed may already have the endpoint. Otherwise patch after platform-core is up.
+**Do not PATCH** `/api/v1/services` to set the NMT URL. The catalogue endpoint is seeded from `TRITON_ENDPOINT_NMT` at migration time. A later PATCH is blocked by platform-core SSRF checks for typical local hosts (`127.0.0.1`, private LAN IPs).
 
-> Platform-core’s SSRF guard often **rejects `localhost` / loopback**. Prefer a routable LAN IP (or host DNS) that reaches this machine’s `:8000`.
+### H1. Confirm the seeded endpoint (optional)
 
 ```bash
-# List services and find NMT serviceId (seeded id below is usual)
-curl -s "http://localhost:8095/api/v1/services" | python3.11 -m json.tool | less
-
-# Example patch (replace HOST with a non-loopback address the probe can reach)
-curl -s -X PATCH http://localhost:8095/api/v1/services \
-  -H "Content-Type: application/json" \
-  -d '{
-    "services": [
-      {
-        "serviceId": "de9a4570f8c14f6859cb79c1934a4db9",
-        "endpoint": "http://HOST:8000"
-      }
-    ]
-  }'
+curl -s "http://127.0.0.1:8095/api/v1/services" | python3.11 -c '
+import sys, json
+data = json.load(sys.stdin)
+# response shape may be a list or {"services": [...]}
+items = data if isinstance(data, list) else data.get("services") or data.get("data") or []
+for s in items:
+    sid = s.get("serviceId") or s.get("service_id") or ""
+    name = s.get("name") or ""
+    if "nmt" in name.lower() or sid == "de9a4570f8c14f6859cb79c1934a4db9":
+        print(name, sid, s.get("endpoint"))
+'
 ```
+
+Expect a non-empty `endpoint` such as `http://127.0.0.1:8000`.
 
 ### H2. NMT via inference (and UI)
 
 ```bash
-TOKEN=$(curl -s -X POST http://localhost:8081/api/v1/auth/login \
+TOKEN=$(curl -s -X POST http://127.0.0.1:8081/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"admin@ai4inclusion.org","password":"ADMIN_PASSWORD","remember_me":false}' \
   | python3.11 -c 'import sys,json; print(json.load(sys.stdin)["access_token"])')
 
-curl -s -X POST http://localhost:8090/api/v1/nmt/inference \
+curl -s -X POST http://127.0.0.1:8090/api/v1/nmt/inference \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{
@@ -604,7 +689,7 @@ curl -s -X POST http://localhost:8090/api/v1/nmt/inference \
   }'
 ```
 
-Or in the UI: open **NMT** (not LLM) after sign-in.
+Expect Hindi in `output[].target` (e.g. `नमस्ते, आप कैसे हैं?`). Or in the UI: set `ENABLED_TASK_TYPES=llm,nmt` ([Part F](#part-f--frontend-optional)), restart Simple UI, then open **NMT** (not LLM) after sign-in.
 
 ---
 
@@ -689,7 +774,51 @@ docker compose up -d postgres redis   # or: docker compose up -d
 | Prometheus / Alertmanager reload failed | Expected until you start `--profile monitoring` (Part G). Ignore for core verify |
 | Redis `HELLO must be called…` warning | Soft redis-py / Redis 8 protocol warning; OK if catalogue warm / startup complete |
 | `/api/v1/chat/completions` fails | Needs an **LLM** upstream — not Part A/H NMT. Host vLLM (or similar) or use **NMT** for simple local E2E |
-| NMT 502 / endpoint rejected | Triton up on `:8000`? PATCH endpoint with a **non-loopback** host if SSRF blocks `localhost` |
+| NMT 502 / blank endpoint | Triton up on `:8000`? Was `TRITON_ENDPOINT_NMT` set in **repo-root** `.env` **before** migrate ([C1b](#c1b-set-nmt-triton-endpoint-before-migrations-required-for-nmt-e2e))? Re-migrate from a wiped DB if it was blank. Do not PATCH locally (SSRF). |
+| Inference never becomes healthy on first setup | Still downloading `en_core_web_lg` (~588 MB). Wait for `pip install` to finish (see [Part D3](#d3-inference--terminal-3-8090)); check the inference terminal (or `.local-run-logs/inference.log` if you used `setup-local.sh`) |
+| Alembic `Multiple heads are present` / `Can't locate revision` on core | Use `./scripts/migrate.sh ai4iplatform_core upgrade heads` (see [C3](#c3-run-migrations)). Do not use `all upgrade` until the platform team lands a merge revision. |
+
+---
+
+## Cleanup and fresh setup scripts
+
+Parts A–H above are the canonical from-scratch path. The helpers below automate the same
+sequence (Compose → `setup-env` → `TRITON_ENDPOINT_NMT` → migrate with `upgrade heads` →
+apps → NMT). Cleanup and setup are **separate** — cleanup does not start anything; setup
+refuses to run if a local stack is already present.
+
+### 1) Cleanup — remove all local resources
+
+Stops host apps, removes the NMT container, and runs Compose `down -v` (containers **and** volumes). Nothing remains to auto-start on reboot.
+
+```bash
+export AI4I_LOCAL=/path/to/cloned-repos
+bash "$AI4I_LOCAL/ai4i-core/docker-compose/scripts/cleanup-local.sh"
+```
+
+Optional: also delete the HuggingFace model cache volume (`REMOVE_HF_CACHE=1`).
+
+### 2) Fresh setup — rebuild from scratch
+
+Brings up the same layers as Parts B–D + A. If a previous local stack is still running
+(`ai4i-*` / `indictrans`, or ports `8081`/`8095`/`8090`/`8000`), **setup exits** and prints
+that you must run `cleanup-local.sh` first — it does not clean up automatically.
+
+After resources start, the script prints the Part E / A4–A5 / H verify curls to run
+manually when each layer is ready (it does not wait or E2E-test for you):
+
+```bash
+export AI4I_LOCAL=/path/to/cloned-repos
+export HF_TOKEN=hf_...   # HuggingFace Read token (IndicTrans2 access)
+bash "$AI4I_LOCAL/ai4i-core/docker-compose/scripts/setup-local.sh"
+```
+
+Requires `model-hosting/nmt-triton` under `$AI4I_LOCAL` (or set `NMT_SRC=`).
+
+On first run, inference may still be installing `en_core_web_lg` (~588 MB) after the script
+exits — see [Part D3](#d3-inference--terminal-3-8090). Watch
+`docker-compose/.local-run-logs/inference.log`, then run the printed curl steps (auth →
+platform-core → inference health → Triton → direct NMT → inference NMT).
 
 ---
 
@@ -701,4 +830,7 @@ docker compose up -d postgres redis   # or: docker compose up -d
 | [MINIMAL-INFRA-REQUIREMENTS.md](MINIMAL-INFRA-REQUIREMENTS.md) | Host CPU / RAM / disk by compose mode |
 | [docker-compose.yml](docker-compose.yml) | Service definitions |
 | [.env.example](.env.example) | Infra + sync defaults |
+| [scripts/README.md](scripts/README.md) | Usage of all scripts in this folder |
 | [scripts/setup-env.sh](scripts/setup-env.sh) | Generate ai4i-core service `.env` files |
+| [scripts/cleanup-local.sh](scripts/cleanup-local.sh) | Tear down apps + Compose volumes + NMT |
+| [scripts/setup-local.sh](scripts/setup-local.sh) | Fresh install; prints verify commands |

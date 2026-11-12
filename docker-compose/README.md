@@ -6,6 +6,7 @@ Local **platform infrastructure** for ai4i-core (Postgres, Redis, Kafka, APISIX,
 |-----|----------|
 | **[SETUP-GUIDE.md](SETUP-GUIDE.md)** | Full walkthrough: NMT (`model-hosting`), Compose, env/migrations, apps, UI |
 | **[MINIMAL-INFRA-REQUIREMENTS.md](MINIMAL-INFRA-REQUIREMENTS.md)** | Host CPU / RAM / disk by compose mode |
+| **[scripts/README.md](scripts/README.md)** | `setup-env` / `cleanup-local` / `setup-local` usage |
 | This README | Quick reference (tiers, images, ports) |
 
 Path in the repo: **`ai4i-core/docker-compose/`**.
@@ -15,7 +16,7 @@ Path in the repo: **`ai4i-core/docker-compose/`**.
 NMT is **not** part of this Compose file. For the simple local translation E2E, clone
 [`COSS-India/model-hosting`](https://github.com/COSS-India/model-hosting) (`feat/nmt-local-setup`)
 next to `ai4i-core` and use **`nmt-triton/`** — see [SETUP-GUIDE Part A](SETUP-GUIDE.md#part-a--local-nmt-triton)
-and [Part H](SETUP-GUIDE.md#part-h--wire-nmt-to-the-platform).
+and [Part H](SETUP-GUIDE.md#part-h--verify-nmt-via-inference).
 
 ```bash
 # sibling of ai4i-core
