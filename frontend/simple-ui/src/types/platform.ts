@@ -403,6 +403,7 @@ export interface ServiceResponse {
   publishedOn?: number;
   status?: string;
   createdAt?: string | null;
+  updatedAt?: string | null;
   versionStatusUpdatedAt?: string | null;
 }
 

@@ -17,6 +17,15 @@ export function getConsentValidationError(accepted: boolean): string | undefined
   return accepted ? undefined : UI_ERROR_MESSAGES.CONSENT_REQUIRED;
 }
 
+/** Keep legal links visually distinct from the surrounding label text. */
+const legalLinkStyle = {
+  color: "blue.600",
+  fontWeight: "medium",
+  textDecoration: "underline",
+  textUnderlineOffset: "2px",
+  _hover: { color: "blue.700" },
+} as const;
+
 const ConsentCheckbox: React.FC<ConsentCheckboxProps> = ({ isChecked, onChange, error }) => (
   <FormControl isRequired isInvalid={!!error}>
     <Checkbox isChecked={isChecked} onChange={(e) => onChange(e.target.checked)}>
@@ -24,6 +33,7 @@ const ConsentCheckbox: React.FC<ConsentCheckboxProps> = ({ isChecked, onChange, 
       <Link
         href="https://github.com/COSS-India/ai4i-core/blob/master/docs/legal/terms-of-service.md"
         isExternal
+        {...legalLinkStyle}
       >
         Terms of Service
       </Link>{" "}
@@ -31,6 +41,7 @@ const ConsentCheckbox: React.FC<ConsentCheckboxProps> = ({ isChecked, onChange, 
       <Link
         href="https://github.com/COSS-India/ai4i-core/blob/master/docs/legal/privacy-policy.md"
         isExternal
+        {...legalLinkStyle}
       >
         Privacy Policy
       </Link>

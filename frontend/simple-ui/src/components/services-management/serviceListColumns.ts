@@ -472,21 +472,27 @@ export function serviceListFilterParams(options: {
   return params;
 }
 
-export function serviceCreatedAtMillis(service: Service): number {
-  const raw = service.createdAt ?? service.created_at;
-  if (!raw) return 0;
+/** ISO timestamp → epoch ms; 0 when missing or unparseable. */
+function isoToMillis(raw: string | null | undefined): number {
+  if (typeof raw !== "string" || !raw.trim()) return 0;
   const ms = Date.parse(raw);
   return Number.isNaN(ms) ? 0 : ms;
+}
+
+// API emits camelCase; snake_case kept as a legacy fallback.
+export function serviceCreatedAtMillis(service: Service): number {
+  return isoToMillis(service.createdAt ?? service.created_at);
+}
+
+export function serviceUpdatedAtMillis(service: Service): number {
+  return isoToMillis(service.updatedAt ?? service.updated_at);
 }
 
 export function servicePublishedOnMillis(service: Service): number {
   // List API emits ISO `publishedAt`; `publishedOn` is only set by the local
   // publish/unpublish optimistic patch in this tab.
-  const iso = service.publishedAt;
-  if (typeof iso === "string" && iso.trim()) {
-    const ms = Date.parse(iso);
-    if (!Number.isNaN(ms)) return ms;
-  }
+  const fromIso = isoToMillis(service.publishedAt);
+  if (fromIso) return fromIso;
   const raw = service.publishedOn;
   if (raw == null || !Number.isFinite(raw) || raw <= 0) return 0;
   return raw < 1e12 ? raw * 1000 : raw;
