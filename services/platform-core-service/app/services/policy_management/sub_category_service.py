@@ -1,7 +1,9 @@
 """Sub-category reads/writes for the policy hierarchy (Category -> SubCategory
 -> Policy).
 
-Every sub-category belongs to exactly one category, which must already exist.
+Every sub-category belongs to exactly one category, which must already exist
+and be enabled: a disabled category accepts no new sub-categories (409
+CATEGORY_DISABLED), its row locked FOR UPDATE for the check.
 Names are unique case-insensitively across all categories, not just within
 one (uq_sub_category_name_lower). The pre-insert checks give a clean 404/409;
 an IntegrityError on that index covers a concurrent create of the same name,
@@ -71,7 +73,22 @@ async def list_sub_categories(
 async def create_sub_category(
     session: AsyncSession, body: SubCategoryCreate, *, created_by: str | None = None
 ) -> SubCategoryItem:
-    await _ensure_category_exists(session, body.category_id)
+    # Lock the parent FOR UPDATE — the lock a category toggle takes — so it
+    # can't be disabled between this check and the insert (AI4IDS-3648).
+    category = await session.get(Category, body.category_id, with_for_update=True)
+    if category is None:
+        await session.rollback()
+        raise EntityNotFoundError(f"Category {body.category_id}")
+    if not category.is_active:
+        # Built before the rollback, which expires the row.
+        error = AppError(
+            f"Category '{category.name}' is disabled; enable it before adding "
+            f"sub-category '{body.name}'.",
+            code="CATEGORY_DISABLED",
+            status_code=409,
+        )
+        await session.rollback()
+        raise error
 
     existing = await session.execute(
         select(SubCategory.id).where(func.lower(SubCategory.name) == func.lower(body.name)).limit(1)

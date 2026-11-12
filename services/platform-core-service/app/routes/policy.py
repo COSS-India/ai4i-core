@@ -216,9 +216,10 @@ async def create_sub_category(
     request: Request,
     session: AsyncSession = Depends(get_db),
 ) -> CreateSubCategoryResponse:
-    """Create a sub-category under an existing category. Name and parent
-    category are required; 404 if the category does not exist, 409 if the
-    name is already taken (case-insensitive). Adopter Admin only."""
+    """Create a sub-category under an existing, enabled category. Name and
+    parent category are required; 404 if the category does not exist, 409 if
+    it is disabled or the name is already taken (case-insensitive). Adopter
+    Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
@@ -455,8 +456,8 @@ async def create_policy(
     redis: aioredis.Redis = Depends(get_redis),
 ) -> CreatePolicyResponse:
     """Create a policy. Name must be unique (case-insensitive); policy_id is
-    auto-generated in SPP-XXXX format. 409 if the name already exists.
-    Adopter Admin only."""
+    auto-generated in SPP-XXXX format. 409 if the name already exists, or
+    if the sub-category or its category is disabled. Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")

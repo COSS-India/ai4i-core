@@ -4,6 +4,8 @@ policy.name is unique (case-insensitive, uq_policy_name_lower).
 The pre-insert check gives a clean 409; an IntegrityError on that constraint
 covers concurrent creates of the same name.
 policy_id is generated atomically via the policy_id_seq sequence.
+A policy can only be created under an enabled sub-category whose category is
+enabled too (409 otherwise).
 """
 
 from typing import List, Optional, Tuple
@@ -25,6 +27,39 @@ async def _assert_policy_types_exist(session: AsyncSession, ids: List[int]) -> N
     missing = sorted(set(ids) - found)
     if missing:
         raise EntityNotFoundError(f"PolicyType {missing}")
+
+
+async def _lock_enabled_parents(session: AsyncSession, sub_category_id: int, policy_name: str) -> None:
+    """A disabled sub-category, or one under a disabled category, accepts no
+    new policies (409, AI4IDS-3649). Both rows stay locked FOR UPDATE — the
+    locks their toggles take — until the insert commits, so neither can be
+    disabled in between."""
+    from app.services.policy_management.sub_category_service import _lock_with_parent
+
+    try:
+        sub_category, locked = await _lock_with_parent(session, sub_category_id)
+    except EntityNotFoundError:
+        raise EntityNotFoundError(f"SubCategory {sub_category_id}")
+    category = locked.get(sub_category.category_id)
+    # Each error is built before the rollback, which expires the rows.
+    error = None
+    if category is not None and not category.is_active:
+        error = AppError(
+            f"Category '{category.name}' is disabled; enable it before adding "
+            f"policy '{policy_name}'.",
+            code="CATEGORY_DISABLED",
+            status_code=409,
+        )
+    elif not sub_category.is_active:
+        error = AppError(
+            f"Sub-category '{sub_category.name}' is disabled; enable it before adding "
+            f"policy '{policy_name}'.",
+            code="SUB_CATEGORY_DISABLED",
+            status_code=409,
+        )
+    if error is not None:
+        await session.rollback()
+        raise error
 
 
 async def list_policies(
@@ -65,6 +100,7 @@ async def create_policy(
         raise DuplicateEntityError(f"Policy '{body.name}'")
 
     await _assert_policy_types_exist(session, body.policy_type_id)
+    await _lock_enabled_parents(session, body.sub_category_id, body.name)
 
     policy_id_str = await repo.get_next_policy_id()
     data = body.model_dump()

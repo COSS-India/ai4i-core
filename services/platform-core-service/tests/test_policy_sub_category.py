@@ -21,10 +21,12 @@ from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy.exc import IntegrityError
 
 from app.core.exceptions import (
+    AppError,
     DuplicateEntityError,
     EntityNotFoundError,
     InsufficientPermissionsError,
 )
+from app.models.policy_management.category import Category
 from app.models.policy_management.sub_category import SubCategory
 from app.schemas.policy_management.sub_category import SubCategoryCreate, SubCategoryItem
 from app.services.policy_management import sub_category_service
@@ -52,9 +54,14 @@ def _result(*, first=None, rows=()) -> MagicMock:
     return result
 
 
-def _session(*results, commit_side_effect=None) -> MagicMock:
-    """AsyncSession stub: each ``execute`` call returns the next of ``results``."""
+_ENABLED = Category(id=1, name="Security", is_active=True)
+
+
+def _session(*results, commit_side_effect=None, category=_ENABLED) -> MagicMock:
+    """AsyncSession stub: each ``execute`` call returns the next of ``results``;
+    ``get`` (the parent category, locked) returns ``category``."""
     session = MagicMock()
+    session.get = AsyncMock(return_value=category)
     session.execute = AsyncMock(side_effect=list(results))
     session.commit = AsyncMock(side_effect=commit_side_effect)
     session.rollback = AsyncMock()
@@ -128,7 +135,7 @@ class TestSubCategoryCreateSchema:
 @pytest.mark.asyncio
 class TestCreateSubCategoryService:
     async def test_creates_under_the_parent_and_returns_the_row(self):
-        session = _session(_CATEGORY_FOUND, _NAME_FREE)
+        session = _session(_NAME_FREE)
         item = await sub_category_service.create_sub_category(
             session, SubCategoryCreate(name="Toxicity", description="Hate", category_id=1)
         )
@@ -140,15 +147,43 @@ class TestCreateSubCategoryService:
         )
 
     async def test_missing_parent_category_is_not_found(self):
-        session = _session(_CATEGORY_MISSING)
+        session = _session(category=None)
         with pytest.raises(EntityNotFoundError):
             await sub_category_service.create_sub_category(
                 session, SubCategoryCreate(name="Toxicity", category_id=42)
             )
         session.add.assert_not_called()
 
+    async def test_parent_category_is_locked_for_the_check(self):
+        # The same lock a category toggle takes, so the parent can't be
+        # disabled between the check and the insert.
+        session = _session(_NAME_FREE)
+        await sub_category_service.create_sub_category(
+            session, SubCategoryCreate(name="Toxicity", category_id=1)
+        )
+        session.get.assert_awaited_once_with(Category, 1, with_for_update=True)
+
+    async def test_disabled_parent_category_is_rejected(self):
+        # AI4IDS-3648: a disabled category accepts no new sub-categories.
+        category = Category(id=1, name="Security", is_active=False)
+        session = _session(category=category)
+
+        async def _expire():  # a real rollback expires the row's attributes
+            category.name = None
+
+        session.rollback.side_effect = _expire
+        with pytest.raises(AppError) as exc:
+            await sub_category_service.create_sub_category(
+                session, SubCategoryCreate(name="Toxicity", category_id=1)
+            )
+        assert (exc.value.status_code, exc.value.code) == (409, "CATEGORY_DISABLED")
+        assert "Category 'Security' is disabled" in exc.value.message  # read before the rollback
+        session.add.assert_not_called()
+        session.execute.assert_not_called()
+        session.rollback.assert_awaited_once()  # releases the category lock
+
     async def test_existing_name_is_rejected_before_insert(self):
-        session = _session(_CATEGORY_FOUND, _NAME_TAKEN)
+        session = _session(_NAME_TAKEN)
         with pytest.raises(DuplicateEntityError):
             await sub_category_service.create_sub_category(
                 session, SubCategoryCreate(name="pii guardrails", category_id=1)
@@ -156,17 +191,17 @@ class TestCreateSubCategoryService:
         session.add.assert_not_called()
 
     async def test_duplicate_check_is_case_insensitive(self):
-        session = _session(_CATEGORY_FOUND, _NAME_FREE)
+        session = _session(_NAME_FREE)
         await sub_category_service.create_sub_category(
             session, SubCategoryCreate(name="Toxicity", category_id=1)
         )
-        stmt = session.execute.await_args_list[1].args[0]
+        stmt = session.execute.await_args_list[0].args[0]
         sql = str(stmt.compile(compile_kwargs={"literal_binds": True}))
         assert "lower(sub_category.name) = lower('Toxicity')" in sql
 
     async def test_integrity_error_on_commit_is_a_duplicate(self):
         session = _session(
-            _CATEGORY_FOUND, _NAME_FREE,
+            _NAME_FREE,
             commit_side_effect=IntegrityError("insert", {}, Exception("uq_sub_category_name_lower")),
         )
         with pytest.raises(DuplicateEntityError):
@@ -177,7 +212,7 @@ class TestCreateSubCategoryService:
 
     async def test_parent_removed_before_insert_is_not_found(self):
         session = _session(
-            _CATEGORY_FOUND, _NAME_FREE,
+            _NAME_FREE,
             commit_side_effect=IntegrityError("insert", {}, Exception("fk_sub_category_category_id")),
         )
         with pytest.raises(EntityNotFoundError):
@@ -188,7 +223,7 @@ class TestCreateSubCategoryService:
 
     async def test_other_integrity_errors_are_not_reported_as_duplicates(self):
         session = _session(
-            _CATEGORY_FOUND, _NAME_FREE,
+            _NAME_FREE,
             commit_side_effect=IntegrityError("insert", {}, Exception("some_other_constraint")),
         )
         with pytest.raises(IntegrityError):
