@@ -912,18 +912,20 @@ class TestRotatedAt:
 
 class TestKeyRotatedNotification:
     @pytest.mark.asyncio
-    async def test_a_rotation_publishes_key_rotated_once(self, monkeypatch) -> None:
+    @pytest.mark.parametrize("grace_days, revoked_immediately", [(7, False), (0, True)])
+    async def test_a_rotation_publishes_key_rotated_once(self, monkeypatch, grace_days, revoked_immediately) -> None:
         monkeypatch.setattr(APIKeyService, "generate_api_key", staticmethod(lambda: _NEW))
         key = _key()
         key.rotated_at = datetime(2026, 11, 12, 9, 30, tzinfo=timezone.utc)
         svc, _repo, _cache = _service(key)
 
         with patch("app.services.api_key_service.publish_key_rotated") as publish:
-            await svc.rotate_by_obj(key, actor_user_id="u-1", actor_name="Asha Rao", grace_days=7)
+            await svc.rotate_by_obj(key, actor_user_id="u-1", actor_name="Asha Rao", grace_days=grace_days)
 
         publish.assert_called_once_with(
             tenant_id=3, api_key_id=7, key_name="prod", application_name="App",
             initiator_name="Asha Rao", rotated_at=key.rotated_at, revoked_at=key.rotated_key_expires_at,
+            revoked_immediately=revoked_immediately,
         )
         assert _OLD not in str(publish.call_args) and _NEW not in str(publish.call_args)
 

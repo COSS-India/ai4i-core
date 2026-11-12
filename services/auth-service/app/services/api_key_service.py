@@ -1417,6 +1417,7 @@ class APIKeyService:
             initiator_name=actor_name,
             rotated_at=db_key.rotated_at,
             revoked_at=db_key.rotated_key_expires_at,
+            revoked_immediately=grace_days == 0,
         )
         return new_value, db_key
 
