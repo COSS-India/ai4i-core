@@ -15,18 +15,28 @@ export interface DomainOption {
   label: string;
 }
 
-export async function listConfigs(type?: string): Promise<ConfigItem[]> {
+/**
+ * `sortOrder` with a `type` makes the backend sort that config's data items by
+ * label (case-insensitive); without a `type` it orders the config rows by id.
+ */
+export async function listConfigs(
+  type?: string,
+  sortOrder?: "asc" | "desc",
+): Promise<ConfigItem[]> {
+  const params: Record<string, string> = {};
+  if (type) params.type = type;
+  if (sortOrder) params.sort_order = sortOrder;
   const response = await apiService.get(apiEndpoints.platform.configs, {
-    params: type ? { type } : undefined,
+    params: Object.keys(params).length ? params : undefined,
     responseSchema: configListResponseSchema,
     suppressErrorAlert: true,
   });
   return response.data.data.items;
 }
 
-/** The platform's standard domain list, in the order the `domain` config stores it. */
+/** The platform's standard domain list, sorted A→Z by label by the backend. */
 export async function getDomainOptions(): Promise<DomainOption[]> {
-  const items = await listConfigs("domain");
+  const items = await listConfigs("domain", "asc");
   const config = items.find((item) => item.type === "domain");
   if (!config) return [];
   const options = new Map<string, DomainOption>();
