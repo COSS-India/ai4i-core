@@ -242,3 +242,106 @@ class TestCreatePolicyRoute:
                 session=MagicMock(),
             )
         stub.assert_not_awaited()
+
+
+# ── create_policy service: enabled parents only (AI4IDS-3649) ────────────────
+
+
+def _policy_session(sub_category, category) -> MagicMock:
+    """AsyncSession stub for create_policy: ``get`` returns the sub-category
+    or its category by model; the repository and policy-type check are
+    patched separately."""
+    from app.models.policy_management.category import Category
+
+    async def _get(model, ident, **_kwargs):
+        return category if model is Category else sub_category
+
+    async def _expire():  # a real rollback expires the rows' attributes
+        for row in (sub_category, category):
+            if row is not None:
+                row.name = None
+
+    session = MagicMock()
+    session.get = AsyncMock(side_effect=_get)
+    session.rollback = AsyncMock(side_effect=_expire)
+    return session
+
+
+@pytest.fixture
+def _repo(monkeypatch):
+    from app.services.policy_management import policy_service
+
+    repo = MagicMock()
+    repo.get_by_name = AsyncMock(return_value=None)
+    repo.get_next_policy_id = AsyncMock(return_value="PID-0001")
+    created = MagicMock(id=7, policy_id="PID-0001", name="PII Redaction", description=None,
+                        domain=["healthcare"], guardrail_scope="output", is_global=False,
+                        sub_category_id=1, is_active=False, policy_type_id=[1],
+                        created_at=None, updated_at=None)
+    repo.create = AsyncMock(return_value=created)
+    monkeypatch.setattr(policy_service, "PolicyRepository", lambda _session: repo)
+    monkeypatch.setattr(policy_service, "_assert_policy_types_exist", AsyncMock())
+    monkeypatch.setattr(policy_service.PolicyItem, "model_validate", staticmethod(lambda row: row))
+    return repo
+
+
+@pytest.mark.asyncio
+class TestCreatePolicyService:
+    async def _create(self, session):
+        from app.services.policy_management import policy_service
+
+        return await policy_service.create_policy(session, PolicyCreate(**_VALID_CREATE))
+
+    async def test_enabled_parents_create_the_policy_under_their_locks(self, _repo):
+        from app.models.policy_management.category import Category
+        from app.models.policy_management.sub_category import SubCategory
+
+        session = _policy_session(
+            SubCategory(id=1, name="PII", category_id=3, is_active=True),
+            Category(id=3, name="Security", is_active=True),
+        )
+        item = await self._create(session)
+        assert item.policy_id == "PID-0001"
+        _repo.create.assert_awaited_once()
+        # Category first, then the sub-category: the order their toggles lock in.
+        locked = [c.args[0] for c in session.get.await_args_list if c.kwargs.get("with_for_update")]
+        assert locked == [Category, SubCategory]
+
+    async def test_disabled_sub_category_is_rejected(self, _repo):
+        from app.core.exceptions import AppError
+        from app.models.policy_management.category import Category
+        from app.models.policy_management.sub_category import SubCategory
+
+        session = _policy_session(
+            SubCategory(id=1, name="PII", category_id=3, is_active=False),
+            Category(id=3, name="Security", is_active=True),
+        )
+        with pytest.raises(AppError) as exc:
+            await self._create(session)
+        assert (exc.value.status_code, exc.value.code) == (409, "SUB_CATEGORY_DISABLED")
+        assert "Sub-category 'PII' is disabled" in exc.value.message  # read before the rollback
+        _repo.create.assert_not_awaited()
+        _repo.get_next_policy_id.assert_not_awaited()  # no policy_id burnt
+        session.rollback.assert_awaited_once()          # releases the locks
+
+    async def test_enabled_sub_category_under_a_disabled_category_is_rejected(self, _repo):
+        from app.core.exceptions import AppError
+        from app.models.policy_management.category import Category
+        from app.models.policy_management.sub_category import SubCategory
+
+        session = _policy_session(
+            SubCategory(id=1, name="PII", category_id=3, is_active=True),
+            Category(id=3, name="Security", is_active=False),
+        )
+        with pytest.raises(AppError) as exc:
+            await self._create(session)
+        assert (exc.value.status_code, exc.value.code) == (409, "CATEGORY_DISABLED")
+        assert "Category 'Security' is disabled" in exc.value.message
+        _repo.create.assert_not_awaited()
+
+    async def test_missing_sub_category_is_not_found(self, _repo):
+        from app.core.exceptions import EntityNotFoundError
+
+        with pytest.raises(EntityNotFoundError, match="SubCategory 1"):
+            await self._create(_policy_session(None, None))
+        _repo.create.assert_not_awaited()
