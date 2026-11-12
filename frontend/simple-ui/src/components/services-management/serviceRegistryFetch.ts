@@ -153,10 +153,14 @@ export function applyServicePublishPatch(
   if (service.serviceId !== serviceId) return service;
   if (freshService) return freshService;
   if (isPublished) {
+    // servicePublishedOnMillis prefers publishedAt, so set both or a
+    // re-publish keeps showing the previous publish date.
+    const now = Date.now();
     return {
       ...service,
       isPublished,
-      publishedOn: Math.floor(Date.now() / 1000),
+      publishedOn: Math.floor(now / 1000),
+      publishedAt: new Date(now).toISOString(),
     };
   }
   return { ...service, isPublished };
