@@ -1,0 +1,13 @@
+{# details: [application_name, api_key, initiated_by, rotated_on, revoked_on] #}
+{% set layout = "notification" %}
+{% set name = "API Key Rotated for " ~ details[0] %}
+{% set headline = "An API key for " ~ tenant_name ~ " has been rotated. The old key remains active during the grace period and will be revoked automatically when the grace period ends." %}
+{% set lines = [
+    {"label": "Application", "value": details[0]},
+    {"label": "API Key", "value": details[1]},
+    {"label": "Initiated by", "value": details[2]},
+    {"label": "Rotated on", "value": details[3]},
+    {"label": "Old key will be revoked on", "value": details[4]},
+    "Action required: Move all applications to the new key before " ~ details[4] ~ ". After this time, requests using the old key will fail.",
+    "If this rotation was not expected, confirm it with " ~ details[2] ~ ".",
+] %}
