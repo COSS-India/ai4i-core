@@ -176,6 +176,25 @@ def _validate_thresholds(name: str, thresholds: List[ThresholdBand]) -> None:
             )
 
 
+def _validate_update_for_row(row: ConfigNotificationAlert, payload: CatalogUpdate) -> None:
+    """Reject a PATCH field that doesn't apply to this row: thresholds on a
+    non-ALERT row, or a scope change on a row that stays GLOBAL."""
+    if payload.thresholds is not None and row.type != NotificationType.ALERT.value:
+        raise ValidationError(
+            message=f"'{row.name}' is a {row.type}-type entry; thresholds do not apply to it.",
+            code="INVALID_THRESHOLDS",
+        )
+    if (
+        payload.scope is not None
+        and row.name in FIXED_GLOBAL_SCOPE_NAMES
+        and payload.scope.value != NotificationScope.GLOBAL.value
+    ):
+        raise ValidationError(
+            message=f"'{row.name}' is always Global scope; its scope can't be changed.",
+            code="SCOPE_NOT_EDITABLE",
+        )
+
+
 async def update_catalog(
     session: AsyncSession,
     name: str,
@@ -217,21 +236,7 @@ async def update_catalog(
     if row is None or row.type == NotificationType.MONITORING.value:
         raise EntityNotFoundError(f"Catalog entry '{name}'")
 
-    if payload.thresholds is not None and row.type != NotificationType.ALERT.value:
-        raise ValidationError(
-            message=f"'{row.name}' is a {row.type}-type entry; thresholds do not apply to it.",
-            code="INVALID_THRESHOLDS",
-        )
-
-    if (
-        payload.scope is not None
-        and row.name in FIXED_GLOBAL_SCOPE_NAMES
-        and payload.scope.value != NotificationScope.GLOBAL.value
-    ):
-        raise ValidationError(
-            message=f"'{row.name}' is always Global scope; its scope can't be changed.",
-            code="SCOPE_NOT_EDITABLE",
-        )
+    _validate_update_for_row(row, payload)
 
     previous_scope = row.scope
     if payload.scope is not None:
