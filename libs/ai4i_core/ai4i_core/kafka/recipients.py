@@ -33,17 +33,29 @@ logger = logging.getLogger(__name__)
 
 DecryptEmail = Callable[[Optional[str]], Optional[str]]
 
+# Who counts as a recipient (AI4IDS-3623): only users the UI shows as Active.
+# A user suspended on their own (is_active false), locked by their tenant's
+# Suspend/Deactivate cascade (is_tenant_active false), or in a tenant that is
+# SUSPENDED or DEACTIVATED gets no email. A user with no tenant (platform
+# ADMIN / MODERATOR) is judged on their own flags alone.
+_ACTIVE_USER = """u.is_active IS TRUE
+       AND u.is_delete IS NOT TRUE
+       AND u.is_tenant_active IS NOT FALSE
+       AND NOT EXISTS (
+             SELECT 1 FROM tenants t_status
+              WHERE t_status.id = u.tenant_id
+                AND t_status.status IN ('SUSPENDED', 'DEACTIVATED'))"""
+
 # Q-R1 — recipients of one tenant, plus the institution name. The name is
 # tenants.organisation (the institution); tenants.name is the contact person.
 _ONE_TENANT_SQL = text(
-    """
+    f"""
     SELECT DISTINCT u.id, u.email, u.full_name,
            (SELECT t.organisation FROM tenants t WHERE t.id = :tenant_id) AS tenant_name
       FROM users u
       LEFT JOIN user_role ur ON ur.user_id = u.id
       LEFT JOIN roles r      ON r.id = ur.role_id
-     WHERE u.is_active IS TRUE
-       AND u.is_delete IS NOT TRUE
+     WHERE {_ACTIVE_USER}
        AND (    (:include_admin        AND r.name = :admin_role)
              OR (:include_tenant_admin AND r.name = :tenant_admin_role
                                        AND u.tenant_id = :tenant_id)
@@ -54,14 +66,13 @@ _ONE_TENANT_SQL = text(
 
 # Q-R2 — recipients of many tenants, grouped per tenant in code
 _MANY_TENANTS_SQL = text(
-    """
+    f"""
     SELECT u.tenant_id::text AS tenant_id, r.name AS role, u.id::text AS user_id,
            u.email, u.full_name
       FROM users u
       LEFT JOIN user_role ur ON ur.user_id = u.id
       LEFT JOIN roles r      ON r.id = ur.role_id
-     WHERE u.is_active IS TRUE
-       AND u.is_delete IS NOT TRUE
+     WHERE {_ACTIVE_USER}
        AND (    (:include_admin        AND r.name = :admin_role)
              OR (:include_tenant_admin AND r.name = :tenant_admin_role
                                        AND u.tenant_id::text = ANY(CAST(:tenant_ids AS varchar[])))
@@ -73,14 +84,13 @@ _MANY_TENANTS_SQL = text(
 # Q-R3 — monitoring recipients: every active user holding a selected role,
 # resolved at send time (no tenant filter; monitoring is platform-level)
 _ROLE_USERS_SQL = text(
-    """
+    f"""
     SELECT DISTINCT u.id, u.email, u.full_name
       FROM users u
       JOIN user_role ur ON ur.user_id = u.id
       JOIN roles r      ON r.id = ur.role_id
      WHERE r.name = ANY(CAST(:roles AS varchar[]))
-       AND u.is_active IS TRUE
-       AND u.is_delete IS NOT TRUE
+       AND {_ACTIVE_USER}
     """
 )
 

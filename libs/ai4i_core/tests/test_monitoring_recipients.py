@@ -28,6 +28,8 @@ class _User:
     full_name: str = ""
     is_active: bool = True
     is_delete: bool = False
+    is_tenant_active: bool = True
+    tenant_status: str = "ACTIVE"
 
 
 class _Result:
@@ -53,6 +55,10 @@ class _AuthDb:
             if "is_active IS TRUE" in sql and not u.is_active:
                 continue
             if "is_delete IS NOT TRUE" in sql and u.is_delete:
+                continue
+            if "is_tenant_active IS NOT FALSE" in sql and not u.is_tenant_active:
+                continue
+            if "status IN ('SUSPENDED', 'DEACTIVATED')" in sql and u.tenant_status in ("SUSPENDED", "DEACTIVATED"):
                 continue
             rows.append({"id": u.id, "email": f"enc:{u.email}", "full_name": u.full_name})
         return _Result(rows)
@@ -83,6 +89,33 @@ async def test_inactive_and_deleted_users_are_dropped():
         _User("3", "gone@x.io", {"ADMIN"}, is_delete=True),
     ])
     assert [r.email for r in await _resolver().for_roles(db, ["ADMIN"])] == ["a@x.io"]
+
+
+@pytest.mark.asyncio
+async def test_users_of_a_suspended_or_deactivated_tenant_are_dropped():
+    """AI4IDS-3623: only users the UI shows as Active get an email. The
+    tenant cascade leaves is_active alone and clears is_tenant_active; the
+    tenant's own status is checked too, as the UI does."""
+    db = _AuthDb([
+        _User("1", "a@x.io", {"ADMIN"}),
+        _User("2", "locked@x.io", {"ADMIN"}, is_tenant_active=False),
+        _User("3", "susp@x.io", {"ADMIN"}, tenant_status="SUSPENDED"),
+        _User("4", "deact@x.io", {"ADMIN"}, tenant_status="DEACTIVATED"),
+    ])
+    assert [r.email for r in await _resolver().for_roles(db, ["ADMIN"])] == ["a@x.io"]
+
+
+def test_every_recipient_query_carries_the_active_user_filter():
+    """for_tenant and for_tenants are tested against fixed rows, so pin here
+    that all three queries filter on the same Active-user rule."""
+    from ai4i_core.kafka.recipients import _MANY_TENANTS_SQL, _ONE_TENANT_SQL, _ROLE_USERS_SQL
+
+    for stmt in (_ONE_TENANT_SQL, _MANY_TENANTS_SQL, _ROLE_USERS_SQL):
+        sql = stmt.text
+        assert "u.is_active IS TRUE" in sql
+        assert "u.is_delete IS NOT TRUE" in sql
+        assert "u.is_tenant_active IS NOT FALSE" in sql
+        assert "status IN ('SUSPENDED', 'DEACTIVATED')" in sql
 
 
 @pytest.mark.asyncio
