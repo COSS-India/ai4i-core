@@ -6,26 +6,504 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/).
 
 
-## [Unreleased]
+## [2.10.0] - 2026-11-02
+
+> Service fallback, Logs Dashboard search, column selection and institution contact release, 61 PRs merged
 
 ### Added
-- `GET /models/list`: new query filters — `name` (contains), `version` (contains),
-  `task_types` (comma-separated), `provider_name` (contains), `version_status`,
-  `created_from`, `created_to`, `include_deprecated`, `created_by`
-- `GET /models/list`: sorting via `sort_by` / `sort_order` query params
-- `GET /models/list`: `providerName` and `noOfServices` fields in list items
-- `GET /models/list`: column projection via `?columns=` (returns only the fields
-  needed by the requested display columns; `modelId` is always included)
+- Service fallback per Application. An Application stores an ordered list of fallback services per primary service (`applications.service_fallbacks`), validated against the Institution's tier, the task type and the published status. When the requested service times out, cannot be reached or returns 5xx, inference-service retries the next fallback on the buffered, streaming and audio-upload paths, and stops once a fallback has been partly billed. The Applications UI gets a fallback editor (AI4IDS-3488, AI4IDS-3568)
+- Logs Dashboard keyword search across all span fields (`q`, up to 256 characters, capped at 20,000 matching traces), `sort_by`, `sort_order`, `status_code` and `service_id` filters, success and failure counts in a `summary` block, and a column picker backed by `GET /api/v1/telemetry/traces/columns` and a `columns` parameter on search (AI4IDS-3526, AI4IDS-3527, AI4IDS-3529)
+- Column selector on the Service List. `GET /api/v1/services/columns` returns the column catalogue, `GET /api/v1/services` takes `columns`, column filters and sort, and returns only the fields the visible columns need. Each user's selection is stored server-side under `/api/v1/preferences/columns/{view_key}` and cached in Redis (AI4IDS-3356)
+- API key rotation rules and UI. The grace period is chosen at rotation and can be extended at `PATCH /api/v1/auth/api-keys/{key_id}/rotated-key`, the previous value can be revoked on its own, and revoking the current value revokes the key. Rotation never changes the key's expiry (AI4IDS-3463)
+- Change the institution contact by picking an existing, set-up Institution Admin (`contact_user_id` on `PATCH /api/v1/auth/tenants/{tenant_id}`), applied immediately with no email. A PENDING institution can still correct its contact email, which re-sends the activation link (AI4IDS-3401, AI4IDS-3549)
+- Update and delete for policy categories and sub-categories, in the API and the Policies page (AI4IDS-3498, AI4IDS-3499, AI4IDS-3500, AI4IDS-3501)
+- Default PII definitions per domain for Education, Finance and Healthcare, so a policy can attach one domain's entities without the others (AI4IDS-3489)
+- Tier rate limit and monthly quotas on My Institution (AI4IDS-3403)
+- Number of services per model on the Model list (AI4IDS-3402)
+- Separate sample JSON for NLP and LLM models on model creation, and a ULCA OpenAPI reference link (AI4IDS-3353, AI4IDS-3354)
+- `users.activated_at`, so the tenant-user list tells Pending Activation from Suspended (AI4IDS-3598)
 
 ### Changed
-- **Breaking** — `GET /models/list`: the `model_name` exact-match query parameter
-  has been removed. Use `?name=` (case-insensitive contains match) instead.
-  Previously, passing `?model_name=X` was silently ignored; it now has no effect
-  because FastAPI drops unknown query params — callers must migrate to `?name=`.
+- Sidebar navigation grouped into Try, Track, Manage and Govern (AI4IDS-3587)
+- Self-registered users (email or Google) can only hold USER; other role assignments are rejected. Admin-created users created between 2026-04-29 and 2026-05-22, and the seeded admin, are re-labelled as admin-created (AI4IDS-3412, AI4IDS-3579, AI4IDS-3585)
+- Changing a tenant user's role replaces their tenant role instead of adding a second one. Demoting the institution's contact or its last active Institution Admin is refused (409 `CONTACT_ROLE_LOCKED`, 422 `LAST_TENANT_ADMIN`), and the user's sessions are revoked on a role change (AI4IDS-3618)
+- `PATCH /api/v1/auth/tenants/{tenant_id}/budget` accepts `top-up` only, and a top-up is rejected while the tenant's budget window has expired (AI4IDS-3398, AI4IDS-3543, AI4IDS-3583)
+- Policy and PII routes use the `policies.*` and `pii_types.read` permissions in place of the admin sentinel
+- Service and hardware descriptions are optional when creating a service (AI4IDS-3400, AI4IDS-3525)
+- The Adoption usage report shows consistent empty values, accurate figures and the reference layout (AI4IDS-3578)
+- Tier Management, Service Management, Institution Management and Logs Dashboard UI updates from the 2.10 demo feedback, including breadcrumbs, the Task Type label, removal of the View icon from list views, and page-only search on the Service List date and price columns (AI4IDS-3332, AI4IDS-3334, AI4IDS-3399, AI4IDS-3404, AI4IDS-3423, AI4IDS-3590)
+- Trace details show request metadata as `metadata`
+- Portal User Guide reviewed and updated (AI4IDS-3486)
+- Grafana dashboard JSONs updated
+- Services moved through `ai4i-core` 1.0.53 and 1.0.54
+
+### Fixed
+- The Logs Dashboard showed the tenant id instead of the institution name, including for suspended institutions (AI4IDS-3600)
+- Failed LLM requests had no task type, so `task_types=llm` returned unclassified rows; guardrail-blocked requests now carry their service and model, and a status filter counts traces by their request status (AI4IDS-3609)
+- The LLM error was not recorded on the trace span, and the readiness probe used the wrong Redis client (AI4IDS-3599, AI4IDS-3604)
+- Out-of-range tenant ids returned 500 instead of 404, and non-numeric tenant ids on notification subscription endpoints were not rejected (AI4IDS-3605, AI4IDS-3607)
+- Renaming a tier to an existing name returned 500 instead of 409 (AI4IDS-3606)
+- Self-registered users landed in Suspended instead of Pending Activation (AI4IDS-3598)
+- Logs Dashboard time range handling
+- The usage backfill guarded on `usage_events` instead of the recorded `daily_usage` rows
+- The policy category and sub-category edit and delete routes were missing from the gateway permission map
+
+### Removed
+- The `top-down` action on the tenant budget API (AI4IDS-3398, AI4IDS-3543)
+- The API Key column from the Logs Dashboard and its trace responses (AI4IDS-3506)
+- `ROTATED_API_KEY_EXPIRE_DAYS` from auth-service. The grace period is chosen per rotation (AI4IDS-3463)
+
+### Upgrade notes
+- Shared library `ai4i-core` 1.0.52 to 1.0.54. auth-service, platform-core and inference pin 1.0.54; kafka-consumers and pyjob stay on 1.0.52. 1.0.53 on PyPI was built from an older branch and must not be used
+- 12 migrations: nine on the auth database and three on the core database. Data-changing ones: `e7a1b2c3d4f5` re-labels admin-created users stored as self-registered, `a7c3e9f15b28` leaves non-privileged self-registered users with USER only, `ba0818f032cd` backfills `users.activated_at`, and `8fbe729b1331` renames the seeded domain PII definitions to `PII`. Net schema change from v2.9: three added columns (`api_key.rotated_at`, `applications.service_fallbacks` with default `{}`, nullable `users.activated_at`) and one new core table (`user_table_preferences`). The `api_key_revoked_at` and `tenants.pending_email` columns are added and dropped within the same run
+- No downtime is needed from v2.9. The migrations only add nullable or defaulted columns, so 2.9 pods keep working against the migrated schema. Run the core and auth migrations first, then roll out the 2.10 services. Keep the gap before the auth-service rollout short: `ba0818f032cd` backfills `users.activated_at` when it runs, so a user who activates on a 2.9 pod afterwards shows as Pending Activation in 2.10 until that backfill is re-run
+- OpenSearch `max_result_window` must be raised to 20001 on `traces-*` for keyword search: `PUT /traces-*/_settings {"index": {"max_result_window": 20001}}`
+- New gateway routes: `PATCH /api/v1/auth/api-keys/{key_id}/rotated-key`, `GET /api/v1/services/columns`, `GET /api/v1/telemetry/traces/columns`, `GET|PUT|DELETE /api/v1/preferences/columns/{view_key}`, and `PATCH|DELETE` on policy categories and sub-categories. Their permissions are in `services/auth-service/api_permissions.json`
+- Breaking API changes: rotation requires `grace_days` and returns 422 `INVALID_GRACE_PERIOD` past the key's expiry; the budget API rejects `top-down` with 422; a typed email change on a non-PENDING institution returns 409 `TENANT_EMAIL_EDIT_NOT_ALLOWED`; a status filter on trace search now pages over traces resolved by their request status, and the summary cards stay global
+- simple-ui reads `ROTATED_API_KEY_DEFAULT_GRACE_DAYS` (default 7) at runtime from its ConfigMap, so it can be changed without rebuilding the image
+- Users who already hold both USER and TENANT ADMIN from the old additive role change keep both until their role is saved again
 
 ---
 
-## [2.2.0] - 2026-06-08
+## [2.9.0] - 2026-10-16
+
+> PII guardrail, policy management, API key rotation and usage metering release, 76 PRs merged
+
+### Added
+- PII policy management. Categories, sub-categories, policy types and policies, each with create, read, update and status APIs under `/api/v1/policies`, audit fields on every policy table, a default category seed, and an application link through `applications.policy_id` (AI4IDS-3172, AI4IDS-3174, AI4IDS-3176, AI4IDS-3178, AI4IDS-3179, AI4IDS-3181, AI4IDS-3312)
+- Policies page in the UI for categories, sub-categories, PII types and policy CRUD
+- Presidio-backed PII engine with a spaCy NLP model: `GET /api/v1/pii/entities`, analyze and anonymize, a custom `entity_counter` anonymizer, entity filtering by country, and `POST /api/v1/pii/simulate` to run a stored or draft policy against sample text (AI4IDS-3175, AI4IDS-3180)
+- PII guardrail in the inference pipeline. Policies linked to an application, and global policies, run on LLM chat requests, including requests with no `app_id`. The policy is cached in Redis and the cache is refreshed when a category or sub-category is enabled or disabled (AI4IDS-3180)
+- API key rotation at `POST /api/v1/auth/api-keys/{key_id}/rotate`. The previous value keeps working for a grace window, can be revoked early at `DELETE /api/v1/auth/api-keys/{key_id}/rotated-key`, and is returned masked in rotation responses. The rotation actions are hidden in the UI until the rotation UI story lands (AI4IDS-3254)
+- Tier-level rate limit, set on tier create and edit and sent to the gateway as `X-Rate-Limit` (AI4IDS-3375)
+- LLM services priced separately for input, cached input and output tokens (AI4IDS-3279)
+- `usage_events` (one row per request) and `daily_usage` tables in the core database, with a daily rollup job, and the Usage Dashboard metering tabs served from them instead of Prometheus (AI4IDS-3292, AI4IDS-3432)
+- A backfill job that loads Usage Dashboard LLM history from Prometheus into `daily_usage` (AI4IDS-3292)
+- Usage Dashboard period filter, LLM token breakdown and LLM drill-down, with today included in Last 7 days and custom ranges (AI4IDS-3292)
+- Scheduled usage report by email to every active USAGE VIEWER, sent by the `usage_report` job in the new `services/pyjob` service through platform-core (AI4IDS-3278, AI4IDS-3416)
+- `services/pyjob`, a new job image with `daily_usage_consolidation`, `monthly_partition_rollover` and `usage_report`, meant to run as Kubernetes CronJobs
+- App-supplied tags on inference requests for tracing, stored as `metadata` on `usage_events` (AI4IDS-3266)
+- End User and Metadata filters on the Logs Dashboard (AI4IDS-3430)
+
+### Changed
+- Usage summary splits budget (all-time) from quota (monthly). `/pay-per-use/usage-summary` now returns `{currency, budget, quota}`, the usage tenant endpoints drop `spend` and the flat quota fields and add `periodSpend`, and the metering endpoints return `scope.period` in place of `scope.window` (AI4IDS-3298)
+- Usage period endpoints take `today`, `yesterday`, `last_7_days` or a custom range of up to 366 days. `window` and `billing_period` return 422 `INVALID_PERIOD`
+- Creating an LLM service, or updating one's billing fields, requires `cachedInputCostPerUnit` and `outputCostPerUnit`. Other task types reject them (AI4IDS-3279)
+- LLM chat validates `user` (up to 256 characters) and `metadata` (up to 16 string values, keys up to 64 characters, no `orch_` prefix) and returns 400 otherwise. Both are stripped before the request reaches the model (AI4IDS-3266)
+- Tier status is cached in Redis (`core:tier:{id}`), written by platform-core and read by auth-service, in place of a per-replica in-memory cache
+- The portal signs the user out only on a 401. Timeouts, network errors, 5xx and 403 keep the session (AI4IDS-3300)
+- `policies.read` granted to TENANT ADMIN, so Institution Admins can list the policy catalogue
+- Policy type names no longer have to be unique
+- Tier assignment emails show the catalogue quota unit, empty email fields show NA, and field labels are bold (AI4IDS-3481)
+- The Portal URL in emails is a hyperlink (AI4IDS-3485)
+- Tier name shown on the Institution Admins page (AI4IDS-3049)
+- Frontend restructured into feature folders, with management validation, model JSON validation and application budget draft logic extracted, and the platform name made dynamic in Onboarding Guides
+- Setup and Kafka consumer documentation updated (AI4IDS-3264)
+- Services moved through `ai4i-core` 1.0.49, 1.0.50, 1.0.51 and 1.0.52 (AI4IDS-3279, AI4IDS-3450)
+
+### Fixed
+- Unsubscribe had no confirmation, and Submit was enabled with no changes (AI4IDS-3271, AI4IDS-3272)
+- Inactive users were shown as enabled and ticked in "Also Notify In Your Org" (AI4IDS-3274)
+- Service listing in View Tier showed an invalid "Draft" status (AI4IDS-3414)
+- Custom date range: the picker closed early, the end date could not be selected, backward selection was blocked, and the LLM cost breakdown overlapped (AI4IDS-3341, AI4IDS-3342, AI4IDS-3470)
+- The daily_usage rollup counted request rows more than once (AI4IDS-3292)
+- A PII policy still ran when its sub-category was inactive (AI4IDS-3180)
+- PII simulate rejected the flat `policy_fields` returned by the policy-types API (AI4IDS-3175)
+- The PII audit log did not keep the raw value for output-scoped policies
+- Multiple Alembic heads on the core database, merged in #1725, #1733, #1747, #1748 and #1791
+
+### Removed
+- The internal `POST /internal/ppu/tier/deactivated` route on auth-service. Tier status now travels through Redis
+- The INFO log of chat request payloads in inference-service
+
+### Upgrade notes
+- Shared library `ai4i-core` 1.0.46 to 1.0.52. auth-service, platform-core, inference, kafka-consumers and the new pyjob all pin 1.0.52
+- 25 migrations: three on the auth database (`applications.policy_id`, `policies.read` for TENANT ADMIN, and `api_key.rotated_key`) and 22 on the core database (the policy tables and seeds, `usage_events` and `daily_usage`, `tiers.rate_limit`, the LLM token prices, and five head-merge revisions). The only one that changes existing rows is `5d7f9b1c3e4a`, which copies each LLM service's `cost_per_unit` into the new cached input and output prices, so existing LLM cost is unchanged
+- The Usage Dashboard switches to `usage_events` unless `METERING_DATA_SOURCE` is set. The default moved from `prometheus` to `usage_events`. `usage_events` starts empty at deploy, so every range before the deploy shows zero until the backfill is run and `USAGE_DAILY_ROLLUP_ENABLED` is turned on. Set `METERING_DATA_SOURCE=prometheus` to keep the old numbers
+- `services/pyjob` needs three CronJobs, which are not defined in this repo: `daily_usage_consolidation` (`30 18 * * *`), `monthly_partition_rollover` (`0 0 1 * *`) and `usage_report`. Without the rollover, rows from next month on fall into the default partition. Without consolidation, `daily_usage` stays empty, and turning `USAGE_DAILY_ROLLUP_ENABLED` on then shows zeros for past periods. The first consolidation run rewrites every `usage_events` row under an exclusive lock, so the payperuse consumer waits for it
+- `usage_report` re-sends on every run, with no send log, so its CronJob schedule must match `USAGE_REPORT_FREQUENCY`. The report reads Prometheus, the auth database and SMTP, and its figures come from Prometheus, so they can differ from the dashboard
+- The Prometheus backfill is a one-off manual run per environment (`python -m backfill` in `services/pyjob`, reversed with `python -m backfill undo`). Run it soon after deploy, because Prometheus retention is rolling
+- Every LLM chat request now goes through the PII guardrail, which reads Redis and platform-core. It fails closed: if Redis or platform-core cannot be reached, or an application points at a policy platform-core does not have, the request returns 503. inference-service must share Redis and `REDIS_DB` with auth-service and platform-core, or app-level policies are silently not enforced. When a policy applies, a streaming response arrives as one chunk at the end
+- inference-service now carries Presidio and the spaCy `en_core_web_lg` model, fetched at image build time. The model loads on the first PII-guarded request per pod, so expect higher pod memory and a slow first request
+- The PII audit log (`ai4iplatform_core.audit_log`) stores the unmasked request for output-scoped policies, in plain JSONB
+- Breaking API changes for usage clients: `/pay-per-use/usage-summary` drops `billingPeriod`, `totalSpend`, `totalAllocatedBudget`, `totalRemainingBudget`, `budgetExceededTenants`, `activeTenants` and `spendByModelTaskType`, the usage tenant endpoints drop `spend` and the flat quota fields, and `window` or `billing_period` returns 422
+- LLM chat callers sending non-string `metadata` values or more than 16 keys now get 400
+- The tier rate limit is sent as `X-Rate-Limit`, but APISIX enforces it only once forward-auth passes the header upstream and the rate limiter counts against it. Existing tiers get no limit (NULL). Deploy platform-core before auth-service, since auth-service now reads tier status from the Redis cache platform-core writes
+- New optional settings: `ROTATED_API_KEY_EXPIRE_DAYS` (auth-service, default 7), `USAGE_DAILY_ROLLUP_ENABLED`, `USAGE_REPORT_ALLOW_SUBDAILY` and the `USAGE_REPORT_*` branding keys (platform-core). The pyjob CronJobs need their own env: the core and auth database settings, `PLATFORM_CORE_SERVICE_URL`, and `INTERNAL_SERVICE_SHARED_SECRET` matching platform-core's
+- API key rotation is API-only for now. The UI hides the rotation actions
+- inference-service still logs Triton request payloads at INFO (`services/base/task_service.py`), so text, audio and image content still reach the logs and OpenSearch. The chat payload log is gone
+
+---
+
+## [2.8.0] - 2026-10-06
+
+> Notification pipeline, monitoring alerts and UI revamp release, 58 PRs merged
+
+### Added
+- Scope-based notification subscriptions. Each catalog item is `GLOBAL` (platform-wide, no opt-out) or `INSTITUTION` (an institution subscribes to it), with a `tenant_notification_subscription` table seeded per institution and Institution Admin endpoints at `GET /api/v1/notification-alerts/subscriptions` and `PATCH`/`PUT /api/v1/notification-alerts/subscriptions/{notification_id}` (AI4IDS-3200, AI4IDS-3202, AI4IDS-3236, AI4IDS-3237)
+- Platform monitoring alerts: five default alerts seeded into the catalog, threshold bands in seconds or percent, `PATCH /api/v1/notification-alerts/monitoring-catalog/{name}`, a monitoring evaluator in platform-core that checks Prometheus on a fixed interval, a standard monitoring email template, and the Monitoring Alerts tab in the UI (AI4IDS-3183, AI4IDS-3186, AI4IDS-3246)
+- One shared notification pipeline in `ai4i_core.kafka`. Tier, budget, quota, usage and monitoring producers share one tiered cache (in-memory, Redis, Postgres), one ledger, one failure log and one Kafka envelope. A notification problem never fails or slows the business request (AI4IDS-3226)
+- Producer-side recipient resolution. auth-service and platform-core resolve and decrypt recipients before publishing, and the Kafka envelope carries a `recipients` list (AI4IDS-3201)
+- Institution tier unassignment at `DELETE /auth/tenants/{id}/tier`, admin-only. API keys under the institution are blocked until a tier is reassigned (AI4IDS-3256)
+- Custom date range on the Usage Dashboard. `/metering/overview` and `/metering/model-consumption` take optional `from` and `to`, validated against the Prometheus retention floor, and the overview reports `first_usage_at` (AI4IDS-3240, AI4IDS-3267)
+- Model creation checks for fields that previously failed only at inference time: `adapterConfig` tensors, dtypes and mappings, `classInstance` for every task type except LLM and pipeline, `schema.taskType` matching `task.type`, and `asyncApiDetails` when `isSyncApi` is false (AI4IDS-3152)
+- Model creation guide and adapter config quick and technical guides under `docs/model_creation/`, with a trimmed sample model JSON in the UI (AI4IDS-3243, AI4IDS-3249)
+- Revamped Tier Management Edit Tier with service and institution mapping (AI4IDS-3162)
+- Domain column and active API key count on Application Management
+
+### Changed
+- UI revamp onto a unified design system: Institution, Tier, Model and Service Management, API Key Management, Logs, Notifications, Explore and Profile, with shared create, edit and view form pages, full-width layouts and standardised navigation (AI4IDS-3195, AI4IDS-3196, AI4IDS-3197, AI4IDS-3198, AI4IDS-3217, AI4IDS-3225, AI4IDS-3227, AI4IDS-3229, AI4IDS-3281 to AI4IDS-3286)
+- Budget Allocation is mandatory when creating an API key. Omitting both `allocated_percentage` and `budget` returns 422 `ALLOCATION_REQUIRED`, zero returns 422 `BUDGET_TOO_SMALL`, and the server no longer gives a key the Application's leftover budget (AI4IDS-3218, AI4IDS-3167)
+- Resizing an Application budget no longer moves its API keys' allocations. Only `allocated_percentage` is recomputed, and a decrease that would not cover existing key allocations is rejected (AI4IDS-3168)
+- Application budget editing revamped, with clearer validation and minimum allocation messages (AI4IDS-3166, AI4IDS-3262)
+- Tenant user create and update accept only `USER` and `TENANT_ADMIN`. `USAGE_VIEWER` and `MODERATOR` stay assignable through platform role assignment (AI4IDS-3169)
+- `USAGE VIEWER` granted `usage.application_read` (AI4IDS-3239)
+- The notification catalog `GET` and `PATCH` are Adopter Admin only, and catalog items carry `scope` and, for monitoring rows, `monitoring_thresholds`
+- notifications_consumer only maps and sends. It no longer reads the auth database or the ledger, and skips a Kafka redelivery through a Redis claim on `event_id` (AI4IDS-3228)
+- Notification and alert emails use `PLATFORM_NAME` and `ADOPTER_LOGO_URL` for branding across auth-service, platform-core and notifications_consumer. The `env.template` default for `PLATFORM_NAME` is now `AI Switch`
+- Model Usage Growth compares rolling 30-day windows instead of calendar months, and the card is back in Key Metrics (AI4IDS-3157, AI4IDS-3170)
+- platform-core reads Prometheus retention from Prometheus itself, with `PROMETHEUS_RETENTION_DAYS` as the fallback
+- The billing-month filter removed from the Budget tab, whose figures are all-time
+- KPI card and Usage Concentration wording made consistent (AI4IDS-3133, AI4IDS-3134)
+- Demo feedback changes (AI4IDS-3135)
+
+### Fixed
+- Institution Admins did not reliably receive INSTITUTION-scope notifications such as Budget Revised. Recipients are now derived from scope (AI4IDS-3273)
+- Quota Limit Updated sent the Adopter Admin one email per institution on the tier instead of one (AI4IDS-3296)
+- Budget Threshold did not fire lower bands again after a budget window was renewed with the same ceiling (AI4IDS-3299)
+- A monitoring alert stayed open forever once a service's traffic stopped, so later spikes sent no email (AI4IDS-3294)
+- SMTP send deadline too short for real servers (AI4IDS-3273)
+- Monitoring alert emails showed the service ID instead of the service name
+- No option to add or edit thresholds in the Alerts Catalog (AI4IDS-3128)
+- Create API Key turned a negative Budget Allocation positive and created the key (AI4IDS-3252)
+- Tier filter in Services and Institution Management listed only mapped tiers (AI4IDS-3244)
+- LLM Service and Source Language dropdowns preselected a value instead of "Select" (AI4IDS-3131, AI4IDS-3132)
+- Created date missing for institution users (AI4IDS-3143)
+- A pending tenant's details shown unmasked in edit mode (AI4IDS-3003)
+- Active API key count type error, and the Application table layout restored
+
+### Removed
+- The internal `POST /internal/ppu/tier/quota-limit-updated` webhook on auth-service. platform-core publishes Quota Limit Updated through the shared pipeline instead
+- The temporary `DEBUG_RECIPIENTS` logging added during AI4IDS-3273 was removed before release
+
+### Upgrade notes
+- Shared library `ai4i-core` 1.0.31 to 1.0.46. auth-service, platform-core, inference and kafka-consumers all pin 1.0.46
+- Eleven migrations: two on the auth database (notification subscription permissions, and `usage.application_read` for USAGE VIEWER) and nine on the core database (catalog `scope`, the subscription table and its seed, monitoring alert types and seed, a monitoring recipient table that a later migration drops again, the notification schema refactor, and a failure log enum value)
+- Migration `0c96d7881ce5` resets every catalog recipient-role flag to false and rebuilds `ledger_notification_alert` empty. Until an admin assigns recipients in the catalog, monitoring alerts go to nobody and the Adopter Admin receives no tier, budget or quota email. Institution Tenant Admins still receive theirs. Send history from 2.7 is not kept, and existing threshold bands are copied into `notification_alert_threshold`
+- `PLATFORM_NAME` is now required on auth-service, platform-core and notifications_consumer. Each fails at startup if it is blank. Run `./scripts/setup-env.sh` or set it per service, and set `ADOPTER_LOGO_URL` for the email header logo
+- `PII_ENCRYPTION_KEY` moves. platform-core and payperuse_consumer now need it, set to the same value auth-service uses. Without it, encrypted email addresses fail to decrypt and quota and budget notifications are silently dropped. notifications_consumer no longer needs it, nor `AUTH_SERVICE_DB`
+- Creating an API key without a budget allocation now returns 422. Callers that relied on the server assigning the Application's leftover budget must send `allocated_percentage` or `budget`
+- Model creation rejects configurations it previously accepted. The checks run on create only, so existing models and model updates are unaffected
+- Optional tuning: `MONITORING_EVAL_ENABLED`, `MONITORING_EVAL_INTERVAL_S`, `MONITORING_MIN_REQUESTS`, `MONITORING_WINDOW`, `NOTIFICATION_CLEANUP_INTERVAL_S`, `METERING_FIRST_USAGE_CACHE_TTL_SECONDS` and the `NOTIF_*` cache and cooldown settings. All have defaults
+- inference-service still logs request payloads at INFO, as in 2.7.2. Prompts, text, audio and image content reach the logs and OpenSearch
+
+---
+
+## [2.7.2] - 2026-09-22
+
+> Hotfix on the 2.7 line, 1 PR merged. Tagged as `v2.7.2-hotfix`
+
+### Changed
+- inference-service logs request payloads at INFO in two places: the full `/v1/chat/completions` body as JSON in the route, and every inference payload just before `run_inference` in `BaseTaskService`, for all task types (#1642)
+
+### Upgrade notes
+- No migrations, no new configuration, and shared library `ai4i-core` unchanged from 2.7.1
+- Request content now reaches the logs, and through them OpenSearch. That includes chat prompts, text inputs, and audio and image content, which can carry personal data and inflate log volume. Check log retention and access on each environment before deploying
+
+---
+
+## [2.7.1] - 2026-09-21
+
+> Hotfix on the 2.7 line, 4 PRs merged. Tagged as `v2.7.1-hotfix`
+
+### Added
+- Optional vLLM Authentication Token on Create and Update Service, as `inferenceEndPoint.authenticationToken`, accepted only for the LLM task type. It is stored encrypted at rest (AES-256-GCM) in `mm_services.llm_auth_token`, masked in every public API response, and sent as `Authorization: Bearer <token>` on the buffered, streaming and multipart vLLM proxy calls. Services without a token behave as before (AI4IDS-3146, AI4IDS-3148)
+- Authentication Token field in the Service Management create, edit and detail views (AI4IDS-3148)
+- `GET /internal/services/{id}` on platform-core, gated by the `X-Internal-Service-Token` shared secret and excluded from the OpenAPI schema. inference-service now resolves services through it to receive credentials unmasked (AI4IDS-3146)
+
+### Changed
+- inference-service refuses to start when `MODEL_MANAGEMENT_SERVICE_INTERNAL_TOKEN` is unset, and platform-core refuses to start when `SERVICE_CREDENTIALS_ENCRYPTION_KEY` is unset or malformed. Before this, a missing token sent an empty header, platform-core returned 403, and every inference call failed as a `ConnectionError`
+- The Notifications and Alerts catalog uses the reusable sortable table component
+- Institution Admin Guide and Adopter Admin Guide updated to the current version (AI4IDS-3156)
+
+### Fixed
+- Triton services lost their `Authorization` header since 2026-07-21. inference-service resolved services through the public route with no identity headers, so the RBAC filter added in AI4IDS-1816 always stripped `api_key`. Resolving through the internal route restores it (AI4IDS-3146)
+- A saved Authentication Token displayed as empty in Edit Service for LLM services (AI4IDS-3161)
+- The Institution usage panel labelled usage by task type as all-time
+
+### Upgrade notes
+- One migration on the core database, `d2e4f6a8b0c2`, adding `mm_services.llm_auth_token` as a nullable `TEXT` column. Existing rows are untouched and nothing is backfilled
+- New required configuration. Both services fail at startup without it:
+  1. `SERVICE_CREDENTIALS_ENCRYPTION_KEY` on platform-core: base64 of 32 random bytes
+  2. `INTERNAL_SERVICE_SHARED_SECRET` on platform-core and `MODEL_MANAGEMENT_SERVICE_INTERNAL_TOKEN` on inference-service, set to the same value. A mismatch rejects every service resolution call, Triton and LLM alike, with 403
+- `SERVICE_CREDENTIALS_ENCRYPTION_KEY` must stay stable across deploys. Rotating it makes every stored token read back as empty, so those services call vLLM with no `Authorization` header until the token is re-entered
+- `cryptography>=41.0.0` added to platform-core's requirements
+- Shared library `ai4i-core` unchanged from 2.7.0
+
+---
+
+## [2.7.0] - 2026-09-18
+
+> Notifications and alerts release, 61 PRs merged
+
+### Added
+- Notification and alert catalog in platform-core: the `configs_notification_alert` table, seeded notification and alert types, and the catalog API at `GET /api/v1/notification-alerts/catalog` and `PATCH /api/v1/notification-alerts/catalog/{name}` (AI4IDS-3023, AI4IDS-3024)
+- Kafka notification producers for tier, budget and usage-threshold events, gated by `NOTIFICATION_PRODUCER_ENABLED` and publishing to `TOPIC_NOTIFICATION` (AI4IDS-3025)
+- `notifications_consumer`: consumes that topic, resolves recipients by role, renders branded HTML and text emails, sends over SMTP, and records every send in `ledger_notification_alert` (AI4IDS-3026, AI4IDS-3027, AI4IDS-3037)
+- Notifications and Alerts Management UI (AI4IDS-3096)
+- Tier lifecycle status: a `status` column on `tiers` with validation and caching, `PATCH /api/v1/pay-per-use/tier/{tier_id}/status` behind a new admin-only permission, a status filter on the list tiers endpoint, and the Tier Lifecycle Status Management UI (AI4IDS-2209, AI4IDS-3089, AI4IDS-3097)
+- Effective dates persisted for tier and budget assignment, with automatic expiry and expired API keys blocked (AI4IDS-3081, AI4IDS-2995)
+- Inference types: the `inference_types` table, `inference_type_id` on the pay-per-use tables, and CRUD at `/api/v1/inference-types` (AI4IDS-2933)
+- OpenAI-compatible model listing at `GET /api/v1/models`, using `serviceId` as the model id and listing only ACTIVE published LLM services
+- OpenSearch-backed metering for the Overview, Tenant Consumption and Model Consumption request counts, selected by `METERING_DATA_SOURCE`, with an ISM policy for the logs indices (AI4IDS-3055)
+- `created_by` audit trail across institutions, applications and API keys, including `tenant_plans.created_by` (AI4IDS-3112)
+- Reusable table component with standardised sorting across the UI (AI4IDS-2993)
+
+### Changed
+- The platform model catalogue moved from `GET /api/v1/models` to `GET /api/v1/models/list`, freeing the OpenAI-compatible path
+- `config.thresholds` reshaped from a percent-keyed dictionary to a list of `{percentage, active}` bands, replaced wholesale on PATCH. The migration keeps whatever each row already held rather than resetting to the seeded 70, 80 and 90 (AI4IDS-3100)
+- An Application with no budget allocation now blocks inference instead of counting as uncapped, with a backfill for keys created before the change (AI4IDS-3127)
+- A tier disengages from an institution once its Effective To date is reached (AI4IDS-3111)
+- Cost per unit updates take effect immediately instead of waiting for the hourly cache refresh (AI4IDS-3101)
+- Numeric columns widened for large quotas and costs, and a tier name is reusable after delete through a partial unique index on non-deleted rows (AI4IDS-3097)
+- Allocation service refactored, behaviour unchanged (AI4IDS-3113)
+- Notifications and Alerts screens refer to Institution rather than tenant (AI4IDS-3120)
+- The API key budget field is optional in the UI (AI4IDS-3123)
+- Navigation simplified, and the Budget and Usage filters reworked (AI4IDS-2947, AI4IDS-2960)
+- Rate limit and effective dates dropped from tier emails, and the threshold percentage capped at 100 (AI4IDS-3042)
+- Manage Plan renamed to Assign Tier, and the Create Institution dialog design restored (AI4IDS-3044)
+- Email send timeout configurable through `SMTP_TIMEOUT` (AI4IDS-3037)
+
+### Fixed
+- BUDGET_THRESHOLD and BUDGET_EXHAUSTED notifications scoped to the tenant, the tenant budget ceiling matched to the dashboard, and only the highest crossed band fires (AI4IDS-3139)
+- API key `allocatedBudget.percentage` calculation (AI4IDS-3077)
+- Tier Management offered Reactivate and Publish actions that are not valid tier statuses (AI4IDS-3124, AI4IDS-3125)
+- Create Tier accepted unlimited and other unsupported quota limit values (AI4IDS-3102)
+- Catalog PATCH rejects the strings "true" and "false" for `recipient_roles` and `thresholds` (AI4IDS-3104)
+- Service ID pre-populated with a trailing slash for non-LLM services (AI4IDS-3085)
+- Text-to-Speech 404 after selecting a source language (AI4IDS-3088)
+- Delete Account missing for the Moderator role (AI4IDS-3021)
+- Conflicting action icons in Institution and Service Management (AI4IDS-2992)
+- Range validation of 0 to 100 on percentage fields (AI4IDS-3048), max validation on price and quota limit fields (AI4IDS-2982), and a description cap on models within services (AI4IDS-2990)
+- Clear all and Create Tier button alignment, and Logs time filters grouped (AI4IDS-3008)
+- Kubernetes-style `REDIS_PORT` values handled in the backfill migration (AI4IDS-3127)
+- Log message parsing in the notifications consumer (AI4IDS-3037)
+- Build failure from an `applyResolved()` argument mismatch
+
+### Security
+- `/auth/validate` 401 responses sanitised to a generic body (AI4IDS-3103)
+- Suspending or deleting the only active Admin in the Default Organization is blocked (AI4IDS-3047)
+- Recipient email addresses stay encrypted at rest. The notifications consumer reads `users.email` ciphertext directly and decrypts it with the same `PII_ENCRYPTION_KEY` auth-service uses
+
+### Migration hygiene
+- The two `ai4iplatform_core` alembic heads merged, and a further merge of the threshold and tiers index heads (AI4IDS-3100)
+
+### Upgrade notes
+- Shared library `ai4i-core` 1.0.23 to 1.0.31. auth-service, platform-core and inference pin 1.0.31, kafka-consumers pins 1.0.30
+- Twenty migrations: three on the auth database (the tier status update permission, `tenant_plans.created_by`, and the unconfigured key exhaustion backfill) and seventeen on the core database (inference types and their backfill, tier status, the notification and alert catalog with its seeds, the notification ledger, the threshold bands, the widened numerics, and the partial unique index on tier name)
+- Callers of the platform model catalogue must move from `GET /api/v1/models` to `GET /api/v1/models/list`. The old path now returns the OpenAI-compatible listing
+- An Application with no budget allocation is now treated as exhausted, so inference under its keys is refused. Allocate a budget to every Application expected to serve traffic before deploying
+- New configuration for notifications: `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_USE_TLS`, `SMTP_TIMEOUT`, `EMAIL_PROVIDER`, `EMAIL_FROM`, `EMAIL_FROM_NAME`, `EMAIL_REPLY_TO`, `PORTAL_URL`, `TOPIC_NOTIFICATION`, `NOTIFICATION_PRODUCER_ENABLED`, and `PII_ENCRYPTION_KEY` set to the same value auth-service uses
+- Metering backend selected by `METERING_DATA_SOURCE`, with `OPENSEARCH_LOGS_INDEX` for the OpenSearch path
+
+---
+
+## [2.6.0] - 2026-09-07
+
+> Applications and budget allocation release, 70 PRs merged
+
+### Added
+- Applications as a first-class entity: `applications` table, onboarding and management APIs, and a default application seeded per institution
+- Three-level Budget Allocation, one shared re-fit algorithm across `PUT /auth/tenants/{id}/budget-allocation`, `PUT /auth/applications/{id}/budget-allocation` and `PUT /auth/api-keys/{id}/budget-allocation`, each taking a discriminated `{type: PERCENTAGE|FIXED, value}` allocation object
+- Application Usage dashboard, and application-level usage on the Metering Dashboard for Institution Admins
+- Tab-based navigation on the Usage Dashboard, with LLM and NLP task types across every tab and a task-type grouped usage summary donut
+- Key Metrics on the Usage Dashboard: 15-day new-institution window and model usage growth (renamed from Platform Adoption)
+- Applications Management UI workflows, plus Tenant Management and API Key Management UI enhancements
+- `application_id` label on all Prometheus metrics
+- Institution Details view for the Institution Admin
+- Role-based onboarding guide selection in portal navigation
+- Field-level guidance for institution, model and service creation
+- Swagger request and response examples across auth-service, platform-core and inference
+
+### Changed
+- Billing deducts per API key against `budget_usage` instead of a tenant-level wallet. Quota is calculated from `tier_quotas` using `tier_id` and `api_key_id` propagated through request context and OTel spans via `X-Tier-ID` and `X-API-Key-ID`
+- API key ownership moved from `user_id` to `application_id`
+- `PATCH /auth/tenants/{id}/budget` cascades atomically into applications and their keys in one transaction; a floor-check failure anywhere rolls the whole revision back
+- Revoked API keys are excluded from every allocation re-fit pool and rejected on an explicit edit. Their historical spend still counts toward their application's consumed floor
+- `ppu_` prefix dropped from the tiers, tier-quota and quota-usage tables, and from the model, repository, service and test files
+- `ppu_tenant_tier_assignments` dropped
+- Updated Tenant and API Key contract APIs; list API keys exposes `application_name` and `tenant_id`, and API key validation returns `created_by` as `user_id`
+- AI Switch branding updated to AI4I Orchestrate, with the platform name and logo configurable in one place
+- Currency values rounded to the nearest whole number across the UI
+- Kafka consumer reliability improvements
+- Model Management and Service Management navigation hidden for anonymous users
+- Obsolete Budget and Usage Summary metrics, and the Model Usage Total/Active Models and growth cards, removed
+
+### Fixed
+- Budget cap gaps on API key creation: revoked-key spend counted against the cap, explicit zero allocation, and a negative re-fit remainder clamped
+- Requests no longer pass through unblocked on a zero or null budget
+- Rounding drift no longer locks out application budget edits
+- Sibling re-fit at the API key level now genuinely resizes unlisted application-level siblings
+- The three budget-allocation endpoints had no `api_permissions.json` entry, so the gateway forward-auth layer treated them as public. The in-service role check still rejected unauthorized callers, but the gateway-level defence in depth was missing
+- Failed request traces appear in the traces UI
+- `request_duration` carries `tenant_id`
+- Usage endpoints broken by the applications and budget schema change
+- New Institutions (Last 15 Days) KPI count
+- Login internal server error
+- Guest user role corrected by migration
+- Usage Viewer role: delete permission, the Profile delete-account option, and the stray Back button on the Usage Dashboard
+- Blank `full_name` no longer sent on `PUT /auth/me`, with min-length and whitespace guards server side
+- Character limits and helper text across institution, user, API key, tier and service fields, and min/max length validation on tier name
+- Swagger version matched to the branch name
+- "All" option added to filter dropdowns across the management modules
+
+### Security
+- Remediated a DOM-based cross-site scripting vulnerability (AI4IDS-2866)
+
+### Migration hygiene
+- Removed a chain-breaking migration and repaired the broken downgrades
+- Migration upgrades no longer write revision files, and the inverted `tenants.status` drift hooks were removed
+
+### Upgrade notes
+- Shared library `ai4i-core` 1.0.22 to 1.0.23
+- Migrations: eight on the auth database (applications, API key and tenant schema changes, permission grants, guest role fix) and four on the core database (rename the `ppu_` tables and add `budget_usage`, add its timestamps, drop `ppu_tenant_tier_assignments`, drop the cost accumulator and expand `budget_usage`)
+- API keys are re-parented from users to applications, and one default application is seeded per institution. Existing keys keep working under that default application
+- Callers of the removed single `PUT /auth/allocations` endpoint must move to the three level-specific endpoints, and to the `{type, value}` allocation object in place of the `allocated_percentage` and `allocated_budget` pair
+
+---
+
+## [2.5.0] - 2026-08-24
+
+> Metering and usage release, 67 PRs merged
+
+### Added
+- Usage Viewer role, a restricted role with access to the Usage Dashboard and Profile only (renamed from Program Admin before release)
+- Model Usage across the Metering Dashboard, with model-registry summary KPIs and a top-models ranking
+- LLM Usage Metering Dashboard
+- Allocated and remaining budget and token totals on the usage summary
+- Onboarding Guide for Institution Admin, with navigation for Institution and Adopter Admins
+- Runtime-configurable AI Switch branding: product name and adopter logo (`ADOPTER_LOGO_URL`) read from the pod environment, so rebranding needs no image rebuild
+- Swagger schema coverage for auth-service, platform-core and inference requests/responses
+
+### Changed
+- Metering keys usage on an immutable organisation id alongside the display name, so renaming an organisation keeps its history attached
+- Metering counts only billable traffic: requests are labelled by how the caller authenticated, and the dashboards restrict to API-key traffic
+- Service schema aligned to the ULCA deployment-service spec, with inference-endpoint fields on services and the schema derived from the linked model when omitted
+- Role names consolidated into a single source of truth; organisation listing and detail authorise on the `x-permission-id` header instead of DB role checks
+- "Tenants" renamed to "Institutions" across the application
+- Unused per-service policy field removed
+- Service Usage tab removed from the Usage Dashboard
+- Auth-service pay-per-use notification retried instead of dropped on failure
+
+### Fixed
+- Ghost service IDs, services no longer in the registry, excluded from Model Consumption
+- Active Tenants count includes only ACTIVE-status organisations
+- Model count made consistent across the Model Registry UI, the list-models API and the Usage Dashboard
+- Malformed API keys return 401 instead of falling through as valid
+- Organisation admins can no longer deactivate their own account
+- Tenant-user responses return roles as a list, and the UI handles users holding multiple roles
+- Trace details no longer report Environment as "development" on staging
+- Logs Dashboard card counts
+- Tier assignments listed without the active-only filter, and budget API upper-bound validation
+
+### Upgrade notes
+- Shared library `ai4i-core` 1.0.17 to 1.0.22, adding the usage-attribution labels the dashboards query
+- Deploy order matters: services must run `ai4i-core` 1.0.22 before this release serves the metering dashboards. On an older library the new labels are absent and the dashboards read empty.
+- Migrations: three on the auth database (seed the restricted role, grant it read access, rename it to Usage Viewer), two on the core database (ULCA inference-endpoint fields, drop the per-service policy column)
+- Contains the 2.4.1 hotfix
+
+---
+
+## [2.4.0] - 2026-08-11
+
+> AI Switch 1.0, 88 PRs merged
+
+### Added
+- SSE streaming and metering for LLM chat, a dedicated `/llm/try-it` endpoint, and LLM-only tiers
+- `ENABLED_TASK_TYPES` runtime filter over the UI, the service catalogue and tier quotas, applied without a rebuild
+- Model Consumption: metering endpoint and the UI to drive it
+- Guest LLM inference, with matching UI permission handling
+- Endpoint validation before service creation, and bulk endpoint updates on `PATCH /services`
+- AI Switch 1.0 branding, plus legal pages and the registration consent flow
+
+### Changed
+- Front end scoped to the LLM model task type across modules
+- `NEXT_PUBLIC_*` build-time variables replaced with server-side runtime environment config
+- Metered units aligned with the quantities pay-per-use actually bills, and the Prometheus tenant label carries the organisation name
+- `inferenceEndPoint` removed, with `adapterConfig` and `schema` exposed as top-level fields
+- Query parameter `modelTaskType` renamed to `taskTypes`, with comma-separated filters on tiers, traces and usage endpoints
+- Pay-per-use consumer switched from async to sync, with fewer DB round-trips and the billed-key dedup TTL cut from 24h to 1h
+- Consumer moved off its bespoke DB registry onto the shared bootstrap database
+- AI4I-Core renamed to AI4I-Orchestrate in the docs
+
+### Fixed
+- API-key status kept in sync with organisation status, including on suspend and deactivate
+- Cached billing flags no longer diverge from Redis on refresh
+- Logout invalidates the access token, and a password change invalidates other active sessions
+- `avg_rps` no longer rounds sparse 24h, 7d and 30d traffic to a misleading 0
+- Unsupported `task_types` rejected with 422 instead of returning a 2xx
+- Assign-tier budget field keeps precision at extreme values
+- Default Organisation protected from status changes and TENANT_ADMIN assignment
+- Anonymous Try It Now flow
+
+### Security
+- Open-redirect finding closed by sanitising an HTTP parameter
+- `String#replace()` replaced with `String#replaceAll()`
+- Private endpoint hosts allowed by configuration, with rejected service writes logged
+- UUID fallback and guarded API-key copy for insecure browser contexts
+
+### Upgrade notes
+- Shared library `ai4i-core` 1.0.8 to 1.0.17
+- Migrations: three on the auth database (API-key caching, its JSONB/GIN conversion, the Guest LLM inference grant), five on the core database (service response schema, adapter-config key normalisation, the LLM target-language fix, per-task-type Try It defaults)
+- Configuration: `NEXT_PUBLIC_*` front-end variables move to the pod environment or ConfigMap rather than image build time
+- A 2.4.1 hotfix shipped on top of this line and was never tagged. It is contained in 2.5.0.
+
+---
+
+## [2.3.0] - 2026-07-27
+
+> Pay-per-use and tier management release, 111 PRs merged
+
+### Added
+- Pay-per-use billing across modalities: text, TTS and audio (ASR, diarization, language detection), audio billed on fractional minutes
+- Tier Management end to end: scheduled tier and quota changes, tenant reassignment, and pending-quota edits with tenant-admin email notification
+- Tier entitlement enforcement on both the API-key and JWT inference paths, including LLM chat completions
+- Usage and Spend dashboards: new Usage Dashboard UI, per-model-task-type usage and spend, and a billing-period selector
+- Tenant lifecycle status transitions
+- Unit Size field on service creation
+
+### Changed
+- LLM follows the OpenAI spec: the `model` field is the service identifier for chat and audio endpoints, resolved via MMS, with no custom `serviceId`
+- 1:1 mapping enforced between model name and LLM service name
+- Model registry schema aligned to the ULCA model spec, with provider and language fields and Swagger docs
+- LLM billing decision sourced from `mm_services.task_type` instead of the span attribute
+- `serviceId` is now a mandatory, user-supplied field on service creation
+- `GET /services` field-filtered for non-admin and public callers instead of returning 403
+- Traces routed exclusively through Kafka, with stdout span logging removed
+- Service-entity caching moved from Redis to an in-memory cache
+- `ai4i-core` bumped to 1.0.8 and published to PyPI
+
+### Fixed
+- Budget consumption and usage update after successful inference
+- `reset_all_quota_fields` scales to lakhs of API keys
+- Missing tier or task-type mapping treated as quota-gated
+- Quota Summary usage calculation and the Total Spend card mismatch
+- Metering alert PromQL matches `exported_endpoint` under Kubernetes ServiceMonitor scraping
+- Tenant reactivation and email-verification workflow, with "Pending Activation" status preserved during deactivation
+- Deactivated-tenant login no longer reports the account as suspended
+- Correct status codes on invalid identifiers: 422 for a structurally invalid model ID, 400 for an invalid `service_id` format, 404 for a nonexistent `tier_id` or an int4-overflow `tenant_id`
+- `WRONGTYPE` Redis errors handled in `cache_service` for legacy string keys
+- Trace-pipeline Kafka to OpenSearch deduplication, and missing OpenTelemetry packages pinned
+- Anonymous Try It Now feature
+
+### Security
+- RBAC matrix enforced for Moderator on pay-per-use endpoints
+- `GET /pay-per-use/tenant/tier` protected with the `ppu.tenant.read` permission
+- simple-ui decoupled from internal permission IDs in API Key Management
+
+---
+
+## [2.2.0] - 2026-07-03
 
 ### Security
 - Upgraded Next.js from 14.2.32 to 15.5.19 to remediate CVE (AI4IDS-1864)
@@ -167,8 +645,17 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-[Unreleased]: https://github.com/COSS-India/ai4i-core/compare/v2.1...HEAD
-[2.2.0]: https://github.com/COSS-India/ai4i-core/compare/v2.1...HEAD
+[Unreleased]: https://github.com/COSS-India/ai4i-core/compare/v2.9...HEAD
+[2.9.0]: https://github.com/COSS-India/ai4i-core/compare/v2.8...v2.9
+[2.8.0]: https://github.com/COSS-India/ai4i-core/compare/v2.7.2-hotfix...v2.8
+[2.7.2]: https://github.com/COSS-India/ai4i-core/compare/v2.7.1-hotfix...v2.7.2-hotfix
+[2.7.1]: https://github.com/COSS-India/ai4i-core/compare/v2.7...v2.7.1-hotfix
+[2.7.0]: https://github.com/COSS-India/ai4i-core/compare/v2.6...v2.7
+[2.6.0]: https://github.com/COSS-India/ai4i-core/compare/v2.5...v2.6
+[2.5.0]: https://github.com/COSS-India/ai4i-core/compare/v2.4...v2.5
+[2.4.0]: https://github.com/COSS-India/ai4i-core/compare/v2.3...v2.4
+[2.3.0]: https://github.com/COSS-India/ai4i-core/compare/v2.2...v2.3
+[2.2.0]: https://github.com/COSS-India/ai4i-core/compare/v2.1...v2.2
 [2.1.0]: https://github.com/COSS-India/ai4i-core/compare/v2.0...v2.1
 [2.0.0]: https://github.com/COSS-India/ai4i-core/compare/v1.1...v2.0
 [1.1.0]: https://github.com/COSS-India/ai4i-core/compare/v1.0...v1.1
