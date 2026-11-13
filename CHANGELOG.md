@@ -6,6 +6,57 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/).
 
 
+## [2.11.0] - 2026-11-13
+
+> Config management, institution status reasons and audit log, fallback metering and usage retention release, 35 PRs merged
+
+### Added
+- Config management API: `GET|POST /api/v1/config` and `GET|PUT|DELETE /api/v1/config/{config_id}`, with a `sort_order` filter. Five default config types are seeded (domain, model-column, service-column, suspend-reasons, deactivate-reasons) and a default row cannot be deleted (409 `DEFAULT_CONFIG_PROTECTED`). Every role can list configs; reading one by id, create, update and delete are ADMIN only (AI4IDS-3645, AI4IDS-3689)
+- A reason on every Institution status change, stored on `tenants.reason` and returned on the tenant. Suspend and Deactivate pick from the configured reasons or take free text for Other; Activate takes a description (AI4IDS-3612)
+- Audit log of Institution status changes in a shared `audit_logs` table, with the state before and after, the acting user and the trace id, readable by ADMIN at `GET /api/v1/audit-logs` (AI4IDS-3641, AI4IDS-3642)
+- Key Rotated email to the Institution's active Tenant Admins and its additional recipients when an API key is rotated. It carries no part of the key value and cannot be unsubscribed from (AI4IDS-3260)
+- Fallback metering: requests sent to a fallback, split into success and failure, plus response time and server errors, recorded per request and in the daily rollup. Fallback KPIs on the metering overview, and a Fallback Requests card on the Institution tab for Institution Admins (AI4IDS-3633, AI4IDS-3639, AI4IDS-3427, AI4IDS-3646)
+- Platform Health section in the Adoption report, with error rate and fallback rate (AI4IDS-3602)
+- Model List: server-side filters (`name`, `version`, `task_types`, `provider_name`, `version_status`, `created_from`, `created_to`, `created_by`), `sort_by` and `sort_order`, a `columns` projection, `providerName` and `noOfServices` on each item, and a column selector driven by the `model-column` config (AI4IDS-3351)
+- Trace search filters for method, model, error and service, with dynamic columns (AI4IDS-3616)
+
+### Changed
+- `usage_events` keeps today and the last three closed days. pyjob deletes older days after their final rollup, and the Usage Dashboard reads every past day from `daily_usage` (AI4IDS-3614)
+- Latency P95 is hidden in the Adoption report, since per-request latencies are no longer kept past the retention window (AI4IDS-3614)
+- Policy domain pickers and the Policies domain filter read the domain list from the config API (AI4IDS-3651)
+- Users of suspended or deactivated Institutions no longer receive notification or usage report emails (AI4IDS-3623)
+- Logs Dashboard, Services Management and Policy Management updates from demo feedback, including removal of the Service column from the Logs Dashboard, domain list sorting, and aligned dates on the service detail panel (AI4IDS-3693, AI4IDS-3695, AI4IDS-3478)
+- Tier Management allows deleting any tier that is not Active, and the Activate dialog field is labelled Reason (AI4IDS-3697, AI4IDS-3699, AI4IDS-3411)
+- simple-ui runs on Node 24, with Next 15.5, React 18.3 and other dependency updates (AI4IDS-3684)
+- Services moved through `ai4i-core` 1.0.55, 1.0.56 and 1.0.57
+
+### Fixed
+- Trace aggregation filled missing service, status and tenant with placeholder values; user and metadata filters now match on contains, and task type casing is normalised (AI4IDS-3620)
+- A Moderator could delete tenant users who were not Tenant Admins (AI4IDS-3611)
+- `POST /api/v1/auth/roles/assign` returned 503 instead of 404 for a user that does not exist (AI4IDS-3608)
+- Sub-categories and policies could be created under a disabled category or sub-category; this now returns 409 `CATEGORY_DISABLED` or `SUB_CATEGORY_DISABLED` (AI4IDS-3648, AI4IDS-3649)
+- The Model List column picker locked whichever optional column was last checked (AI4IDS-3697)
+- Duplicate vertical scrollbar on admin table pages, and consent link styling on sign-up and institution forms (AI4IDS-3622, AI4IDS-3695)
+
+### Removed
+- The legacy PII management module, its `/api/v1/pii/admin/*` routes, `POST /api/v1/pii/redact`, its UI, and the five `pii_*` tables. Policy management replaces it (AI4IDS-3688)
+- `GET /api/v1/telemetry/traces/columns`. simple-ui keeps the Logs Dashboard columns itself (AI4IDS-3655)
+- The `model_name` query parameter on the Model List (AI4IDS-3351)
+- `USAGE_DAILY_ROLLUP_ENABLED`, `NER_SERVICE_URL` and `PII_LLM_URL` from platform-core
+
+### Upgrade notes
+- Shared library `ai4i-core` 1.0.54 to 1.0.57. auth-service, platform-core and kafka-consumers pin 1.0.57, inference-service pins 1.0.55, and pyjob stays on 1.0.52
+- 10 migrations: two on the auth database and eight on the core database. Data-changing ones: `7229140c5c89` drops the five legacy `pii_*` tables and their rows (a downgrade recreates them empty), `a3c5e7f9b1d4` seeds five default configs, `e8b9c0d1e2f3` grants `configs.read` to USER, GUEST, TENANT ADMIN and USAGE VIEWER, and `445916bf95f9` seeds the `KEY_ROTATED` catalog row. `b7d3f1a9c2e5` converts `daily_usage.fallback_count` to JSON; the column is new in this release, so existing rows hold 0
+- Deploy in three stages. First run the auth migrations and the core migrations up to `97c3bf253272`. Then roll out auth-service, platform-core, inference-service, both kafka consumers, simple-ui and pyjob. Then run the last two core migrations, `5611c5d7c73d` and `445916bf95f9`. A service on `ai4i-core` older than 1.0.57 fails to load every notification setting once the `KEY_ROTATED` row exists, and the 2.11 services write columns the first stage adds. Between the rollout and the last stage, a key rotation sends no email
+- Keep the gap between the first stage and the platform-core rollout short: a 2.10 platform-core pod that restarts after `7229140c5c89` fails at startup, because it loads the dropped PII tables
+- auth-service needs `NOTIFICATION_TIMEZONE` (an IANA zone such as `Asia/Kolkata`) and refuses to start without a valid one
+- Past days on the Usage Dashboard now always read `daily_usage`. Confirm pyjob's daily consolidation job is running and `daily_usage` is filled before deploying, or Yesterday, Last 7 days and custom ranges show zero
+- From its first nightly run, pyjob deletes `usage_events` days older than `USAGE_EVENTS_RETENTION_DAYS` (default 3) closed days, after rolling each one up. Per-request rows and hourly charts for those days are gone afterwards, so take a backup first if the raw history is needed. The value must be greater than `USAGE_ROLLUP_LOOKBACK_DAYS` or pyjob refuses to start
+- Breaking API changes: `PATCH /api/v1/auth/tenants/{tenant_id}/status` returns 422 `STATUS_REASON_REQUIRED` without a `reason` for SUSPENDED, DEACTIVATED and ACTIVE, and 422 `STATUS_REASON_NOT_ALLOWED` with one for PENDING; the Model List ignores `model_name`, so a caller still sending it gets every model; the legacy PII routes and `GET /api/v1/telemetry/traces/columns` are gone
+- Gateway routes: six added (config CRUD and `GET /api/v1/audit-logs`) and eleven removed (legacy PII and trace columns). Their permissions are in `services/auth-service/api_permissions.json`
+
+---
+
 ## [2.10.0] - 2026-11-02
 
 > Service fallback, Logs Dashboard search, column selection and institution contact release, 61 PRs merged
@@ -645,7 +696,9 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-[Unreleased]: https://github.com/COSS-India/ai4i-core/compare/v2.9...HEAD
+[Unreleased]: https://github.com/COSS-India/ai4i-core/compare/v2.11...HEAD
+[2.11.0]: https://github.com/COSS-India/ai4i-core/compare/v2.10...v2.11
+[2.10.0]: https://github.com/COSS-India/ai4i-core/compare/v2.9...v2.10
 [2.9.0]: https://github.com/COSS-India/ai4i-core/compare/v2.8...v2.9
 [2.8.0]: https://github.com/COSS-India/ai4i-core/compare/v2.7.2-hotfix...v2.8
 [2.7.2]: https://github.com/COSS-India/ai4i-core/compare/v2.7.1-hotfix...v2.7.2-hotfix
