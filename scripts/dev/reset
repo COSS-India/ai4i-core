@@ -12,7 +12,7 @@ echo ""
 echo "This will remove:"
 echo "  docker volumes"
 echo "  .env files"
-echo "  the shared .venv (and any leftover per-service .venv)"
+echo "  the per-service .venv folders and the repo-root .venv (migrations)"
 echo "  logs and PID files"
 echo ""
 read -rp "Continue? [y/N] " confirm

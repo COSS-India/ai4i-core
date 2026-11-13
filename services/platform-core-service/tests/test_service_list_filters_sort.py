@@ -58,10 +58,14 @@ class TestFilters:
         assert "mm_models.name ILIKE '%whisper%'" in w
 
     def test_wildcards_escaped(self):
-        w = _where(ServiceListFilters(name="50%_off"))
-        # LIKE escape char is a backslash; the postgres literal renderer doubles it.
-        assert "'%50\\\\%\\\\_off%'" in w
-        assert "ESCAPE" in w
+        # Check the bound value sent to Postgres, not the literal rendering: how the
+        # renderer quotes backslashes differs between SQLAlchemy versions.
+        stmt = _apply_list_filters(
+            select(Service, Model).join(Model, _MODEL_JOIN), ServiceListFilters(name="50%_off")
+        )
+        compiled = stmt.compile(dialect=postgresql.dialect())
+        assert "%50\\%\\_off%" in compiled.params.values()
+        assert "ESCAPE" in str(compiled)
 
     def test_tier_ids_overlap(self):
         w = _where(ServiceListFilters(tier_ids=["t1", "t2"]))
