@@ -192,6 +192,7 @@ class TestGetTenantRouteTierName:
         svc.build_tenant_response = TenantService.build_tenant_response
         svc.resolve_tier_name = TenantService.resolve_tier_name
         svc.resolve_tier_limits = TenantService.resolve_tier_limits
+        svc.resolve_contact_user_id = AsyncMock(return_value=None)
 
         app = FastAPI()
         register_exception_handlers(app)

@@ -1048,6 +1048,17 @@ class TenantService:
             ],
         }
 
+    async def resolve_contact_user_id(self, tenant: Tenant) -> Optional[UUID]:
+        """Id of the tenant's current contact: the active Institution Admin of
+        this tenant whose email matches ``tenant.email``. Lets the "Change
+        contact" dropdown hide the current contact. None when no such user."""
+        if not tenant.email:
+            return None
+        user = await self._users.get_by_email(tenant.email)
+        if user is None or not await self._is_institution_admin(user, tenant.id):
+            return None
+        return user.id
+
     @staticmethod
     def build_tenant_response(tenant: Tenant, *, unmask: bool = False) -> dict:
         """Shape a tenant into its API dict, applying the PII-masking policy.
@@ -1139,8 +1150,8 @@ class TenantService:
             )
         return old_email, new_email, admin
 
-    async def _resolve_new_contact_email(self, tenant: Tenant, contact_user_id: UUID) -> str:
-        """Email of the Institution Admin chosen by "Change contact". The
+    async def _resolve_new_contact(self, tenant: Tenant, contact_user_id: UUID) -> User:
+        """The Institution Admin chosen by "Change contact". The
         tenant must be ACTIVE, and the user an active, set-up Institution
         Admin of it who is not already its contact; the change then applies
         immediately (they are already verified, so no email is sent)."""
@@ -1176,7 +1187,7 @@ class TenantService:
                 code="CONTACT_ALREADY_CURRENT",
                 status_code=409,
             )
-        return user.email
+        return user
 
     @staticmethod
     def _assert_typed_email_allowed(tenant: Tenant, old_email: str, new_email: str) -> None:
@@ -1244,9 +1255,12 @@ class TenantService:
         await self._assert_organisation_available(data, tenant_id)
         contact_user_id = data.pop("contact_user_id", None)
         if contact_user_id is not None:
-            # "Change contact": the picked admin's email replaces any email
-            # the client echoed back.
-            data["email"] = await self._resolve_new_contact_email(tenant, contact_user_id)
+            # "Change contact": the picked admin's email and name replace any
+            # the client echoed back, so both always belong to the same person.
+            contact = await self._resolve_new_contact(tenant, contact_user_id)
+            data["email"] = contact.email
+            if (contact.full_name or "").strip():
+                data["name"] = contact.full_name.strip()
             old_email, new_email, admin = "", "", None
         else:
             old_email, new_email, admin = await self._resolve_pending_email_admin(tenant, data)
