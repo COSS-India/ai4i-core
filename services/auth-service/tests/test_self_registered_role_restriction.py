@@ -91,7 +91,8 @@ class TestRoleServiceAssignRole:
         await svc.assign_role(target.id, RoleName.USER)
 
         svc._roles.assign_role.assert_awaited_once()
-        svc._users.get_by_id.assert_not_awaited()
+        # Looked up only to 404 on a missing user, not to restrict USER.
+        svc._users.get_by_id.assert_awaited_once_with(target.id)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("creation_type", NOT_SELF_REGISTERED)

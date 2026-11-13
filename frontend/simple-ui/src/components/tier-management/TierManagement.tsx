@@ -240,7 +240,9 @@ function makeTierActionsColumn(
     actionCount: 3,
     getActions: (tier) => {
       const statusAction = getTierStatusAction(tier.status);
-      const canDelete = tier.status === "DEACTIVATED";
+      // A never-activated (INACTIVE) tier can be deleted directly; only an
+      // ACTIVE tier must be deactivated first.
+      const canDelete = effectiveTierStatus(tier) !== "ACTIVE";
       const busy = deletingId !== null || updatingStatusId !== null;
       return [
         {
@@ -581,9 +583,9 @@ const TierManagement: React.FC = () => {
   );
 
   return (
-    <Box>
+    <Box display="flex" flexDirection="column" minH={0}>
       {formPage}
-      <Box>
+      <Box display="flex" flexDirection="column" minH={0}>
           <ManagementPageHeader
             crumbs={false}
             title="Tier Management"
@@ -594,6 +596,7 @@ const TierManagement: React.FC = () => {
           />
           <DataTable
         layout="admin"
+        fillHeight
         items={sortedTiers}
         columns={columns}
         getRowKey={(tier) => tier.id}

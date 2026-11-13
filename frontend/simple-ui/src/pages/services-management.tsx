@@ -13,7 +13,7 @@ const ServicesManagementPage: React.FC = () => {
         <meta name="description" content="Manage and configure services" />
       </Head>
 
-      <ContentLayout>
+      <ContentLayout fillHeight>
         <ServicesManagement />
       </ContentLayout>
     </>

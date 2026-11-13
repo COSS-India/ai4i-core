@@ -1,4 +1,4 @@
-"""Unit tests: Moderator is blocked from list, create, update, and update-status on tenant users."""
+"""Unit tests: Moderator is blocked from list, create, update, update-status, and delete on tenant users."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -191,7 +191,7 @@ class TestModeratorDeleteTenantUser:
         svc._roles.get_user_roles = AsyncMock(return_value=[RoleName.MODERATOR.value])
 
         with pytest.raises(HTTPException) as exc_info:
-            await svc.delete_tenant_user(_moderator(), 1, uuid4())
+            await svc.delete_tenant_user(_moderator(), 1, uuid4(), MagicMock())
 
         assert exc_info.value.status_code == 403
         assert exc_info.value.detail["code"] == "INSUFFICIENT_PERMISSIONS"
@@ -205,10 +205,12 @@ class TestModeratorDeleteTenantUser:
         svc._tenants.get_by_id = AsyncMock(return_value=_active_tenant())
         target = _tenant_user()
         svc._load_tenant_user_or_404 = AsyncMock(return_value=target)
+        svc._assert_not_last_tenant_admin = AsyncMock()
+        svc._assert_not_last_platform_admin = AsyncMock()
         svc._users.update = AsyncMock()
         svc._users.commit = AsyncMock()
 
-        await svc.delete_tenant_user(_admin(), 1, target.id)
+        await svc.delete_tenant_user(_admin(), 1, target.id, MagicMock())
 
         svc._users.update.assert_awaited_once()
         svc._users.commit.assert_awaited_once()

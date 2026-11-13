@@ -4,6 +4,9 @@ ai4i_core's RecipientResolver.for_roles honours only the MONITORING roles
 (ADMIN / MODERATOR), so it can't resolve USAGE VIEWER; this is the same
 role query (Q-R3) for that one role. users.email is encrypted at rest; a
 user whose email fails to decrypt is skipped, as RecipientResolver does.
+
+Only users the UI shows as Active get the report (AI4IDS-3623), by the same
+rule as every notification email: ai4i_core.kafka.ACTIVE_USER_SQL.
 """
 from __future__ import annotations
 
@@ -11,6 +14,7 @@ import logging
 from dataclasses import dataclass
 from typing import Callable, Optional
 
+from ai4i_core.kafka import ACTIVE_USER_SQL
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,14 +23,13 @@ logger = logging.getLogger(__name__)
 USAGE_VIEWER_ROLE = "USAGE VIEWER"
 
 _ROLE_USERS_SQL = text(
-    """
+    f"""
     SELECT DISTINCT u.id, u.email
       FROM users u
       JOIN user_role ur ON ur.user_id = u.id
       JOIN roles r      ON r.id = ur.role_id
      WHERE r.name = :role
-       AND u.is_active IS TRUE
-       AND u.is_delete IS NOT TRUE
+       AND {ACTIVE_USER_SQL}
     """
 )
 

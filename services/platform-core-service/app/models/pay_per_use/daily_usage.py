@@ -13,8 +13,9 @@ from sqlalchemy import (
     Numeric,
     PrimaryKeyConstraint,
     String,
+    text,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.sql import func
 
 from app.models import Base
@@ -49,6 +50,17 @@ class DailyUsage(Base):
 
     tenant_id, application_id and api_key_id are rows in the auth DB, so they
     have no foreign key.
+
+    fallback_count, total_response_time_ms, response_time_count and
+    server_error_count are rolled up from request rows (migration
+    ea3961c258e4). fallback_count is {"count", "success", "failure"} (JSONB
+    since migration b7d3f1a9c2e5): the request rows sent to a fallback, split
+    by status (failure when it is 400 or above); count is part of
+    request_count and failure part of failed_count. server_error_count
+    (status >= 500) is part of failed_count. response_time_count is the
+    requests with a response time (none before the migration), so the average
+    response time is total_response_time_ms / response_time_count; P95 is not
+    additive, so it is read from usage_events.
     """
 
     __tablename__ = "daily_usage"
@@ -99,6 +111,15 @@ class DailyUsage(Base):
     request_count = Column(BigInteger, nullable=False, default=0, server_default="0")
     success_count = Column(BigInteger, nullable=False, default=0, server_default="0")
     failed_count = Column(BigInteger, nullable=False, default=0, server_default="0")
+    fallback_count = Column(
+        JSONB,
+        nullable=False,
+        default=lambda: {"count": 0, "success": 0, "failure": 0},
+        server_default=text("""'{"count": 0, "success": 0, "failure": 0}'::jsonb"""),
+    )
+    total_response_time_ms = Column(BigInteger, nullable=False, default=0, server_default="0")
+    response_time_count = Column(BigInteger, nullable=False, default=0, server_default="0")
+    server_error_count = Column(BigInteger, nullable=False, default=0, server_default="0")
 
     total_units = Column(UNITS, nullable=False, default=0, server_default="0")
     cached_input_units = Column(UNITS, nullable=False, default=0, server_default="0")

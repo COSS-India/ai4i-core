@@ -107,7 +107,7 @@ export interface TelemetryTraceRecord {
   method?: string | null;
 }
 
-/** Column metadata from GET /telemetry/traces/columns (AI4IDS-3529). */
+/** Logs Dashboard column metadata (AI4IDS-3529). */
 export interface TelemetryTraceColumnDef {
   key: string;
   label: string;
@@ -115,10 +115,6 @@ export interface TelemetryTraceColumnDef {
   filterable: boolean;
   sortable: boolean;
   keyword_searchable: boolean;
-}
-
-export interface TelemetryTraceColumnsResponse {
-  columns: TelemetryTraceColumnDef[];
 }
 
 /** Allowed `sort_by` values on traces/search. */

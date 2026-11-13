@@ -10,7 +10,6 @@ import {
   traceSchema,
   traceSearchResponseSchema,
   telemetryTraceSearchResponseSchema,
-  telemetryTraceColumnsResponseSchema,
   telemetryTraceDetailSchema,
 } from './dto/schemas/observability';
 import type {
@@ -19,7 +18,6 @@ import type {
   LogSearchResponse,
   Process,
   Span,
-  TelemetryTraceColumnsResponse,
   TelemetryTraceDetail,
   TelemetryTraceRecord,
   TelemetryTraceSearchResponse,
@@ -37,7 +35,6 @@ export type {
   TelemetrySpan,
   TelemetrySpanContext,
   TelemetryTraceColumnDef,
-  TelemetryTraceColumnsResponse,
   TelemetryTraceDetail,
   TelemetryTraceRecord,
   TelemetryTraceSearchAggregations,
@@ -258,23 +255,6 @@ const telemetryErrorMessage = (error: unknown, fallback: string): string => {
   return fallback;
 };
 
-/**
- * Column catalogue for the Logs Dashboard picker.
- * GET /api/v1/telemetry/traces/columns
- */
-export const getTelemetryTraceColumns = async (): Promise<TelemetryTraceColumnsResponse> => {
-  try {
-    const response = await apiService.get(
-      telemetryUrl(apiEndpoints.telemetry.tracesColumns),
-      { timeout: 30000, responseSchema: telemetryTraceColumnsResponseSchema }
-    );
-    return response.data;
-  } catch (error: unknown) {
-    console.error('Failed to get telemetry trace columns:', error);
-    throw new Error(telemetryErrorMessage(error, 'Failed to load column options'));
-  }
-};
-
 type TelemetryTraceSearchParams = {
   taskType?: string;
   level?: string;
@@ -290,8 +270,8 @@ type TelemetryTraceSearchParams = {
   metadataValue?: string;
   /** Keyword across all spans of a log (1–256 chars). */
   q?: string;
-  /** Exact service id on the request span. */
-  serviceId?: string;
+  /** Phrase match on the service name shown in the Service column. */
+  service?: string;
   /** Comma-separated status codes (100–599, max 10). */
   statusCode?: string;
   /** Per-column contains searches when the backend accepts them. */
@@ -336,7 +316,7 @@ function buildTraceSearchQueryParams(
     queryParams.append('metadata_value', params.metadataValue);
   }
   appendIfPresent(queryParams, 'q', params.q);
-  appendIfPresent(queryParams, 'service_id', params.serviceId);
+  appendIfPresent(queryParams, 'service', params.service);
   appendIfPresent(queryParams, 'status_code', params.statusCode);
   appendIfPresent(queryParams, 'url', params.url);
   appendIfPresent(queryParams, 'method', params.method);

@@ -239,6 +239,9 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
   >(TENANT.STATUS.ACTIVE);
   const [isStatusDialogOpen, setIsStatusDialogOpen] = useState(false);
   const [isSubmittingStatus, setIsSubmittingStatus] = useState(false);
+  // Institution status dialog: reason key (Suspend / Deactivate) and remarks or description.
+  const [statusReason, setStatusReason] = useState("");
+  const [statusRemarks, setStatusRemarks] = useState("");
 
   const [resendVerificationTenantId, setResendVerificationTenantId] = useState<
     string | null
@@ -1507,6 +1510,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
       currentStatus: t.status,
     });
     setStatusUpdateNewStatus(newStatus);
+    setStatusReason("");
+    setStatusRemarks("");
     setIsStatusDialogOpen(true);
   };
 
@@ -1603,7 +1608,8 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     setIsStatusDialogOpen(true);
   };
 
-  const handleConfirmStatusUpdate = async () => {
+  /** `reason` is what the Institution status dialog resolved; unused for user status changes. */
+  const handleConfirmStatusUpdate = async (reason?: string) => {
     if (!statusUpdateTarget) return;
     setIsSubmittingStatus(true);
     try {
@@ -1616,6 +1622,7 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
         await tenantService.updateTenantStatus({
           tenant_id: statusUpdateTarget.tenant_id,
           status: statusUpdateNewStatus as TenantStatus,
+          ...(reason ? { reason } : {}),
         });
         if (wasPendingDeactivate) {
           markPendingSoftDeletedTenant(statusUpdateTarget.tenant_id);
@@ -2060,6 +2067,10 @@ export function useTenantManagement(options: UseTenantManagementOptions) {
     statusUpdateNewStatus,
     isStatusDialogOpen,
     isSubmittingStatus,
+    statusReason,
+    setStatusReason,
+    statusRemarks,
+    setStatusRemarks,
     handleOpenTenantStatus,
     handleOpenUserStatus,
     handleConfirmStatusUpdate,

@@ -288,6 +288,14 @@ export interface DataTableAdminProps<T> extends DataTableSharedProps<T> {
   noResultsMessage?: string;
   unfilteredCount?: number;
   maxHeight?: string;
+  /**
+   * Shrink to the height left in a flex-column parent (e.g. `ContentLayout
+   * fillHeight`) instead of capping rows at `maxHeight`, so only the rows scroll
+   * and pagination stays in view. Every ancestor up to that parent must be a
+   * flex column with `minH={0}`. On very short windows the rows area can shrink
+   * to a sliver rather than pushing pagination out of view.
+   */
+  fillHeight?: boolean;
   tableContainerProps?: Omit<TableContainerProps, "children">;
   size?: "sm" | "md";
   paginationPosition?: "top" | "bottom";
@@ -603,6 +611,25 @@ export function TableDateField({
   );
 }
 
+let selectMeasureCanvas: HTMLCanvasElement | null = null;
+
+/** Selected option text when it is wider than the select can show, else "". */
+function truncatedSelectLabel(select: HTMLSelectElement): string {
+  const label = select.selectedOptions[0]?.text ?? "";
+  if (!label) return "";
+  selectMeasureCanvas ??= document.createElement("canvas");
+  const ctx = selectMeasureCanvas.getContext("2d");
+  if (!ctx) return "";
+  const style = globalThis.getComputedStyle(select);
+  ctx.font =
+    style.font || `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+  const available =
+    select.clientWidth -
+    Number.parseFloat(style.paddingLeft) -
+    Number.parseFloat(style.paddingRight);
+  return ctx.measureText(label).width > available ? label : "";
+}
+
 /** Select field wired to reset pagination when the value changes. */
 export function TableSelectField({
   label,
@@ -646,6 +673,13 @@ export function TableSelectField({
         bg={inputBg}
         aria-label={label}
         {...selectProps}
+        onMouseEnter={(e) => {
+          // Show the full selected value on hover only when it is cut off.
+          if (selectProps?.title === undefined) {
+            e.currentTarget.title = truncatedSelectLabel(e.currentTarget);
+          }
+          selectProps?.onMouseEnter?.(e);
+        }}
       >
         {children}
       </Select>
@@ -1997,6 +2031,9 @@ function AdminFilterToolbarSection({
       minW={0}
       w="full"
       overflowX="hidden"
+      // overflowX makes this a scroll container, so under `fillHeight` it would
+      // otherwise shrink to nothing before the table does.
+      flexShrink={0}
     >
       <VStack spacing={4} align="stretch">
         {showFiltersHeading ? (
@@ -2025,14 +2062,26 @@ function AdminFilterToolbarSection({
   );
 }
 
+/**
+ * Lets a wrapper shrink with its flex-column parent. Spread on every element
+ * between `ContentLayout fillHeight` and a `fillHeight` admin DataTable.
+ */
+export const FILL_HEIGHT_COLUMN_PROPS = {
+  display: "flex",
+  flexDirection: "column",
+  minH: 0,
+} as const;
+
 function AdminTableSurface({
   toolbarAttached,
+  fillHeight,
   showPagination,
   paginationPosition,
   paginationBlock,
   tableBody,
 }: Readonly<{
   toolbarAttached: boolean;
+  fillHeight: boolean;
   showPagination: boolean;
   paginationPosition: "top" | "bottom";
   paginationBlock: React.ReactNode;
@@ -2049,6 +2098,7 @@ function AdminTableSurface({
       borderRadius={toolbarAttached ? 0 : "14px"}
       bg="white"
       overflow="hidden"
+      {...(fillHeight ? FILL_HEIGHT_COLUMN_PROPS : {})}
     >
       {showTop ? paginationBlock : null}
       {tableBody}
@@ -2059,11 +2109,13 @@ function AdminTableSurface({
 
 function AdminTableFrame({
   toolbarAttached,
+  fillHeight,
   toolbar,
   tableSurface,
   filterContextValue,
 }: Readonly<{
   toolbarAttached: boolean;
+  fillHeight: boolean;
   toolbar: React.ReactNode;
   tableSurface: React.ReactNode;
   filterContextValue: {
@@ -2072,8 +2124,15 @@ function AdminTableFrame({
     deferApply: boolean;
   };
 }>): React.ReactElement {
+  const fillProps = fillHeight ? FILL_HEIGHT_COLUMN_PROPS : {};
   const stack = (
-    <VStack spacing={toolbarAttached ? 0 : 6} align="stretch" w="full" minW={0}>
+    <VStack
+      spacing={toolbarAttached ? 0 : 6}
+      align="stretch"
+      w="full"
+      minW={0}
+      {...fillProps}
+    >
       {toolbar}
       {tableSurface}
     </VStack>
@@ -2087,6 +2146,7 @@ function AdminTableFrame({
       borderRadius="lg"
       bg="white"
       overflow="hidden"
+      {...fillProps}
     >
       {stack}
     </Box>
@@ -2235,6 +2295,7 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
     onRowClick,
     rowAriaLabel,
     maxHeight = "60vh",
+    fillHeight = false,
     tableContainerProps,
     size = "sm",
     paginationPosition = "bottom",
@@ -2368,7 +2429,10 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
   const tableBody = (
     <TableContainer
       ref={tableContainerRef}
-      maxH={containerMaxH ?? maxHeight}
+      maxH={containerMaxH ?? (fillHeight ? undefined : maxHeight)}
+      // Shrink below the rows' height so pagination stays in view on short
+      // windows; a floor here would let the surface's overflow="hidden" clip it.
+      minH={fillHeight ? 0 : undefined}
       overflowY="auto"
       overflowX="auto"
       bg="white"
@@ -2447,6 +2511,7 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
   const tableSurface = (
     <AdminTableSurface
       toolbarAttached={toolbarAttached}
+      fillHeight={fillHeight}
       showPagination={!isLoading && !showEmpty}
       paginationPosition={paginationPosition}
       paginationBlock={paginationBlock}
@@ -2457,6 +2522,7 @@ function AdminLayoutDataTable<T>(props: Readonly<DataTableAdminProps<T>>) {
   return (
     <AdminTableFrame
       toolbarAttached={toolbarAttached}
+      fillHeight={fillHeight}
       toolbar={toolbar}
       tableSurface={tableSurface}
       filterContextValue={filterContextValue}

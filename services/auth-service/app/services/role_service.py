@@ -153,8 +153,13 @@ class RoleService:
         if not role:
             raise EntityNotFoundError(f"Role '{key}'")
 
+        # Platform ADMIN skips the route's tenant-scope lookup, so this is the
+        # only existence check: without it the user_role FK insert fails as a 500.
+        target = await self._users.get_by_id(user_id)
+        if target is None:
+            raise EntityNotFoundError(f"User {user_id}")
+
         if key != RoleName.USER.value:
-            target = await self._users.get_by_id(user_id)
             self._assert_role_assignable_to_creation_type(target, key)
             if key == RoleName.ADMIN.value:
                 await self._lock_default_org_admin_roster(target)

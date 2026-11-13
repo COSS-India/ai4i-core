@@ -7,7 +7,8 @@ concentration, active institutions and models, model usage growth, first
 usage, and the per-model requests, success % and native units (with the LLM
 token split). The counts come from request rows and the units from usage rows
 (see MeteringUsageRepository), so figures are exact rather than Prometheus'
-extrapolated increase(), and not limited by its retention.
+extrapolated increase(), and not limited by its retention: days past
+usage_events' own retention come from the daily_usage rollup, by the day.
 
 Only API-key traffic is recorded, which is what the dashboard already counted.
 Request rows exist from the cut-over onwards; data_since() reports when they
@@ -22,7 +23,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
-from typing import Optional, Union
+from typing import Callable, Optional, Union
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -48,7 +49,7 @@ from app.utils.metering_promql_builder import (
     comparison_shift_seconds,
 )
 from app.utils.prometheus_client import PrometheusClient
-from app.utils.usage_period import IST
+from app.utils.usage_period import IST, ist_midnight
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,38 @@ def _tenant_pk(tenant_id, tenant: Optional[str] = None) -> Optional[int]:
     if tenant_id is not None or tenant:
         raise PermissionError(f"tenant scope without a usable tenant id (tenant_id={tenant_id!r})")
     return None
+
+
+def _seconds(start: datetime, end: datetime) -> int:
+    return max(1, round((end - start).total_seconds()))
+
+
+def _use_previous_of(result: dict, versus: dict) -> None:
+    """Take request_total's vs-previous figures from ``versus`` (the
+    whole-day comparison), keeping the counts shown."""
+    for key, shown in result.items():
+        if key != "filters":
+            shown.update({k: v for k, v in versus[key].items() if "previous" in k})
+
+
+def _fallback_figures(
+    fmt: Callable[[int], str], cur: UsageAgg, compared: Optional[UsageAgg], prev_fb: Optional[UsageAgg],
+) -> dict:
+    """request_total's fallback_requests: ``cur``'s counts, the vs-previous
+    % of ``compared`` against ``prev_fb`` (None without it)."""
+    def figure(attr: str) -> dict:
+        current = getattr(cur, attr)
+        previous = getattr(prev_fb, attr) if prev_fb is not None else None
+        against = getattr(compared, attr) if compared is not None else current
+        return {
+            "count": current,
+            "formatted": fmt(current),
+            "vs_previous_pct": round((against - previous) / previous * 100, 1) if previous else None,
+            "previous_count": previous,
+            "previous_formatted": fmt(previous) if previous is not None else None,
+        }
+
+    return {**figure("fallback"), "successful": figure("fallback_successful"), "failed": figure("fallback_failed")}
 
 
 class UsageEventsMeteringService(MeteringService):
@@ -86,7 +119,8 @@ class UsageEventsMeteringService(MeteringService):
     # ── Store plumbing ────────────────────────────────────────────────────────
 
     async def refresh_retention(self) -> None:
-        """No retention to refresh: usage_events keeps every day."""
+        """No retention to refresh: days past usage_events' retention are read
+        from daily_usage (see MeteringUsageRepository)."""
 
     async def data_since(self, period) -> Optional[datetime]:
         """When request rows begin inside the period: its start once they
@@ -153,23 +187,74 @@ class UsageEventsMeteringService(MeteringService):
         """Total / successful / failed requests and average RPS, against the
         same span shifted back (for `today`, yesterday's same clock span).
         The previous figures are None when request rows don't cover that span,
-        as Prometheus reported them past its retention."""
+        as Prometheus reported them past its retention.
+
+        When the previous span ends partway through a day whose usage_events
+        rows were dropped (last 7 days' previous span ends 7 days back at
+        this hour), that day's part can't be counted, and the span would come
+        up short and inflate the growth %. Both spans are then compared over
+        their whole days only (up to today's midnight, and the same shifted
+        back), all of them in daily_usage; the counts shown still cover the
+        whole range, only the vs-previous figures leave today's part out.
+
+        Also fallback_requests: the requests sent to a fallback service,
+        already part of the total (0 when there were none), with how many of
+        them succeeded and failed (status 400 or above). Only this store
+        records fallbacks, so the other backends leave the key out. Its
+        previous figures are None too when that span starts before fallbacks
+        were recorded."""
         start, end, shift = self._bounds(time_range)
         tid, type_ids = _tenant_pk(tenant_id, tenant), await self._type_ids(task_types)
-        seconds = max(1, round((end - start).total_seconds()))
+        seconds = _seconds(start, end)
         cur = await self._counts(start, end, tid, type_ids)
         prev_start, prev_end = start - timedelta(seconds=shift), end - timedelta(seconds=shift)
-        previous = None
-        if await self._covered(prev_start, prev_end):
-            prev = await self._counts(prev_start, prev_end, tid, type_ids)
-            previous = (prev.requests, prev.successful, prev.requests / seconds)
-        return request_total_result(
-            cur.requests, cur.successful, round(cur.requests / seconds, 4), previous,
-            filters={
-                "inference_only": inference_only, "tenant": tenant,
-                "service_id": service_id, "time_range": time_range or "all",
-            },
+        prev_end, compared, compared_seconds = await self._compared_span(
+            start, prev_start, prev_end, shift, cur, tid, type_ids,
         )
+        prev, prev_fb = await self._previous_counts(prev_start, prev_end, compared, tid, type_ids)
+        previous = (prev.requests, prev.successful, prev.requests / compared_seconds) if prev is not None else None
+        filters = {
+            "inference_only": inference_only, "tenant": tenant,
+            "service_id": service_id, "time_range": time_range or "all",
+        }
+        result = request_total_result(
+            cur.requests, cur.successful, round(cur.requests / seconds, 4), previous, filters=filters,
+        )
+        if compared is not cur and previous is not None:
+            _use_previous_of(result, request_total_result(
+                compared.requests, compared.successful, round(compared.requests / compared_seconds, 4),
+                previous, filters=filters,
+            ))
+        result["fallback_requests"] = _fallback_figures(self._format_count, cur, compared, prev_fb)
+        return result
+
+    async def _compared_span(
+        self, start: datetime, prev_start: datetime, prev_end: datetime, shift: int,
+        cur: UsageAgg, tid: Optional[int], type_ids: Optional[list[int]],
+    ) -> tuple[datetime, Optional[UsageAgg], int]:
+        """(previous span's end, what it's compared with, that span's seconds)
+        for request_total: the current span as is, or — when the previous one
+        ends mid a dropped day — both cut to whole days (see request_total).
+        None to compare with when no whole day is left."""
+        if not await self._usage.ends_mid_dropped_day(prev_end):
+            return prev_end, cur, _seconds(start, prev_end + timedelta(seconds=shift))
+        prev_end = ist_midnight(prev_end.astimezone(IST).date())
+        if prev_end <= prev_start:
+            return prev_end, None, 1
+        compared_end = prev_end + timedelta(seconds=shift)
+        return prev_end, await self._counts(start, compared_end, tid, type_ids), _seconds(start, compared_end)
+
+    async def _previous_counts(
+        self, prev_start: datetime, prev_end: datetime, compared: Optional[UsageAgg],
+        tid: Optional[int], type_ids: Optional[list[int]],
+    ) -> tuple[Optional[UsageAgg], Optional[UsageAgg]]:
+        """(previous span's counts, the same for its fallback figures): None
+        when there's nothing to compare with, or request rows don't cover the
+        span; fallbacks None too when it starts before they were recorded."""
+        if compared is None or not await self._covered(prev_start, prev_end):
+            return None, None
+        prev = await self._counts(prev_start, prev_end, tid, type_ids)
+        return prev, (prev if await self._usage.fallbacks_recorded_by(prev_start) else None)
 
     async def request_volume_chart(
         self,
@@ -310,15 +395,19 @@ class UsageEventsMeteringService(MeteringService):
         }
 
     async def model_usage_growth_pct(self) -> Optional[float]:
-        """LLM requests, last 30 days vs the 30 before. None until request
-        rows cover the whole 60 days, or with no traffic in the earlier 30."""
-        now = datetime.now(timezone.utc)
+        """LLM requests, the last 30 whole IST days (up to today's midnight)
+        vs the 30 before. Whole days: windows ending now would start and end
+        partway through days whose usage_events rows were dropped, which
+        can't be cut at the hour (see MeteringUsageRepository), so the two
+        would count different lengths. None until request rows cover the
+        whole 60 days, or with no traffic in the earlier 30."""
+        today = ist_midnight(datetime.now(IST).date())
         month = timedelta(days=30)
-        if not await self._covered(now - 2 * month, now):
+        if not await self._covered(today - 2 * month, today):
             return None
         type_ids = await self._type_ids(["llm"])
-        cur = await self._counts(now - month, now, None, type_ids)
-        prev = await self._counts(now - 2 * month, now - month, None, type_ids)
+        cur = await self._counts(today - month, today, None, type_ids)
+        prev = await self._counts(today - 2 * month, today - month, None, type_ids)
         if prev.requests <= 0:
             return None
         return round((cur.requests - prev.requests) / prev.requests * 100, 1)

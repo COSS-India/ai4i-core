@@ -31,6 +31,9 @@ def test_day_queries_are_the_dashboards_llm_api_key_queries():
     assert 'exported_endpoint=~"/api/v1/chat(/completions)?"' in q["requests"]
     assert 'status_code=~"2.."' in q["successful"] and 'status_code' not in q["requests"]
     assert 'token_type=~"prompt|completion"' in q["tokens"]
+    assert 'status_code=~"5.."' in q["server_errors"]
+    assert "telemetry_obsv_request_duration_seconds_sum{" in q["duration"]
+    assert 'exported_endpoint=~"/api/v1/chat(/completions)?"' in q["duration"]
     assert q["tokens"].startswith("sum by(tenant_id, application_id, service_id, token_type)")
 
 
@@ -87,6 +90,31 @@ def test_one_row_per_institution_application_and_service():
 
     # Several keys on the application: no API key on the row.
     assert (rows[12]["api_key_id"], rows[12]["request_count"], rows[12]["total_units"]) == (None, 4, 0)
+
+
+def test_server_errors_and_response_time_but_no_fallbacks():
+    labels = dict(tenant_id="7", application_id="11", service_id="llm-svc")
+    results = {
+        "requests": [_series(20, **labels)],
+        "successful": [_series(17, **labels)],
+        "server_errors": [_series(2.4, **labels)],
+        "duration": [_series(12.3456, **labels)],   # seconds
+    }
+    (row,) = build_day_rows(DAY, results, _lookups())
+    assert (row["failed_count"], row["server_error_count"]) == (3, 2)
+    assert (row["total_response_time_ms"], row["response_time_count"]) == (12346, 20)
+    # Prometheus has no record of fallbacks
+    assert (row["fallback_count"], row["fallback_success"], row["fallback_failure"]) == (0, 0, 0)
+
+    # Server errors are part of the failures, never more than them.
+    results["server_errors"] = [_series(5, **labels)]
+    (row,) = build_day_rows(DAY, results, _lookups())
+    assert row["server_error_count"] == 3
+
+    # No duration series: nothing timed, so nothing in the average's divisor.
+    del results["duration"]
+    (row,) = build_day_rows(DAY, results, _lookups())
+    assert (row["total_response_time_ms"], row["response_time_count"]) == (0, 0)
 
 
 def test_unknown_application_service_and_tenant():

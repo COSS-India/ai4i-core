@@ -2,9 +2,7 @@
 index that serves usage_events time-range scans."""
 from datetime import date, datetime, timezone
 
-import pytest
 
-from app.core.config import settings
 from app.models.pay_per_use.daily_usage import DailyUsage
 from app.models.pay_per_use.usage_event import UsageEvent
 from app.repositories.pay_per_use.period_usage import period_sources
@@ -23,23 +21,15 @@ def _models(period):
     return [s.model for s in period_sources(period)]
 
 
-@pytest.mark.parametrize("key", ["today", "yesterday", "last_7_days"])
-def test_usage_events_for_every_period_until_the_rollup_is_on(monkeypatch, key):
-    monkeypatch.setattr(settings, "usage_daily_rollup_enabled", False)
-    assert _models(_dashboard(key)) == [UsageEvent]
-
-
-def test_past_periods_read_daily_usage_once_the_rollup_is_on(monkeypatch):
-    monkeypatch.setattr(settings, "usage_daily_rollup_enabled", True)
+def test_past_periods_read_daily_usage():
     assert _models(_dashboard("yesterday")) == [DailyUsage]
     assert _models(_dashboard("today")) == [UsageEvent]
     assert _models(_dashboard("custom", "2026-10-01", "2026-10-15")) == [DailyUsage]
 
 
-def test_a_period_ending_today_reads_its_past_days_from_daily_usage_and_today_from_usage_events(monkeypatch):
+def test_a_period_ending_today_reads_its_past_days_from_daily_usage_and_today_from_usage_events():
     """Last 7 days and a custom range ending today: daily_usage for the whole
     days before today, usage_events for today up to now (not rolled up yet)."""
-    monkeypatch.setattr(settings, "usage_daily_rollup_enabled", True)
     for period in (_dashboard("last_7_days"), _dashboard("custom", "2026-10-01", "2026-10-16")):
         daily, events = period_sources(period)
         assert (daily.model, events.model) == (DailyUsage, UsageEvent)
@@ -50,8 +40,7 @@ def test_a_period_ending_today_reads_its_past_days_from_daily_usage_and_today_fr
         assert period.end in events_bounds.values()
 
 
-def test_a_custom_range_of_just_today_reads_usage_events(monkeypatch):
-    monkeypatch.setattr(settings, "usage_daily_rollup_enabled", True)
+def test_a_custom_range_of_just_today_reads_usage_events():
     assert _models(_dashboard("custom", "2026-10-16", "2026-10-16")) == [UsageEvent]
 
 

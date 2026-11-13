@@ -8,14 +8,10 @@ import {
   Flex,
   Select,
   Stack,
-  Tab,
-  TabList,
-  TabPanel,
-  TabPanels,
-  Tabs,
   Text,
   Textarea,
 } from "@chakra-ui/react";
+import { useQuery } from "@tanstack/react-query";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import FormActions from "../../common/FormActions";
 import FormDrawer from "../../common/FormDrawer";
@@ -23,7 +19,9 @@ import ReadOnlyField from "../../common/ReadOnlyField";
 import LoadingSpinner from "../../common/LoadingSpinner";
 import FieldLabel from "../../common/FieldLabel";
 import { FIELD_HINTS } from "../../../config/fieldHints";
+import { getDomainOptions } from "../../../services/configManagementService";
 import DataTable, {
+  FILL_HEIGHT_COLUMN_PROPS,
   createActionsColumn,
   type DataTableColumn,
 } from "../../common/table";
@@ -108,6 +106,8 @@ export function PolicyList() {
   const canManage = role === "adopter";
   const parentActive = useParentActive();
   const names = useHierarchyNames();
+  // Same platform domain list (and cache entry) as the policy drawer's DomainPicker.
+  const domainOptions = useQuery({ queryKey: ["configs", "domain"], queryFn: getDomainOptions });
 
   const rows = useMemo(
     () =>
@@ -274,7 +274,7 @@ export function PolicyList() {
   );
 
   return (
-    <Box>
+    <Box {...FILL_HEIGHT_COLUMN_PROPS}>
       {policiesStatus === "error" ? (
         <Alert status="error" borderRadius="md" mb={4}>
           <AlertIcon />
@@ -293,6 +293,7 @@ export function PolicyList() {
       ) : (
       <DataTable
         layout="admin"
+        fillHeight
         items={sortedPolicies}
         columns={columns}
         getRowKey={(row) => row.id}
@@ -357,7 +358,7 @@ export function PolicyList() {
             width: "170px",
             options: [
               { value: "", label: "All Domains" },
-              ...domains.map((d) => ({ value: d.id, label: d.name })),
+              ...(domainOptions.data ?? []).map((d) => ({ value: d.code, label: d.label })),
             ],
           },
         ]}
@@ -368,27 +369,10 @@ export function PolicyList() {
 }
 
 export function ConfigurationPanel() {
-  const { configTab, setConfigTab } = usePiiPolicies();
   return (
-    <Tabs
-      variant="enclosed"
-      colorScheme="blue"
-      index={configTab === "domain" ? 1 : 0}
-      onChange={(index) => setConfigTab(index === 1 ? "domain" : "types")}
-    >
-      <TabList>
-        <Tab fontWeight="semibold">PII Types</Tab>
-        <Tab fontWeight="semibold">Domain</Tab>
-      </TabList>
-      <TabPanels>
-        <TabPanel px={0} pt={4}>
-          <TypeLibrary />
-        </TabPanel>
-        <TabPanel px={0} pt={4}>
-          <DomainTable />
-        </TabPanel>
-      </TabPanels>
-    </Tabs>
+    <Box {...FILL_HEIGHT_COLUMN_PROPS}>
+      <TypeLibrary />
+    </Box>
   );
 }
 
@@ -554,7 +538,7 @@ function TypeLibrary() {
   }, [openDrawer, askConfirm, deleteType, updateType]);
 
   return (
-    <Box>
+    <Box {...FILL_HEIGHT_COLUMN_PROPS}>
       {typesStatus === "error" ? (
         <Alert status="error" borderRadius="md" mb={4}>
           <AlertIcon />
@@ -573,6 +557,7 @@ function TypeLibrary() {
       ) : (
     <DataTable
       layout="admin"
+      fillHeight
       items={sortedRows}
       columns={columns}
       getRowKey={(row) => row.key}
@@ -646,98 +631,6 @@ function TypeLibrary() {
           </Stack>
         </FormDrawer>
       ) : null}
-    </Box>
-  );
-}
-
-function DomainTable() {
-  const {
-    domains,
-    domainsStatus,
-    domainsError,
-    reloadDomains,
-    domainSearch,
-    setDomainSearch,
-  } = usePiiPolicies();
-  const rows = domains.filter((d) => d.name.toLowerCase().includes(domainSearch.toLowerCase()));
-  const domainSortAccessors = useMemo(
-    () => ({
-      name: (row: (typeof domains)[number]) => row.name,
-    }),
-    [],
-  );
-  const domainSort = useDeferredColumnSort("name", domainSortAccessors);
-  const sortedDomains = useMemo(() => domainSort.apply(rows), [domainSort, rows]);
-
-  const columns = useMemo<DataTableColumn<(typeof domains)[number]>[]>(
-    () => [
-      {
-        id: "name",
-        header: "Domain Name",
-        width: "24%",
-        sortable: true,
-        sortAccessor: (row) => row.name,
-        cell: (row) => (
-          <Text fontSize="sm" fontWeight="medium" color="ink.800">
-            {row.name}
-          </Text>
-        ),
-      },
-      {
-        id: "description",
-        header: "Description",
-        cell: (row) => (
-          <Text fontSize="sm" color="ink.500">
-            {row.description || "—"}
-          </Text>
-        ),
-      },
-    ],
-    [],
-  );
-
-  if (domainsStatus === "loading" && domains.length === 0) {
-    return (
-      <Center py={10}>
-        <LoadingSpinner label="Loading domains…" />
-      </Center>
-    );
-  }
-
-  return (
-    <Box>
-      {domainsError ? (
-        <Alert status={domainsStatus === "error" ? "error" : "warning"} borderRadius="md" mb={4}>
-          <AlertIcon />
-          <Text flex="1" fontSize="sm">
-            {domainsError}
-          </Text>
-          <Button size="sm" variant="outline" onClick={reloadDomains}>
-            Try again
-          </Button>
-        </Alert>
-      ) : null}
-    <DataTable
-      layout="admin"
-      items={sortedDomains}
-      columns={columns}
-      getRowKey={(row) => row.id}
-      sort={domainSort.sort}
-      onSortChange={domainSort.onSortChange}
-      paginate="client"
-      paginationPosition="bottom"
-      unfilteredCount={domains.length}
-      hasActiveFilters={Boolean(domainSearch)}
-      onClearFilters={() => setDomainSearch("")}
-      emptyMessage="No domains yet."
-      noResultsMessage="No domains match your search."
-      search={{
-        value: domainSearch,
-        onChange: setDomainSearch,
-        placeholder: "Search domains...",
-        fields: ["name"],
-      }}
-    />
     </Box>
   );
 }

@@ -52,6 +52,7 @@ from app.repositories.tenant_repository import TenantRepository
 from app.utils.budget_window import is_budget_window_expired
 from app.services import budget_usage
 from app.services.cache_service import CacheService
+from app.services.notification_events import publish_key_rotated
 
 logger = logging.getLogger(__name__)
 
@@ -1322,7 +1323,7 @@ class APIKeyService:
         return application, tenant
 
     async def rotate_by_obj(
-        self, db_key: APIKey, actor_user_id: UUID, grace_days: int
+        self, db_key: APIKey, actor_user_id: UUID, actor_name: str, grace_days: int
     ) -> tuple[str, APIKey]:
         """Issue a new value for a key already fetched and scope-verified by
         the caller. The old value moves to rotated_key and keeps working as
@@ -1373,6 +1374,7 @@ class APIKeyService:
             )
         await self._repo.commit()
         await self._repo.refresh(db_key)
+        tenant_id, application_name = application.tenant_id, application.name
 
         try:
             await self._refresh_redis_cache(
@@ -1406,6 +1408,16 @@ class APIKeyService:
         logger.info(
             "API key rotated: id=%s application=%s rotated_key_expires_at=%s",
             db_key.id, db_key.application_id, db_key.rotated_key_expires_at,
+        )
+        publish_key_rotated(
+            tenant_id=tenant_id,
+            api_key_id=db_key.id,
+            key_name=db_key.key_name,
+            application_name=application_name,
+            initiator_name=actor_name,
+            rotated_at=db_key.rotated_at,
+            revoked_at=db_key.rotated_key_expires_at,
+            revoked_immediately=grace_days == 0,
         )
         return new_value, db_key
 

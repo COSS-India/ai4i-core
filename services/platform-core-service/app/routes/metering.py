@@ -244,6 +244,56 @@ def _combine_first_usage(*candidates: Optional[datetime]) -> Optional[str]:
 # ── Cache helpers ─────────────────────────────────────────────────────────────
 
 
+async def _metering_first_request(
+    redis: aioredis.Redis, first_usage_key: str, cached: Optional[dict], queried,
+) -> tuple[Optional[datetime], str]:
+    """The metering half of /overview's first_usage_at, and where it came
+    from (for the log): its own longer-lived cache, or ``queried`` — the
+    first_request_at result, None, or the Exception it raised."""
+    if cached is not None:
+        return _parse_cached_first_request(cached), "cache_hit"
+    if isinstance(queried, Exception):
+        # Falls back to the quota value alone. Not degraded, and not cached
+        # under its own key, so the next overview miss retries it. The
+        # overview itself is still cached: blocking that too would make
+        # every load pay for the slow query again while Prometheus struggles.
+        logger.warning("first_request_at lookup failed: %s", queried)
+        return None, "failed"
+    if queried is None:
+        return None, "none"
+    # Only a real timestamp is cached. A None (no API-key requests yet)
+    # would stick for the whole TTL, and for a tenant on untiered keys
+    # quota_usage has nothing either, so first_usage_at would stay null
+    # for up to an hour after its first request. Not caching it costs
+    # one retry per overview miss until that first request shows up.
+    await _cache_set(
+        redis, first_usage_key, {"first_request_at": _iso_utc(queried)}, ttl=_FIRST_USAGE_CACHE_TTL,
+    )
+    return queried, "queried"
+
+
+def _log_first_usage(
+    scope_tenant: Optional[str],
+    quota_first_usage: Optional[datetime],
+    quota_ok: bool,
+    metering_first_request: Optional[datetime],
+    metering_source: str,
+    first_usage_at: Optional[str],
+) -> None:
+    """Traces a null first_usage_at to the half that produced it without a
+    debugger: INFO only when it is null (the case worth looking at), DEBUG
+    otherwise, so routine overview misses don't add log volume. The tenant
+    id is enough to trace; the organisation name stays out of the logs."""
+    logger.log(
+        logging.INFO if first_usage_at is None else logging.DEBUG,
+        "first_usage_at tenant_id=%s quota=%s quota_ok=%s metering=%s metering_source=%s result=%s",
+        scope_tenant,
+        _iso_utc(quota_first_usage) if quota_first_usage else None, quota_ok,
+        _iso_utc(metering_first_request) if metering_first_request else None, metering_source,
+        first_usage_at,
+    )
+
+
 async def _cache_get(redis: aioredis.Redis, key: str) -> Optional[dict]:
     try:
         raw = await redis.get(key)
@@ -375,13 +425,17 @@ def _avg_requests_per_tenant_cell(
 
 def _overview_kpis(rt: Optional[dict]) -> list[Cell]:
     """Successful/Failed show the COUNT as the value and the rate as
-    sub-text (helper); both are colored on the frontend (green / red)."""
+    sub-text (helper); both are colored on the frontend (green / red).
+    Fallback requests (sent to a fallback service) come last, only from a
+    source that records fallbacks (usage_events); they are part of Total
+    Requests, not added. Fallback Successful / Fallback Failed split them,
+    with their rate of the fallbacks as sub-text."""
     if not rt:
         return []
     success_rate = rt["success_rate"]["rate_pct"]
     # No traffic → 0% failure (not 100%); 100−0 would be wrong.
     failure_rate = round(100 - success_rate, 2) if rt["total_requests"]["count"] else 0.0
-    return [
+    kpis = [
         Cell(
             key="total_requests",
             label="Total Requests",
@@ -413,6 +467,33 @@ def _overview_kpis(rt: Optional[dict]) -> list[Cell]:
             pct_change=rt["avg_rps"]["vs_previous_pct"],
         ),
     ]
+    fallback = rt.get("fallback_requests")
+    if fallback is not None:
+        kpis.append(Cell(
+            key="fallback_requests",
+            label="Fallback Requests",
+            value=fallback["formatted"],
+            previous=fallback["previous_formatted"],
+            pct_change=fallback["vs_previous_pct"],
+        ))
+        fb_total = fallback["count"]
+        for key, label, rate_label in (
+            ("successful", "Fallback Successful", "success rate"),
+            ("failed", "Fallback Failed", "failure rate"),
+        ):
+            part = fallback.get(key)
+            if part is None:
+                continue
+            rate = round(part["count"] / fb_total * 100, 2) if fb_total else 0.0
+            kpis.append(Cell(
+                key=f"fallback_{key}",
+                label=label,
+                value=part["formatted"],
+                previous=part["previous_formatted"],
+                pct_change=part["vs_previous_pct"],
+                helper=f"{rate:.2f}% {rate_label}",
+            ))
+    return kpis
 
 
 def _platform_adoption_block(
@@ -597,9 +678,9 @@ async def get_overview(
     auth_type_filter = API_KEY_AUTH_TYPE
 
     ranking_active = is_admin and not scope_tenant
-    # v9: usage_events source (v8: period.dataFrom/partial; v7: onboarded_at; v6: period filter).
+    # v11: fallback_successful / fallback_failed; v10: fallback_requests; v9: usage_events source (v8: period.dataFrom/partial; v7: onboarded_at; v6: period filter).
     cache_key = (
-        f"metering:overview:v9:{usage_period.cache_part}:{scope_tenant_name or 'all'}:"
+        f"metering:overview:v11:{usage_period.cache_part}:{scope_tenant_name or 'all'}:"
         f"{_caller_role_label(request)}:{','.join(task_type_filter) if task_type_filter else 'all'}"
         + (f":{limit}" if ranking_active else "")
     )
@@ -649,43 +730,12 @@ async def get_overview(
         return_exceptions=True,
     )
     *results, metering_first_request = results
-    if first_request_cached is not None:
-        metering_first_request = _parse_cached_first_request(first_request_cached)
-        metering_source = "cache_hit"
-    elif isinstance(metering_first_request, Exception):
-        metering_source = "failed"
-        # Falls back to the quota value alone. Not degraded, and not cached
-        # under its own key, so the next overview miss retries it. The
-        # overview itself is still cached: blocking that too would make
-        # every load pay for the slow query again while Prometheus struggles.
-        logger.warning("first_request_at lookup failed: %s", metering_first_request)
-        metering_first_request = None
-    elif metering_first_request is None:
-        metering_source = "none"
-    else:
-        metering_source = "queried"
-        # Only a real timestamp is cached. A None (no API-key requests yet)
-        # would stick for the whole TTL, and for a tenant on untiered keys
-        # quota_usage has nothing either, so first_usage_at would stay null
-        # for up to an hour after its first request. Not caching it costs
-        # one retry per overview miss until that first request shows up.
-        await _cache_set(
-            redis, first_usage_key,
-            {"first_request_at": _iso_utc(metering_first_request)},
-            ttl=_FIRST_USAGE_CACHE_TTL,
-        )
+    metering_first_request, metering_source = await _metering_first_request(
+        redis, first_usage_key, first_request_cached, metering_first_request,
+    )
     first_usage_at = _combine_first_usage(quota_first_usage, metering_first_request)
-    # Traces a null first_usage_at to the half that produced it without a
-    # debugger: INFO only when it is null (the case worth looking at), DEBUG
-    # otherwise, so routine overview misses don't add log volume. The tenant
-    # id is enough to trace; the organisation name stays out of the logs.
-    logger.log(
-        logging.INFO if first_usage_at is None else logging.DEBUG,
-        "first_usage_at tenant_id=%s quota=%s quota_ok=%s metering=%s metering_source=%s result=%s",
-        scope_tenant,
-        _iso_utc(quota_first_usage) if quota_first_usage else None, first_usage_ok,
-        _iso_utc(metering_first_request) if metering_first_request else None, metering_source,
-        first_usage_at,
+    _log_first_usage(
+        scope_tenant, quota_first_usage, first_usage_ok, metering_first_request, metering_source, first_usage_at,
     )
     # Merge both result sets through one _partition_results call so a failure
     # in either half still degrades the response instead of raising —

@@ -27,6 +27,7 @@ class NotificationName(str, Enum):
     LATENCY_P50 = "LATENCY_P50"
     LATENCY_P95 = "LATENCY_P95"
     LATENCY_P99 = "LATENCY_P99"
+    KEY_ROTATED = "KEY_ROTATED"
 
 
 class NotificationType(str, Enum):
@@ -44,6 +45,7 @@ class NotificationModule(str, Enum):
     BUDGET = "BUDGET"
     QUOTA = "QUOTA"
     MONITORING = "MONITORING"
+    API_KEY = "API_KEY"
 
 
 class NotificationChannel(str, Enum):

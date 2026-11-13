@@ -1,10 +1,15 @@
 """Collects the Usage Viewer report's figures for one period (AI4IDS-3278).
 
-Only figures the platform tracks are collected. Availability, P95 latency,
-fallback rate, provider count and financial-year totals are not tracked,
-so the email and PDF leave them out. Platform health (5xx error rate) is
-not part of the report, so it is not queried: a figure nobody sees must not
-be able to fail the run and hold back the email.
+Only figures the platform tracks are collected. Availability, provider
+count and financial-year totals are not tracked, so they are left out.
+
+Platform health (error rate, fallback rate; latency P95 is commented out
+pending a decision, see _platform_health) comes from request rows through
+MeteringUsageRepository. The error rate counts server errors and
+timeouts (status 500 or above; an empty response returns 200 and isn't
+counted), read with its requests from usage_events, which has every day's
+status codes; the fallback rate reads usage_events / daily_usage, the
+dashboard's period source.
 
 Every figure comes from one collect() run, so the email summary and the
 attached PDF always agree (a single ReportData feeds both).
@@ -27,6 +32,7 @@ from typing import Awaitable, Optional, TypeVar
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.repositories.pay_per_use.metering_usage import MeteringUsageRepository, UsageAgg
 from app.repositories.pay_per_use.usage_repository import UsageRepository
 from app.services.metering_service import MeteringService
 from app.services.usage_report.period import ReportPeriod
@@ -111,9 +117,35 @@ class PeriodSpend:
 
 
 @dataclass
+class PlatformHealth:
+    """Platform health in the period, from request rows. The error rate covers
+    the whole period. Response time and the fallback flag were recorded from a
+    later date (migration ea3961c258e4), so latency P95 and the fallback rate
+    cover only tracked_from to the period's end: tracked_from is None when
+    neither was recorded by the end of the period, and later than the period
+    start when recording began inside it."""
+    requests: int
+    server_errors: int
+    tracked_from: Optional[datetime] = None
+    tracked_requests: int = 0
+    fallbacks: int = 0
+    latency_p95_ms: Optional[float] = None
+
+    @property
+    def error_rate_pct(self) -> Optional[float]:
+        return self.server_errors / self.requests * 100 if self.requests else None
+
+    @property
+    def fallback_rate_pct(self) -> Optional[float]:
+        return self.fallbacks / self.tracked_requests * 100 if self.tracked_requests else None
+
+
+@dataclass
 class ReportData:
     period: ReportPeriod
     generated_at: datetime
+    # Platform health (None: request rows not recorded by the period's end, or failed)
+    platform_health: Optional[PlatformHealth] = None
     # Requests
     total_requests: Optional[int] = None
     prev_total_requests: Optional[int] = None
@@ -199,6 +231,7 @@ class UsageReportCollector:
         data = ReportData(period=report_period, generated_at=now)
         rng = _range(period)
 
+        data.platform_health = await self._try(data, "platform_health", self._platform_health(period))
         data.total_requests = await self._try(data, "total_requests", self._metering.inference_request_total(rng))
         if prev_retained:
             data.prev_total_requests = await self._try(
@@ -372,6 +405,30 @@ class UsageReportCollector:
             names = {str(r.id): r.organisation for r in rows.all()}
         used = budget.used_pct_by_tenant if budget else {}
         return [InstitutionSpend(names.get(tid) or tid, amount, used.get(tid)) for tid, amount in ranked]
+
+    async def _platform_health(self, period: UsagePeriod) -> Optional[PlatformHealth]:
+        """None when request rows had not started by the end of the period."""
+        usage = MeteringUsageRepository(self._core_db)
+        if await usage.request_rows_from(period.start, period.end) is None:
+            return None
+        requests, server_errors = await usage.server_errors(period.start, period.end)
+        health = PlatformHealth(requests=requests, server_errors=server_errors)
+        since = await usage.response_times_from(period.end)
+        if since is None:
+            return health
+        health.tracked_from = max(period.start, since)
+        tracked = (await usage.aggregate(health.tracked_from, period.end)).get((), UsageAgg())
+        health.tracked_requests, health.fallbacks = tracked.requests, tracked.fallback
+        # Latency P95 is commented out (here, in pdf._health and in
+        # mailer.summary_lines) until it is decided how to compute it once
+        # usage_events keeps only the last few days (pyjob's
+        # USAGE_EVENTS_RETENTION_DAYS): a percentile can't be built from
+        # daily_usage, so a weekly or monthly P95 would cover just those days.
+        # Also open: whether P95 is needed at all, or the average response
+        # time (daily_usage.total_response_time_ms / response_time_count) is
+        # enough. Uncomment the three once that is decided.
+        # health.latency_p95_ms = await usage.response_time_p95(health.tracked_from, period.end)
+        return health
 
     async def _period_spend(self, period: UsagePeriod, subdaily: bool = False) -> Optional[PeriodSpend]:
         """None when usage recording had not started by the end of the period."""

@@ -16,6 +16,7 @@ from uuid import UUID
 
 import httpx
 
+from ai4i_core.audit import AuditAction, AuditEntity, AuditLogWriter, noop_audit_writer
 from ai4i_core.email import EmailClient, EmailMessage
 from fastapi import BackgroundTasks, HTTPException, status
 
@@ -71,10 +72,15 @@ from app.services.tenant_lifecycle import (
     TENANT_ONBOARDING_STATUSES,
     assert_default_tenant_not_targeted,
     assert_email_available,
+    assert_status_reason,
     assert_tenant_email_editable,
     assert_valid_tenant_status_transition,
     is_default_tenant,
     sync_tenant_users_for_status,
+)
+from app.services.audit_messages import (
+    TENANT_STATUS_AUDIT_PROPERTIES,
+    tenant_status_template,
 )
 from app.services.email_helpers import (
     enqueue_email,
@@ -427,6 +433,7 @@ class TenantService:
         api_key_service: Optional[APIKeyService] = None,
         refresh_token_repo: Optional[RefreshTokenRepository] = None,
         allocation_service: Optional[AllocationService] = None,
+        audit: Optional[AuditLogWriter] = None,
     ) -> None:
         self._tenants = tenant_repo
         self._users = user_repo
@@ -438,6 +445,9 @@ class TenantService:
         self._api_keys = api_key_service
         self._refresh_tokens = refresh_token_repo
         self._allocations = allocation_service
+        # Status changes are audited to ai4iplatform_core: track() before the
+        # change, log() after ai4iplatform_auth is committed.
+        self._audit = audit or noop_audit_writer()
 
     # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -1299,6 +1309,7 @@ class TenantService:
                     "message": "Only administrators can change tenant status.",
                 },
             )
+        assert_status_reason(body.status, body.reason)
         tenant = await self._load_tenant_for_update_or_404(tenant_id)
         if body.status != TenantStatus.ACTIVE:
             assert_default_tenant_not_targeted(
@@ -1309,10 +1320,30 @@ class TenantService:
         await sync_tenant_users_for_status(
             self._users, tenant_id, body.status, updated_by=current_user.id
         )
+        # Audit: old values are read before the change; the row is written
+        # after the commit, in the background (not awaited).
+        trace = await self._audit.track(
+            self._tenants._db, AuditEntity.TENANT, tenant_id, TENANT_STATUS_AUDIT_PROPERTIES
+        )
+        old_status = tenant.status
+        # Every status change carries a reason (assert_status_reason), which
+        # replaces the previous one; earlier reasons stay in the audit rows.
         await self._tenants.update(
-            tenant, {"status": body.status, "updated_by": current_user.id}
+            tenant,
+            {
+                "status": body.status,
+                "reason": body.reason,
+                "updated_by": current_user.id,
+            },
         )
         await self._tenants.save_and_refresh(tenant)
+        self._audit.log(
+            trace,
+            AuditAction.STATUS_CHANGE,
+            tenant_status_template(old_status, body.status),
+            {"status": body.status, "reason": body.reason},
+            performed_by=current_user.id,
+        )
         if self._api_keys is not None:
             if body.status == TenantStatus.SUSPENDED:
                 # Keep is_active=True (Inactive): same key auto-resumes on reactivation.
@@ -2133,12 +2164,9 @@ class TenantService:
         self, current_user: User, tenant_id: int, user_id: UUID, background_tasks: BackgroundTasks
     ) -> None:
         await self.enforce_scope(current_user, tenant_id)
+        await self._deny_moderator(current_user)
         tenant = await self._load_tenant_or_404(tenant_id)
         target = await self._load_tenant_user_or_404(tenant_id, user_id)
-        # MODERATORs may delete USER-role accounts but not higher-privileged roles.
-        target_roles = await self._roles.get_user_roles(target.id)
-        if RoleName.TENANT_ADMIN.value in target_roles:
-            await self._deny_moderator(current_user)
         await self._assert_not_last_tenant_admin(target, tenant)
         await self._assert_not_last_platform_admin(target, tenant, action="delete")
 

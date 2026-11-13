@@ -13,6 +13,20 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+# Load schemas first — the service imports from it.
+_SCHEMAS_PATH = Path(__file__).resolve().parents[1] / "app" / "schemas" / "telemetry.py"
+_schemas_spec = importlib.util.spec_from_file_location("app.schemas.telemetry", _SCHEMAS_PATH)
+_schemas = importlib.util.module_from_spec(_schemas_spec)
+sys.modules["app.schemas.telemetry"] = _schemas
+_schemas_spec.loader.exec_module(_schemas)
+
+# Load the service next — the route imports from it, and _MAX_KEYWORD_TRACE_IDS moved here.
+_TELEMETRY_SERVICE_PATH = Path(__file__).resolve().parents[1] / "app" / "services" / "telemetry_service.py"
+_svc_spec = importlib.util.spec_from_file_location("app.services.telemetry_service", _TELEMETRY_SERVICE_PATH)
+_telemetry_svc = importlib.util.module_from_spec(_svc_spec)
+sys.modules["app.services.telemetry_service"] = _telemetry_svc
+_svc_spec.loader.exec_module(_telemetry_svc)
+
 _TELEMETRY_ROUTE_PATH = Path(__file__).resolve().parents[1] / "app" / "routes" / "telemetry.py"
 _spec = importlib.util.spec_from_file_location("app.routes.telemetry", _TELEMETRY_ROUTE_PATH)
 _telemetry = importlib.util.module_from_spec(_spec)
@@ -20,7 +34,7 @@ sys.modules["app.routes.telemetry"] = _telemetry
 _spec.loader.exec_module(_telemetry)
 
 search_traces_opensearch = _telemetry.search_traces_opensearch
-_MAX_KEYWORD_TRACE_IDS = _telemetry._MAX_KEYWORD_TRACE_IDS
+_MAX_KEYWORD_TRACE_IDS = _telemetry_svc._MAX_KEYWORD_TRACE_IDS
 
 ADMIN = "1"
 TENANT_ADMIN = "5"
@@ -94,18 +108,39 @@ def _make_client(trace_ids: list, pre_trace_ids: list | None = None):
     return client
 
 
+_BASE_FIELDS = (
+    "task_types", "status_filter", "tenant_id", "start_date", "end_date",
+    "q", "log_status", "status_code", "service_id",
+)
+_SPAN_FIELDS = (
+    "user", "metadata_key", "metadata_value", "method", "model",
+    "error", "service", "url", "application",
+)
+_PAGING_FIELDS = ("page", "page_size", "sort_by", "sort_order")
+
+
 def _search(client, request=None, **params):
-    base = dict(
+    """Build base/span/paging dependency objects and call the route function
+    directly — search_traces_opensearch takes these (not flat kwargs) since
+    the _TraceBaseFilters/_TraceSpanFilters/_TracePaginationQuery refactor."""
+    defaults = dict(
         task_types=None, status_filter=None, tenant_id=None,
-        start_date=None, end_date=None, page=1, page_size=15,
-        q=None, log_status=None, status_code=None, service_id=None,
-        sort_by=None, sort_order=None, user=None,
-        metadata_key=None, metadata_value=None,
+        start_date=None, end_date=None, q=None, log_status=None,
+        status_code=None, service_id=None,
+        user=None, metadata_key=None, metadata_value=None,
+        method=None, model=None, error=None, service=None, url=None, application=None,
+        page=1, page_size=15, sort_by=None, sort_order=None,
+        columns=None,
     )
+    merged = {**defaults, **params}
+    columns = merged.pop("columns")
+    base = _telemetry._TraceBaseFilters(**{k: merged[k] for k in _BASE_FIELDS})
+    span = _telemetry._TraceSpanFilters(**{k: merged[k] for k in _SPAN_FIELDS})
+    paging = _telemetry._TracePaginationQuery(**{k: merged[k] for k in _PAGING_FIELDS})
     return asyncio.run(search_traces_opensearch(
         request=request or _request(),
         opensearch_client=client,
-        **{**base, **params},
+        base=base, span=span, paging=paging, columns=columns,
     ))
 
 

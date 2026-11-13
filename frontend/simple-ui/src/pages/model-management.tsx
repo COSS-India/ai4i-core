@@ -1,9 +1,11 @@
 // Model Management page with list and create functionality
 
 import {
-  Badge,
+  Alert,
+  AlertDescription,
+  AlertIcon,
   Box,
-  HStack,
+  Button,
   Skeleton,
   Switch,
   Text,
@@ -21,14 +23,32 @@ import FormActions from "../components/common/FormActions";
 import FormDrawer from "../components/common/FormDrawer";
 import ModelExtraDetails from "../components/model-management/ModelDetails";
 import ModelForm from "../components/model-management/ModelForm";
+import ModelListColumnPicker from "../components/model-management/ModelListColumnPicker";
+import ModelStatusConfirmDialog from "../components/model-management/ModelStatusConfirmDialog";
+import ModelViewActions from "../components/model-management/ModelViewActions";
+import { buildModelToolbarFilterDefs } from "../components/model-management/modelToolbarFilters";
 import { validateModelData } from "../components/model-management/modelJsonValidation";
 import {
+  modelCreatedAtMs,
+  renderModelCreatedAtCell,
+  renderModelServiceCountCell,
+  renderModelNameCell,
+  renderModelProviderCell,
+  renderModelStatusCell,
+  renderModelTaskTypeCell,
+  renderModelVersionCell,
+  modelListColumnWidth,
+} from "../components/model-management/modelListCells";
+import { modelListColumnsParam } from "../components/model-management/modelListColumns";
+import { useModelRegistryList } from "../components/model-management/useModelRegistryList";
+import { useModelListColumnCatalogue } from "../components/model-management/useModelListColumnCatalogue";
+import { useModelListVisibleColumns } from "../components/model-management/useModelListVisibleColumns";
+import {
   createModel,
-  getAllModels,
   getModelById,
   updateModel,
   MODELS_ALL_QUERY_KEY,
-  MODELS_ALL_STALE_MS,
+  MODEL_LIST_QUERY_KEY,
 } from "../services/modelManagementService";
 import type { ModelCreateRequest, ModelDetails } from "../types/platform";
 import {
@@ -41,10 +61,10 @@ import { isRegistryReadOnlyUser, userHasRole } from "../utils/rbac";
 import { useSessionExpiry } from "../hooks/useSessionExpiry";
 import { parseError, showError } from "../utils/errorHandler";
 import { MODEL_SAMPLES, type ModelSampleKind } from "../utils/sampleModelJson";
+import { resolveTaskType } from "../utils/platformService";
 import { stripJsonComments } from "../utils/stripJsonComments";
 import { showToast } from "../utils/toast";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
-import ConfirmDialog from "../components/common/ConfirmDialog";
 import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
   actionsColumnSize,
@@ -52,19 +72,24 @@ import DataTable, {
 } from "../components/common/table";
 import { FIELD_HINTS } from "../config/fieldHints";
 import { useDeferredColumnSort } from "../utils/tableSort";
-import {
-  MODEL_VERSION,
-  MODEL_VERSION_FILTER_LIST,
-  MODEL_API_KEY_REDACTED,
-  formatModelTaskTypeLabel,
-  getTaskColorScheme,
-  formatModelVersionFilterLabel,
-  formatModelVersionStatusLabel,
-  isModelVersionStatusActive,
-} from "../config/constants";
+import { MODEL_REGISTRY_ERRORS, MODEL_VERSION } from "../config/constants";
 import { useInferenceTypes } from "../hooks/useInferenceTypes";
 import { getPlatformName } from "../config/runtimeConfig";
-import { resolveTaskType } from "../utils/platformService";
+
+/** Right-align Actions-column content without nesting a helper inside `cell`. */
+function modelActionsRail(child: React.ReactNode): React.ReactElement {
+  return (
+    <Box
+      display="flex"
+      justifyContent="flex-end"
+      alignItems="center"
+      w="100%"
+      minH="32px"
+    >
+      {child}
+    </Box>
+  );
+}
 
 /** Registry UI model row — requires fields used in forms/tables. */
 type Model = ModelDetails & {
@@ -79,6 +104,9 @@ type Model = ModelDetails & {
   task: NonNullable<ModelDetails["task"]>;
 };
 
+/** Rows arrive sorted from GET /models/list; the sort hook only tracks the header state. */
+const NO_CLIENT_SORT_ACCESSORS: Record<string, (row: Model) => string | number> = {};
+
 const ModelManagementPage: React.FC = () => {
   const [selectedModel, setSelectedModel] = useState<Model | null>(null);
   const [isViewingModel, setIsViewingModel] = useState(false);
@@ -92,32 +120,9 @@ const ModelManagementPage: React.FC = () => {
   const [updatingModelId, setUpdatingModelId] = useState<string | null>(null);
   const [modelToConfirm, setModelToConfirm] = useState<Model | null>(null);
   const [confirmAction, setConfirmAction] = useState<"deprecate" | "activate" | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [filterVersionStatus, setFilterVersionStatus] = useState<string>("");
-  const [filterTaskType, setFilterTaskType] = useState<string>("");
   const { taskTypeNames, isLoading: isLoadingTaskTypes } = useInferenceTypes();
-  const didInitTaskTypeFilter = useRef(false);
-  const [taskTypeFilterReady, setTaskTypeFilterReady] = useState(false);
-  useEffect(() => {
-    if (didInitTaskTypeFilter.current || isLoadingTaskTypes) return;
-    didInitTaskTypeFilter.current = true;
-    // Single enabled type → lock filter to it (no All). Multiple → default All ("").
-    if (taskTypeNames.length === 1) setFilterTaskType(taskTypeNames[0]);
-    setTaskTypeFilterReady(true);
-  }, [isLoadingTaskTypes, taskTypeNames]);
-  const modelSortAccessors = useMemo(
-    () => ({
-      name: (m: Model) => m.name ?? "",
-      version: (m: Model) => m.version ?? "",
-      created: (m: Model) => {
-        if (m.createdAt != null) return new Date(m.createdAt).getTime();
-        if (m.submittedOn != null) return m.submittedOn * 1000;
-        return 0;
-      },
-    }),
-    [],
-  );
-  const modelSort = useDeferredColumnSort("name", modelSortAccessors);
+  // GET /models/list sorts; no column picked → API default (newest first).
+  const modelSort = useDeferredColumnSort("name", NO_CLIENT_SORT_ACCESSORS);
   const { isOpen: isConfirmOpen, onOpen: onConfirmOpen, onClose: onConfirmClose } = useDisclosure();
   const cancelConfirmRef = React.useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -126,6 +131,18 @@ const ModelManagementPage: React.FC = () => {
   /** Bumped when the user leaves or opens a row, so a late return fetch cannot reopen. */
   const modelReturnGenRef = useRef(0);
   const { user } = useAuth();
+  const { catalogue: modelListColumns, isLoading: isLoadingColumns } =
+    useModelListColumnCatalogue();
+  const {
+    visibleColumnIds,
+    visibleColumnsReady,
+    applyVisibleColumns,
+    resetVisibleColumns,
+  } = useModelListVisibleColumns({
+    userId: user?.user_id ?? "",
+    catalogue: modelListColumns,
+    modelSort,
+  });
   const queryClient = useQueryClient();
   const isRegistryReadOnly = isRegistryReadOnlyUser(user?.roles);
   const { isOpen: isCreateOpen, onOpen: onCreateOpen, onClose: onCreateCloseRaw } = useDisclosure();
@@ -207,44 +224,32 @@ const ModelManagementPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router.query.modelId]);
 
-  // Shared catalogue with Services Management. Filters apply client-side.
-  const modelsQuery = useQuery({
-    queryKey: MODELS_ALL_QUERY_KEY,
-    queryFn: getAllModels,
-    staleTime: MODELS_ALL_STALE_MS,
-    enabled: taskTypeFilterReady,
+  // Like Services Management: GET /models/list does the search, sort and paging,
+  // and `columns=` limits each row to the visible columns' fields.
+  const modelColumnsParam = useMemo(
+    () => modelListColumnsParam(visibleColumnIds),
+    [visibleColumnIds],
+  );
+  const registry = useModelRegistryList({
+    columns: modelColumnsParam,
+    enabledTaskTypes: taskTypeNames,
+    modelSort,
+    // Wait for the saved selection so the first request never sends the fallback ids.
+    // visibleColumnsReady alone turns true for the fallback catalogue while the
+    // column config is still loading, so wait for that config too.
+    enabled: !isLoadingTaskTypes && !isLoadingColumns && visibleColumnsReady,
   });
+  const registryItems = registry.items as unknown as Model[];
   const refreshModels = useCallback(async () => {
-    await queryClient.invalidateQueries({ queryKey: MODELS_ALL_QUERY_KEY });
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: MODEL_LIST_QUERY_KEY }),
+      // Services Management keeps its own full-row copy.
+      queryClient.invalidateQueries({ queryKey: MODELS_ALL_QUERY_KEY }),
+    ]);
   }, [queryClient]);
 
-  const models = useMemo((): Model[] => {
-    const enabledTasks = new Set(
-      taskTypeNames.map((name) => name.toLowerCase()),
-    );
-    const wantTask = filterTaskType.trim().toLowerCase();
-    const wantStatus = filterVersionStatus.trim().toLowerCase();
-    return ((modelsQuery.data ?? []) as unknown as Model[]).filter((model) => {
-      const task = resolveTaskType(model).toLowerCase();
-      if (enabledTasks.size > 0 && task && !enabledTasks.has(task)) return false;
-      if (wantTask && task !== wantTask) return false;
-      if (wantStatus) {
-        const status = (model.versionStatus ?? "").toLowerCase();
-        if (wantStatus === "active") {
-          if (status && status !== "active") return false;
-        } else if (status !== wantStatus) {
-          return false;
-        }
-      }
-      return true;
-    });
-  }, [
-    modelsQuery.data,
-    taskTypeNames,
-    filterTaskType,
-    filterVersionStatus,
-  ]);
-  const isLoading = modelsQuery.isPending;
+  // Wait for the column config so the table does not swap columns after first paint.
+  const isLoading = registry.isLoading || isLoadingColumns || !visibleColumnsReady;
 
   const {
     data: allServices,
@@ -318,24 +323,15 @@ const ModelManagementPage: React.FC = () => {
     );
   }, []);
 
-  const registryTableItems = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    const filtered = q
-      ? models.filter((m) => (m.name ?? "").toLowerCase().includes(q))
-      : models;
-    return modelSort.apply(filtered);
-  }, [models, searchQuery, modelSort]);
-
-  const showTaskTypeAllOption = taskTypeNames.length > 1;
-  const hasActiveFilters =
-    filterVersionStatus !== "" ||
-    (showTaskTypeAllOption && filterTaskType !== "") ||
-    searchQuery.trim() !== "";
-  const clearAllFilters = () => {
-    setSearchQuery("");
-    setFilterVersionStatus("");
-    setFilterTaskType(taskTypeNames.length === 1 ? taskTypeNames[0] : "");
-  };
+  const toolbarFilterDefs = useMemo(
+    () =>
+      buildModelToolbarFilterDefs({
+        filters: registry.filters,
+        setFilter: registry.setFilter,
+        taskTypeNames,
+      }),
+    [registry.filters, registry.setFilter, taskTypeNames],
+  );
 
   const handleClearUpload = () => {
     setUploadedModelData(null);
@@ -633,103 +629,64 @@ const ModelManagementPage: React.FC = () => {
     setConfirmAction(null);
   };
 
-  const modelColumns = useMemo((): DataTableColumn<Model>[] => {
+  const modelColumnTemplates = useMemo((): DataTableColumn<Model>[] => {
     return [
       {
         id: "name",
         header: "Name",
         sortable: true,
         sortAccessor: (model) => model.name ?? "",
-        cell: (model) => (
-          <Text fontWeight="medium" fontSize="sm" noOfLines={1} title={model.name || model.modelId}>
-            {model.name || model.modelId || "—"}
-          </Text>
-        ),
+        cell: renderModelNameCell,
       },
       {
         id: "version",
         header: "Version",
         sortable: true,
         sortAccessor: (model) => model.version ?? "",
-        cell: (model) => (
-          <Text fontSize="sm" fontWeight="medium">
-            {model.version || "1.0"}
-          </Text>
-        ),
+        cell: renderModelVersionCell,
+      },
+      {
+        id: "taskType",
+        header: "Task Type",
+        hint: FIELD_HINTS.model.col.task,
+        sortable: true,
+        sortAccessor: (model) => resolveTaskType(model),
+        cell: renderModelTaskTypeCell,
+      },
+      {
+        id: "providerName",
+        header: "Provider Name",
+        hint: FIELD_HINTS.model.col.provider,
+        sortable: true,
+        sortAccessor: (model) => model.providerName ?? model.submitter?.name ?? "",
+        cell: renderModelProviderCell,
       },
       {
         id: "status",
         header: "Status",
         hint: FIELD_HINTS.model.col.status,
-        cell: (model) => (
-          <Badge
-            colorScheme={isModelVersionStatusActive(model.versionStatus) ? "green" : "gray"}
-            fontSize="xs"
-          >
-            {formatModelVersionStatusLabel(model.versionStatus)}
-          </Badge>
-        ),
+        sortable: true,
+        sortAccessor: (model) => model.versionStatus ?? "",
+        cell: renderModelStatusCell,
       },
       {
-        id: "task",
-        header: "Task Type",
-        hint: FIELD_HINTS.model.col.task,
-        cell: (model) => {
-          const taskType = resolveTaskType(model);
-          return (
-            <Badge colorScheme={getTaskColorScheme(taskType)} fontSize="xs">
-              {taskType ? taskType.toUpperCase() : "N/A"}
-            </Badge>
-          );
-        },
-      },
-      {
-        id: "created",
+        id: "createdAt",
         header: "Created At",
         sortable: true,
         sortAccessor: (model) => {
-          if (model.createdAt != null) return new Date(model.createdAt).getTime();
-          if (model.submittedOn != null) return model.submittedOn * 1000;
-          return 0;
+          const ms = modelCreatedAtMs(model);
+          return Number.isFinite(ms) ? ms : 0;
         },
-        cell: (model) => {
-          const createdMs =
-            model.createdAt != null
-              ? new Date(model.createdAt).getTime()
-              : model.submittedOn != null
-                ? model.submittedOn * 1000
-                : NaN;
-          return (
-            <Text fontSize="sm" color="ink.600">
-              {Number.isFinite(createdMs) ? new Date(createdMs).toLocaleDateString() : "N/A"}
-            </Text>
-          );
-        },
+        cell: renderModelCreatedAtCell,
       },
       {
-        id: "serviceCount",
+        id: "noOfServices",
         header: "No. of Services",
         hint: FIELD_HINTS.model.col.services,
-        cell: (model) => {
-          if (isServiceCountLoading) {
-            return <Skeleton height="20px" width="28px" borderRadius="md" />;
-          }
-          if (hasServiceCountError) {
-            return (
-              <Tooltip label="Could not load services" placement="top" hasArrow>
-                <Text fontSize="sm" color="gray.400">
-                  —
-                </Text>
-              </Tooltip>
-            );
-          }
-          const count = getServiceCount(model);
-          return (
-            <Text fontSize="sm" color="ink.600">
-              {count > 0 ? count : "-"}
-            </Text>
-          );
-        },
+        sortable: true,
+        sortAccessor: (model) => model.noOfServices ?? 0,
+        // Row's own count; the services list is only for the action switches.
+        cell: renderModelServiceCountCell,
       },
       {
         id: "actions",
@@ -744,16 +701,13 @@ const ModelManagementPage: React.FC = () => {
           px: 2,
         },
         cell: (model) => {
-          const rail = (child: React.ReactNode) => (
-            <Box display="flex" justifyContent="flex-end" alignItems="center" w="100%" minH="32px">
-              {child}
-            </Box>
-          );
           if (isServiceCountLoading) {
-            return rail(<Skeleton height="20px" width="36px" borderRadius="md" />);
+            return modelActionsRail(
+              <Skeleton height="20px" width="36px" borderRadius="md" />,
+            );
           }
           if (hasServiceCountError) {
-            return rail(
+            return modelActionsRail(
               <Tooltip label="Could not load services" placement="top" hasArrow>
                 <Text fontSize="sm" color="gray.400">
                   —
@@ -765,7 +719,7 @@ const ModelManagementPage: React.FC = () => {
           // Deprecated models must stay activatable even with 0 services
           // (Create Service is hidden for deprecated models).
           if (!isRegistryReadOnly && isModelDeprecated(model)) {
-            return rail(
+            return modelActionsRail(
               <Tooltip label="Activate model" placement="top" hasArrow>
                 <Box as="span" display="inline-flex" alignItems="center">
                   <Switch
@@ -783,7 +737,7 @@ const ModelManagementPage: React.FC = () => {
           }
 
           if (isModelActive(model) && !hasLinkedServices(model)) {
-            return rail(
+            return modelActionsRail(
               <Text fontSize="sm" color="ink.600">
                 NA
               </Text>,
@@ -791,11 +745,11 @@ const ModelManagementPage: React.FC = () => {
           }
 
           if (isRegistryReadOnly || !isModelActive(model)) {
-            return rail(null);
+            return modelActionsRail(null);
           }
 
           const blockedByPublished = hasPublishedService(model);
-          return rail(
+          return modelActionsRail(
             <Tooltip
               label={
                 blockedByPublished
@@ -827,7 +781,6 @@ const ModelManagementPage: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     modelSort,
-    getServiceCount,
     hasLinkedServices,
     hasPublishedService,
     isModelActive,
@@ -838,6 +791,51 @@ const ModelManagementPage: React.FC = () => {
     isRegistryReadOnly,
   ]);
 
+  const modelColumns = useMemo((): DataTableColumn<Model>[] => {
+    // Headers come from the `model-column` config labels.
+    const labels = new Map(modelListColumns.map((column) => [column.id, column.label]));
+    const byId = new Map(
+      modelColumnTemplates.map((col) => [
+        col.id,
+        {
+          ...col,
+          ...modelListColumnWidth(col.id),
+          header: labels.get(col.id) ?? col.header,
+        },
+      ]),
+    );
+    const visible = visibleColumnIds
+      .map((id) => byId.get(id))
+      .filter((col): col is DataTableColumn<Model> => Boolean(col));
+    // Always keep Actions last if present.
+    const withoutActions = visible.filter((col) => col.id !== "actions");
+    const actions = byId.get("actions");
+    return actions && visibleColumnIds.includes("actions")
+      ? [...withoutActions, actions]
+      : withoutActions;
+  }, [modelColumnTemplates, modelListColumns, visibleColumnIds]);
+
+  /** Service counts loaded without error; the drawer's status switch waits for them. */
+  const serviceCountsReady = !isServiceCountLoading && !hasServiceCountError;
+  // The view drawer wins when both are open.
+  const isCreateDrawerOpen =
+    isCreateOpen && !isRegistryReadOnly && !(isViewingModel && selectedModel);
+  const openCreateServiceForModel = (modelId: string) => {
+    const returnTo = `/model-management?modelId=${encodeURIComponent(modelId)}`;
+    router.push(
+      `/services-management?modelId=${encodeURIComponent(modelId)}&tab=create&returnTo=${encodeURIComponent(returnTo)}`,
+    );
+  };
+
+  const columnPicker = (
+    <ModelListColumnPicker
+      columns={modelListColumns}
+      visibleIds={visibleColumnIds}
+      onChange={applyVisibleColumns}
+      onReset={resetVisibleColumns}
+    />
+  );
+
   return (
     <>
       <Head>
@@ -845,7 +843,7 @@ const ModelManagementPage: React.FC = () => {
         <meta name="description" content="Manage and configure AI models" />
       </Head>
 
-      <ContentLayout>
+      <ContentLayout fillHeight>
                 <ManagementPageHeader
                     crumbs={false}
                     title="Model Management"
@@ -862,64 +860,54 @@ const ModelManagementPage: React.FC = () => {
                   />
                       <DataTable
                         layout="admin"
-                        key={`${filterTaskType}-${filterVersionStatus}`}
-                        items={registryTableItems}
+                        fillHeight
+                        items={registryItems}
                         columns={modelColumns}
-            sort={modelSort.sort}
-            onSortChange={modelSort.onSortChange}
+                        sort={modelSort.sort}
+                        onSortChange={registry.onSortChange}
                         getRowKey={(model) => model.modelId}
                         onRowClick={(model) => handleViewModel(model.modelId)}
-                        paginate="client"
+                        paginate="server"
                         paginationPosition="bottom"
                         pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
+                        serverPagination={{
+                          page: registry.page,
+                          pageSize: registry.pageSize,
+                          totalItems: registry.total,
+                          onPageChange: registry.setPage,
+                          onPageSizeChange: registry.onPageSizeChange,
+                          pageSizeOptions: DEFAULT_PAGE_SIZE_OPTIONS,
+                        }}
                         isLoading={isLoading}
                         loadingMessage="Loading models..."
                         emptyMessage="No models in the registry yet."
+                        emptyContent={
+                          registry.isError ? (
+                            <Alert status="error" borderRadius="md">
+                              <AlertIcon />
+                              <AlertDescription flex="1">
+                                {MODEL_REGISTRY_ERRORS.LOAD_FAILED}
+                              </AlertDescription>
+                              <Button size="sm" onClick={registry.retry}>
+                                Retry
+                              </Button>
+                            </Alert>
+                          ) : undefined
+                        }
                         noResultsMessage="No results found. Try adjusting your search or filters."
-                        unfilteredCount={models.length}
-                        hasActiveFilters={hasActiveFilters}
-                        onClearFilters={clearAllFilters}
+                        unfilteredCount={registry.total}
+                        hasActiveFilters={registry.hasActiveFilters}
+                        onClearFilters={registry.clearFilters}
+                        filterToolbarRightContent={columnPicker}
                         search={{
                           label: "Search",
-                          value: searchQuery,
-                          onChange: setSearchQuery,
+                          value: registry.filters.name ?? "",
+                          onChange: (value) => registry.setFilter("name", value),
                           placeholder: "Search by model name...",
-                          fields: ["model_name", "name"],
+                          debounceMs: 400,
+                          fields: ["name"],
                         }}
-                        filterDefs={[
-                          {
-                            id: "status",
-                            label: "Status",
-                            type: "select",
-                            param: "version_status",
-                            value: filterVersionStatus,
-                            onChange: setFilterVersionStatus,
-                            options: [
-                              { label: "All", value: MODEL_VERSION.FILTER.ALL },
-                              ...MODEL_VERSION_FILTER_LIST.map((s) => ({
-                                label: formatModelVersionFilterLabel(s),
-                                value: s,
-                              })),
-                            ],
-                          },
-                          {
-                            id: "taskType",
-                            label: "Task type",
-                            type: "select",
-                            param: "model_task_type",
-                            value: filterTaskType,
-                            onChange: setFilterTaskType,
-                            options: [
-                              ...(showTaskTypeAllOption
-                                ? [{ label: "All", value: "" }]
-                                : []),
-                              ...taskTypeNames.map((t) => ({
-                                label: formatModelTaskTypeLabel(t),
-                                value: t,
-                              })),
-                            ],
-                          },
-                        ]}
+                        filterDefs={toolbarFilterDefs}
                       />
         <FormDrawer
           isOpen={Boolean(isViewingModel && selectedModel)}
@@ -929,74 +917,18 @@ const ModelManagementPage: React.FC = () => {
           description="Model configuration."
           actions={
             selectedModel ? (
-              <HStack spacing={2}>
-                {isRegistryReadOnly ? (
-                  <Badge colorScheme="gray" fontSize="xs" px={2} py={0.5}>
-                    Read-only
-                  </Badge>
-                ) : null}
-                {!isRegistryReadOnly &&
-                  (selectedModel.versionStatus?.toLowerCase() === "active" || !selectedModel.versionStatus) && (
-                  <CreateButton
-                    size="sm"
-                    onClick={() => {
-                      const modelId = selectedModel.modelId;
-                      const returnTo = `/model-management?modelId=${encodeURIComponent(modelId)}`;
-                      router.push(
-                        `/services-management?modelId=${encodeURIComponent(modelId)}&tab=create&returnTo=${encodeURIComponent(returnTo)}`,
-                      );
-                    }}
-                  >
-                    Create Service
-                  </CreateButton>
-                )}
-                {!isRegistryReadOnly &&
-                !isServiceCountLoading &&
-                !hasServiceCountError &&
-                isModelDeprecated(selectedModel) ? (
-                  <Tooltip label="Activate model" placement="top" hasArrow>
-                    <Box as="span" display="inline-flex" alignItems="center">
-                      <Switch
-                        size="md"
-                        colorScheme="green"
-                        isChecked={false}
-                        onChange={() => openConfirmDialog("activate", selectedModel)}
-                        isDisabled={updatingModelId !== null}
-                      />
-                    </Box>
-                  </Tooltip>
-                ) : !isRegistryReadOnly &&
-                  !isServiceCountLoading &&
-                  !hasServiceCountError &&
-                  isModelActive(selectedModel) &&
-                  hasLinkedServices(selectedModel) ? (
-                  <Tooltip
-                    label={
-                      hasPublishedService(selectedModel)
-                        ? "Unpublish its services to deprecate"
-                        : "Deprecate model"
-                    }
-                    placement="top"
-                    hasArrow
-                  >
-                    <Box as="span" display="inline-flex" alignItems="center">
-                      <Switch
-                        size="md"
-                        colorScheme="green"
-                        isChecked={true}
-                        onChange={() => {
-                          if (hasPublishedService(selectedModel)) return;
-                          openConfirmDialog("deprecate", selectedModel);
-                        }}
-                        isDisabled={
-                          updatingModelId !== null ||
-                          hasPublishedService(selectedModel)
-                        }
-                      />
-                    </Box>
-                  </Tooltip>
-                ) : null}
-              </HStack>
+              <ModelViewActions
+                isReadOnly={isRegistryReadOnly}
+                serviceCountsReady={serviceCountsReady}
+                isActive={isModelActive(selectedModel)}
+                isDeprecated={isModelDeprecated(selectedModel)}
+                hasLinkedServices={hasLinkedServices(selectedModel)}
+                hasPublishedService={hasPublishedService(selectedModel)}
+                isUpdating={updatingModelId !== null}
+                onCreateService={() => openCreateServiceForModel(selectedModel.modelId)}
+                onActivate={() => openConfirmDialog("activate", selectedModel)}
+                onDeprecate={() => openConfirmDialog("deprecate", selectedModel)}
+              />
             ) : undefined
           }
           footer={<FormActions hideSubmit cancelLabel="Close" onCancel={closeModelView} pt={0} />}
@@ -1016,7 +948,7 @@ const ModelManagementPage: React.FC = () => {
           ) : null}
         </FormDrawer>
         <FormDrawer
-          isOpen={isCreateOpen && !isRegistryReadOnly && !(isViewingModel && selectedModel)}
+          isOpen={isCreateDrawerOpen}
           onClose={closeCreateModal}
           lockDismiss={isUploading}
           size="wide"
@@ -1035,7 +967,7 @@ const ModelManagementPage: React.FC = () => {
             />
           }
         >
-          {isCreateOpen && !isRegistryReadOnly && !(isViewingModel && selectedModel) ? (
+          {isCreateDrawerOpen ? (
           <ModelForm
             mode="create"
             model={parsedModelData}
@@ -1068,31 +1000,13 @@ const ModelManagementPage: React.FC = () => {
         </FormDrawer>
       </ContentLayout>
 
-      <ConfirmDialog
+      <ModelStatusConfirmDialog
         isOpen={isConfirmOpen}
+        action={confirmAction}
+        model={modelToConfirm}
+        isConfirmLoading={updatingModelId === modelToConfirm?.modelId}
         onClose={closeConfirmDialog}
         onConfirm={handleConfirmAction}
-        title={confirmAction === "deprecate" ? "Deprecate model" : "Activate model"}
-        body={
-          confirmAction === "deprecate" ? (
-            <>
-              Are you sure you want to deprecate{" "}
-              <strong>{modelToConfirm?.name || modelToConfirm?.modelId}</strong>?
-              Deprecated models cannot be used for new services.
-            </>
-          ) : (
-            <>
-              Are you sure you want to activate{" "}
-              <strong>{modelToConfirm?.name || modelToConfirm?.modelId}</strong>?
-              The model will be available for services again.
-            </>
-          )
-        }
-        confirmLabel="Confirm"
-        cancelLabel="Cancel"
-        confirmColorScheme={confirmAction === "deprecate" ? "orange" : "green"}
-        isConfirmLoading={updatingModelId === modelToConfirm?.modelId}
-        confirmLoadingText={confirmAction === "deprecate" ? "Deprecating..." : "Activating..."}
         leastDestructiveRef={cancelConfirmRef}
       />
     </>

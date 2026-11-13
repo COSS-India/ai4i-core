@@ -1,0 +1,24 @@
+{# details: [application_name, api_key, initiated_by, rotated_on, revoked_on, revoked_immediately] #}
+{% set layout = "notification" %}
+{% set name = "API Key Rotated for " ~ details[0] %}
+{% if details[5] %}
+{% set headline = "An API key for " ~ tenant_name ~ " has been rotated. The old key was revoked immediately." %}
+{% set old_key_lines = [
+    {"label": "Old key revoked on", "value": details[4]},
+    "Requests using the old key now fail.",
+] %}
+{% else %}
+{% set headline = "An API key for " ~ tenant_name ~ " has been rotated. The old key remains active during the grace period and will be revoked automatically when the grace period ends." %}
+{% set old_key_lines = [
+    {"label": "Old key will be revoked on", "value": details[4]},
+    "Action required: Move all applications to the new key before " ~ details[4] ~ ". After this time, requests using the old key will fail.",
+] %}
+{% endif %}
+{% set lines = [
+    {"label": "Application", "value": details[0]},
+    {"label": "API Key", "value": details[1]},
+    {"label": "Initiated by", "value": details[2]},
+    {"label": "Rotated on", "value": details[3]},
+] + old_key_lines + [
+    "If this rotation was not expected, confirm it with " ~ details[2] ~ ".",
+] %}

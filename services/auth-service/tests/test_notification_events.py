@@ -8,10 +8,12 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from ai4i_core.kafka import NotificationName
 
 import app.services.notification_events as events
+from app.core.config import AuthSettings
 
 
 @pytest.mark.asyncio
@@ -153,3 +155,56 @@ def test_nothing_is_sent_when_the_pipeline_is_not_configured(monkeypatch):
     events.publish_budget_event(7, Decimal("0"), Decimal("1"), None)
     events.refresh_tenant_subscriptions(7)
     run.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_key_rotated_event(monkeypatch):
+    calls = []
+
+    async def fake_emit_state(name, tenant_id, new_state, **kwargs):
+        calls.append({"name": name, "tenant_id": tenant_id, "new_state": new_state, **kwargs})
+
+    pending = []
+    monkeypatch.setattr(events, "notifications_configured", lambda: True)
+    monkeypatch.setattr(events, "emit_state", fake_emit_state)
+    monkeypatch.setattr(events, "run_in_background", pending.append)
+
+    rotated = datetime(2026, 11, 12, 9, 30, tzinfo=timezone.utc)
+    revoked = datetime(2026, 11, 19, 9, 30, tzinfo=timezone.utc)
+    events.publish_key_rotated(3, 42, "prod-key", "Chatbot", "Asha Rao", rotated, revoked, False)
+    for coroutine in pending:
+        await coroutine
+
+    (event,) = calls
+    assert event["name"] is NotificationName.KEY_ROTATED
+    assert event["tenant_id"] == "3"
+    # Each rotation commits a new rotated_at, so each one is a new state.
+    assert event["new_state"] == {"api_key_id": 42, "rotated_at": "2026-11-12T09:30:00+00:00"}
+    assert event["details"] == [
+        "Chatbot", "prod-key (ID 42)", "Asha Rao", "12 Nov 2026, 03:00 PM IST", "19 Nov 2026, 03:00 PM IST", False,
+    ]
+
+
+def test_key_rotated_times_follow_notification_timezone(monkeypatch):
+    calls = []
+    monkeypatch.setattr(events, "notifications_configured", lambda: True)
+    monkeypatch.setattr(events, "emit_state", lambda *args, **kwargs: calls.append(kwargs["details"]))
+    monkeypatch.setattr(events, "run_in_background", lambda value: None)
+    monkeypatch.setattr(events.settings, "notification_timezone", "UTC")
+
+    when = datetime(2026, 11, 12, 9, 30, tzinfo=timezone.utc)
+    events.publish_key_rotated(3, 42, "prod-key", "Chatbot", "Asha Rao", when, when, True)
+
+    assert calls[0][3:] == ["12 Nov 2026, 09:30 AM UTC", "12 Nov 2026, 09:30 AM UTC", True]
+
+
+def test_missing_notification_timezone_fails_startup(monkeypatch):
+    monkeypatch.delenv("NOTIFICATION_TIMEZONE", raising=False)
+    with pytest.raises(ValidationError, match="notification_timezone"):
+        AuthSettings(_env_file=None)
+
+
+def test_unknown_notification_timezone_fails_startup(monkeypatch):
+    monkeypatch.setenv("NOTIFICATION_TIMEZONE", "Mars/Olympus")
+    with pytest.raises(ValidationError, match="NOTIFICATION_TIMEZONE must be an IANA time zone"):
+        AuthSettings(_env_file=None)

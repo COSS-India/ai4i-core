@@ -37,6 +37,7 @@
     { "endpoint": "PATCH:/api/v1/auth/tenants/{tenant_id}/users/{user_id}/status", "permissionRequired": 46, "description": "Toggle tenant user status (tenant.users.update)" },
     { "endpoint": "PATCH:/api/v1/auth/tenants/{tenant_id}/users/{user_id}", "permissionRequired": 46, "description": "Update tenant user profile (tenant.users.update)" },
     { "endpoint": "DELETE:/api/v1/auth/tenants/{tenant_id}/users/{user_id}", "permissionRequired": 47, "description": "Soft-delete tenant user (tenant.users.delete)" },
+    { "endpoint": "GET:/api/v1/audit-logs",                               "permissionRequired": 109, "description": "List audit logs (audit_logs.read)" },
 
     { "endpoint": "POST:/api/v1/auth/tenants/{tenant_id}/applications",           "permissionRequired": 43, "description": "Create Application (application.create); ADMIN and TENANT ADMIN only" },
     { "endpoint": "GET:/api/v1/auth/tenants/{tenant_id}/applications",            "permissionRequired": 48, "description": "List Applications (application.read); ADMIN and TENANT ADMIN only" },
@@ -87,16 +88,6 @@
     { "endpoint": "POST:/api/v1/audio-lang-detection/inference",           "permissionRequired": 70, "description": "Audio-lang-detection inference (audio-lang-detection.inference)" },
     { "endpoint": "POST:/api/v1/pipeline/inference",                       "permissionRequired": 71, "description": "Pipeline inference (pipeline.inference)" },
 
-    { "endpoint": "POST:/api/v1/pii/redact",                               "permissionRequired": 90, "description": "PII redaction (pii_guard.inference)" },
-    { "endpoint": "GET:/api/v1/pii/admin/all-domains",                     "permissionRequired": 91, "description": "List PII domains (pii_guard.admin)" },
-    { "endpoint": "POST:/api/v1/pii/admin/deploy",                         "permissionRequired": 91, "description": "Deploy PII policy (pii_guard.admin)" },
-    { "endpoint": "POST:/api/v1/pii/admin/activate-domains",               "permissionRequired": 91, "description": "Activate PII domains (pii_guard.admin)" },
-    { "endpoint": "POST:/api/v1/pii/admin/domain",                         "permissionRequired": 91, "description": "Create PII domain (pii_guard.admin)" },
-    { "endpoint": "POST:/api/v1/pii/admin/generate-regex",                 "permissionRequired": 91, "description": "Generate regex for PII policy (pii_guard.admin)" },
-    { "endpoint": "GET:/api/v1/pii/admin/tenant-domains",                  "permissionRequired": 91, "description": "List tenant→PII-domain mappings (pii_guard.admin)" },
-    { "endpoint": "POST:/api/v1/pii/admin/tenant-domain",                  "permissionRequired": 91, "description": "Upsert tenant→PII-domain mapping (pii_guard.admin)" },
-    { "endpoint": "POST:/api/v1/pii/admin/tenant-domain/delete",           "permissionRequired": 91, "description": "Delete tenant→PII-domain mapping (pii_guard.admin)" },
-    { "endpoint": "GET:/api/v1/pii/admin/audit-logs",                      "permissionRequired": 92, "description": "List PII audit logs (pii_guard.audit.read)" },
     { "endpoint": "GET:/api/v1/pii/entities",                              "permissionRequired": 105, "description": "List supported PII entities (pii_types.read — ADMIN only)" },
 
     { "endpoint": "GET:/api/v1/policy-service/pii-types",                  "permissionRequired": 105, "description": "List PII types (pii_types.read)" },
@@ -125,7 +116,6 @@
 
     { "endpoint": "POST:/api/v1/telemetry/logs",                           "permissionRequired": 132, "description": "Record logs (telemetry.write)" },
     { "endpoint": "POST:/api/v1/telemetry/traces",                         "permissionRequired": 132, "description": "Record traces (telemetry.write)" },
-    { "endpoint": "GET:/api/v1/telemetry/traces/columns",                  "permissionRequired": 131, "description": "List available trace columns for the column picker (traces.read)" },
     { "endpoint": "GET:/api/v1/telemetry/traces/search",                   "permissionRequired": 131, "description": "Search traces (traces.read); role 1 (admin) or 2 (moderator) see all traces; role 5 (tenant admin) sees own tenant only" },
     { "endpoint": "GET:/api/v1/telemetry/traces/{trace_id}",               "permissionRequired": 131, "description": "Get trace by ID (traces.read); role 1 (admin) or 2 (moderator) see all traces; role 5 (tenant admin) sees own tenant only" },
 
@@ -204,6 +194,12 @@
     { "endpoint": "DELETE:/api/v1/preferences/columns/service-list",       "permissionRequired": 51, "description": "Reset the caller's Service List columns to default (service.read)" },
     { "endpoint": "GET:/api/v1/preferences/columns/{view_key}",            "permissionRequired": 1,  "description": "Fallback for a view with no entry of its own (admin sentinel — ADMIN only); each view lists its own GET/PUT/DELETE with the permission of the page it belongs to" },
     { "endpoint": "PUT:/api/v1/preferences/columns/{view_key}",            "permissionRequired": 1,  "description": "Fallback for a view with no entry of its own (admin sentinel — ADMIN only)" },
-    { "endpoint": "DELETE:/api/v1/preferences/columns/{view_key}",         "permissionRequired": 1,  "description": "Fallback for a view with no entry of its own (admin sentinel — ADMIN only)" }
+    { "endpoint": "DELETE:/api/v1/preferences/columns/{view_key}",         "permissionRequired": 1,  "description": "Fallback for a view with no entry of its own (admin sentinel — ADMIN only)" },
+
+    { "endpoint": "GET:/api/v1/config",                                   "permissionRequired": 120, "description": "List all config entries (configs.read — all roles)" },
+    { "endpoint": "POST:/api/v1/config",                                  "permissionRequired": 1,  "description": "Create a config entry (admin sentinel — ADMIN only)" },
+    { "endpoint": "GET:/api/v1/config/{config_id}",                       "permissionRequired": 1,  "description": "Get config entry by ID (admin sentinel — ADMIN only)" },
+    { "endpoint": "PUT:/api/v1/config/{config_id}",                       "permissionRequired": 1,  "description": "Update a config entry (admin sentinel — ADMIN only)" },
+    { "endpoint": "DELETE:/api/v1/config/{config_id}",                    "permissionRequired": 1,  "description": "Delete a config entry (admin sentinel — ADMIN only)" }
   ]
 }

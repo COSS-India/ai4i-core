@@ -113,12 +113,6 @@ class CoreSettings(BaseSettings):
     smtp_auth_username: Optional[str] = None
     smtp_auth_password: Optional[str] = None
 
-    # ── NER service (used by PII DetectionEngine for AI-based entity extraction) ──
-    ner_service_url: str
-
-    # ── LLM service (used by PII /admin/generate-regex to produce regex patterns) ──
-    pii_llm_url: str
-
     # ── Redis ──
     redis_host: str
     redis_port: int
@@ -134,10 +128,6 @@ class CoreSettings(BaseSettings):
     # its own key: it's a full-retention subquery, and it only moves when a
     # tenant sends its first request.
     metering_first_usage_cache_ttl_seconds: int = 3600
-    # Usage Dashboard (USAGE_DAILY_ROLLUP_ENABLED): whether past periods read
-    # the daily_usage rollup. Off until the rollup job runs; until then every
-    # period, past ones included, sums usage_events directly.
-    usage_daily_rollup_enabled: bool = False
     ppu_tier_cache_ttl_seconds: int = 600
     # Auto-refresh interval exposed to the dashboard (METERING_REFRESH_INTERVAL_SECONDS).
     metering_refresh_interval_seconds: int = 60

@@ -208,6 +208,15 @@ def _resolve_billing_month(end_time_ns) -> str:
     return _span_end_time(end_time_ns).strftime("%Y-%m")
 
 
+def _span_duration_ms(start_time_ns, end_time_ns) -> Optional[int]:
+    """The span's duration in whole milliseconds; None when either end is
+    missing or they are out of order."""
+    start, end = _to_int(start_time_ns), _to_int(end_time_ns)
+    if start <= 0 or end < start:
+        return None
+    return round((end - start) / 1e6)
+
+
 def _optional_int(value) -> Optional[int]:
     """A positive int from a span attribute or id string, else None."""
     number = _to_int(value)
@@ -744,6 +753,10 @@ async def _record_request(data: dict, msg: Message) -> None:
             input_units_cost=Decimal(0),
             cached_input_units_cost=Decimal(0),
             output_units_cost=Decimal(0),
+            # Set by inference-service only when the request was sent to a
+            # fallback; the exporter may send it as a bool or a string.
+            sent_to_fallback=str(attrs.get("sent_to_fallback", "")).lower() == "true",
+            response_time_ms=_span_duration_ms(data.get("start_time"), data.get("end_time")),
         ))
         await db.commit()
     logger.debug(

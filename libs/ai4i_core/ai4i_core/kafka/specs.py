@@ -73,6 +73,7 @@ SPECS: Dict[NotificationName, NotificationSpec] = {
         _monitoring(NotificationName.LATENCY_P50),
         _monitoring(NotificationName.LATENCY_P95),
         _monitoring(NotificationName.LATENCY_P99),
+        _state(NotificationName.KEY_ROTATED),
     )
 }
 

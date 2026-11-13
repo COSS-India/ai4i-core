@@ -4,14 +4,12 @@ import {
 } from "../../services/servicesManagementService";
 import type { Service } from "../../types/platform";
 import {
-  serviceListCellKey,
   serviceListFilterParams,
   type ServiceListColumnDef,
 } from "./serviceListColumns";
 import {
   statusFilterToApiValue,
   statusFilterToPublished,
-  tierIdsForColumnSearch,
 } from "./serviceRegistryFilters";
 
 export type RegistryFetchOptions = {
@@ -31,7 +29,6 @@ export type RegistryFetchContext = {
   taskFilterColumnId?: string;
   statusFilterColumnId?: string;
   serviceListCatalogue: readonly ServiceListColumnDef[];
-  tierOptions: readonly { id: string; name: string }[];
   registryPage: number;
   registryPageSize: number;
   sortMode: "time" | "sorted";
@@ -65,22 +62,6 @@ function mergeServerFilters(
     filters[context.statusFilterColumnId] = statusFilterToApiValue(options.status);
   }
   return filters;
-}
-
-/** Tier column search stores a name. GET /services filters that column by id. */
-function filtersWithTierIds(
-  filters: Record<string, string>,
-  columns: readonly ServiceListColumnDef[],
-  tiers: readonly { id: string; name: string }[],
-): Record<string, string> {
-  const next = { ...filters };
-  for (const column of columns) {
-    if (serviceListCellKey(column.id) !== "tier") continue;
-    const typed = (next[column.id] ?? "").trim();
-    if (!typed) continue;
-    next[column.id] = tierIdsForColumnSearch(typed, tiers);
-  }
-  return next;
 }
 
 export async function fetchRegistryServicesPage(
@@ -119,11 +100,7 @@ export async function fetchRegistryServicesPage(
     limit: context.registryPageSize,
     query: serviceListFilterParams({
       columns: context.serviceListCatalogue,
-      filters: filtersWithTierIds(
-        mergeServerFilters(context, options),
-        context.serviceListCatalogue,
-        context.tierOptions,
-      ),
+      filters: mergeServerFilters(context, options),
       enabledTaskTypes: context.enabledTaskTypesParam,
       sortBy,
       sortOrder,
@@ -176,10 +153,14 @@ export function applyServicePublishPatch(
   if (service.serviceId !== serviceId) return service;
   if (freshService) return freshService;
   if (isPublished) {
+    // servicePublishedOnMillis prefers publishedAt, so set both or a
+    // re-publish keeps showing the previous publish date.
+    const now = Date.now();
     return {
       ...service,
       isPublished,
-      publishedOn: Math.floor(Date.now() / 1000),
+      publishedOn: Math.floor(now / 1000),
+      publishedAt: new Date(now).toISOString(),
     };
   }
   return { ...service, isPublished };

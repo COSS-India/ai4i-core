@@ -55,7 +55,7 @@ export const TenantDashboardPanels: React.FC<TenantPanelsProps> = ({
   <Box pt={2}>
     {subTab === METERING.SUB_TAB.OVERVIEW && overview ? (
       <VStack align="stretch" spacing={6}>
-        <OverviewKpiCards data={overview} isPlatformWide={false} />
+        <OverviewKpiCards data={overview} isPlatformWide={false} showFallbackRequests />
         {requestVolumeSection}
       </VStack>
     ) : null}

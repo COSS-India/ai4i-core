@@ -16,10 +16,13 @@ boundaries are IST midnight.
      This only does work on the first run after the migration or that change;
      later runs find nothing to convert.
    - Day partitions are created for today and the next USAGE_EVENTS_DAYS_AHEAD
-     days, and for every earlier day that has rows to restore. Rows the
-     DEFAULT partition holds for a day being created are moved into it first,
-     since Postgres refuses the new range otherwise.
-   - Past day partitions are never dropped.
+     days, and for every earlier day that has rows to restore — except the
+     DEFAULT partition's days before the retention cutoff: a past day with
+     no partition is one step 3 dropped, so those rows arrived late and stay
+     in DEFAULT for step 3 to add. Rows the DEFAULT partition holds for a
+     day being created are moved into it first, since Postgres refuses the
+     new range otherwise.
+   - Past day partitions are dropped by step 3 only.
 
    The parent is locked ACCESS EXCLUSIVE for the transaction, so writers wait
    instead of sending rows to the DEFAULT partition mid-conversion. The
@@ -40,11 +43,39 @@ boundaries are IST midnight.
    rows existed (status set, with units) stands in for its request and counts
    once per correlation id, as one request can have several. Rows without a
    status_code add units and cost only. A request is failed when its status
-   is 400 or above.
+   is 400 or above, and a server error (server_error_count, the platform's
+   own failures: 5xx and timeouts) when it is 500 or above. fallback_count
+   is a JSON {"count", "success", "failure"} of the request rows sent to a
+   fallback, split by status (failure when 400 or above). It,
+   total_response_time_ms and response_time_count come from request rows
+   only, which carry sent_to_fallback and response_time_ms;
+   response_time_count is the average's divisor, as rows from before
+   response_time_ms have none.
 
-Re-running is safe: both steps converge to the same state. A
+3. Retention: every usage_events day before the last
+   USAGE_EVENTS_RETENTION_DAYS closed days is dropped, oldest first, one
+   transaction per day with the day's partition (or DEFAULT, for a day with
+   no partition) locked EXCLUSIVE, so no row can land in the day between
+   its last rollup and the drop, while other days' writes and all reads go
+   on; the parent is locked only by DETACH, at the end. A day that
+   still has its partition is rolled up a last time (picking up anything
+   that arrived since the lookback last read it), then its partition and
+   any DEFAULT rows of it are dropped; a failure rolls the whole day back,
+   partition included, so the next run rolls it up again. A day with rows
+   in DEFAULT only was dropped before (its late rows had no partition to
+   land in), or never got a partition: of its rows, those inserted
+   (created_at) after the day's rollup rows were last written are added to
+   them, the rest were already counted; all of them are deleted. A day with backfill rows
+   (source = 'backfill', see services/pyjob/backfill) is dropped without a
+   rollup: the dashboard already shows the backfill for it. The step is
+   skipped when step 1 or any rollup failed in the same run.
+
+   The retention is more than the lookback (bootstrap.config enforces it),
+   so the rollup never re-reads a dropped day.
+
+Re-running is safe: every step converges to the same state. A
 transaction-level advisory lock per step makes an overlapping run skip the
-step instead of racing.
+step instead of racing; retention takes the rollup's lock.
 """
 from __future__ import annotations
 
@@ -53,7 +84,7 @@ from typing import Any, Iterable
 from zoneinfo import ZoneInfo
 
 from ai4i_core.logging import get_logger
-from sqlalchemy import bindparam, text
+from sqlalchemy import DateTime, bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bootstrap.config import get_settings
@@ -72,8 +103,16 @@ DIMENSIONS = (
 )
 MEASURES = (
     "request_count", "success_count", "failed_count",
+    "fallback_count", "server_error_count", "total_response_time_ms", "response_time_count",
     "total_units", "cached_input_units", "output_units",
     "input_units_cost", "cached_input_units_cost", "output_units_cost",
+)
+# fallback_count is JSONB: the aggregate returns its parts as integers
+# (fallback_count, fallback_success, fallback_failure) and the upsert builds it.
+FALLBACK_PARTS = ("fallback_success", "fallback_failure")
+FALLBACK_JSON = (
+    "jsonb_build_object('count', CAST(:fallback_count AS bigint),"
+    " 'success', CAST(:fallback_success AS bigint), 'failure', CAST(:fallback_failure AS bigint))"
 )
 NAMES = (
     "tenant_name", "allocated_budget", "application_name", "tier_name",
@@ -104,6 +143,12 @@ def _in_days(days: Iterable[date]) -> str:
     return " OR ".join(
         f"(occurred_at >= {_bound(d)} AND occurred_at < {_bound(d + timedelta(days=1))})" for d in sorted(days)
     )
+
+
+def _retention_cutoff(today: date) -> date:
+    """The first day kept: today and the USAGE_EVENTS_RETENTION_DAYS closed
+    days before it are; every earlier day is dropped."""
+    return today - timedelta(days=get_settings().USAGE_EVENTS_RETENTION_DAYS)
 
 
 async def _lock(session: AsyncSession, step: str) -> bool:
@@ -200,8 +245,12 @@ async def _maintain_partitions(today: date) -> None:
                 await session.execute(text(f'ALTER TABLE "{name}" RENAME TO "ue_convert_{i}"'))
                 detached.append(f"ue_convert_{i}")
                 wanted |= await _days_with_rows(session, detached[-1])
+            # A past day with no partition was dropped: its DEFAULT rows are
+            # late ones, left there for _drop_day to add, never partitioned
+            # (a partition would make them look like the whole day).
+            cutoff = _retention_cutoff(today)
             if has_default:
-                wanted |= await _days_with_rows(session, DEFAULT)
+                wanted |= {d for d in await _days_with_rows(session, DEFAULT) if d >= cutoff}
             to_create = sorted(d for d in wanted if d not in days)
 
             columns = await _insertable_columns(session)
@@ -268,6 +317,21 @@ _AGGREGATE = text(
             count(*) FILTER (WHERE status_code >= 400 AND total_units = 0)
               + count(DISTINCT correlation_id) FILTER (WHERE status_code >= 400 AND total_units > 0)
               AS failed_count,
+            -- platform-side failures (server errors, timeouts): part of failed_count
+            count(*) FILTER (WHERE status_code >= 500 AND total_units = 0)
+              + count(DISTINCT correlation_id) FILTER (WHERE status_code >= 500 AND total_units > 0)
+              AS server_error_count,
+            -- set on request rows only; pre-cutover rows carry neither
+            count(*) FILTER (WHERE sent_to_fallback AND status_code IS NOT NULL AND total_units = 0)
+              AS fallback_count,
+            count(*) FILTER (WHERE sent_to_fallback AND status_code < 400 AND total_units = 0)
+              AS fallback_success,
+            count(*) FILTER (WHERE sent_to_fallback AND status_code >= 400 AND total_units = 0)
+              AS fallback_failure,
+            coalesce(sum(response_time_ms) FILTER (WHERE status_code IS NOT NULL AND total_units = 0), 0)
+              AS total_response_time_ms,
+            count(response_time_ms) FILTER (WHERE status_code IS NOT NULL AND total_units = 0)
+              AS response_time_count,
             sum(total_units) AS total_units,
             sum(cached_input_units) AS cached_input_units,
             sum(output_units) AS output_units,
@@ -276,6 +340,7 @@ _AGGREGATE = text(
             sum(output_units_cost) AS output_units_cost
         FROM usage_events
         WHERE occurred_at >= :start AND occurred_at < :end
+          AND (:written_after IS NULL OR created_at > :written_after)
         GROUP BY tenant_id, application_id, api_key_id, tier_id, service_id, inference_type_id,
                  to_char(occurred_at AT TIME ZONE 'UTC', 'YYYY-MM')
     )
@@ -290,12 +355,12 @@ _AGGREGATE = text(
     LEFT JOIN mm_services s ON s.service_id = agg.service_id
     LEFT JOIN mm_models m ON m.model_id = s.model_id
     """
-)
+).bindparams(bindparam("written_after", None, type_=DateTime(timezone=True)))  # None: every row
 
 _UPSERT = text(
     f"""
     INSERT INTO daily_usage ({", ".join(DIMENSIONS + NAMES + MEASURES)})
-    VALUES ({", ".join(f":{c}" for c in DIMENSIONS + NAMES + MEASURES)})
+    VALUES ({", ".join(FALLBACK_JSON if c == "fallback_count" else f":{c}" for c in DIMENSIONS + NAMES + MEASURES)})
     ON CONFLICT ({", ".join(DIMENSIONS)}) DO UPDATE SET
         {", ".join(f"{c} = EXCLUDED.{c}" for c in NAMES + MEASURES)},
         updated_at = now()
@@ -309,6 +374,39 @@ _UPSERT = text(
 # never be swept by the rollup.
 _DELETE_STALE = text(
     "DELETE FROM daily_usage WHERE usage_date = :usage_date AND source = 'rollup' AND updated_at < now()"
+)
+
+# Late rows of a dropped day (in DEFAULT, as the day has no partition any
+# more): added to what its rows already count. Names
+# stay as rolled up, filled in only where the earlier row had none.
+# fallback_count's parts are added one by one.
+_FALLBACK_ADD = "jsonb_build_object({})".format(", ".join(
+    f"'{k}', coalesce((daily_usage.fallback_count->>'{k}')::bigint, 0)"
+    f" + coalesce((EXCLUDED.fallback_count->>'{k}')::bigint, 0)"
+    for k in ("count", "success", "failure")
+))
+_UPSERT_ADD = text(
+    f"""
+    INSERT INTO daily_usage ({", ".join(DIMENSIONS + NAMES + MEASURES)})
+    VALUES ({", ".join(FALLBACK_JSON if c == "fallback_count" else f":{c}" for c in DIMENSIONS + NAMES + MEASURES)})
+    ON CONFLICT ({", ".join(DIMENSIONS)}) DO UPDATE SET
+        {", ".join(f"{c} = coalesce(daily_usage.{c}, EXCLUDED.{c})" for c in NAMES)},
+        {", ".join(
+            f"{c} = {_FALLBACK_ADD}" if c == "fallback_count" else f"{c} = daily_usage.{c} + EXCLUDED.{c}"
+            for c in MEASURES
+        )},
+        updated_at = now()
+    """
+)
+
+_HAS_BACKFILL = text("SELECT 1 FROM daily_usage WHERE usage_date = :usage_date AND source = 'backfill' LIMIT 1")
+
+# When the day's rollup rows were last written: a DEFAULT row inserted
+# (created_at) before that was read by that rollup, one inserted after it
+# wasn't. Never counts a row twice; a row only misses being counted when its
+# billing transaction began before that write and committed after it.
+_LAST_ROLLUP = text(
+    "SELECT max(updated_at) FROM daily_usage WHERE usage_date = :usage_date AND source = 'rollup'"
 )
 
 
@@ -340,6 +438,50 @@ async def _auth_names(
     return tenants, applications
 
 
+async def _summarise(session: AsyncSession, day: date, written_after: datetime | None = None) -> list[dict]:
+    """The day's daily_usage rows, aggregated from its usage_events rows
+    (only those inserted after ``written_after``, when given)."""
+    groups = (
+        await session.execute(
+            _AGGREGATE,
+            {
+                "start": _day_start(day),
+                "end": _day_start(day + timedelta(days=1)),
+                "written_after": written_after,
+            },
+        )
+    ).mappings().all()
+    tenants, applications = await _auth_names(
+        {g["tenant_id"] for g in groups if g["tenant_id"] is not None},
+        {g["application_id"] for g in groups if g["application_id"] is not None},
+    )
+
+    rows = []
+    for g in groups:
+        tenant_name, allocated_budget = tenants.get(g["tenant_id"], (None, None))
+        rows.append({
+            **{c: g[c] for c in DIMENSIONS[1:-1] + MEASURES + FALLBACK_PARTS},
+            "usage_date": day,
+            "billing_month": g["billing_month"],
+            "tenant_name": tenant_name,
+            "allocated_budget": allocated_budget,
+            "application_name": applications.get(g["application_id"]),
+            "tier_name": g["tier_name"],
+            "service_name": g["service_name"],
+            "model_name": g["model_name"],
+            "task_type": g["task_type"],
+            "unit": g["unit"],
+        })
+    return rows
+
+
+def _totals(rows: list[dict]) -> tuple[int, Any]:
+    return (
+        sum(r["request_count"] for r in rows),
+        sum(r["input_units_cost"] + r["cached_input_units_cost"] + r["output_units_cost"] for r in rows),
+    )
+
+
 async def _rollup_day(day: date) -> None:
     async with platform_core_session() as session:
         async with session.begin():
@@ -347,41 +489,86 @@ async def _rollup_day(day: date) -> None:
                 logger.warning("Rollup already running, skipping | usage_date=%s", day)
                 return
 
-            groups = (
-                await session.execute(
-                    _AGGREGATE, {"start": _day_start(day), "end": _day_start(day + timedelta(days=1))}
-                )
-            ).mappings().all()
-            tenants, applications = await _auth_names(
-                {g["tenant_id"] for g in groups if g["tenant_id"] is not None},
-                {g["application_id"] for g in groups if g["application_id"] is not None},
-            )
-
-            rows = []
-            for g in groups:
-                tenant_name, allocated_budget = tenants.get(g["tenant_id"], (None, None))
-                rows.append({
-                    **{c: g[c] for c in DIMENSIONS[1:-1] + MEASURES},
-                    "usage_date": day,
-                    "billing_month": g["billing_month"],
-                    "tenant_name": tenant_name,
-                    "allocated_budget": allocated_budget,
-                    "application_name": applications.get(g["application_id"]),
-                    "tier_name": g["tier_name"],
-                    "service_name": g["service_name"],
-                    "model_name": g["model_name"],
-                    "task_type": g["task_type"],
-                    "unit": g["unit"],
-                })
+            rows = await _summarise(session, day)
             if rows:
                 await session.execute(_UPSERT, rows)
             stale = (await session.execute(_DELETE_STALE, {"usage_date": day})).rowcount or 0
 
+    requests, cost = _totals(rows)
     logger.info(
         "Rollup done | usage_date=%s rows=%d stale_rows_deleted=%d requests=%d cost=%s",
-        day, len(rows), stale,
-        sum(r["request_count"] for r in rows),
-        sum(r["input_units_cost"] + r["cached_input_units_cost"] + r["output_units_cost"] for r in rows),
+        day, len(rows), stale, requests, cost,
+    )
+
+
+async def _expired_days(today: date) -> tuple[dict[date, str | None], bool]:
+    """Days before the retention cutoff that still have usage_events rows,
+    with their day partition (None: their rows are in DEFAULT only — late
+    rows of a day dropped before), and whether there is a DEFAULT partition."""
+    cutoff = _retention_cutoff(today)
+    async with platform_core_session() as session:
+        days, _, has_default = await _partitions(session)
+        expired: dict[date, str | None] = {d: name for d, name in days.items() if d < cutoff}
+        if has_default:
+            rows = await session.execute(
+                text(
+                    f"SELECT DISTINCT (occurred_at AT TIME ZONE 'Asia/Kolkata')::date FROM \"{DEFAULT}\" "
+                    f"WHERE occurred_at < {_bound(cutoff)}"
+                )
+            )
+            for day in rows.scalars():
+                expired.setdefault(day, None)
+    return expired, has_default
+
+
+async def _drop_day(day: date, partition: str | None, has_default: bool) -> None:
+    """Roll ``day`` up a last time and drop its usage_events rows, in one
+    transaction (see the module docstring, step 3)."""
+    async with platform_core_session() as session:
+        async with session.begin():
+            if not await _lock(session, "rollup"):
+                logger.warning("Rollup already running, retention skipped | usage_date=%s", day)
+                return
+            # Taken before the day is read: a row written between the rollup
+            # and the drop would be lost with it. Only the table the day's
+            # rows are in is locked, and EXCLUSIVE lets reads through: writes
+            # of other days (today's billing) and dashboard reads go on. The
+            # parent's ACCESS EXCLUSIVE lock is DETACH's, taken at the end.
+            await session.execute(text("SET LOCAL lock_timeout = '30s'"))
+            await session.execute(text(f'LOCK TABLE "{partition or DEFAULT}" IN EXCLUSIVE MODE'))
+
+            if await session.scalar(_HAS_BACKFILL, {"usage_date": day}) is not None:
+                mode, rows = "backfill", []
+            elif partition is None:
+                # Rows in DEFAULT only. The day's last rollup counted those
+                # written before it (it reads DEFAULT too: e.g. a day the
+                # partition step never moved out of DEFAULT); only the ones
+                # written after it are added (see _LAST_ROLLUP).
+                last = await session.scalar(_LAST_ROLLUP, {"usage_date": day})
+                mode, rows = "late_rows_added", await _summarise(session, day, written_after=last)
+                if rows:
+                    await session.execute(_UPSERT_ADD, rows)
+            else:
+                mode, rows = "rolled_up", await _summarise(session, day)
+                # No rows left to read (none recorded): keep whatever
+                # daily_usage has rather than sweep it.
+                if rows:
+                    await session.execute(_UPSERT, rows)
+                    await session.execute(_DELETE_STALE, {"usage_date": day})
+
+            if partition:
+                await session.execute(text(f'ALTER TABLE "{TABLE}" DETACH PARTITION "{partition}"'))
+                await session.execute(text(f'DROP TABLE "{partition}"'))
+            default_rows = 0
+            if has_default:
+                result = await session.execute(text(f'DELETE FROM "{DEFAULT}" WHERE {_in_days([day])}'))
+                default_rows = result.rowcount or 0
+
+    requests, cost = _totals(rows)
+    logger.info(
+        "Retention dropped day | usage_date=%s mode=%s partition=%s default_rows_deleted=%d "
+        "rows=%d requests=%d cost=%s",
+        day, mode, partition, default_rows, len(rows), requests, cost,
     )
 
 
@@ -404,6 +591,23 @@ async def consolidate(today: date) -> None:
         except Exception:
             logger.exception("Rollup failed | usage_date=%s", day)
             failed.append(f"rollup {day}")
+
+    # Nothing is dropped after a failure: the next run retries it first.
+    if failed:
+        logger.warning("Retention skipped after a failed step | table=%s failed=%s", TABLE, failed)
+    else:
+        try:
+            expired, has_default = await _expired_days(today)
+        except Exception:
+            logger.exception("Retention failed | table=%s", TABLE)
+            failed.append("retention")
+            expired, has_default = {}, False
+        for day, partition in sorted(expired.items()):
+            try:
+                await _drop_day(day, partition, has_default)
+            except Exception:
+                logger.exception("Retention failed | usage_date=%s", day)
+                failed.append(f"retention {day}")
     if failed:
         raise RuntimeError(f"Daily usage consolidation failed for: {', '.join(failed)}")
 

@@ -536,6 +536,10 @@ class UsageEvent:
     input_units_cost: Decimal
     cached_input_units_cost: Decimal
     output_units_cost: Decimal
+    # Request rows only (from the "request" span): the request was sent to a
+    # fallback service, and its duration in milliseconds.
+    sent_to_fallback: bool = False
+    response_time_ms: Optional[int] = None
 
 
 # tier_id and service_id are foreign keys, but the span carries them as sent:
@@ -550,7 +554,8 @@ _INSERT_USAGE_EVENT = text(
     "  (correlation_id, occurred_at, tenant_id, application_id, api_key_id,"
     "   tier_id, service_id, inference_type_id, task_type, unit_of_measurement, status_code,"
     "   total_units, cached_input_units, output_units,"
-    "   input_units_cost, cached_input_units_cost, output_units_cost)"
+    "   input_units_cost, cached_input_units_cost, output_units_cost,"
+    "   sent_to_fallback, response_time_ms)"
     " VALUES"
     "  (:correlation_id, :occurred_at, :tenant_id, :application_id, :api_key_id,"
     "   (SELECT id FROM tiers WHERE id = CAST(:tier_id AS uuid)),"
@@ -559,7 +564,8 @@ _INSERT_USAGE_EVENT = text(
     "   (SELECT unit FROM inference_types WHERE id = CAST(:inference_type_id AS int)),"
     "   :status_code,"
     "   :total_units, :cached_input_units, :output_units,"
-    "   :input_units_cost, :cached_input_units_cost, :output_units_cost)"
+    "   :input_units_cost, :cached_input_units_cost, :output_units_cost,"
+    "   :sent_to_fallback, :response_time_ms)"
     " ON CONFLICT (correlation_id, occurred_at) DO NOTHING"
 )
 
@@ -597,6 +603,8 @@ async def record_usage_event(db: AsyncSession, event: UsageEvent) -> bool:
                 "input_units_cost": event.input_units_cost,
                 "cached_input_units_cost": event.cached_input_units_cost,
                 "output_units_cost": event.output_units_cost,
+                "sent_to_fallback": event.sent_to_fallback,
+                "response_time_ms": event.response_time_ms,
             })
         if result.rowcount == 0:
             logger.warning(

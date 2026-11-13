@@ -18,6 +18,7 @@ from app.services.usage_report.collector import (
     BudgetSummary,
     InstitutionSpend,
     PeriodSpend,
+    PlatformHealth,
     RankedInstitution,
     RankedModel,
     ReportData,
@@ -278,6 +279,13 @@ def repo_state():
         data_from=SEP_START - (SEP_END - SEP_START),  # recording began long before September
         period_rows=[SimpleNamespace(tenant_id=1, cost=Decimal("12.5")),
                      SimpleNamespace(tenant_id=1, cost=Decimal("17.5"))],
+        # Platform health (MeteringUsageRepository): request rows and response
+        # times recorded long before September; totals by aggregate() start.
+        request_rows_from=SEP_START,
+        response_times_from=SEP_START - (SEP_END - SEP_START),
+        totals={SEP_START: (1000, 21)},   # start -> (requests, fallbacks)
+        server_errors=(1000, 4),          # (requests, server errors) in the period
+        p95=639.6,
     )
 
 
@@ -288,7 +296,26 @@ def repo(monkeypatch, repo_state):
     _stub_repo(monkeypatch, "get_tenant_budgets", lambda self, tenant_ids, auth_db=None: state.budgets)
     _stub_repo(monkeypatch, "get_usage_data_from", lambda self, p: state.data_from)
     _stub_repo(monkeypatch, "get_period_usage", lambda self, p, *a, **k: state.period_rows)
+    _stub_usage(monkeypatch, "request_rows_from", lambda self, start, end: state.request_rows_from)
+    _stub_usage(monkeypatch, "response_times_from", lambda self, end: state.response_times_from)
+    _stub_usage(monkeypatch, "response_time_p95", lambda self, start, end: state.p95)
+    _stub_usage(monkeypatch, "aggregate", lambda self, start, end, group_by=(), **k: _agg(state.totals[start]))
+    _stub_usage(monkeypatch, "server_errors", lambda self, start, end: state.server_errors)
     return state
+
+
+def _stub_usage(monkeypatch, name, side_effect):
+    from app.repositories.pay_per_use.metering_usage import MeteringUsageRepository
+
+    monkeypatch.setattr(MeteringUsageRepository, name,
+                        create_autospec(getattr(MeteringUsageRepository, name), side_effect=side_effect))
+
+
+def _agg(totals) -> dict:
+    from app.repositories.pay_per_use.metering_usage import UsageAgg
+
+    requests, fallback = totals
+    return {(): UsageAgg(requests=requests, fallback=fallback)}
 
 
 class TestCollector:
@@ -311,6 +338,10 @@ class TestCollector:
         collector, _, _ = self._collector()
         d = await collector.collect(SEP, now=AFTER_SEP)
         assert d.failed == []
+        h = d.platform_health
+        assert (h.requests, h.server_errors, h.tracked_from, h.fallbacks) == (1000, 4, SEP_START, 21)
+        assert (h.error_rate_pct, h.fallback_rate_pct) == (pytest.approx(0.4), pytest.approx(2.1))
+        assert h.latency_p95_ms is None                      # commented out pending a decision
         assert (d.total_requests, d.prev_total_requests) == (1000, 800)
         assert d.requests_change_pct == pytest.approx(25.0)
         assert (d.total_models, d.active_models, d.inactive_models) == (10, 2, 8)
@@ -369,10 +400,9 @@ class TestCollector:
         core.rollback.assert_awaited()
 
     @pytest.mark.asyncio
-    async def test_report_without_platform_health_is_sent_to_every_viewer(self, retention_90d, repo, portal):
-        # Platform health was dropped from the report: the run completes with
-        # nothing in data.failed (DONE, detail None), and neither the email nor
-        # the PDF mentions the error rate.
+    async def test_report_with_platform_health_is_sent_to_every_viewer(self, retention_90d, repo, portal):
+        # The run completes with nothing in data.failed (DONE, detail None), and
+        # both the email and the PDF lead with platform health.
         from app.services.usage_report.period import MONTHLY
         from app.services.usage_report.recipients import Recipient
         from app.services.usage_report.scheduler import DONE, run_scheduled
@@ -396,9 +426,10 @@ class TestCollector:
             for part in mime.walk():
                 if part.get_content_type() in ("text/plain", "text/html"):
                     body = part.get_content()
-                    assert "Platform health" not in body and "error rate" not in body
-                    assert "Model portfolio:" in body
-        assert "Platform Health" not in attached[0] and "Error rate" not in attached[0]
+                    assert "Platform health: error rate 0.4%, fallback rate 2.1%." in body
+                    assert "P95" not in body
+                    assert body.index("Platform health:") < body.index("Model portfolio:")
+        assert "Platform Health" in attached[0] and "Error rate" in attached[0]
 
     @pytest.mark.asyncio
     async def test_registry_returning_none_is_a_failure_not_na(self, retention_90d, repo):
@@ -592,6 +623,7 @@ class TestUsageViewerEmails:
 
 def _full_data() -> ReportData:
     d = ReportData(period=SEP, generated_at=AFTER_SEP)
+    d.platform_health = PlatformHealth(18_400_000, 73_600, SEP_START, 18_400_000, 386_400, 639.6)
     d.total_requests, d.prev_total_requests = 18_400_000, 15_600_000
     d.total_models, d.active_models = 42, 31
     d.models_by_task = {"NMT": 12, "ASR": 9}
@@ -684,6 +716,7 @@ class TestRenderEmail:
         assert msg.subject == "AI Switch – Monthly programme report – September 2026"
         lines = mailer.summary_lines(_full_data())
         assert lines == [
+            "Platform health: error rate 0.4%, fallback rate 2.1%.",
             "Model portfolio: 42 Models; 31 were used in September.",
             "Adoption: 26 of 36 Institutions were live (+3 vs August). 18.40M requests were served (+17.9%).",
         ]
@@ -694,19 +727,22 @@ class TestRenderEmail:
         assert "Portal</a> for more details." in msg.html_body
 
     def test_no_untracked_or_dummy_figures_in_the_email(self, portal):
-        # Availability, P95, providers, financial-year totals and the budget line
-        # are not tracked, so they must not appear with made-up values.
+        # Availability, providers, financial-year totals and the budget line are
+        # not tracked, so they must not appear with made-up values (the sample
+        # report's 99.6% availability among them).
         msg = mailer.render_email(_full_data(), "viewer@x.gov.in")
         for body in (msg.html_body, msg.text_body):
-            for dummy in ("availability", "P95", "providers", "financial year", "Budget:",
-                          "99.6%", "640 ms", "62.4M", "43%", "₹21.5 Cr", "₹50 Cr"):
+            for dummy in ("providers", "financial year", "Budget:",
+                          "99.6%", "62.4M", "43%", "₹21.5 Cr", "₹50 Cr"):
                 assert dummy not in body, dummy
+            assert "availability" not in body.lower()
 
     def test_failed_figures_show_na_and_drop_the_comparison(self, portal):
         lines = mailer.summary_lines(ReportData(period=SEP, generated_at=AFTER_SEP))
-        assert lines[0] == "Model portfolio: Not available."
-        assert lines[1] == "Adoption: Live Institutions: Not available. Requests served: Not available."
-        assert " vs " not in lines[1]
+        assert lines[0] == "Platform health: error rate Not available, fallback rate Not available."
+        assert lines[1] == "Model portfolio: Not available."
+        assert lines[2] == "Adoption: Live Institutions: Not available. Requests served: Not available."
+        assert " vs " not in lines[2]
 
     def test_sender_name_is_escaped_in_html(self, portal, monkeypatch):
         monkeypatch.setattr("app.services.usage_report.mailer.settings.usage_report_sender_name",
@@ -815,18 +851,20 @@ class TestReportHtml:
                      "Ministry A", "IndicTrans2", "Models by task type", "Top 5 institutions by spend (this period)",
                      "Financial year allocation: Not available"):
             assert real in html, real
-        # Availability, P95, fallback rate and providers are not tracked, so not shown.
-        for untracked in ("Availability", "Latency P95", "Fallback rate", "Providers"):
-            assert untracked not in html, untracked
+        # Providers are not tracked, so not shown.
+        assert "Providers" not in html
 
-    def test_sections_are_unnumbered_and_platform_health_is_gone(self):
+    def test_sections_are_unnumbered_and_platform_health_comes_first(self):
         import re
 
         html = render_report_html(_full_data())
-        assert re.findall(r"<h2>(.*?)</h2>", html) == ["Model Portfolio", "Adoption Ratio", "Budget Utilisation"]
-        for removed in ("Platform Health", "Error rate", "5xx"):
-            assert removed not in html, removed
-        assert "health_cards" not in report_context(_full_data())
+        assert re.findall(r"<h2>(.*?)</h2>", html) == [
+            "Platform Health", "Model Portfolio", "Adoption Ratio", "Budget Utilisation",
+        ]
+        cards = report_context(_full_data())["health"]["cards"]
+        assert [(c["label"], c["value"]) for c in cards] == [("Error rate", "0.4%"), ("Fallback rate", "2.1%")]
+        assert "Latency P95" not in html     # commented out pending a decision
+        assert "recorded from" not in html   # recorded for the whole period
 
     def test_legends_give_every_count(self):
         html = render_report_html(_full_data())
@@ -1003,6 +1041,11 @@ class TestReportPdf:
     def test_worst_case_content_still_fits_one_page(self):
         assert _pages(render_report_html(self._worst_case())) == 1
 
+    def test_worst_case_with_the_recorded_from_caption_still_fits_one_page(self):
+        d = self._worst_case()
+        d.platform_health = PlatformHealth(1000, 4, datetime(2026, 9, 20, 6, tzinfo=UTC), 400, 20, 4055.4)
+        assert _pages(render_report_html(d)) == 1
+
     def test_long_names_do_not_push_percentages_off_the_page(self):
         # Without min-width: 0 on flex items, a 300-character institution name
         # widens its panel and the % column lands past the page edge (~1600px).
@@ -1175,3 +1218,70 @@ class TestSendScript:
         script, state = wired
         assert await script.run(script._parse_args(["--period", "Sept"])) == script.EXIT_USAGE
         state.deliver.assert_not_awaited()
+
+
+# ── platform health ──────────────────────────────────────────────────────────
+
+
+class TestPlatformHealth:
+    def _collector(self):
+        auth = _FakeAuthDB(tenants=TestCollector.TENANTS, budget_tenants=[("1", "Ministry A")])
+        return UsageReportCollector(_fake_metering(), auth, AsyncMock())
+
+    def test_figures_are_one_decimal_and_whole_ms(self):
+        v = fmt.platform_health(PlatformHealth(3, 1, SEP_START, 3, 2, 4055.4))
+        assert v == {"latency_p95": "4,055 ms", "error_rate": "33.3%", "fallback_rate": "66.7%"}
+
+    def test_no_requests_is_a_dash(self):
+        v = fmt.platform_health(PlatformHealth(0, 0, SEP_START, 0, 0, None))
+        assert v == {"latency_p95": "—", "error_rate": "—", "fallback_rate": "—"}
+
+    def test_response_times_not_recorded_are_not_available(self):
+        v = fmt.platform_health(PlatformHealth(1000, 4))
+        assert (v["latency_p95"], v["fallback_rate"], v["error_rate"]) == ("Not available", "Not available", "0.4%")
+
+    def test_unloaded_health_is_not_available(self):
+        assert set(fmt.platform_health(None).values()) == {"Not available"}
+
+    @pytest.mark.asyncio
+    async def test_requests_not_recorded_by_the_period_end_is_none_not_failed(self, retention_90d, repo):
+        repo.request_rows_from = None
+        d = await self._collector().collect(SEP, now=AFTER_SEP)
+        assert d.platform_health is None and "platform_health" not in d.failed
+
+    @pytest.mark.asyncio
+    async def test_response_times_not_recorded_leave_latency_and_fallback_untracked(self, retention_90d, repo):
+        repo.response_times_from = None
+        h = (await self._collector().collect(SEP, now=AFTER_SEP)).platform_health
+        assert (h.requests, h.server_errors, h.tracked_from, h.latency_p95_ms) == (1000, 4, None, None)
+
+    @pytest.mark.asyncio
+    async def test_recording_that_began_mid_period_covers_only_those_days(self, retention_90d, repo):
+        since = datetime(2026, 9, 20, 6, 0, tzinfo=UTC)
+        repo.response_times_from = since
+        repo.totals[since] = (400, 20)   # requests from the 20th on
+        h = (await self._collector().collect(SEP, now=AFTER_SEP)).platform_health
+        assert (h.tracked_from, h.tracked_requests, h.fallbacks) == (since, 400, 20)
+        assert h.fallback_rate_pct == pytest.approx(5.0)       # of the 400, not the month's 1000
+        assert h.error_rate_pct == pytest.approx(0.4)          # still the whole month
+        d = _full_data()
+        d.platform_health = h
+        assert report_context(d)["health"]["since"] == "Fallback rate is recorded from 20 Sep 2026."
+        assert "recorded from 20 Sep 2026" in render_report_html(d)
+
+    @pytest.mark.asyncio
+    async def test_latency_p95_is_not_queried_while_commented_out(self, retention_90d, repo):
+        from app.repositories.pay_per_use.metering_usage import MeteringUsageRepository
+
+        d = await self._collector().collect(SEP, now=AFTER_SEP)
+        MeteringUsageRepository.response_time_p95.assert_not_called()
+        assert d.platform_health.latency_p95_ms is None
+
+    @pytest.mark.asyncio
+    async def test_a_failed_query_marks_health_failed_and_the_rest_still_load(self, retention_90d, repo):
+        from app.repositories.pay_per_use.metering_usage import MeteringUsageRepository
+
+        MeteringUsageRepository.server_errors.side_effect = RuntimeError("db down")
+        d = await self._collector().collect(SEP, now=AFTER_SEP)
+        assert d.failed == ["platform_health"] and d.platform_health is None
+        assert d.total_requests == 1000

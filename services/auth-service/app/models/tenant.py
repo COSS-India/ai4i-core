@@ -36,6 +36,11 @@ class Tenant(Base):
         nullable=False,
         server_default=TenantStatus.PENDING.value,
     )
+    # Reason given with the latest status change (PATCH /tenants/{id}/status):
+    # a predefined Suspend / Deactivate reason, the admin's own text for
+    # Other, or the description on Activate. NULL until the first status
+    # change, and cleared when a PENDING tenant finishes onboarding.
+    reason = Column(String(255), nullable=True)
     tier_id = Column(UUID(as_uuid=True), nullable=True)
     allocated_budget = Column(Numeric(15, 2), nullable=True)
     budget_effective_from = Column(DateTime(timezone=True), nullable=True)

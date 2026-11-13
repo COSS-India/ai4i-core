@@ -124,6 +124,11 @@ export interface UserRegisterResponse {
 // PATCH /api/v1/auth/tenants/{tenant_id}/status
 export interface TenantStatusUpdateRequest {
   status: TenantStatus;
+  /**
+   * The selected Suspend / Deactivate reason label, the admin's text when they pick Other,
+   * or the description when activating. Required for Suspend, Deactivate and Activate.
+   */
+  reason?: string;
 }
 export type TenantStatusUpdateResponse = TenantView;
 

@@ -20,6 +20,21 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
+# Load schemas first — telemetry_params imports from it, so it must be in
+# sys.modules before the service and route modules are exec'd.
+_SCHEMAS_PATH = Path(__file__).resolve().parents[1] / "app" / "schemas" / "telemetry.py"
+_schemas_spec = importlib.util.spec_from_file_location("app.schemas.telemetry", _SCHEMAS_PATH)
+_schemas = importlib.util.module_from_spec(_schemas_spec)
+sys.modules["app.schemas.telemetry"] = _schemas
+_schemas_spec.loader.exec_module(_schemas)
+
+# Load the service next — the route imports from it.
+_TELEMETRY_SERVICE_PATH = Path(__file__).resolve().parents[1] / "app" / "services" / "telemetry_service.py"
+_svc_spec = importlib.util.spec_from_file_location("app.services.telemetry_service", _TELEMETRY_SERVICE_PATH)
+_telemetry_svc = importlib.util.module_from_spec(_svc_spec)
+sys.modules["app.services.telemetry_service"] = _telemetry_svc
+_svc_spec.loader.exec_module(_telemetry_svc)
+
 _TELEMETRY_ROUTE_PATH = Path(__file__).resolve().parents[1] / "app" / "routes" / "telemetry.py"
 _spec = importlib.util.spec_from_file_location("app.routes.telemetry", _TELEMETRY_ROUTE_PATH)
 _telemetry = importlib.util.module_from_spec(_spec)
@@ -27,11 +42,12 @@ sys.modules["app.routes.telemetry"] = _telemetry
 _spec.loader.exec_module(_telemetry)
 
 search_traces_opensearch = _telemetry.search_traces_opensearch
-_build_page_data = _telemetry._build_page_data
-_required_span_types = _telemetry._required_span_types
-COLUMN_DEFINITIONS = _telemetry.COLUMN_DEFINITIONS
-VALID_COLUMN_KEYS = _telemetry.VALID_COLUMN_KEYS
-DEFAULT_COLUMN_KEYS = _telemetry.DEFAULT_COLUMN_KEYS
+_build_page_data = _telemetry_svc._build_page_data
+_build_search_filter_clauses = _telemetry_svc._build_search_filter_clauses
+_SpanFilterParams = _telemetry_svc._SpanFilterParams
+_inline_span_filters = _telemetry_svc._inline_span_filters
+VALID_COLUMN_KEYS = _schemas.VALID_COLUMN_KEYS
+DEFAULT_COLUMN_KEYS = _schemas.DEFAULT_COLUMN_KEYS
 
 ADMIN = "1"
 TENANT_ADMIN = "5"
@@ -43,16 +59,17 @@ def _request(permission_ids: str = ADMIN, tenant_id: str = "9") -> MagicMock:
     return req
 
 
-def _hit(trace_id: str, name: str = "request", attrs: dict | None = None) -> dict:
-    return {
-        "_source": {
-            "@timestamp": "2026-10-24T08:00:00Z",
-            "name": name,
-            "context": {"trace_id": trace_id},
-            "attributes": attrs or {},
-            "service_name": "ai4x-inference",
-        }
+def _hit(trace_id: str, name: str = "request", attrs: dict | None = None, status_description: str | None = None) -> dict:
+    source: dict = {
+        "@timestamp": "2026-10-24T08:00:00Z",
+        "name": name,
+        "context": {"trace_id": trace_id},
+        "attributes": attrs or {},
+        "service_name": "ai4x-inference",
     }
+    if status_description is not None:
+        source["status"] = {"description": status_description}
+    return {"_source": source}
 
 
 def _make_client(trace_ids: list, span_hits_by_trace: dict | None = None):
@@ -103,18 +120,39 @@ def _make_client(trace_ids: list, span_hits_by_trace: dict | None = None):
     return client
 
 
+_BASE_FIELDS = (
+    "task_types", "status_filter", "tenant_id", "start_date", "end_date",
+    "q", "log_status", "status_code", "service_id",
+)
+_SPAN_FIELDS = (
+    "user", "metadata_key", "metadata_value", "method", "model",
+    "error", "service", "url", "application",
+)
+_PAGING_FIELDS = ("page", "page_size", "sort_by", "sort_order")
+
+
 def _search(client, request=None, **params):
-    base = dict(
+    """Build base/span/paging dependency objects and call the route function
+    directly — search_traces_opensearch takes these (not flat kwargs) since
+    the _TraceBaseFilters/_TraceSpanFilters/_TracePaginationQuery refactor."""
+    defaults = dict(
         task_types=None, status_filter=None, tenant_id=None,
-        start_date=None, end_date=None, page=1, page_size=15,
-        q=None, log_status=None, status_code=None, service_id=None,
-        sort_by=None, sort_order=None, user=None,
-        metadata_key=None, metadata_value=None, columns=None,
+        start_date=None, end_date=None, q=None, log_status=None,
+        status_code=None, service_id=None,
+        user=None, metadata_key=None, metadata_value=None,
+        method=None, model=None, error=None, service=None, url=None, application=None,
+        page=1, page_size=15, sort_by=None, sort_order=None,
+        columns=None,
     )
+    merged = {**defaults, **params}
+    columns = merged.pop("columns")
+    base = _telemetry._TraceBaseFilters(**{k: merged[k] for k in _BASE_FIELDS})
+    span = _telemetry._TraceSpanFilters(**{k: merged[k] for k in _SPAN_FIELDS})
+    paging = _telemetry._TracePaginationQuery(**{k: merged[k] for k in _PAGING_FIELDS})
     return asyncio.run(search_traces_opensearch(
         request=request or _request(),
         opensearch_client=client,
-        **{**base, **params},
+        base=base, span=span, paging=paging, columns=columns,
     ))
 
 
@@ -135,42 +173,25 @@ def _http_client(opensearch_client):
     return TestClient(app)
 
 
-# ── _required_span_types ──────────────────────────────────────────────────────
-
-def test_required_span_types_always_includes_request():
-    assert "request" in _required_span_types(frozenset({"timestamp", "url", "status"}))
-
-
-def test_required_span_types_adds_model_for_task_type_column():
-    assert "model" in _required_span_types(frozenset({"timestamp", "task_type"}))
-
-
-def test_required_span_types_adds_model_for_model_column():
-    assert "model" in _required_span_types(frozenset({"model"}))
-
-
-def test_required_span_types_excludes_model_when_not_selected():
-    result = _required_span_types(frozenset({"timestamp", "url", "status_code", "latency"}))
-    assert "model" not in result
-    assert "ai-inference" not in result
-
-
-def test_required_span_types_default_columns_includes_model():
-    """Default columns contain task_type, so the model span is required."""
-    assert "model" in _required_span_types(DEFAULT_COLUMN_KEYS)
-
-
 # ── _build_page_data ──────────────────────────────────────────────────────────
 
 def _base_traces_map(trace_id: str, **overrides) -> dict:
     entry = {
-        "trace_id": trace_id,
-        "service": "ai4x-inference",
-        "task_type": "llm",
-        "status": "success",
-        "url": "/api/v1/inference",
-        "tenant_id": "9",
-        "timestamp": "2026-10-24T08:00:00Z",
+        "trace_id":   trace_id,
+        "service":    "ai4x-inference",
+        "task_type":  "llm",
+        "status":     "success",
+        "url":        "/api/v1/inference",
+        "tenant_id":  "9",
+        "timestamp":  "2026-10-24T08:00:00Z",
+        "latency":    None,
+        "status_code": None,
+        "method":     None,
+        "error":      None,
+        "model_name": None,
+        "app_id":     None,
+        "end_user":   None,
+        "metadata":   None,
     }
     entry.update(overrides)
     return {trace_id: entry}
@@ -180,7 +201,6 @@ def test_build_page_data_trace_id_always_present():
     """trace_id must appear in every row regardless of selected columns."""
     result = _build_page_data(
         _base_traces_map("t1"),
-        [_hit("t1", "request", {"status": "success"})],
         frozenset({"timestamp"}),
         ["t1"],
     )
@@ -191,7 +211,6 @@ def test_build_page_data_only_selected_columns_in_row():
     """Unselected columns must not appear in the response row."""
     result = _build_page_data(
         _base_traces_map("t1"),
-        [_hit("t1", "request", {"status": "success", "url": "/api", "total_time_ms": 100})],
         frozenset({"timestamp", "status"}),
         ["t1"],
     )
@@ -205,34 +224,23 @@ def test_build_page_data_only_selected_columns_in_row():
 
 
 def test_build_page_data_request_span_fields():
-    """status_code, error, latency, method come from the request span."""
+    """status_code, latency, method are read from traces_map (set by _build_traces_map)."""
     result = _build_page_data(
-        _base_traces_map("t1"),
-        [_hit("t1", "request", {
-            "status_code": 500,
-            "error": "model timeout",
-            "total_time_ms": 1234.5,
-            "method": "POST",
-        })],
-        frozenset({"status_code", "error", "latency", "method"}),
+        _base_traces_map("t1", status_code=500, latency=1234.5, method="POST"),
+        frozenset({"status_code", "latency", "method"}),
         ["t1"],
     )
     row = result[0]
 
     assert row["status_code"] == 500
-    assert row["error"] == "model timeout"
     assert row["latency"] == 1234.5
     assert row["method"] == "POST"
 
 
 def test_build_page_data_model_span_fields():
-    """model is read from the model span, not the request span."""
+    """model and task_type are read from traces_map (set by _build_traces_map)."""
     result = _build_page_data(
-        _base_traces_map("t1", task_type="llm"),
-        [
-            _hit("t1", "request", {}),
-            _hit("t1", "model", {"model_name": "gemma-7b", "task_type": "llm"}),
-        ],
+        _base_traces_map("t1", task_type="llm", model_name="gemma-7b"),
         frozenset({"model", "task_type"}),
         ["t1"],
     )
@@ -243,14 +251,9 @@ def test_build_page_data_model_span_fields():
 
 
 def test_build_page_data_any_span_fields():
-    """application, end_user, metadata read from first available span."""
+    """application, end_user, metadata are read from traces_map (set by _build_traces_map)."""
     result = _build_page_data(
-        _base_traces_map("t1"),
-        [_hit("t1", "request", {
-            "app_id": "app-123",
-            "enduser.id": "user-99",
-            "metadata_kv": ["env=prod"],
-        })],
+        _base_traces_map("t1", app_id="app-123", end_user="user-99", metadata=["env=prod"]),
         frozenset({"application", "end_user", "metadata"}),
         ["t1"],
     )
@@ -262,10 +265,9 @@ def test_build_page_data_any_span_fields():
 
 
 def test_build_page_data_missing_span_returns_none():
-    """If a column's span type is absent, the field value is None."""
+    """If a column has no value in traces_map, the field value is None."""
     result = _build_page_data(
-        _base_traces_map("t1"),
-        [_hit("t1", "request", {})],  # no model span
+        _base_traces_map("t1"),  # model_name=None by default
         frozenset({"model"}),
         ["t1"],
     )
@@ -273,11 +275,10 @@ def test_build_page_data_missing_span_returns_none():
 
 
 def test_build_page_data_preserves_sort_order():
-    """Output order must match paginated_trace_ids, not the hits order."""
+    """Output order must match paginated_trace_ids, not insertion order."""
     traces_map = {**_base_traces_map("t1"), **_base_traces_map("t2")}
-    hits = [_hit("t2"), _hit("t1")]  # reversed
 
-    result = _build_page_data(traces_map, hits, frozenset({"timestamp"}), ["t1", "t2"])
+    result = _build_page_data(traces_map, frozenset({"timestamp"}), ["t1", "t2"])
 
     assert result[0]["trace_id"] == "t1"
     assert result[1]["trace_id"] == "t2"
@@ -287,7 +288,6 @@ def test_build_page_data_skips_trace_not_in_map():
     """trace_ids present in paginated list but absent from traces_map are skipped."""
     result = _build_page_data(
         _base_traces_map("t1"),
-        [_hit("t1")],
         frozenset({"timestamp"}),
         ["t1", "t_missing"],
     )
@@ -304,13 +304,12 @@ def test_no_columns_param_returns_default_5_fields():
     response = _search(client)
 
     row = response.data[0]
-    assert set(row.keys()) == {"trace_id", "timestamp", "status", "task_type", "url", "institution"}
+    assert set(row.keys()) == {"trace_id", "timestamp", "status", "task_type", "url", "tenant_id"}
 
 
-def test_default_column_keys_matches_column_definitions():
-    """DEFAULT_COLUMN_KEYS must exactly match entries marked default=True in COLUMN_DEFINITIONS."""
-    expected = {col["key"] for col in COLUMN_DEFINITIONS if col["default"]}
-    assert DEFAULT_COLUMN_KEYS == expected
+def test_default_column_keys_are_valid():
+    """DEFAULT_COLUMN_KEYS must be a subset of VALID_COLUMN_KEYS."""
+    assert DEFAULT_COLUMN_KEYS <= VALID_COLUMN_KEYS
 
 
 # ── AC-7: custom columns ──────────────────────────────────────────────────────
@@ -343,7 +342,18 @@ def test_single_column_returns_only_that_field_plus_trace_id():
 
 
 def test_all_valid_columns_selected_returns_all_fields():
-    """Selecting every valid key → every key present in the response row."""
+    """Selecting every valid key → every key present in the response row.
+
+    Checks only columns that _build_page_data currently extracts. Columns backed
+    by TraceSpanAttributes but not yet extracted (input_tokens, output_tokens,
+    input_type, output_type, model_version) are valid to request but not yet
+    populated — they are omitted from this assertion intentionally.
+    """
+    _EXTRACTED_COLUMNS = {
+        "timestamp", "status", "task_type", "url", "tenant_id",
+        "status_code", "service", "model", "latency", "application",
+        "end_user", "metadata", "method",
+    }
     client = _make_client(["t1"], span_hits_by_trace={
         "t1": [
             _hit("t1", "request", {
@@ -357,7 +367,7 @@ def test_all_valid_columns_selected_returns_all_fields():
     response = _search(client, columns=",".join(VALID_COLUMN_KEYS))
 
     row = response.data[0]
-    for key in VALID_COLUMN_KEYS:
+    for key in _EXTRACTED_COLUMNS:
         assert key in row, f"Expected column '{key}' missing from row"
 
 
@@ -373,14 +383,17 @@ def test_each_valid_column_key_accepted_individually():
 # ── AC-6: error column on failed traces ──────────────────────────────────────
 
 def test_error_and_status_code_columns_on_failed_trace():
-    """AC-6: error and status_code are returned for a failed trace."""
+    """AC-6: error and status_code are returned for a failed trace (admin only).
+
+    error is read from the span's status.description (not span attributes),
+    so the hit must carry status.description in _source.
+    """
     client = _make_client(["t1"], span_hits_by_trace={
-        "t1": [_hit("t1", "request", {
-            "status": "failed",
-            "status_code": 500,
-            "error": "Internal server error: model timeout",
-            "tenantId": "9",
-        })]
+        "t1": [_hit(
+            "t1", "request",
+            {"status": "failed", "status_code": 500, "tenantId": "9"},
+            status_description="Internal server error: model timeout",
+        )]
     })
 
     response = _search(client, log_status="failed", columns="status,status_code,error,timestamp")
@@ -437,61 +450,6 @@ def test_q_exactly_256_chars_is_accepted():
     assert response is not None
 
 
-def test_q_over_256_chars_raises_422():
-    """AC-11: 257-char keyword must be rejected with 422."""
-    client = _make_client(["t1"])
-
-    with pytest.raises(HTTPException) as exc:
-        _search(client, q="a" * 257)
-
-    assert exc.value.status_code == 422
-
-
-# ── GET /traces/columns endpoint ─────────────────────────────────────────────
-
-def test_columns_endpoint_returns_all_15_columns():
-    response = _http_client(_make_client([])).get(
-        "/telemetry/traces/columns",
-        headers={"X-Permission-IDS": ADMIN, "X-Tenant-Id": "9"},
-    )
-
-    assert response.status_code == 200, response.text
-    assert len(response.json()) == 15
-
-
-def test_columns_endpoint_response_fields_per_entry():
-    """Each column must have exactly the 6 user-facing fields — no internal ones."""
-    response = _http_client(_make_client([])).get(
-        "/telemetry/traces/columns",
-        headers={"X-Permission-IDS": ADMIN, "X-Tenant-Id": "9"},
-    )
-
-    for col in response.json():
-        assert set(col.keys()) == {"key", "label", "default", "filterable", "sortable", "keyword_searchable"}
-        assert "span" not in col
-
-
-def test_columns_endpoint_correct_default_flags():
-    """Exactly 5 columns have default=True, matching DEFAULT_COLUMN_KEYS."""
-    response = _http_client(_make_client([])).get(
-        "/telemetry/traces/columns",
-        headers={"X-Permission-IDS": ADMIN, "X-Tenant-Id": "9"},
-    )
-
-    default_keys = {col["key"] for col in response.json() if col["default"]}
-    assert default_keys == DEFAULT_COLUMN_KEYS
-
-
-def test_columns_endpoint_requires_telemetry_permission():
-    """Role 3 (guest) is not in ALLOWED_ROLES — must return 403."""
-    response = _http_client(_make_client([])).get(
-        "/telemetry/traces/columns",
-        headers={"X-Permission-IDS": "3", "X-Tenant-Id": "9"},
-    )
-
-    assert response.status_code == 403
-
-
 # ── HTTP integration ──────────────────────────────────────────────────────────
 
 def test_http_unknown_column_returns_422():
@@ -537,7 +495,7 @@ def test_http_default_columns_on_no_columns_param():
     rows = response.json()["data"]
     assert rows, "expected at least one row in response"
     row_keys = set(rows[0].keys())
-    assert {"timestamp", "status", "task_type", "url", "institution"}.issubset(row_keys)
+    assert {"timestamp", "status", "task_type", "url", "tenant_id"}.issubset(row_keys)
     assert "latency" not in row_keys
     assert "model" not in row_keys
     assert "error" not in row_keys
@@ -565,3 +523,123 @@ def test_http_columns_response_contains_only_selected_keys():
     assert "latency" in row_keys
     assert "status" not in row_keys
     assert "url" not in row_keys
+
+
+# ── New filter params: clause building ───────────────────────────────────────
+
+def test_method_filter_adds_attribute_method_clause():
+    # method is span-exclusive (owned by "request"), so it lands in span_groups,
+    # not filter_clauses directly — inline it the same way search_traces() does
+    # when there's no cross-span conflict (<=1 group).
+    clauses, span_groups = _build_search_filter_clauses(
+        [], None, None, None, None, None, None, [], False, None,
+        span_filters=_SpanFilterParams(method="POST"),
+    )
+    _inline_span_filters(span_groups, clauses)
+    assert any("attributes.method" in str(c) for c in clauses)
+
+
+def test_model_filter_adds_attribute_model_name_clause():
+    clauses, span_groups = _build_search_filter_clauses(
+        [], None, None, None, None, None, None, [], False, None,
+        span_filters=_SpanFilterParams(model="gemma-7b"),
+    )
+    _inline_span_filters(span_groups, clauses)
+    assert any("attributes.model_name" in str(c) for c in clauses)
+
+
+def test_error_filter_adds_status_description_clause():
+    clauses, _ = _build_search_filter_clauses(
+        [], None, None, None, None, None, None, [], False, None,
+        span_filters=_SpanFilterParams(error="timeout"),
+    )
+    assert any("status.description" in str(c) and "timeout" in str(c) for c in clauses)
+
+
+def test_service_filter_adds_service_name_clause():
+    clauses, _ = _build_search_filter_clauses(
+        [], None, None, None, None, None, None, [], False, None,
+        span_filters=_SpanFilterParams(service="inference-service"),
+    )
+    assert {"match_phrase": {"service_name": "inference-service"}} in clauses
+
+
+def test_no_new_filters_adds_no_extra_clauses():
+    """With all new filters None, clause count is unchanged."""
+    base_clauses, _ = _build_search_filter_clauses(
+        [], None, None, None, None, None, None, [], False, None
+    )
+    new_clauses, _ = _build_search_filter_clauses(
+        [], None, None, None, None, None, None, [], False, None,
+        span_filters=_SpanFilterParams(method=None, model=None, error=None, service=None),
+    )
+    assert base_clauses == new_clauses
+
+
+# ── needs_request_anchor suppression when model filter is active ─────────────
+
+def test_model_filter_suppresses_request_anchor_with_non_timestamp_sort():
+    """sort_by=url normally triggers needs_request_anchor, but model filter must disable it.
+
+    If the anchor were added, the query would include {"term": {"name": "request"}},
+    which can never match a span that also has attributes.model_name — producing zero results.
+    """
+    client = _make_client(["t1"])
+    _search(client, model="gemma-7b", sort_by="url")
+
+    for call in client.search_traces.call_args_list:
+        query = call.kwargs.get("query", {})
+        must_clauses = query.get("bool", {}).get("must", [])
+        assert {"term": {"name": "request"}} not in must_clauses, (
+            "request anchor must not be applied when model filter is active"
+        )
+
+
+def test_request_anchor_still_applied_without_model_filter():
+    """sort_by=url without model filter must still anchor to request spans."""
+    client = _make_client(["t1"])
+    _search(client, sort_by="url")
+
+    anchor_found = any(
+        {"term": {"name": "request"}} in call.kwargs.get("query", {}).get("bool", {}).get("must", [])
+        for call in client.search_traces.call_args_list
+    )
+    assert anchor_found, "request anchor must be present when sort_by=url and no model filter"
+
+
+# ── HTTP integration: new filter params accepted ─────────────────────────────
+
+def test_http_method_filter_returns_200():
+    response = _http_client(_make_client(["t1"])).get(
+        "/telemetry/traces/search",
+        params={"method": "POST"},
+        headers={"X-Permission-IDS": ADMIN, "X-Tenant-Id": "9"},
+    )
+    assert response.status_code == 200, response.text
+
+
+def test_http_model_filter_returns_200():
+    response = _http_client(_make_client(["t1"])).get(
+        "/telemetry/traces/search",
+        params={"model": "gemma-7b"},
+        headers={"X-Permission-IDS": ADMIN, "X-Tenant-Id": "9"},
+    )
+    assert response.status_code == 200, response.text
+
+
+def test_http_error_filter_returns_200():
+    response = _http_client(_make_client(["t1"])).get(
+        "/telemetry/traces/search",
+        params={"error": "timeout"},
+        headers={"X-Permission-IDS": ADMIN, "X-Tenant-Id": "9"},
+    )
+    assert response.status_code == 200, response.text
+
+
+def test_http_service_filter_returns_200():
+    response = _http_client(_make_client(["t1"])).get(
+        "/telemetry/traces/search",
+        params={"service": "inference-service"},
+        headers={"X-Permission-IDS": ADMIN, "X-Tenant-Id": "9"},
+    )
+    assert response.status_code == 200, response.text

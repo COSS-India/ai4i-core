@@ -24,6 +24,7 @@ from ai4i_core.observability import set_billed_state, set_metric_labels
 from models.common import ChatCompletionResponse, GenericInferenceResponse
 from orchestrator import Orchestrator
 from services.llm_service import OpenAIProxyService
+from services.service_fallback import fallback_span_attrs
 from trace.request_span import traced_span, get_context_attributes
 from utils.failover import AllServicesUnavailableError
 from utils.http_status import http_status_for
@@ -533,6 +534,17 @@ def _seed_llm_request_attrs(req_attrs: dict, request: Request) -> None:
     req_attrs.update(get_context_attributes())
     req_attrs["service_id"] = getattr(request.state, "service_id", "") or ""
     req_attrs["task_type"] = "llm"
+    _apply_llm_fallback_attrs(req_attrs, request)
+
+
+def _apply_llm_fallback_attrs(req_attrs: dict, request: Request) -> None:
+    """Mark the request span when the request was sent to a configured
+    fallback, answered or not: the fallback chain (llm_service
+    mark_sent_to_fallback / mark_served_by_fallback) keeps the service the
+    client asked for on request.state."""
+    requested = getattr(request.state, "requested_service_id", None)
+    if requested:
+        req_attrs.update(fallback_span_attrs(requested))
 
 
 def _llm_error_description(status_code: int, body: Any) -> str:
@@ -560,6 +572,7 @@ async def _run_llm_chat_consolidated(request: Request, payload: Dict[str, Any], 
         # is updated by proxy_traced): the request span names the service
         # that actually served it, like the Triton path.
         req_attrs["service_id"] = getattr(request.state, "service_id", "") or req_attrs["service_id"]
+        _apply_llm_fallback_attrs(req_attrs, request)
         # Same values llm_service.py already read from the vLLM `usage` block
         # onto the ai-inference span (via ai4i_core.context) — bridged here so
         # ObservabilityMiddleware reads one shared count instead of re-parsing

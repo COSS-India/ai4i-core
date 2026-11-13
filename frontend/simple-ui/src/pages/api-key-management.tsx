@@ -125,7 +125,7 @@ const ApiKeyManagementPage: React.FC = () => {
         <meta name="description" content="Create and manage API keys" />
       </Head>
 
-      <ContentLayout>
+      <ContentLayout fillHeight>
         <ManagementPageHeader
             crumbs={false}
             title="API Key Management"

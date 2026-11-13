@@ -17,7 +17,6 @@ scheduled job.
    before it. The job refuses otherwise. A day with `usage_events` but no rollup rows, like the day
    recording started (its events cover only part of it), can be backfilled: past days are read
    from `daily_usage`, so its events no longer show once it's backfilled.
-4. The dashboard shows the rows where platform-core has `USAGE_DAILY_ROLLUP_ENABLED=true`.
 
 ## Run
 

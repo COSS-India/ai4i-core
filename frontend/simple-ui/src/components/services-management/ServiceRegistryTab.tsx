@@ -1,22 +1,16 @@
 // Service Registry tab: filterable/searchable table of all registered services
-import React, { useCallback, useState } from "react";
+import React from "react";
 import DataTable, {
   DEFAULT_PAGE_SIZE_OPTIONS,
   type DataTableColumn,
-  type DataTableColumnFilters,
   type DataTableSortState,
 } from "../common/table";
-import { activeColumnFilterCount } from "../common/DataTableColumnFilter";
 import type { ServiceTierFilterOption } from "../../hooks/useServicesManagement";
 import type { Service } from "../../services/servicesManagementService";
-import {
-  serviceListCellKey,
-  type ServiceListColumnDef,
-} from "./serviceListColumns";
+import type { ServiceListColumnDef } from "./serviceListColumns";
 import {
   buildClientServiceFilterDefs,
   buildServerServiceFilterDefs,
-  SERVICE_COLUMN_SEARCH_KEYS,
 } from "./serviceRegistryFilters";
 
 interface ServiceRegistryTabProps {
@@ -129,11 +123,6 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
   const serverMode = Boolean(
     serverColumns && onServerFilterChange && onServerPageChange,
   );
-  // Own full column-filter state so page-only searches (dates, prices) stick;
-  // API-backed keys are also pushed to serverFilters below.
-  const [columnFilters, setColumnFilters] = useState<DataTableColumnFilters>(
-    {},
-  );
   const serverFilterDefs = resolveServerFilterDefs({
     serverMode,
     serverColumns,
@@ -158,31 +147,10 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
     onServerPageSizeChange,
   });
 
-  const handleColumnFiltersChange = useCallback(
-    (next: DataTableColumnFilters) => {
-      setColumnFilters(next);
-      if (!serverMode || !serverColumns || !onServerFilterChange) return;
-      for (const column of serverColumns) {
-        const cellKey = serviceListCellKey(column.id);
-        if (SERVICE_COLUMN_SEARCH_KEYS.has(cellKey)) {
-          onServerFilterChange(column.id, next[column.id] ?? "");
-        }
-      }
-    },
-    [serverMode, serverColumns, onServerFilterChange],
-  );
-
-  // Page-only column searches live here, not in serverFilters — clear must
-  // reset them too, and Clear must show when only those are set.
-  const handleClearFilters = useCallback(() => {
-    setColumnFilters({});
-    onClearFilters();
-  }, [onClearFilters]);
-  const hasColumnFilters = activeColumnFilterCount(columnFilters) > 0;
-
   return (
     <DataTable
       layout="admin"
+      fillHeight
       key={tableKey}
       items={items}
       columns={columns}
@@ -200,8 +168,8 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
       emptyMessage="No services in the registry yet."
       noResultsMessage="No results found. Try adjusting your search or filters."
       unfilteredCount={totalServicesCount}
-      hasActiveFilters={hasActiveFilters || (serverMode && hasColumnFilters)}
-      onClearFilters={handleClearFilters}
+      hasActiveFilters={hasActiveFilters}
+      onClearFilters={onClearFilters}
       filterToolbarRightContent={columnPicker}
       search={{
         label: "Search",
@@ -212,10 +180,7 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
         width: { base: "full", sm: "220px" },
       }}
       filterDefs={serverMode ? serverFilterDefs : clientFilterDefs}
-      columnSearch
       autoColumnSort
-      columnFilters={serverMode ? columnFilters : undefined}
-      onColumnFiltersChange={serverMode ? handleColumnFiltersChange : undefined}
     />
   );
 };

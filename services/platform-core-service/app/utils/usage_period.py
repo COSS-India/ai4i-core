@@ -13,9 +13,8 @@ include_today: last_7_days ends yesterday, and a custom ``to`` must be
 yesterday or earlier.
 
 Prometheus / OpenSearch figures query the range as an AbsoluteRange.
-Postgres figures come from usage_events, or, once the rollup is on, from
-daily_usage for the whole past days and usage_events for today up to now
-(see period_usage.period_sources).
+Postgres figures come from daily_usage for the whole past days and from
+usage_events for today up to now (see period_usage.period_sources).
 """
 from __future__ import annotations
 
@@ -77,9 +76,9 @@ class UsagePeriod:
 
     @property
     def uses_daily_usage(self) -> bool:
-        """Whether daily_usage can serve the period's whole past days once the
-        rollup is on (period_usage.period_sources decides; today, up to now,
-        always comes from usage_events)."""
+        """Whether daily_usage serves the period's whole past days
+        (period_usage.period_sources decides; today, up to now, always comes
+        from usage_events)."""
         return self.key != "today"
 
     @property

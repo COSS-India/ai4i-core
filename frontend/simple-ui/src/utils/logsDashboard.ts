@@ -25,28 +25,31 @@ export const KEYWORD_MAX_LENGTH = 256;
 export const COLUMN_STORAGE_KEY = "logs-dashboard-columns";
 
 /**
- * Offline fallback matching platform-core COLUMN_DEFINITIONS (AI4IDS-3529).
- * Prefer GET /telemetry/traces/columns when the API is available.
+ * Column catalogue for the Logs Dashboard picker. Mirrors platform-core
+ * COLUMN_DEFINITIONS (AI4IDS-3529) — keep keys in sync, since traces/search
+ * rejects unknown keys in `columns`.
+ *
+ * Exception: `service` is left out on purpose (removed from the Logs Dashboard
+ * after demo feedback), even though platform-core still lists it. Do not add
+ * it back when syncing.
  */
-export const FALLBACK_COLUMN_DEFS: TelemetryTraceColumnDef[] = [
-  { key: "timestamp", label: "Timestamp", default: true, filterable: false, sortable: true, keyword_searchable: false },
+export const LOGS_COLUMN_DEFS: TelemetryTraceColumnDef[] = [
   { key: "status", label: "Status", default: true, filterable: true, sortable: false, keyword_searchable: true },
+  { key: "timestamp", label: "Timestamp", default: true, filterable: false, sortable: true, keyword_searchable: false },
   { key: "task_type", label: "Task Type", default: true, filterable: true, sortable: false, keyword_searchable: true },
   { key: "url", label: "URL", default: true, filterable: false, sortable: true, keyword_searchable: true },
   { key: "institution", label: INSTITUTION, default: true, filterable: true, sortable: false, keyword_searchable: false },
   { key: "status_code", label: "Status Code", default: false, filterable: true, sortable: true, keyword_searchable: true },
   { key: "error", label: "Error", default: false, filterable: false, sortable: false, keyword_searchable: true },
-  { key: "service", label: "Service", default: false, filterable: true, sortable: false, keyword_searchable: true },
   { key: "model", label: "Model", default: false, filterable: false, sortable: false, keyword_searchable: true },
   { key: "latency", label: "Latency (ms)", default: false, filterable: false, sortable: true, keyword_searchable: false },
   { key: "application", label: "Application", default: false, filterable: false, sortable: false, keyword_searchable: true },
-  { key: "api_key", label: "API Key", default: false, filterable: false, sortable: false, keyword_searchable: true },
   { key: "end_user", label: "End User", default: false, filterable: true, sortable: false, keyword_searchable: true },
   { key: "metadata", label: "Metadata", default: false, filterable: true, sortable: false, keyword_searchable: true },
   { key: "method", label: "Method", default: false, filterable: false, sortable: false, keyword_searchable: false },
 ];
 
-export const DEFAULT_COLUMN_KEYS = FALLBACK_COLUMN_DEFS.filter((c) => c.default).map(
+export const DEFAULT_COLUMN_KEYS = LOGS_COLUMN_DEFS.filter((c) => c.default).map(
   (c) => c.key
 );
 
@@ -158,7 +161,6 @@ const containsFilter = (label: string): DataTableColumnFilterConfig => ({
  */
 const LOGS_COLUMN_FILTERS: Record<string, DataTableColumnFilterConfig> = {
   end_user: { type: "text", placeholder: "Search", helper: "Exact match on end-user ID" },
-  service: { type: "text", placeholder: "Search", helper: "Exact match on service ID" },
   status_code: {
     type: "text",
     placeholder: "Search",
@@ -184,21 +186,41 @@ const LOGS_COLUMN_FILTERS: Record<string, DataTableColumnFilterConfig> = {
   },
 };
 
+/** Why a toolbar-owned column shows a greyed-out search box. */
+const toolbarFilterReason = (
+  key: string,
+  canPickTenant: boolean,
+): string | undefined => {
+  if (key === "timestamp") return "Use Time range, Start Time and End Time above";
+  if (key === "task_type") return "Use the Task Type filter above";
+  if (key === "institution") {
+    return canPickTenant
+      ? `Use the ${INSTITUTION} filter above`
+      : `Logs are limited to your ${INSTITUTION}`;
+  }
+  return undefined;
+};
+
 /**
- * `false` opts the column out of column search (toolbar already filters it).
+ * Toolbar-owned columns get a disabled search box so the search row stays
+ * even; Status stays empty (icon-only, narrow column). `false` opts out.
  * Any other known column gets its config; unknown keys get a plain text search.
  */
 export const logsColumnFilterConfig = (
   def: TelemetryTraceColumnDef,
+  options: { canPickTenant?: boolean } = {},
 ): DataTableColumnFilterConfig | false => {
-  if (TOOLBAR_FILTERED_COLUMN_KEYS.has(def.key)) return false;
+  if (TOOLBAR_FILTERED_COLUMN_KEYS.has(def.key)) {
+    const reason = toolbarFilterReason(def.key, options.canPickTenant ?? true);
+    if (!reason) return false;
+    return { type: "text", placeholder: "Search", disabledReason: reason };
+  }
   return LOGS_COLUMN_FILTERS[def.key] ?? { type: "text", placeholder: "Search" };
 };
 
 /** traces/search params for per-column searches; keys follow the column catalogue. */
 export type LogsColumnFilterParams = {
   user?: string;
-  serviceId?: string;
   statusCode?: string;
   metadataKey?: string;
   metadataValue?: string;
@@ -221,7 +243,6 @@ export const columnFiltersToTraceParams = (
     .join(",");
   return {
     user: filters.end_user,
-    serviceId: filters.service,
     statusCode: statusCode || undefined,
     metadataKey: metadata?.key,
     metadataValue: metadata?.value,
