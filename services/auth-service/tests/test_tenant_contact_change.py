@@ -22,9 +22,10 @@ def _tenant(email: str = "old@tenant.com", status=TenantStatus.ACTIVE,
     return Tenant(id=1, name="Acme", organisation=organisation, email=email, status=status)
 
 
-def _user(email: str = "new.admin@tenant.com", tenant_id=1, is_active: bool = True) -> User:
+def _user(email: str = "new.admin@tenant.com", tenant_id=1, is_active: bool = True,
+          full_name=None) -> User:
     return User(id=uuid4(), email=email, username=uuid4().hex[:12], tenant_id=tenant_id,
-                is_active=is_active)
+                is_active=is_active, full_name=full_name)
 
 
 def _body(**fields) -> MagicMock:
@@ -97,6 +98,42 @@ class TestChangeContact:
         await _change(svc, admin.id, email="old@tenant.com")
 
         assert svc._tenants.update.await_args.args[1]["email"] == "new.admin@tenant.com"
+
+    @pytest.mark.asyncio
+    async def test_contact_name_follows_picked_admin(self) -> None:
+        """AI4IDS-3708: the name switches with the email, and the picked
+        admin's name wins over a contact_name the client echoed back."""
+        admin = _user(full_name="  Suzuki India Admin B ")
+        svc = _service(_tenant(), admin)
+
+        await _change(svc, admin.id, contact_name="Suzuki India Admin A")
+
+        staged = svc._tenants.update.await_args.args[1]
+        assert staged["email"] == "new.admin@tenant.com"
+        assert staged["name"] == "Suzuki India Admin B"
+
+
+class TestResolveContactUserId:
+    @pytest.mark.asyncio
+    async def test_returns_matching_institution_admin(self) -> None:
+        admin = _user("old@tenant.com")
+        svc = _service(_tenant("old@tenant.com"), admin)
+
+        assert await svc.resolve_contact_user_id(_tenant("old@tenant.com")) == admin.id
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("case", ["missing", "other_tenant", "not_admin", "inactive"])
+    async def test_none_when_not_an_active_institution_admin(self, case) -> None:
+        candidate = {
+            "missing": None,
+            "other_tenant": _user("old@tenant.com", tenant_id=2),
+            "not_admin": _user("old@tenant.com"),
+            "inactive": _user("old@tenant.com", is_active=False),
+        }[case]
+        roles = ("USER",) if case == "not_admin" else ("TENANT ADMIN",)
+        svc = _service(_tenant("old@tenant.com"), candidate, roles=roles)
+
+        assert await svc.resolve_contact_user_id(_tenant("old@tenant.com")) is None
 
 
 

@@ -158,7 +158,8 @@ async def get_tenant(
 ):
     """Return one tenant by id, including its assigned ``tier_name`` and
     ``tier_limits`` (rate limit in requests/min and monthly quota per task
-    type) for the read-only "Tier and usage limits" section.
+    type) for the read-only "Tier and usage limits" section, and the
+    current contact's ``contact_user_id`` (null when it can't be resolved).
 
     Tenant admins are limited to their own tenant. Pass `unmask=true` only
     for the edit form (ADMIN / TENANT_ADMIN).
@@ -168,6 +169,7 @@ async def get_tenant(
     data = svc.build_tenant_response(tenant, unmask=unmask)
     data["tier_name"] = await svc.resolve_tier_name(tenant.tier_id, platform_core_db)
     data["tier_limits"] = await svc.resolve_tier_limits(tenant.tier_id, platform_core_db)
+    data["contact_user_id"] = await svc.resolve_contact_user_id(tenant)
     return GetTenantResponse(data=data)
 
 
@@ -189,8 +191,9 @@ async def update_tenant(
     organisation or email returns 409. Returned contact PII is masked.
 
     Contact change: send ``contact_user_id`` (an active, set-up Institution
-    Admin of this tenant) — ``email`` switches to theirs immediately, no
-    email is sent. 409 CONTACT_NOT_INSTITUTION_ADMIN / CONTACT_NOT_VERIFIED /
+    Admin of this tenant) — ``email`` and ``contact_name`` switch to theirs
+    immediately (overriding any sent ``contact_name``), no email is sent.
+    409 CONTACT_NOT_INSTITUTION_ADMIN / CONTACT_NOT_VERIFIED /
     CONTACT_ALREADY_CURRENT, or TENANT_EMAIL_EDIT_NOT_ALLOWED while
     PENDING/SUSPENDED/DEACTIVATED, for the Default Organisation, or for a
     typed email change on a non-PENDING tenant. A PENDING tenant may still correct
