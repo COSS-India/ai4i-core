@@ -34,7 +34,7 @@ type ModelFormProps = {
   model: ModelReviewSource | null;
   /** Training dataset, adapter, and schema. Same block on review and view. */
   extra?: React.ReactNode;
-  fileInputRef?: React.RefObject<HTMLInputElement>;
+  fileInputRef?: React.RefObject<HTMLInputElement | null>;
   onFileChange?: (event: React.ChangeEvent<HTMLInputElement>) => void;
   onDownloadSample?: (kind: ModelSampleKind) => void;
   isUploading?: boolean;
