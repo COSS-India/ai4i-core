@@ -27,5 +27,5 @@ ENV HOSTNAME=0.0.0.0
 USER node
 
 ENTRYPOINT ["/entrypoint.dev.sh"]
-# Dev server for hot-reload; -H 0.0.0.0 required for Docker
+# Dev server for hot-reload (Turbopack, the Next 16 default); -H 0.0.0.0 required for Docker
 CMD ["npx", "next", "dev", "-p", "3000", "-H", "0.0.0.0"]

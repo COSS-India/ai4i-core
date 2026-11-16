@@ -721,8 +721,8 @@ export function buildMeasuredColumnWidths(options: Readonly<{
  * column set is unchanged, so paging or filtering does not make columns jump.
  */
 export function useContentColumnWidths(options: Readonly<{
-  tableRef: React.RefObject<HTMLTableElement>;
-  containerRef: React.RefObject<HTMLElement>;
+  tableRef: React.RefObject<HTMLTableElement | null>;
+  containerRef: React.RefObject<HTMLElement | null>;
   columns: readonly AdminColumnInput[];
   trailingFixedPx?: number;
   trailingColumnId?: string;

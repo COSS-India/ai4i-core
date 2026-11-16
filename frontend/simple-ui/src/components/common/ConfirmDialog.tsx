@@ -37,7 +37,7 @@ export interface ConfirmDialogProps {
    * Ref passed to the least destructive action (usually Cancel),
    * so screen readers and focus behave correctly.
    */
-  leastDestructiveRef?: RefObject<HTMLButtonElement>;
+  leastDestructiveRef?: RefObject<HTMLButtonElement | null>;
   /** Centre the dialog vertically instead of pinning it near the top. */
   isCentered?: boolean;
 }

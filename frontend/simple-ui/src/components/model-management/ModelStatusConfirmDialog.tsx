@@ -10,7 +10,7 @@ type ModelStatusConfirmDialogProps = {
   isConfirmLoading: boolean;
   onClose: () => void;
   onConfirm: () => void | Promise<void>;
-  leastDestructiveRef?: RefObject<HTMLButtonElement>;
+  leastDestructiveRef?: RefObject<HTMLButtonElement | null>;
 };
 
 const COPY: Record<
