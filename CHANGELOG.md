@@ -8,7 +8,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [2.11.0] - 2026-11-13
 
-> Config management, institution status reasons and audit log, fallback metering and usage retention release, 35 PRs merged
+> Config management, institution status reasons and audit log, fallback metering and usage retention release, 34 PRs merged
 
 ### Added
 - Config management API: `GET|POST /api/v1/config` and `GET|PUT|DELETE /api/v1/config/{config_id}`, with a `sort_order` filter. Five default config types are seeded (domain, model-column, service-column, suspend-reasons, deactivate-reasons) and a default row cannot be deleted (409 `DEFAULT_CONFIG_PROTECTED`). Every role can list configs; reading one by id, create, update and delete are ADMIN only (AI4IDS-3645, AI4IDS-3689)
