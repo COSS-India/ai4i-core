@@ -396,8 +396,9 @@ class TestScopeTransitionResetsTenantSubscriptions:
 
 class TestFixedGlobalScope:
     @pytest.mark.asyncio
-    async def test_key_rotated_cannot_move_to_institution(self):
-        row = _row(name="KEY_ROTATED", module="API_KEY", scope="GLOBAL")
+    @pytest.mark.parametrize("name", ["KEY_ROTATED", "GRACE_PERIOD_EXPIRING", "API_KEY_EXPIRING"])
+    async def test_api_key_notifications_cannot_move_to_institution(self, name):
+        row = _row(name=name, module="API_KEY", scope="GLOBAL")
         session = _Session(found=row)
         with pytest.raises(ValidationError) as exc:
             await svc.update_catalog(session, row.name, CatalogUpdate(scope="INSTITUTION"))
@@ -405,9 +406,21 @@ class TestFixedGlobalScope:
         assert row.scope == "GLOBAL" and session.commits == 0
 
     @pytest.mark.asyncio
-    async def test_key_rotated_other_fields_stay_editable(self):
-        row = _row(name="KEY_ROTATED", module="API_KEY", scope="GLOBAL")
+    @pytest.mark.parametrize("name", ["KEY_ROTATED", "GRACE_PERIOD_EXPIRING", "API_KEY_EXPIRING"])
+    async def test_api_key_notifications_other_fields_stay_editable(self, name):
+        row = _row(name=name, module="API_KEY", scope="GLOBAL")
         item = await svc.update_catalog(
             _Session(found=row), row.name, CatalogUpdate(scope="GLOBAL", recipient_roles={"ADMIN": True})
         )
         assert item.scope.value == "GLOBAL" and item.recipient_roles["ADMIN"] is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", ["GRACE_PERIOD_EXPIRING", "API_KEY_EXPIRING"])
+    async def test_key_expiry_day_thresholds_are_not_editable(self, name):
+        row = _row(name=name, module="API_KEY", scope="GLOBAL")
+        with pytest.raises(ValidationError) as exc:
+            await svc.update_catalog(
+                _Session(found=row), row.name,
+                CatalogUpdate(thresholds=[{"percentage": 50, "active": True}] * 3),
+            )
+        assert exc.value.code == "INVALID_THRESHOLDS"
