@@ -140,11 +140,27 @@ NOTIFICATION_METADATA: dict[NotificationName, NotificationMetadata] = {
         module=NotificationModule.API_KEY,
         detail_line="API key {key_name} of {application_name} rotated",
     ),
+    NotificationName.GRACE_PERIOD_EXPIRING: NotificationMetadata(
+        display_name="Grace Period Ending",
+        description="Fires as the grace period of a rotated API key runs down (10, 5 and 1 days before the old key is revoked).",
+        module=NotificationModule.API_KEY,
+        detail_line="Old key of {key_name} ({application_name}) revoked in {days_left} days",
+    ),
+    NotificationName.API_KEY_EXPIRING: NotificationMetadata(
+        display_name="API Key Expiring",
+        description="Fires as an API key nears its expiry date (10, 5 and 1 days before it expires).",
+        module=NotificationModule.API_KEY,
+        detail_line="API key {key_name} ({application_name}) expires in {days_left} days",
+    ),
 }
 
 #: Rows that stay GLOBAL: a catalog PATCH may not change their scope, so
 #: Institution Admins can never unsubscribe from them.
-FIXED_GLOBAL_SCOPE_NAMES = frozenset({NotificationName.KEY_ROTATED})
+FIXED_GLOBAL_SCOPE_NAMES = frozenset({
+    NotificationName.KEY_ROTATED,
+    NotificationName.GRACE_PERIOD_EXPIRING,
+    NotificationName.API_KEY_EXPIRING,
+})
 
 
 # ── Catalog PATCH validation (code-side, per the design's 6.1 "Legal
