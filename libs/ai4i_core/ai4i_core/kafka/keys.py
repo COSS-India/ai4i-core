@@ -16,6 +16,9 @@ from .specs import NotificationSpec
 _BILLING_MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 _AMOUNT_RE = re.compile(r"^\d+\.\d{%d}$" % c.AMOUNT_DECIMALS)
 _AMOUNT_QUANTUM = Decimal(1).scaleb(-c.AMOUNT_DECIMALS)
+_DIGITS_RE = re.compile(r"^[1-9]\d*$")
+# UTC, cut to whole seconds: the same instant always gives the same ledger key.
+_UTC_SECONDS_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 
 
 class InvalidSubject(ValueError):
@@ -31,7 +34,16 @@ def _check_value(key: SubjectKey, value: Any) -> str:
         raise InvalidSubject(f"model_task_type must be lower case, got {value!r}")
     if key is SubjectKey.BUDGET_CEILING and not _AMOUNT_RE.match(value):
         raise InvalidSubject(f"budget_ceiling must have {c.AMOUNT_DECIMALS} decimals, got {value!r}")
+    if key in (SubjectKey.API_KEY_ID, SubjectKey.DAYS_BEFORE) and not _DIGITS_RE.match(value):
+        raise InvalidSubject(f"{key.value} must be a positive whole number, got {value!r}")
+    if key is SubjectKey.EXPIRES_AT and not _UTC_SECONDS_RE.match(value):
+        raise InvalidSubject(f"expires_at must be YYYY-MM-DDTHH:MM:SSZ, got {value!r}")
     return value
+
+
+def utc_seconds(value: datetime) -> str:
+    """An aware datetime as the expires_at subject value: UTC, whole seconds, 'Z'."""
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def validate_subject(spec: NotificationSpec, subject: Mapping[str, Any]) -> Dict[str, str]:

@@ -28,6 +28,8 @@ class NotificationName(str, Enum):
     LATENCY_P95 = "LATENCY_P95"
     LATENCY_P99 = "LATENCY_P99"
     KEY_ROTATED = "KEY_ROTATED"
+    GRACE_PERIOD_EXPIRING = "GRACE_PERIOD_EXPIRING"
+    API_KEY_EXPIRING = "API_KEY_EXPIRING"
 
 
 class NotificationType(str, Enum):
@@ -69,6 +71,7 @@ class ThresholdUnit(str, Enum):
 
     PERCENT = "PERCENT"
     SECONDS = "SECONDS"
+    DAYS = "DAYS"
 
 
 class Severity(str, Enum):
@@ -195,6 +198,9 @@ class SubjectKey(str, Enum):
     BUDGET_CEILING = "budget_ceiling"
     BUDGET_WINDOW = "budget_window"
     SERVICE_ID = "service_id"
+    API_KEY_ID = "api_key_id"
+    EXPIRES_AT = "expires_at"
+    DAYS_BEFORE = "days_before"
 
 
 class CacheName(str, Enum):

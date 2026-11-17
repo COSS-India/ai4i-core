@@ -59,6 +59,13 @@ class StateItem:
     new_state: Mapping[str, Any]
     details: Details
     tenant_name: Optional[str] = None
+    #: Severity of this item's event (e.g. by reminder level); INFO by default.
+    severity: Severity = Severity.INFO
+
+
+#: emit_state_bulk sends the platform ADMIN one consolidated copy only for
+#: these names; for every other name the ADMIN is a recipient of each event.
+_CONSOLIDATED_ADMIN_COPY = frozenset({NotificationName.QUOTA_LIMIT_UPDATED})
 
 
 @dataclass(frozen=True)
@@ -349,14 +356,23 @@ async def emit_state(
     )
 
 
+def _with_admins(recipients: Sequence[Recipient], admins: Sequence[Recipient]) -> List[Recipient]:
+    """A tenant's recipients plus the platform ADMIN users, one per email."""
+    merged = {r.email: r for r in admins}
+    merged.update({r.email: r for r in recipients})
+    return sorted(merged.values(), key=lambda r: r.email)
+
+
 async def emit_state_bulk(name, items: Sequence[StateItem], *, summary: str = "") -> List[uuid.UUID]:
     """A STATE fan-out (every tenant x changed task type): one cache read,
     one bulk claim (Q-L5), one recipient query (Q-R2). `summary` (e.g. the
     tier id and change list) is the message of a failure row that covers the
-    whole fan-out. The platform ADMIN (when recipient_roles["ADMIN"] is set)
-    gets exactly one consolidated copy for the whole call, naming every
+    whole fan-out. Each item's event carries its own severity. For
+    QUOTA_LIMIT_UPDATED the platform ADMIN (when recipient_roles["ADMIN"] is
+    set) gets exactly one consolidated copy for the whole call, naming every
     tenant that fired and every change across every subject, instead of one
-    copy per tenant or per subject. Returns the event ids handed to Kafka."""
+    copy per tenant or per subject; for every other name the ADMIN is a
+    recipient of each event. Returns the event ids handed to Kafka."""
     rt = get_runtime()
     spec = get_spec(name)
     if spec is None or not spec.is_state:
@@ -432,19 +448,23 @@ async def emit_state_bulk(name, items: Sequence[StateItem], *, summary: str = ""
             )
         return []
 
+    consolidated = spec.name in _CONSOLIDATED_ADMIN_COPY
     sent: List[uuid.UUID] = []
     for claim in won:
         item = by_event[claim.event_id]
+        recipients = by_tenant.get(claim.tenant_id, [])
+        if admins and not consolidated:
+            recipients = _with_admins(recipients, admins)
         event_id = await _deliver(
             rt, row, tenant_id=claim.tenant_id, subject=claim.subject, event_id=claim.event_id,
-            occurred_at=occurred_at, details=item.details, severity=Severity.INFO,
-            state_hash_value=claim.state_hash, recipients=by_tenant.get(claim.tenant_id, []),
+            occurred_at=occurred_at, details=item.details, severity=item.severity,
+            state_hash_value=claim.state_hash, recipients=recipients,
             tenant_name=item.tenant_name,
         )
         if event_id is not None:
             sent.append(event_id)
 
-    if admins:
+    if admins and consolidated:
         # One consolidated copy for the whole fan-out — not one per tenant
         # and not one per changed subject (e.g. model task type): a tier
         # save that changes several task types still gets the Admin exactly
