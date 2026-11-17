@@ -138,6 +138,27 @@ CASES = [
          "Move all applications to the new key before 19 Nov 2026, 03:00 PM IST.",
          "If this rotation was not expected, confirm it with Asha Rao."],
     ),
+    (
+        "GRACE_PERIOD_EXPIRING",
+        ["Chatbot", "prod-key (ID 42)", "Asha Rao", "12 Nov 2026, 03:00 PM IST", "22 Nov 2026, 03:00 PM IST", 5],
+        f"Action required: Old API key for Chatbot will be revoked in 5 days — {TENANT}",
+        ["The old API key for Chatbot will be revoked in 5 days, on 22 Nov 2026, 03:00 PM IST.",
+         "Application: Chatbot", "Old key identifier: prod-key (ID 42)", "New key identifier: prod-key (ID 42)",
+         "Rotated by: Asha Rao", "Rotated on: 12 Nov 2026, 03:00 PM IST",
+         "Old key revocation on: 22 Nov 2026, 03:00 PM IST", "Time remaining: 5 days",
+         "moved to the new key before 22 Nov 2026, 03:00 PM IST.",
+         "this email does not include the API key value."],
+    ),
+    (
+        "API_KEY_EXPIRING",
+        ["Chatbot", "prod-key (ID 42)", "01 Oct 2026, 10:00 AM IST", "18 Nov 2026, 10:00 AM IST", 1],
+        f"Action required: API key for Chatbot expires in 1 day — {TENANT}",
+        ["The API key prod-key (ID 42) for Chatbot expires in 1 day, on 18 Nov 2026, 10:00 AM IST.",
+         f"Institution: {TENANT}", "Application: Chatbot", "Key identifier: prod-key (ID 42)",
+         "Created on: 01 Oct 2026, 10:00 AM IST", "Expires on: 18 Nov 2026, 10:00 AM IST", "Time remaining: 1 day",
+         "move the Application to it before 18 Nov 2026, 10:00 AM IST.",
+         "this email does not include the API key value."],
+    ),
 ]
 
 
@@ -460,3 +481,15 @@ def test_key_rotated_zero_day_grace_says_the_old_key_is_already_revoked():
         assert "Requests using the old key now fail." in body
         assert "If this rotation was not expected, confirm it with Asha Rao." in body
         assert "grace period" not in body and "Action required" not in body
+
+
+@pytest.mark.parametrize("event_name,details", [
+    ("GRACE_PERIOD_EXPIRING", ["Chatbot", "prod-key (ID 42)", "Asha Rao", "x", "18 Nov 2026, 10:00 AM IST", 0]),
+    ("API_KEY_EXPIRING", ["Chatbot", "prod-key (ID 42)", "x", "18 Nov 2026, 10:00 AM IST", 0]),
+])
+def test_key_expiry_on_the_last_day_says_today(event_name, details):
+    message = _render(event_name, details)
+    assert "today" in message.subject and "in 0 days" not in message.subject
+    for body in (message.text_body, re.sub(r"</?strong>", "", message.html_body)):
+        assert "Time remaining: Less than a day" in body
+        assert " today, on 18 Nov 2026, 10:00 AM IST." in body
