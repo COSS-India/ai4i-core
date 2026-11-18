@@ -34,7 +34,7 @@ interface ServiceRegistryTabProps {
   onClearFilters: () => void;
   /** Column picker, rendered at the end of the filter toolbar. */
   columnPicker?: React.ReactNode;
-  /** When set, filters and paging come from GET /services/columns and GET /services. */
+  /** When set, filters and paging run on GET /services, using these columns' filter metadata. */
   serverColumns?: readonly ServiceListColumnDef[];
   serverFilterValues?: Record<string, string>;
   onServerFilterChange?: (columnId: string, value: string) => void;

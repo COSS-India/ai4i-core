@@ -32,12 +32,12 @@ export function useServiceListVisibleColumns(options: {
     setRegistryPage,
   } = options;
 
-  const [visibleColumnIds, setVisibleColumnIds] = useState<string[]>(
-    defaultServiceListColumnIds,
+  const [visibleColumnIds, setVisibleColumnIds] = useState<string[]>(() =>
+    defaultServiceListColumnIds(serviceListCatalogue),
   );
   const catalogueKey = serviceListCatalogue.map((column) => column.id).join("|");
   // Catalogue the current selection was loaded for. The list fetch waits for
-  // this so it never sends the initial offline ids to the API.
+  // this so it never requests columns for a selection that is about to change.
   const [loadedCatalogueKey, setLoadedCatalogueKey] = useState<string | null>(null);
 
   const preferenceUserId = useCallback(
@@ -46,26 +46,14 @@ export function useServiceListVisibleColumns(options: {
   );
 
   useLayoutEffect(() => {
-    const id = preferenceUserId();
-    if (!id) return;
-    let cancelled = false;
-    loadVisibleServiceColumns({
-      userId: id,
-      usesServer: serviceListUsesServer,
+    // No user id yet → catalogue defaults, so the table is never stuck waiting.
+    const next = loadVisibleServiceColumns({
+      userId: preferenceUserId(),
       catalogue: serviceListCatalogue,
-    })
-      .then((next) => {
-        if (cancelled) return;
-        setVisibleColumnIds((current) => nextVisibleColumnIds(current, next));
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (!cancelled) setLoadedCatalogueKey(catalogueKey);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [preferenceUserId, serviceListUsesServer, catalogueKey, serviceListCatalogue]);
+    });
+    setVisibleColumnIds((current) => nextVisibleColumnIds(current, next));
+    setLoadedCatalogueKey(catalogueKey);
+  }, [preferenceUserId, catalogueKey, serviceListCatalogue]);
 
   const handleRegistrySortChange = useCallback(
     (next: { key: string; direction: "asc" | "desc" }) => {
@@ -90,36 +78,23 @@ export function useServiceListVisibleColumns(options: {
     (next: readonly string[]) => {
       const resolved = persistVisibleServiceColumns({
         userId: preferenceUserId(),
-        usesServer: serviceListUsesServer,
         catalogue: serviceListCatalogue,
         columnIds: next,
       });
       setVisibleColumnIds(resolved);
       resetSortIfColumnHidden(resolved);
     },
-    [
-      preferenceUserId,
-      resetSortIfColumnHidden,
-      serviceListCatalogue,
-      serviceListUsesServer,
-    ],
+    [preferenceUserId, resetSortIfColumnHidden, serviceListCatalogue],
   );
 
   const resetVisibleColumns = useCallback(() => {
-    void resetVisibleServiceColumns({
+    const resolved = resetVisibleServiceColumns({
       userId: preferenceUserId(),
-      usesServer: serviceListUsesServer,
       catalogue: serviceListCatalogue,
-    }).then((resolved) => {
-      setVisibleColumnIds((current) => nextVisibleColumnIds(current, resolved));
-      resetSortIfColumnHidden(resolved);
     });
-  }, [
-    preferenceUserId,
-    resetSortIfColumnHidden,
-    serviceListCatalogue,
-    serviceListUsesServer,
-  ]);
+    setVisibleColumnIds((current) => nextVisibleColumnIds(current, resolved));
+    resetSortIfColumnHidden(resolved);
+  }, [preferenceUserId, resetSortIfColumnHidden, serviceListCatalogue]);
 
   return {
     visibleColumnIds,

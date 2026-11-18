@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   SERVICE_LIST_COLUMNS,
   serviceListCellKey,
+  serviceListColumnsFromConfig,
   serviceListSortAccessors,
   type ServiceListColumnDef,
 } from "../components/services-management/serviceListColumns";
@@ -23,7 +24,6 @@ import {
 import { useDeferredColumnSort } from "../utils/tableSort";
 import { resolveTaskType } from "../utils/platformService";
 import {
-  getServiceListColumns,
   createService,
   getServiceById,
   updateService,
@@ -46,6 +46,7 @@ import {
   ACTIVE_TIERS_QUERY_KEY,
   ACTIVE_TIERS_STALE_MS,
 } from "../services/tierManagementService";
+import { getServiceColumnConfig } from "../services/configManagementService";
 import type { ModelDetails } from "../types/platform";
 import {
   sanitizeServiceId,
@@ -664,20 +665,19 @@ export function useServicesManagement() {
   const [serverFilters, setServerFilters] = useState<Record<string, string>>({});
   const [serverTotal, setServerTotal] = useState(0);
   const { user, isLoading: authLoading } = useAuth();
-  const columnsQuery = useQuery({
-    queryKey: ["service-list-columns", user?.user_id],
-    queryFn: getServiceListColumns,
+  // `service-column` config: order, labels and mandatory columns (AI4IDS-3732).
+  // Missing or failed → SERVICE_LIST_COLUMNS as it is.
+  const columnConfigQuery = useQuery({
+    queryKey: ["configs", "service-column"],
+    queryFn: getServiceColumnConfig,
     enabled: Boolean(user?.user_id),
-    staleTime: 5 * 60 * 1000,
-    retry: false,
   });
-  useEffect(() => {
-    if (!columnsQuery.isError || !columnsQuery.error) return;
-    showError(columnsQuery.error);
-  }, [columnsQuery.isError, columnsQuery.error]);
-  const serviceListCatalogue: readonly ServiceListColumnDef[] =
-    columnsQuery.data?.columns ?? SERVICE_LIST_COLUMNS;
-  const serviceListUsesServer = columnsQuery.data?.source === "api";
+  const serviceListCatalogue: readonly ServiceListColumnDef[] = useMemo(
+    () => serviceListColumnsFromConfig(SERVICE_LIST_COLUMNS, columnConfigQuery.data),
+    [columnConfigQuery.data],
+  );
+  // Paging, filters and sort run on GET /services.
+  const serviceListUsesServer = true;
   const registrySortAccessors = useMemo(
     () => serviceListSortAccessors(serviceListCatalogue),
     [serviceListCatalogue],
@@ -696,8 +696,8 @@ export function useServicesManagement() {
     registrySort,
     setRegistryPage,
   });
-  // GET /services?columns= accepts API catalogue ids only (the offline
-  // catalogue's camelCase ids would 422). Joined string keeps the fetch stable.
+  // GET /services?columns= takes the catalogue's API ids; unknown ids would 422.
+  // Joined string keeps the fetch stable.
   const visibleColumnsParam = useMemo(() => {
     if (!serviceListUsesServer) return undefined;
     const known = new Set(serviceListCatalogue.map((column) => column.id));
@@ -783,10 +783,12 @@ export function useServicesManagement() {
   );
 
   const showTaskTypeAllOption = taskTypeNames.length > 1;
-  const taskFilterColumnId = serviceListCatalogue.find(
+  // Filters and search use the built-in columns, so they stay available
+  // whichever columns the `service-column` config lists.
+  const taskFilterColumnId = SERVICE_LIST_COLUMNS.find(
     (column) => serviceListCellKey(column.id) === "task",
   )?.id;
-  const statusFilterColumnId = serviceListCatalogue.find(
+  const statusFilterColumnId = SERVICE_LIST_COLUMNS.find(
     (column) => serviceListCellKey(column.id) === "status",
   )?.id;
   const hasActiveFilters = serviceListUsesServer
@@ -813,7 +815,7 @@ export function useServicesManagement() {
     setRegistryPage(1);
     setServerFilters((prev) => ({ ...prev, [columnId]: value }));
   }, []);
-  const nameFilterColumnId = serviceListCatalogue.find(
+  const nameFilterColumnId = SERVICE_LIST_COLUMNS.find(
     (column) => serviceListCellKey(column.id) === "name",
   )?.id;
   const searchQueryRef = useRef(searchQuery);
@@ -967,7 +969,6 @@ export function useServicesManagement() {
           serverFilters,
           taskFilterColumnId,
           statusFilterColumnId,
-          serviceListCatalogue,
           registryPage,
           registryPageSize,
           sortMode: registrySort.mode,
@@ -1004,7 +1005,6 @@ export function useServicesManagement() {
     serverFilters,
     taskFilterColumnId,
     statusFilterColumnId,
-    serviceListCatalogue,
     registryPage,
     registryPageSize,
     registrySort.mode,
@@ -1068,9 +1068,20 @@ export function useServicesManagement() {
   );
 
   useEffect(() => {
-    if (!taskTypeFilterReady || !columnsQuery.isFetched || !visibleColumnsReady) return;
+    if (
+      !taskTypeFilterReady ||
+      !columnConfigQuery.isFetched ||
+      !visibleColumnsReady
+    ) {
+      return;
+    }
     ignoreAsync(fetchServices());
-  }, [fetchServices, taskTypeFilterReady, columnsQuery.isFetched, visibleColumnsReady]);
+  }, [
+    fetchServices,
+    taskTypeFilterReady,
+    columnConfigQuery.isFetched,
+    visibleColumnsReady,
+  ]);
 
   /** AI4IDS-2949: block Create Service when the platform has no tiers. Edit remains allowed. */
   const isCreateServiceTabDisabled =
@@ -1905,7 +1916,7 @@ export function useServicesManagement() {
     // Registry tab
     registryTableItems,
     totalServicesCount: serviceListUsesServer ? serverTotal : services.length,
-    isLoading: isLoading || authLoading || columnsQuery.isLoading,
+    isLoading: isLoading || authLoading || columnConfigQuery.isLoading,
     // Remounts the client-paged table so pagination returns to page 1 on a filter change.
     tableKey: serviceListUsesServer
       ? `server-${registryEpoch}`

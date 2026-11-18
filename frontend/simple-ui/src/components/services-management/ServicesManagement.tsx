@@ -20,6 +20,8 @@ import ServiceRegistryTab from "./ServiceRegistryTab";
 import ServiceFormTab from "./ServiceFormTab";
 import ServiceDetailTab from "./ServiceDetailTab";
 import {
+  SERVICE_LIST_COLUMNS,
+  SERVICE_SORTABLE_COLUMN_IDS,
   serviceListCellKey,
   type ServiceListColumnDef,
 } from "./serviceListColumns";
@@ -87,7 +89,8 @@ function resolveDrawerFlags(options: {
 
 function serverRegistryProps(options: {
   usesServer: boolean;
-  catalogue: readonly ServiceListColumnDef[];
+  /** Columns the toolbar filters are built from. */
+  filterColumns: readonly ServiceListColumnDef[];
   setServerFilterValue: (columnId: string, value: string) => void;
   setRegistryPage: (page: number) => void;
   setRegistryPageSize: (size: number) => void;
@@ -106,7 +109,7 @@ function serverRegistryProps(options: {
     };
   }
   return {
-    serverColumns: options.catalogue,
+    serverColumns: options.filterColumns,
     onServerFilterChange: options.setServerFilterValue,
     onServerPageChange: options.setRegistryPage,
     onServerPageSizeChange: options.setRegistryPageSize,
@@ -321,7 +324,7 @@ function buildVisibleServiceColumns(
           ...template,
           id: definition.id,
           header,
-          sortable: definition.sortable !== false && Boolean(template.sortable),
+          sortable: SERVICE_SORTABLE_COLUMN_IDS.has(definition.id) && Boolean(template.sortable),
         }
       : {
           id: definition.id,
@@ -648,7 +651,8 @@ const ServicesManagement: React.FC = () => {
   const pageDescription = pageDescriptionForRole(isRegistryReadOnly);
   const serverProps = serverRegistryProps({
     usesServer: serviceListUsesServer,
-    catalogue: serviceListCatalogue,
+    // Built-in columns, so the filters stay whichever columns the config lists.
+    filterColumns: SERVICE_LIST_COLUMNS,
     setServerFilterValue,
     setRegistryPage,
     setRegistryPageSize,
