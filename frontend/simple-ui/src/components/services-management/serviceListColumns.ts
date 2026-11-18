@@ -81,6 +81,23 @@ export function serviceListCellKey(id: string): string {
   return CELL_KEYS[id] ?? id;
 }
 
+function serviceFilter(
+  type: string,
+  params: string[],
+  options: ServiceListColumnFilter["options"] = null,
+): ServiceListColumnFilter {
+  return { type, params, options };
+}
+
+function serviceColumn(
+  id: ServiceListColumnId,
+  label: string,
+  mandatory: boolean,
+  filter?: ServiceListColumnFilter,
+): ServiceListColumnDef {
+  return filter ? { id, label, mandatory, filterable: true, filter } : { id, label, mandatory };
+}
+
 /**
  * Every Service List column, in the built-in display order (used when the
  * `service-column` config is missing). Mirrors platform-core's
@@ -90,75 +107,38 @@ export function serviceListCellKey(id: string): string {
  * Actions stay last, matching the rest of the admin tables.
  */
 export const SERVICE_LIST_COLUMNS: readonly ServiceListColumnDef[] = [
-  {
-    id: "name",
-    label: "Name",
-    mandatory: true,
-    filterable: true,
-    filter: { type: "text", params: ["name"], options: null },
-  },
-  {
-    id: "task_type",
-    label: "Task Type",
-    mandatory: true,
-    filterable: true,
-    // Options come from the enabled task types (useInferenceTypes).
-    filter: { type: "multi_select", params: ["task_types"], options: null },
-  },
-  {
-    id: "model_name",
-    label: "Model Name",
-    mandatory: true,
-    filterable: true,
-    filter: { type: "text", params: ["model_name"], options: null },
-  },
-  {
-    id: "tier",
-    label: "Tier",
-    mandatory: true,
-    filterable: true,
-    // Options come from the active tiers (tierFilterOptions).
-    filter: { type: "multi_select", params: ["tier_ids"], options: null },
-  },
-  {
-    id: "status",
-    label: "Status",
-    mandatory: false,
-    filterable: true,
-    filter: {
-      type: "single_select",
-      params: ["is_published"],
-      options: [
-        { value: "true", label: "Published" },
-        { value: "false", label: "Unpublished" },
-      ],
-    },
-  },
-  {
-    id: "created_at",
-    label: "Created At",
-    mandatory: false,
-    filterable: true,
-    filter: { type: "date_range", params: ["created_from", "created_to"], options: null },
-  },
-  {
-    id: "service_id",
-    label: "Service ID",
-    mandatory: false,
-    filterable: true,
-    filter: { type: "text", params: ["service_id"], options: null },
-  },
-  { id: "input_price", label: "Input Price", mandatory: false },
-  { id: "output_price", label: "Output Price", mandatory: false },
-  { id: "cached_input_price", label: "Cached Input Price", mandatory: false },
-  {
-    id: "published_at",
-    label: "Published On",
-    mandatory: false,
-    filterable: true,
-    filter: { type: "date_range", params: ["published_from", "published_to"], options: null },
-  },
-  { id: "actions", label: "Actions", mandatory: true },
+  serviceColumn("name", "Name", true, serviceFilter("text", ["name"])),
+  // Task type options come from the enabled task types (useInferenceTypes).
+  serviceColumn("task_type", "Task Type", true, serviceFilter("multi_select", ["task_types"])),
+  serviceColumn("model_name", "Model Name", true, serviceFilter("text", ["model_name"])),
+  // Tier options come from the active tiers (tierFilterOptions).
+  serviceColumn("tier", "Tier", true, serviceFilter("multi_select", ["tier_ids"])),
+  serviceColumn(
+    "status",
+    "Status",
+    false,
+    serviceFilter("single_select", ["is_published"], [
+      { value: "true", label: "Published" },
+      { value: "false", label: "Unpublished" },
+    ]),
+  ),
+  serviceColumn(
+    "created_at",
+    "Created At",
+    false,
+    serviceFilter("date_range", ["created_from", "created_to"]),
+  ),
+  serviceColumn("service_id", "Service ID", false, serviceFilter("text", ["service_id"])),
+  serviceColumn("input_price", "Input Price", false),
+  serviceColumn("output_price", "Output Price", false),
+  serviceColumn("cached_input_price", "Cached Input Price", false),
+  serviceColumn(
+    "published_at",
+    "Published On",
+    false,
+    serviceFilter("date_range", ["published_from", "published_to"]),
+  ),
+  serviceColumn("actions", "Actions", true),
 ];
 
 /**
