@@ -140,6 +140,9 @@ function AdminListColumnPicker<T extends AdminListColumnDef>({
                 }}
                 py={1.5}
                 cursor={locked ? "not-allowed" : "pointer"}
+                // Chakra fades disabled items and checkbox labels to 0.4 each;
+                // together the locked labels were barely readable.
+                _disabled={{ opacity: 1, cursor: "not-allowed" }}
               >
                 <Checkbox
                   isChecked={checked}
@@ -147,8 +150,14 @@ function AdminListColumnPicker<T extends AdminListColumnDef>({
                   pointerEvents="none"
                   colorScheme="blue"
                   mr={2}
+                  sx={{ "& .chakra-checkbox__label[data-disabled]": { opacity: 1 } }}
                 >
-                  <Text as="span" fontSize="sm">
+                  <Text
+                    as="span"
+                    fontSize="sm"
+                    color={locked ? "ink.400" : undefined}
+                    opacity={locked ? 0.75 : undefined}
+                  >
                     {column.label}
                     {column.mandatory ? (
                       <Text as="span" color="ink.400" ml={1}>
