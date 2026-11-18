@@ -76,6 +76,10 @@ boundaries are IST midnight.
 Re-running is safe: every step converges to the same state. A
 transaction-level advisory lock per step makes an overlapping run skip the
 step instead of racing; retention takes the rollup's lock.
+
+After the usage steps, the job sends today's API key expiry reminders
+(jobs/key_expiry_alerts.py, reading the auth DB directly). The two parts are
+independent: a failure in one never skips the other.
 """
 from __future__ import annotations
 
@@ -89,6 +93,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from bootstrap.config import get_settings
 from bootstrap.database import auth_session, platform_core_session
+from jobs.key_expiry_alerts import run_key_expiry_alerts
 
 logger = get_logger(__name__)
 
@@ -613,5 +618,20 @@ async def consolidate(today: date) -> None:
 
 
 async def run() -> None:
+    # Two independent steps: a failure in one never stops the other, and the
+    # job exits as failed if either failed.
+    failed = []
     logger.info("Starting daily usage consolidation")
-    await consolidate(datetime.now(IST).date())
+    try:
+        await consolidate(datetime.now(IST).date())
+    except Exception:
+        logger.exception("Daily usage consolidation failed")
+        failed.append("usage consolidation")
+    logger.info("Starting key expiry reminders")
+    try:
+        await run_key_expiry_alerts()
+    except Exception:
+        logger.exception("Key expiry reminders failed")
+        failed.append("key expiry reminders")
+    if failed:
+        raise RuntimeError(f"Daily job failed for: {', '.join(failed)}")

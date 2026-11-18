@@ -80,3 +80,13 @@ async def platform_core_session() -> AsyncIterator[AsyncSession]:
 async def auth_session() -> AsyncIterator[AsyncSession]:
     async with _require(_auth_session_factory)() as session:
         yield session
+
+
+def platform_core_session_factory() -> async_sessionmaker[AsyncSession]:
+    """The session factory itself, for libraries that open their own sessions."""
+    return _require(_platform_core_session_factory)
+
+
+def auth_session_factory() -> async_sessionmaker[AsyncSession]:
+    """The session factory itself, for libraries that open their own sessions."""
+    return _require(_auth_session_factory)
