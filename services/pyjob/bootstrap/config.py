@@ -78,6 +78,17 @@ class PyJobSettings(BaseSettings):
         300.0, description="Per-request timeout for internal calls"
     )
 
+    # ── Notifications (daily_usage_consolidation's key expiry step) ──
+    # Only that step reads these; it fails when one it needs is unset.
+    KAFKA_SERVER: Optional[str] = Field(None, description="Kafka bootstrap servers for notification events")
+    TOPIC_NOTIFICATION: str = Field("notification.events", description="Topic the notification events go to")
+    NOTIFICATION_TIMEZONE: Optional[str] = Field(
+        None, description="IANA zone for reminder days and the dates shown in the emails; same as auth-service"
+    )
+    PII_ENCRYPTION_KEY: Optional[SecretStr] = Field(
+        None, description="Decrypts recipient emails in the auth DB; same value as auth-service"
+    )
+
     # ── usage_report ──
     USAGE_REPORT_FREQUENCY: Optional[str] = Field(
         None, description="monthly, or a duration like 1d / 7d / 14d (under a day: test envs only); "
