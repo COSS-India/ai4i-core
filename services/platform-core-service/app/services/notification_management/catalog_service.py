@@ -50,6 +50,7 @@ from app.services.notification_management.cache_refresh import (
 )
 from app.services.notification_management.catalog_metadata import (
     FIXED_GLOBAL_SCOPE_NAMES,
+    HIDDEN_CATALOG_NAMES,
     LEGAL_RECIPIENT_ROLES,
     MAX_THRESHOLD_PERCENT,
     MIN_THRESHOLD_PERCENT,
@@ -123,6 +124,7 @@ async def list_catalog(session: AsyncSession, catalog_type: NotificationType) ->
     result = await session.execute(
         select(ConfigNotificationAlert)
         .where(ConfigNotificationAlert.type == catalog_type.value)
+        .where(ConfigNotificationAlert.name.notin_([n.value for n in HIDDEN_CATALOG_NAMES]))
         .order_by(ConfigNotificationAlert.id)
     )
     rows = result.scalars().all()
@@ -222,8 +224,11 @@ async def update_catalog(
     # comparing a non-member string to a Postgres ENUM column raises a DB
     # error (a 500) rather than the clean 404 an unknown name should be.
     try:
-        NotificationName(name)
+        catalog_name = NotificationName(name)
     except ValueError:
+        raise EntityNotFoundError(f"Catalog entry '{name}'")
+    # Hidden rows aren't in the Adopter catalog: same 404 as an unknown name.
+    if catalog_name in HIDDEN_CATALOG_NAMES:
         raise EntityNotFoundError(f"Catalog entry '{name}'")
 
     result = await session.execute(

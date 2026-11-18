@@ -162,6 +162,14 @@ FIXED_GLOBAL_SCOPE_NAMES = frozenset({
     NotificationName.API_KEY_EXPIRING,
 })
 
+#: Rows kept out of the Adopter catalog: GET /catalog doesn't list them and
+#: PATCH /catalog/{name} 404s, so their seeded scope, recipients and day
+#: thresholds can't be changed from the FE. They still fire as seeded.
+HIDDEN_CATALOG_NAMES = frozenset({
+    NotificationName.GRACE_PERIOD_EXPIRING,
+    NotificationName.API_KEY_EXPIRING,
+})
+
 
 # ── Catalog PATCH validation (code-side, per the design's 6.1 "Legal
 # recipient roles per notification" table) ──
