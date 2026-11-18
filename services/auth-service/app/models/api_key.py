@@ -23,6 +23,17 @@ class APIKey(Base):
             unique=True,
             postgresql_where=text("rotated_key IS NOT NULL"),
         ),
+        # Range scans of the daily key-expiry reminders (pyjob key_expiry_alerts).
+        Index(
+            "ix_api_key_rotated_key_expires_at",
+            "rotated_key_expires_at",
+            postgresql_where=text("rotated_key IS NOT NULL AND is_active"),
+        ),
+        Index(
+            "ix_api_key_expires_at",
+            "expires_at",
+            postgresql_where=text("expires_at IS NOT NULL AND is_active"),
+        ),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True, index=True)
