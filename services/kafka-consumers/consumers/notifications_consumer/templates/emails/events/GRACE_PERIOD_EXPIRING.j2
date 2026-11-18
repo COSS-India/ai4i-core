@@ -1,19 +1,17 @@
-{# details: [application_name, api_key, rotated_by, rotated_on, revoked_on, days_left] #}
+{# details: [application_name, api_key, expires_on, days_left] #}
 {% set layout = "notification" %}
-{% set days_left = details[5] %}
+{% set days_left = details[3] %}
 {% set when = "today" if days_left == 0 else ("in 1 day" if days_left == 1 else "in " ~ days_left ~ " days") %}
-{% set time_remaining = "Less than a day" if days_left == 0 else ("1 day" if days_left == 1 else days_left ~ " days") %}
 {% set name = "Action required: Old API key for " ~ details[0] ~ " will be revoked " ~ when %}
-{% set headline = "The old API key for " ~ details[0] ~ " will be revoked " ~ when ~ ", on " ~ details[4] ~ "." %}
+{% set headline = "The old API key for " ~ details[0] ~ " will expire " ~ when ~ ", on " ~ details[2] ~ "." %}
 {% set lines = [
-    "Rotation details",
+    "API Key Rotation Details",
     {"label": "Application", "value": details[0]},
-    {"label": "Old key identifier", "value": details[1]},
-    {"label": "New key identifier", "value": details[1]},
-    {"label": "Rotated by", "value": details[2]},
-    {"label": "Rotated on", "value": details[3]},
-    {"label": "Old key revocation on", "value": details[4]},
-    {"label": "Time remaining", "value": time_remaining},
-    "What you need to do: Any Application still using the old key will lose access when it is revoked. Please make sure all Applications are moved to the new key before " ~ details[4] ~ ".",
-    "For security reasons, this email does not include the API key value.",
+    {"label": "Old API Key Identifier", "value": details[1]},
+    {"label": "New API Key Identifier", "value": details[1]},
+    {"label": "Days Remaining", "value": days_left},
+    {"label": "Expiry Date", "value": details[2]},
+    "Action Required",
+    "Please ensure that the application is updated to use the new API key before the old key expires. Any application still using the old key will lose access after its expiry.",
+    "For security reasons, this email does not include the API key values.",
 ] %}
