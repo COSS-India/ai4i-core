@@ -13,6 +13,11 @@
 import type { ServiceColumnConfigEntry } from "../../services/configManagementService";
 import type { Service } from "../../types/platform";
 import { resolveTaskType } from "../../utils/platformService";
+import {
+  canToggleOffColumn,
+  resolveColumnSelection,
+  toggleColumnSelection,
+} from "../common/adminListColumnSelection";
 
 /** API column ids (`GET /services?columns=`, column preferences). */
 export type ServiceListColumnId =
@@ -186,46 +191,27 @@ export function defaultServiceListColumnIds(
   return catalogue.filter((column) => column.mandatory).map((column) => column.id);
 }
 
-/**
- * Keep mandatory columns and drop unknown ids. Optional columns may all be
- * hidden; defaults apply only when nothing usable is stored (first visit, or
- * every stored id is gone from the catalogue). Result is catalogue order.
- */
 export function resolveServiceListColumns(
   selected: readonly string[] | null | undefined,
   catalogue: readonly ServiceListColumnDef[] = SERVICE_LIST_COLUMNS,
 ): string[] {
-  const known = new Set(catalogue.map((column) => column.id));
-  const picked = new Set((selected ?? []).filter((id) => known.has(id)));
-  if (picked.size === 0) return defaultServiceListColumnIds(catalogue);
-  return catalogue
-    .filter((column) => column.mandatory || picked.has(column.id))
-    .map((column) => column.id);
+  return resolveColumnSelection(selected, catalogue, defaultServiceListColumnIds);
 }
 
-/** Only mandatory columns are locked; every optional column can be turned off. */
 export function canToggleOffServiceListColumn(
   _current: readonly string[],
   id: string,
   catalogue: readonly ServiceListColumnDef[] = SERVICE_LIST_COLUMNS,
 ): boolean {
-  const column = catalogue.find((entry) => entry.id === id);
-  return column != null && !column.mandatory;
+  return canToggleOffColumn(id, catalogue);
 }
 
-/** Turn an optional column on or off. Mandatory columns stay. */
 export function toggleServiceListColumn(
   current: readonly string[],
   id: string,
   catalogue: readonly ServiceListColumnDef[] = SERVICE_LIST_COLUMNS,
 ): string[] {
-  if (!canToggleOffServiceListColumn(current, id, catalogue)) {
-    return resolveServiceListColumns(current, catalogue);
-  }
-  const next = current.includes(id)
-    ? current.filter((columnId) => columnId !== id)
-    : [...current, id];
-  return resolveServiceListColumns(next, catalogue);
+  return toggleColumnSelection(current, id, catalogue, defaultServiceListColumnIds);
 }
 
 /**
