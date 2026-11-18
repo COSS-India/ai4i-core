@@ -27,7 +27,7 @@ def upgrade() -> None:
             INSERT INTO configs_notification_alert
                 (name, type, module, channels, scope, recipient_roles)
             SELECT '{name}', 'NOTIFICATION', 'API_KEY', '{{EMAIL}}', 'GLOBAL',
-                   '{{"ADMIN": false, "TENANT ADMIN": true}}'::jsonb
+                   '{{"ADMIN": true, "TENANT ADMIN": true}}'::jsonb
             WHERE NOT EXISTS (SELECT 1 FROM configs_notification_alert WHERE name = '{name}');
             """
         )
