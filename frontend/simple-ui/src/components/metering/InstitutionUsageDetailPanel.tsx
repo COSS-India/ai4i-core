@@ -10,11 +10,9 @@ import SpendByTaskTypeTable from "./SpendByTaskTypeTable";
 import { BudgetCell, TenantAvatar, TierBadge } from "./UsageSpendCells";
 
 const sectionLabelSx = {
-  fontSize: "11px",
-  letterSpacing: "0.04em",
+  fontSize: "13px",
   color: "gray.600",
   fontWeight: "semibold",
-  textTransform: "uppercase" as const,
 };
 
 const cardSx = {

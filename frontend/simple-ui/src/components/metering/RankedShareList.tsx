@@ -1,4 +1,4 @@
-import { Badge, Box, Grid, HStack, Progress, Text, VStack } from "@chakra-ui/react";
+import { Box, Grid, HStack, Progress, Text, VStack } from "@chakra-ui/react";
 import React from "react";
 import { METERING } from "../../config/meteringConstants";
 import { meteringColorAt } from "../../utils/meteringColors";
@@ -32,6 +32,12 @@ interface RankedShareListProps {
   variant?: "default" | "modelWithTaskType";
 }
 
+// Total Requests and % of Total columns: fixed widths and a wide gap, so the
+// two right-aligned headers read as separate columns, not one phrase.
+const TOTAL_COL_MIN_W = "104px";
+const PCT_COL_MIN_W = "80px";
+const COLUMN_GAP = 6;
+
 const RankedShareList: React.FC<RankedShareListProps> = ({
   rows,
   headerLeft = METERING.SECTIONS.RANKED_SHARE.HEADER_LEFT,
@@ -45,8 +51,8 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
 }) => {
   const modelWithTaskType = variant === "modelWithTaskType" && Boolean(headerTaskType);
   const gridColumns = modelWithTaskType
-    ? "minmax(0, 2fr) minmax(96px, 0.85fr) minmax(88px, 0.75fr) 56px"
-    : "minmax(0, 2fr) minmax(88px, 0.75fr) 56px";
+    ? "minmax(0, 2fr) minmax(96px, 0.85fr) minmax(104px, 0.75fr) 80px"
+    : "minmax(0, 2fr) minmax(104px, 0.75fr) 80px";
 
   const headerTotalCell = (
     <HStack spacing={1} justify="flex-end">
@@ -76,7 +82,7 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
       {modelWithTaskType ? (
         <Grid
           templateColumns={gridColumns}
-          gap={3}
+          columnGap={COLUMN_GAP}
           fontSize="xs"
           color="gray.500"
           px={1}
@@ -97,9 +103,9 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
               </Text>
             ) : null}
           </HStack>
-          <HStack spacing={2} flexShrink={0}>
-            <Box minW="88px">{headerTotalCell}</Box>
-            <Box minW="56px">{headerRightCell}</Box>
+          <HStack spacing={COLUMN_GAP} flexShrink={0}>
+            <Box minW={TOTAL_COL_MIN_W}>{headerTotalCell}</Box>
+            <Box minW={PCT_COL_MIN_W}>{headerRightCell}</Box>
           </HStack>
         </HStack>
       )}
@@ -119,18 +125,16 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
         );
 
         const totalCell = (
-          <Badge
-            colorScheme="gray"
-            variant="subtle"
-            fontSize="xs"
-            borderRadius="md"
+          <Text
+            fontSize="sm"
             fontWeight="semibold"
-            minW="88px"
-            textAlign="center"
-            justifyContent="center"
+            color="gray.700"
+            minW={TOTAL_COL_MIN_W}
+            textAlign="right"
+            whiteSpace="nowrap"
           >
             {row.formattedValue}
-          </Badge>
+          </Text>
         );
 
         const taskTypeCell = row.taskType ? (
@@ -156,6 +160,7 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
             color="gray.500"
             textAlign="right"
             whiteSpace="nowrap"
+            minW={PCT_COL_MIN_W}
           >
             {row.percentage.toFixed(2)}
           </Text>
@@ -164,13 +169,13 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
         if (modelWithTaskType) {
           return (
             <Box key={row.rank}>
-              <Grid templateColumns={gridColumns} gap={3} alignItems="center" mb={1.5}>
+              <Grid templateColumns={gridColumns} columnGap={COLUMN_GAP} alignItems="center" mb={1.5}>
                 {modelCell}
                 {taskTypeCell}
                 <Box justifySelf="end">{totalCell}</Box>
                 {pctCell}
               </Grid>
-              <Grid templateColumns={gridColumns} gap={3}>
+              <Grid templateColumns={gridColumns} columnGap={COLUMN_GAP}>
                 <Progress
                   value={row.percentage}
                   size="sm"
@@ -205,7 +210,7 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
                   ) : null}
                 </VStack>
               </HStack>
-              <HStack spacing={2} flexShrink={0}>
+              <HStack spacing={COLUMN_GAP} flexShrink={0}>
                 {totalCell}
                 {pctCell}
               </HStack>

@@ -25,11 +25,11 @@ const taskRowKey = (row: TaskUsageRow) => `${row.tierName ?? ""}-${row.task.task
 const hasCostBreakdown = (row: TaskUsageRow) =>
   (row.task.periodUsage.breakdown?.length ?? 0) > 0;
 
-/** "USAGE VS. QUOTA (OCT 2026)" — every quota is for the same, current billing month. */
+/** "Usage vs. Quota (Oct 2026)" — every quota is for the same, current billing month. */
 function quotaColumnLabel(rows: TaskUsageRow[]): string {
   const copy = METERING.USAGE_SPEND;
   const billingMonth = rows.find((row) => row.task.quota)?.task.quota?.billingMonth;
-  const month = billingMonth ? formatBillingMonth(billingMonth).toUpperCase() : copy.THIS_MONTH;
+  const month = billingMonth ? formatBillingMonth(billingMonth) : copy.THIS_MONTH;
   return `${copy.USAGE_VS_QUOTA} (${month})`;
 }
 

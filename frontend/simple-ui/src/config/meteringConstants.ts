@@ -62,14 +62,27 @@ export const METERING = {
     },
     LABELS: {
       total_requests: "Total Requests",
+      successful: "Successful Requests",
+      failed: "Failed Requests",
       fallback_requests: "Fallback Requests",
-      avg_rps: "Average RPS",
+      fallback_successful: "Fallback Successful Requests",
+      fallback_failed: "Fallback Failed Requests",
+      avg_rps: "Average Requests per Second",
     },
     HELPERS: {
       total_requests: `Across all ${INSTITUTIONS}`,
       successful: "Of all requests",
       failed: "Of all requests",
-      avg_rps: "Requests per second",
+    },
+    /** An em dash replaces "0.00% …" rates when there is nothing to take a rate of. */
+    NO_RATE: {
+      NO_FALLBACKS_TOOLTIP: "No fallback requests in this period",
+    },
+    /** Institution Admin Overview: the summary cards in two titled groups. */
+    GROUPS: {
+      REQUESTS_TITLE: "Requests",
+      FALLBACK_TITLE: "Fallback",
+      FALLBACK_SUBTITLE: "Requests sent to the fallback Service after the primary Service failed",
     },
     TOOLTIPS: {
       total_requests:
@@ -93,8 +106,10 @@ export const METERING = {
   PERIODS: [
     { key: "today", label: "Today" },
     { key: "yesterday", label: "Yesterday" },
-    { key: "last_7_days", label: "Last 7 days" },
+    { key: "last_7_days", label: "Last 7 Days" },
   ] as const satisfies ReadonlyArray<{ key: MeteringPresetPeriodKey; label: string }>,
+  /** Quick button that applies a 30-day custom range. */
+  LAST_30_DAYS_LABEL: "Last 30 Days",
   /** Preset period in running text, e.g. "Consumption across all Models – today". */
   PERIOD_LABELS: {
     today: "today",
@@ -104,7 +119,7 @@ export const METERING = {
   /** Custom date ranges are calendar days in IST, whatever the browser zone. */
   IST_TIME_ZONE: "Asia/Kolkata",
   CUSTOM_RANGE: {
-    TITLE: "Custom date range",
+    TITLE: "Custom Date Range",
     SUBTITLE: "Select a start date and an end date (any day up to today)",
     APPLY: "Apply",
     CANCEL: "Cancel",
@@ -144,7 +159,7 @@ export const METERING = {
   CONTROLS: {
     ALL_TENANTS: `All ${INSTITUTIONS}`,
     TOP_N_PREFIX: "Top",
-    CUSTOM_RANGE: "Custom range",
+    CUSTOM_RANGE: "Custom Range",
     LAST_REFRESHED_PREFIX: "Last refreshed:",
     REFRESH: "Refresh",
   },
@@ -152,17 +167,21 @@ export const METERING = {
     TITLE: "My Usage",
   },
   USAGE_SPEND: {
-    BUDGET_SUMMARY: "BUDGET SUMMARY",
-    BUDGET: "BUDGET",
-    QUOTA_SUMMARY: "QUOTA SUMMARY",
-    USAGE_BY_TASK_TYPE: "USAGE BY TASK TYPE",
-    /** Followed by the billing month, e.g. "USAGE VS. QUOTA (OCT 2026)". */
-    USAGE_VS_QUOTA: "USAGE VS. QUOTA",
-    THIS_MONTH: "THIS MONTH",
+    BUDGET_SUMMARY: "Budget Summary",
+    BUDGET: "Budget",
+    QUOTA_SUMMARY: "Quota Summary",
+    USAGE_BY_TASK_TYPE: "Usage by Task Type",
+    /** Followed by the billing month, e.g. "Usage vs. Quota (Oct 2026)". */
+    USAGE_VS_QUOTA: "Usage vs. Quota",
+    THIS_MONTH: "This Month",
     NO_QUOTA_THIS_MONTH: "No quota this month",
-    USAGE_IN_PERIOD: "USAGE IN PERIOD",
-    PERIOD_SPEND: "SPEND IN PERIOD",
-    TABLE_PERIOD_SPEND: "Spend in period",
+    USAGE_IN_PERIOD: "Usage in Period",
+    PERIOD_SPEND: "Spend in Period",
+    TABLE_PERIOD_SPEND: "Spend in Period",
+    TIER_FILTER_ALL: "Filter by Tier · All Tiers",
+    TABLE_TIER: "Tier",
+    TABLE_ALLOCATED_BUDGET: "Allocated Budget (INR)",
+    TABLE_BUDGET: "Budget",
     /** Expandable LLM rows: input / cached input / output tokens and their cost. */
     TOGGLE_COST_BREAKDOWN: "Toggle cost breakdown for",
     COST_SHARE_SUFFIX: "% of cost",
@@ -171,15 +190,15 @@ export const METERING = {
       "Spend and usage are for the selected period. Budget is all-time and quota is for the current month — open an institution for the full breakdown.",
     MULTI_TIER_NOTE: `Grouped by tier since this ${INSTITUTION.toLowerCase()} changed tier during the period.`,
     /** @deprecated Use USAGE_BY_TASK_TYPE */
-    SPEND_BY_TASK_TYPE: "USAGE BY TASK TYPE",
-    TENANT_DETAIL_TITLE: "Institution Usage Details",
+    SPEND_BY_TASK_TYPE: "Usage by Task Type",
+    TENANT_DETAIL_TITLE: `${INSTITUTION} Usage Details`,
     BUDGET_TOTALS_NOTE:
       "Allocated and Remaining Budget reflect overall totals and are not affected by the selected date range.",
     TIER_BREAKDOWN_NOTE:
       "Usage in the selected period; quota is for the current billing month.",
-    TOTAL_ALLOCATED: "TOTAL ALLOCATED",
-    TOTAL_USED: "TOTAL USED",
-    TOTAL_REMAINING: "TOTAL REMAINING",
+    TOTAL_ALLOCATED: "Total Allocated",
+    TOTAL_USED: "Total Used",
+    TOTAL_REMAINING: "Total Remaining",
     TOOLTIPS: {
       TOTAL_ALLOCATED: "Total budget allocated to institutions.",
       TOTAL_USED: "Total budget used by institutions.",
@@ -199,14 +218,14 @@ export const METERING = {
     LIFETIME_NOTE:
       "Spend in period follows the selected period. Allocated, spend and remaining budget are lifetime totals.",
     SUMMARY: {
-      TOTAL_APPLICATIONS: "TOTAL APPLICATIONS",
-      ALLOCATED: "ALLOCATED BUDGET",
-      SPENT: "SPEND BUDGET",
-      REMAINING: "REMAINING BUDGET",
+      TOTAL_APPLICATIONS: "Total Applications",
+      ALLOCATED: "Allocated Budget",
+      SPENT: "Spend Budget",
+      REMAINING: "Remaining Budget",
       SCOPE_ONBOARDED: "Onboarded under this Institution",
       SCOPE_ACROSS_APPS: "Across all Applications",
       PCT_OF_INSTITUTION: "of Institution Budget",
-      PERIOD_SPEND: "SPEND IN PERIOD",
+      PERIOD_SPEND: "Spend in Period",
     },
     TOOLTIPS: {
       TOTAL_APPLICATIONS: "Count of all Applications onboarded under the Institution.",
@@ -233,25 +252,25 @@ export const METERING = {
         "This Key's Allocated amount minus its Spend, as % of its own allocation.",
     },
     TABLE: {
-      APPLICATION: "APPLICATION",
-      DOMAIN: "DOMAIN",
-      ALLOCATED: "ALLOCATED BUDGET",
-      SPEND: "SPEND BUDGET",
-      REMAINING: "REMAINING BUDGET",
-      API_KEY: "API KEY",
-      ALLOCATED_SHORT: "ALLOCATED",
-      SPEND_SHORT: "SPEND",
-      REMAINING_SHORT: "REMAINING",
+      APPLICATION: "Application",
+      DOMAIN: "Domain",
+      ALLOCATED: "Allocated Budget",
+      SPEND: "Spend Budget",
+      REMAINING: "Remaining Budget",
+      API_KEY: "API Key",
+      ALLOCATED_SHORT: "Allocated",
+      SPEND_SHORT: "Spend",
+      REMAINING_SHORT: "Remaining",
       NO_BUDGET: "No Budget allocated",
       REMAINING_OF_ALLOCATION: "of App allocation",
       REMAINING_OF_KEY_ALLOCATION: "remaining",
-      PERIOD_SPEND: "SPEND IN PERIOD",
-      PERIOD_SPEND_SHORT: "IN PERIOD",
+      PERIOD_SPEND: "Spend in Period",
+      PERIOD_SPEND_SHORT: "In Period",
       PERIOD_OF_ALLOCATION: "of allocation",
     },
     DRAWER_TITLE: "Application Spend Details",
     DRAWER_SPEND_BY_API_KEY: "Spend by API Key",
-    DRAWER_PERIOD_SPEND: "SPEND IN PERIOD",
+    DRAWER_PERIOD_SPEND: "Spend in Period",
     DRAWER_NO_BUDGET: "No Budget has been allocated to this Application yet.",
     DRAWER_NO_KEYS: "No API keys have been issued against this Application yet.",
     SELECT_INSTITUTION: "Select an institution from the filter above to view application usage.",
@@ -345,37 +364,35 @@ export const METERING = {
   },
   SECTIONS: {
     CONSUMPTION_OVERVIEW: {
-      TITLE: "Usage concentration",
+      TITLE: "Usage Concentration",
       SUBTITLE: `${INSTITUTIONS} by request volume – reflects the selected time window`,
-      DONUT_SECONDARY: INSTITUTIONS.toLowerCase(),
+      DONUT_SECONDARY: INSTITUTIONS,
     },
-    KEY_METRICS: {
-      TITLE: "Key metrics",
+    /** Adopter Admin: Institution and Model summary cards under one heading. */
+    PLATFORM_OVERVIEW: {
+      TITLE: "Platform Overview",
       SUBTITLE: "Platform-wide institution and model indicators",
-      INSTITUTION_ROW_TITLE: `${INSTITUTIONS} metrics`,
-      MODEL_ROW_TITLE: "Model metrics",
       INSTITUTION_CARDS: [
         {
           key: "total_tenants",
-          label: `Total ${INSTITUTIONS.toLowerCase()}`,
-          helper: "Registered on platform",
+          label: `Total ${INSTITUTIONS}`,
           tooltip: `Count of ${INSTITUTIONS.toLowerCase()} registered on the platform.`,
         },
         {
           key: "active_30d",
-          label: `Active ${INSTITUTIONS.toLowerCase()}`,
+          label: `Active ${INSTITUTIONS}`,
           helper: "In the last 30 days",
           tooltip: `${INSTITUTIONS} with at least one AI Model request in the last 30 days.`,
         },
         {
           key: "new_tenants_15d",
-          label: `New ${INSTITUTIONS.toLowerCase()}`,
+          label: `New ${INSTITUTIONS}`,
           helper: "In the last 15 days",
           tooltip: `Count of ${INSTITUTIONS.toLowerCase()} onboarded in the last 15 days.`,
         },
         {
           key: "tenants_budget_exhausted",
-          label: "Budget exhausted",
+          label: `Budget-Exhausted ${INSTITUTIONS}`,
           helper: INSTITUTIONS,
           tooltip: `Count of ${INSTITUTIONS.toLowerCase()} whose all-time spend has reached their allocated budget.`,
         },
@@ -383,20 +400,19 @@ export const METERING = {
       MODEL_CARDS: [
         {
           key: "total_models",
-          label: "Total models",
-          helper: "On platform",
+          label: "Total Models",
           tooltip: "Total number of models registered on the platform.",
         },
         {
           key: "active_models_30d",
-          label: "Active models",
+          label: "Active Models",
           helper: "In the last 30 days",
           tooltip:
             "Total number of models that have received at least one request in the last 30 days.",
         },
         {
           key: "model_usage_growth_pct",
-          label: "Model usage growth",
+          label: "Model Usage Growth",
           helper: "Last 30 days vs Previous 30",
           tooltip:
             "Percentage change in overall model usage over the last 30 days compared to the 30 days before that.",
@@ -404,13 +420,13 @@ export const METERING = {
       ] as const,
     },
     TENANT_RANKING: {
-      TITLE: `${INSTITUTION} ranking`,
+      TITLE: `${INSTITUTION} Ranking`,
       SUBTITLE_PREFIX: "By request volume ·",
       TABLE_RANK: "Rank",
       TABLE_INSTITUTION: INSTITUTION,
       TABLE_REQUESTS: "Requests",
       TABLE_SHARE: "Share",
-      AVG_REQUESTS_LABEL: `Average Requests Per Active ${INSTITUTION}`,
+      AVG_REQUESTS_LABEL: `Average Requests per Active ${INSTITUTION}`,
       TOOLTIPS: {
         AVG_REQUESTS:
           `Total requests divided by the number of active ${INSTITUTIONS.toLowerCase()} in the selected window.`,
@@ -420,26 +436,26 @@ export const METERING = {
       },
     },
     REQUEST_VOLUME: {
-      TITLE: "Request volume & health",
+      TITLE: "Request Volume & Health",
       SUBTITLE: "Request volume over the selected time window",
+      TOTAL: "Total Requests",
       SUCCESSFUL: "Successful",
       FAILED: "Failed",
-      FAILURE_RATE_SUFFIX: "failure rate",
-      Y_AXIS_REQUESTS: "REQUESTS",
+      Y_AXIS_REQUESTS: "Requests",
     },
     // Model Consumption tab — model-level KPIs + per-service drill-down
     MODEL: {
-      TITLE: "Model consumption",
+      TITLE: "Model Consumption",
       SUBTITLE:
         "Model request distribution – reflects the selected time window",
-      BREAKDOWN_TITLE: "Model consumption Drill down",
+      BREAKDOWN_TITLE: "Model Consumption Drill Down",
       BREAKDOWN_SUBTITLE_PREFIX: "Consumption across all Models –",
       DONUT_PRIMARY: "All",
       DONUT_SECONDARY: "Models",
-      TOTAL_MODELS: "Total models",
-      ACTIVE_MODELS: "Active models",
-      MOST_USED: "Most used model",
-      OVERALL_SUCCESS: "Overall success rate %",
+      TOTAL_MODELS: "Total Models",
+      ACTIVE_MODELS: "Active Models",
+      MOST_USED: "Most Used Model",
+      OVERALL_SUCCESS: "Overall Success Rate %",
       SUCCESS_RATE_SUFFIX: "Across all models",
       REQUESTS_SUFFIX: "requests",
       REQUESTS_ACROSS_INSTITUTIONS: `requests across all ${INSTITUTIONS}`,
@@ -447,10 +463,10 @@ export const METERING = {
       TABLE_TASK_TYPE: "Task Type",
       TABLE_MODEL: "Model Name",
       TABLE_SERVICE: "Service Name",
-      TABLE_TOTAL_REQUESTS: "Total requests",
+      TABLE_TOTAL_REQUESTS: "Total Requests",
       TABLE_NATIVE: "Native Consumption",
-      TABLE_SUCCESS: "Success rate %",
-      TABLE_FAILURE: "Failure rate %",
+      TABLE_SUCCESS: "Success Rate %",
+      TABLE_FAILURE: "Failure Rate %",
       FILTER_TASK_TYPES: "Task Type",
       /** Expandable LLM rows: input / cached input / output tokens. */
       TOGGLE_TOKEN_BREAKDOWN: "Toggle token breakdown for",
@@ -477,8 +493,8 @@ export const METERING = {
     },
     RANKED_SHARE: {
       HEADER_LEFT: INSTITUTION,
-      HEADER_TOTAL_REQUESTS: "Total requests",
-      HEADER_RIGHT: "% of total",
+      HEADER_TOTAL_REQUESTS: "Total Requests",
+      HEADER_RIGHT: "% of Total",
       TOOLTIPS: {
         TOTAL_REQUESTS: "Request count for this institution in the selected time window.",
         PCT_OF_TOTAL: "This row's share of the total requests shown in the list.",

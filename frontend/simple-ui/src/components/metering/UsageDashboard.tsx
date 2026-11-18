@@ -5,7 +5,7 @@ import { useMeteringDashboard } from "../../hooks/useMeteringDashboard";
 import LoadingSpinner from "../common/LoadingSpinner";
 import { MeteringAlerts } from "./MeteringAsyncState";
 import MeteringControls from "./MeteringControls";
-import { KeyMetricsSection } from "./OverviewSections";
+import { PlatformOverviewSection } from "./OverviewSections";
 import RequestVolumeSection from "./RequestVolumeSection";
 import {
   AdopterDashboardPanels,
@@ -77,7 +77,7 @@ const UsageDashboard: React.FC<UsageDashboardProps> = (props) => {
       <MeteringAlerts errorMessage={primaryError} dataStateBanner={dataStateBanner} />
 
       {showKeyMetrics ? (
-        <KeyMetricsSection data={keyMetricsOverview} supplement={keyMetricsSupplement} />
+        <PlatformOverviewSection data={keyMetricsOverview} supplement={keyMetricsSupplement} />
       ) : null}
 
       <MeteringControls

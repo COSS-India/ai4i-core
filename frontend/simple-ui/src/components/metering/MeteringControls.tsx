@@ -104,7 +104,7 @@ const MeteringControls: React.FC<MeteringControlsProps> = ({
           fontWeight={isLast30Days ? "semibold" : "normal"}
           borderRadius="full"
         >
-          Last 30 days
+          {METERING.LAST_30_DAYS_LABEL}
         </Button>
       </ButtonGroup>
       <CustomRangePicker
