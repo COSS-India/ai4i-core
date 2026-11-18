@@ -147,7 +147,7 @@ const UsageAndSpendTab: React.FC<UsageAndSpendTabProps> = ({
           fontWeight="medium"
           borderColor="gray.300"
         >
-          <option value="">Filter by tier · All tiers</option>
+          <option value="">{METERING.USAGE_SPEND.TIER_FILTER_ALL}</option>
           {data.tiers.map((t) => (
             <option key={t.id} value={t.id}>
               {t.name}

@@ -16,7 +16,7 @@ interface MeteringSectionCardProps {
   subtitle?: string;
   action?: React.ReactNode;
   children: React.ReactNode;
-  /** Uppercase grey section label (reference design). */
+  /** Small grey section label (reference design). */
   sectionLabel?: boolean;
   /** Render title block only — no card wrapper. */
   bare?: boolean;
@@ -34,13 +34,7 @@ const MeteringSectionCard: React.FC<MeteringSectionCardProps> = ({
     <HStack justify="space-between" align="flex-start" flexWrap="wrap" gap={2} mb={sectionLabel || bare ? 3 : 0}>
       <VStack align="flex-start" spacing={0}>
         {sectionLabel ? (
-          <Text
-            fontSize="xs"
-            fontWeight="semibold"
-            color="gray.500"
-            textTransform="uppercase"
-            letterSpacing="wider"
-          >
+          <Text fontSize="sm" fontWeight="semibold" color="gray.600">
             {title}
           </Text>
         ) : (
@@ -81,7 +75,8 @@ interface KpiCardProps {
   label: string;
   value: React.ReactNode;
   pctChange?: number | null;
-  helper?: string;
+  /** Sub-text under the value; a node when part of it needs its own hover tip. */
+  helper?: React.ReactNode;
   valueColor?: string;
   /** Override default 3xl — use a smaller size for long string values. */
   valueFontSize?: string;
@@ -112,13 +107,7 @@ export const KpiCard: React.FC<KpiCardProps> = ({
       <CardBody py={5} px={5}>
         <VStack align="stretch" spacing={3}>
           <HStack spacing={1.5} align="center">
-            <Text
-              fontSize="xs"
-              fontWeight="semibold"
-              color="gray.500"
-              textTransform="uppercase"
-              letterSpacing="wider"
-            >
+            <Text fontSize="sm" fontWeight="semibold" color="gray.600">
               {label}
             </Text>
             {tooltip ? <InfoTip message={tooltip} /> : null}
