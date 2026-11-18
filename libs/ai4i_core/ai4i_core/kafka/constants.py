@@ -156,6 +156,7 @@ class Producer(str, Enum):
     PAYPERUSE_CONSUMER = "payperuse-consumer"
     MONITORING_EVALUATOR = "monitoring-evaluator"
     NOTIFICATIONS_CONSUMER = "notifications-consumer"
+    PYJOB = "pyjob"
 
 
 class Operation(str, Enum):
