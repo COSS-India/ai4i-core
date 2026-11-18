@@ -41,8 +41,8 @@ export const statusReasonsConfigDataSchema = z.array(
     .passthrough(),
 );
 
-/** `data` of the `model-column` config: Model List columns in display order. */
-export const modelColumnsConfigDataSchema = z.array(
+/** `data` of a list column config (`model-column`, `service-column`): columns in display order. */
+export const columnsConfigDataSchema = z.array(
   z
     .object({
       key: z.string(),
@@ -53,3 +53,6 @@ export const modelColumnsConfigDataSchema = z.array(
     })
     .passthrough(),
 );
+
+/** `data` of the `model-column` config: Model List columns in display order. */
+export const modelColumnsConfigDataSchema = columnsConfigDataSchema;

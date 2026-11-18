@@ -1,9 +1,9 @@
 import { apiService } from "./api";
 import { apiEndpoints } from "./apiEndpoints";
 import {
+  columnsConfigDataSchema,
   configListResponseSchema,
   domainsConfigDataSchema,
-  modelColumnsConfigDataSchema,
   statusReasonsConfigDataSchema,
   type ConfigItem,
 } from "./dto/schemas/configManagement";
@@ -48,7 +48,8 @@ export async function getDomainOptions(): Promise<DomainOption[]> {
   return Array.from(options.values());
 }
 
-export interface ModelColumnConfigEntry {
+/** One entry of a list column config (`model-column`, `service-column`). */
+export interface ColumnConfigEntry {
   key: string;
   label: string;
   required: boolean;
@@ -56,13 +57,17 @@ export interface ModelColumnConfigEntry {
   defaultVisible?: boolean;
 }
 
-/** Model List columns from the `model-column` config, in display order. */
-export async function getModelColumnConfig(): Promise<ModelColumnConfigEntry[]> {
-  const items = await listConfigs("model-column");
-  const config = items.find((item) => item.type === "model-column");
+export type ModelColumnConfigEntry = ColumnConfigEntry;
+
+export type ServiceColumnConfigEntry = ColumnConfigEntry;
+
+/** Entries of a list column config, in display order. Blank and repeated keys are dropped. */
+async function getColumnConfig(type: string): Promise<ColumnConfigEntry[]> {
+  const items = await listConfigs(type);
+  const config = items.find((item) => item.type === type);
   if (!config) return [];
-  const entries = new Map<string, ModelColumnConfigEntry>();
-  for (const { key, label, required, defaultVisible } of modelColumnsConfigDataSchema.parse(
+  const entries = new Map<string, ColumnConfigEntry>();
+  for (const { key, label, required, defaultVisible } of columnsConfigDataSchema.parse(
     config.data,
   )) {
     const id = key.trim();
@@ -75,6 +80,16 @@ export async function getModelColumnConfig(): Promise<ModelColumnConfigEntry[]> 
     });
   }
   return Array.from(entries.values());
+}
+
+/** Model List columns from the `model-column` config, in display order. */
+export function getModelColumnConfig(): Promise<ModelColumnConfigEntry[]> {
+  return getColumnConfig("model-column");
+}
+
+/** Service List columns from the `service-column` config, in display order. */
+export function getServiceColumnConfig(): Promise<ServiceColumnConfigEntry[]> {
+  return getColumnConfig("service-column");
 }
 
 export type StatusReasonConfigType = "suspend-reasons" | "deactivate-reasons";

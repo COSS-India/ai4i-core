@@ -4,8 +4,9 @@ import {
 } from "../../services/servicesManagementService";
 import type { Service } from "../../types/platform";
 import {
+  SERVICE_LIST_COLUMNS,
+  SERVICE_SORTABLE_COLUMN_IDS,
   serviceListFilterParams,
-  type ServiceListColumnDef,
 } from "./serviceListColumns";
 import {
   statusFilterToApiValue,
@@ -28,7 +29,6 @@ export type RegistryFetchContext = {
   serverFilters: Record<string, string>;
   taskFilterColumnId?: string;
   statusFilterColumnId?: string;
-  serviceListCatalogue: readonly ServiceListColumnDef[];
   registryPage: number;
   registryPageSize: number;
   sortMode: "time" | "sorted";
@@ -86,20 +86,16 @@ export async function fetchRegistryServicesPage(
   // the user has not chosen a column — BE default is published first, then newest.
   let sortBy: string | undefined;
   let sortOrder: "asc" | "desc" | undefined;
-  if (context.sortMode === "sorted" && context.sortKey) {
-    const column = context.serviceListCatalogue.find(
-      (entry) => entry.id === context.sortKey,
-    );
-    if (column?.sortable) {
-      sortBy = column.id;
-      sortOrder = context.sortDirection;
-    }
+  if (context.sortMode === "sorted" && SERVICE_SORTABLE_COLUMN_IDS.has(context.sortKey)) {
+    sortBy = context.sortKey;
+    sortOrder = context.sortDirection;
   }
   const params = {
     offset: (context.registryPage - 1) * context.registryPageSize,
     limit: context.registryPageSize,
     query: serviceListFilterParams({
-      columns: context.serviceListCatalogue,
+      // Built-in columns: filters do not depend on the configured columns.
+      columns: SERVICE_LIST_COLUMNS,
       filters: mergeServerFilters(context, options),
       enabledTaskTypes: context.enabledTaskTypesParam,
       sortBy,
