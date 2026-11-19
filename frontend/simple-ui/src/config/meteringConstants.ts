@@ -65,24 +65,12 @@ export const METERING = {
       successful: "Successful Requests",
       failed: "Failed Requests",
       fallback_requests: "Fallback Requests",
-      fallback_successful: "Fallback Successful Requests",
-      fallback_failed: "Fallback Failed Requests",
       avg_rps: "Average Requests per Second",
     },
     HELPERS: {
       total_requests: `Across all ${INSTITUTIONS}`,
       successful: "Of all requests",
       failed: "Of all requests",
-    },
-    /** An em dash replaces "0.00% …" rates when there is nothing to take a rate of. */
-    NO_RATE: {
-      NO_FALLBACKS_TOOLTIP: "No fallback requests in this period",
-    },
-    /** Institution Admin Overview: the summary cards in two titled groups. */
-    GROUPS: {
-      REQUESTS_TITLE: "Requests",
-      FALLBACK_TITLE: "Fallback",
-      FALLBACK_SUBTITLE: "Requests sent to the fallback Service after the primary Service failed",
     },
     TOOLTIPS: {
       total_requests:
