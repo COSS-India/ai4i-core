@@ -42,6 +42,7 @@ def _row(key_id: int, days_before: int, days_left: int, tenant_id: int = 7) -> d
         "expiring_key": f"ab12{key_id:024d}gh78",
         "new_key": None,
         "expires_at": datetime(2026, 11, 27, 10, 30, 15, 123456, tzinfo=timezone.utc),
+        "rotated_at": None,
         "application_name": "Billing App",
         "tenant_id": tenant_id,
         "tenant_name": "Force India",
@@ -93,6 +94,14 @@ def test_state_item():
     assert item.tenant_name == "Force India"
     # [application, masked key, expiry, days left]
     assert item.details == ["Billing App", "ab12******gh78", "27 Nov 2026, 04:00 PM IST", 4]
+
+
+def test_grace_subject_is_keyed_on_the_rotation():
+    _, severity = step.day_levels(DAY_BANDS)
+    row = {**_row(904, 10, 9), "rotated_at": datetime(2026, 11, 17, 10, 30, 15, 999, tzinfo=timezone.utc)}
+    item = step._state_item(row, severity)
+    # No expires_at: extending the grace period must not make a new subject.
+    assert item.subject == {"api_key_id": "904", "rotated_at": "2026-11-17T10:30:15Z", "days_before": "10"}
 
 
 def test_grace_details_add_the_masked_new_key():
