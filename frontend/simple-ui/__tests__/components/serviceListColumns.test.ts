@@ -9,6 +9,7 @@ import {
   saveServiceListColumns,
   formatServiceListPrice,
   serviceListCellKey,
+  serviceListColumnsForRole,
   serviceListColumnsFromConfig,
   serviceListColumnStorageKey,
   serviceListDateFilterInstant,
@@ -20,6 +21,7 @@ import {
   type ServiceListColumnPreferenceStore,
 } from "../../src/components/services-management/serviceListColumns";
 import { mandatoryColumnsHint } from "../../src/components/common/AdminListColumnPicker";
+import { seesAdminServiceListColumns } from "../../src/utils/rbac";
 import type { Service } from "../../src/types/platform";
 
 const memoryStore = (): ServiceListColumnPreferenceStore & { data: Map<string, string[]> } => {
@@ -323,6 +325,84 @@ describe("service list columns", () => {
       expect(mandatoryColumnsHint(serviceListColumnsFromConfig(SERVICE_LIST_COLUMNS, config))).toBe(
         "Service Name, Task Type, Model Name, Tier, and Actions stay visible.",
       );
+    });
+  });
+
+  describe("columns by role", () => {
+    const otherRoleIds = ["name", "task_type", "model_name", "status", "service_id", "actions"];
+
+    it("marks the backend's admin-only columns", () => {
+      expect(
+        SERVICE_LIST_COLUMNS.filter((column) => column.adminOnly).map((column) => column.id),
+      ).toEqual([
+        "tier",
+        "created_at",
+        "input_price",
+        "output_price",
+        "cached_input_price",
+        "published_at",
+      ]);
+    });
+
+    it("gives Admins and Adopter Admins every column", () => {
+      expect(serviceListColumnsForRole(SERVICE_LIST_COLUMNS, true)).toBe(SERVICE_LIST_COLUMNS);
+    });
+
+    it("drops the admin-only columns for other roles", () => {
+      const catalogue = serviceListColumnsForRole(SERVICE_LIST_COLUMNS, false);
+      expect(catalogue.map((column) => column.id)).toEqual(otherRoleIds);
+      // Tier is required but admin-only, so other roles have one required column fewer.
+      expect(defaultServiceListColumnIds(catalogue)).toEqual([
+        "name",
+        "task_type",
+        "model_name",
+        "actions",
+      ]);
+      expect(mandatoryColumnsHint(catalogue)).toBe(
+        "Name, Task Type, Model Name, and Actions stay visible.",
+      );
+    });
+
+    it("drops admin-only ids from a saved selection", () => {
+      const catalogue = serviceListColumnsForRole(SERVICE_LIST_COLUMNS, false);
+      expect(resolveServiceListColumns(["tier", "input_price", "status"], catalogue)).toEqual([
+        "name",
+        "task_type",
+        "model_name",
+        "status",
+        "actions",
+      ]);
+    });
+
+    it("does not let the config bring admin-only columns back", () => {
+      const configured = serviceListColumnsFromConfig(SERVICE_LIST_COLUMNS, [
+        { key: "name", label: "Service Name", required: true },
+        { key: "tier", label: "Tier", required: true },
+        { key: "inputPrice", label: "Input Price", required: false },
+        { key: "status", label: "Status", required: false },
+      ]);
+      expect(serviceListColumnsForRole(configured, false).map((column) => column.id)).toEqual([
+        "name",
+        "status",
+        "actions",
+      ]);
+      expect(serviceListColumnsForRole(configured, true).map((column) => column.id)).toEqual([
+        "name",
+        "tier",
+        "input_price",
+        "status",
+        "actions",
+      ]);
+    });
+
+    it("shows admin-only columns to ADMIN and MODERATOR only", () => {
+      expect(seesAdminServiceListColumns(["ADMIN"])).toBe(true);
+      expect(seesAdminServiceListColumns(["MODERATOR"])).toBe(true);
+      expect(seesAdminServiceListColumns(["moderator"])).toBe(true);
+      expect(seesAdminServiceListColumns(["TENANT_ADMIN"])).toBe(false);
+      expect(seesAdminServiceListColumns(["USER"])).toBe(false);
+      expect(seesAdminServiceListColumns(["USAGE VIEWER"])).toBe(false);
+      expect(seesAdminServiceListColumns(undefined)).toBe(false);
     });
   });
 });
