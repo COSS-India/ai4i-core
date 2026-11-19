@@ -13,6 +13,15 @@ still matches the expected before/after value, leaving every other entry
 label away from "Name", upgrade() is a no-op for that row; likewise
 downgrade() is a no-op if the label is no longer "Model Name".
 
+configs.data is typed Any at the API layer, so a PUT /config/{id} call
+could in principle replace this row's data with something that isn't an
+array of {key, label, ...} objects (an object, a string, []). The WHERE
+clause uses jsonb containment (@>) to require the expected {key: 'name',
+label: ...} element to already be present before touching the row, so
+jsonb_array_elements() in the SET subquery only ever runs on rows that
+are genuinely shaped as expected — no array shape means no match, so the
+row is left alone instead of raising or writing data = NULL.
+
 Revision ID: 602fce4c3c41
 Revises: fb79c598fb1b
 Create Date: 2026-11-19
@@ -42,6 +51,7 @@ _RELABEL_SQL = """
         FROM jsonb_array_elements(c.data) WITH ORDINALITY AS t(e, i)
     )
     WHERE c.type = :t
+      AND c.data @> jsonb_build_array(jsonb_build_object('key', 'name', 'label', CAST(:old_label AS text)))
 """
 
 
