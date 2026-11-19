@@ -363,6 +363,125 @@ def _with_admins(recipients: Sequence[Recipient], admins: Sequence[Recipient]) -
     return sorted(merged.values(), key=lambda r: r.email)
 
 
+async def _valid_state_items(rt, spec, items: Sequence[StateItem]) -> List[Tuple[StateItem, Dict[str, str]]]:
+    """The items whose tenant and subject pass validation, with the
+    normalised subject."""
+    valid: List[Tuple[StateItem, Dict[str, str]]] = []
+    for item in items:
+        _, subject = await _validate(rt, spec.name, item.tenant_id, item.subject, expect_state=True)
+        if subject is not None:
+            valid.append((item, subject))
+    return valid
+
+
+def _state_claims(spec, row, read, valid) -> Tuple[List[StateClaim], Dict[uuid.UUID, StateItem]]:
+    """One claim per item whose tenant has the alert on and someone to send
+    it to; the rest are skipped."""
+    claims: List[StateClaim] = []
+    by_event: Dict[uuid.UUID, StateItem] = {}
+    for item, subject in valid:
+        subs = read.subscriptions.get(str(item.tenant_id))
+        if not (_enabled(row, subs) and _someone_assigned(row, subs)):
+            _decision(spec.name, Decision.SKIP)
+            continue
+        claim = StateClaim(str(item.tenant_id), subject, state_hash(item.new_state), uuid.uuid4())
+        claims.append(claim)
+        by_event[claim.event_id] = item
+    return claims, by_event
+
+
+async def _claim_states(rt, spec, row, claims: List[StateClaim], summary: str) -> List[StateClaim]:
+    """Bulk ledger claim (Q-L5). Returns the claims this call won; a write
+    failure is recorded and wins nothing."""
+    try:
+        async with rt.core_session_factory() as session:
+            won = await claim_state_bulk(session, row.id, claims)
+            await session.commit()
+    except Exception as exc:
+        await rt.failures.record(
+            FailureStage.LEDGER, FailureCode.LEDGER_WRITE_FAILED, notification_name=spec.name,
+            notification_id=row.id, operation=Operation.LEDGER_CLAIM_STATE_BULK, error=exc,
+            message=summary or None,
+        )
+        return []
+    _decision(spec.name, Decision.DUPLICATE, len(claims) - len(won))
+    _decision(spec.name, Decision.FIRE, len(won))
+    return won
+
+
+async def _state_recipients(rt, spec, row, read, won: List[StateClaim]):
+    """Recipients of the fired tenants (Q-R2): (by_tenant, admins), or None
+    when the lookup failed (recorded per won claim)."""
+    fired_tenants = list(dict.fromkeys(claim.tenant_id for claim in won))
+    extras = {
+        tenant: read.subscriptions[tenant].entry(spec.name).recipients
+        for tenant in fired_tenants if tenant in read.subscriptions
+    }
+    try:
+        async with rt.auth_session_factory() as session:
+            return await rt.recipients.for_tenants(session, fired_tenants, row.recipient_roles, extras)
+    except Exception as exc:
+        for claim in won:
+            await rt.failures.record(
+                FailureStage.RECIPIENTS, FailureCode.RECIPIENTS_LOOKUP_FAILED, notification_name=spec.name,
+                notification_id=row.id, tenant_id=claim.tenant_id, subject=claim.subject,
+                event_id=claim.event_id, operation=Operation.RECIPIENTS_LOOKUP, error=exc,
+                state_hash=claim.state_hash,
+            )
+        return None
+
+
+async def _deliver_state_events(
+    rt, row, won: List[StateClaim], by_event: Dict[uuid.UUID, StateItem],
+    by_tenant, admins: Sequence[Recipient], occurred_at,
+) -> List[uuid.UUID]:
+    """One event per won claim, to its tenant's recipients (plus the
+    platform ADMIN users when given)."""
+    sent: List[uuid.UUID] = []
+    for claim in won:
+        item = by_event[claim.event_id]
+        recipients = by_tenant.get(claim.tenant_id, [])
+        if admins:
+            recipients = _with_admins(recipients, admins)
+        event_id = await _deliver(
+            rt, row, tenant_id=claim.tenant_id, subject=claim.subject, event_id=claim.event_id,
+            occurred_at=occurred_at, details=item.details, severity=item.severity,
+            state_hash_value=claim.state_hash, recipients=recipients,
+            tenant_name=item.tenant_name,
+        )
+        if event_id is not None:
+            sent.append(event_id)
+    return sent
+
+
+async def _deliver_consolidated_admin_copy(
+    rt, row, won: List[StateClaim], by_event: Dict[uuid.UUID, StateItem],
+    admins: Sequence[Recipient], occurred_at,
+) -> List[uuid.UUID]:
+    """One consolidated copy for the whole fan-out — not one per tenant
+    and not one per changed subject (e.g. model task type): a tier save
+    that changes several task types still gets the Admin exactly one
+    email, naming every institution and every change."""
+    head = by_event[won[0].event_id]
+    institution_names = list(dict.fromkeys(
+        by_event[claim.event_id].tenant_name or claim.tenant_id for claim in won
+    ))
+    changes = list(dict.fromkeys(
+        line for claim in won for line in by_event[claim.event_id].details[1]
+    ))
+    distinct_subjects = list({tuple(sorted(claim.subject.items())): claim.subject for claim in won}.values())
+    if len(institution_names) == 1:
+        tenant_name, details = institution_names[0], [head.details[0], changes, head.details[2]]
+    else:
+        tenant_name, details = "multiple institutions", [head.details[0], changes, head.details[2], institution_names]
+    event_id = await _deliver(
+        rt, row, tenant_id=PLATFORM_TENANT_ID, subject={}, event_id=uuid.uuid4(),
+        occurred_at=occurred_at, details=details, severity=Severity.INFO,
+        recipients=admins, tenant_name=tenant_name, subjects=distinct_subjects,
+    )
+    return [] if event_id is None else [event_id]
+
+
 async def emit_state_bulk(name, items: Sequence[StateItem], *, summary: str = "") -> List[uuid.UUID]:
     """A STATE fan-out (every tenant x changed task type): one cache read,
     one bulk claim (Q-L5), one recipient query (Q-R2). `summary` (e.g. the
@@ -379,11 +498,7 @@ async def emit_state_bulk(name, items: Sequence[StateItem], *, summary: str = ""
         await _validate(rt, name, None, {}, expect_state=True)
         return []
 
-    valid: List[Tuple[StateItem, Dict[str, str]]] = []
-    for item in items:
-        _, subject = await _validate(rt, spec.name, item.tenant_id, item.subject, expect_state=True)
-        if subject is not None:
-            valid.append((item, subject))
+    valid = await _valid_state_items(rt, spec, items)
     if not valid:
         return []
 
@@ -400,94 +515,26 @@ async def emit_state_bulk(name, items: Sequence[StateItem], *, summary: str = ""
         )
         return []
 
-    claims: List[StateClaim] = []
-    by_event: Dict[uuid.UUID, StateItem] = {}
-    for item, subject in valid:
-        subs = read.subscriptions.get(str(item.tenant_id))
-        if not (_enabled(row, subs) and _someone_assigned(row, subs)):
-            _decision(spec.name, Decision.SKIP)
-            continue
-        claim = StateClaim(str(item.tenant_id), subject, state_hash(item.new_state), uuid.uuid4())
-        claims.append(claim)
-        by_event[claim.event_id] = item
+    claims, by_event = _state_claims(spec, row, read, valid)
     if not claims:
         return []
 
     occurred_at = utc_now()
-    try:
-        async with rt.core_session_factory() as session:
-            won = await claim_state_bulk(session, row.id, claims)
-            await session.commit()
-    except Exception as exc:
-        await rt.failures.record(
-            FailureStage.LEDGER, FailureCode.LEDGER_WRITE_FAILED, notification_name=spec.name,
-            notification_id=row.id, operation=Operation.LEDGER_CLAIM_STATE_BULK, error=exc,
-            message=summary or None,
-        )
-        return []
-    _decision(spec.name, Decision.DUPLICATE, len(claims) - len(won))
-    _decision(spec.name, Decision.FIRE, len(won))
+    won = await _claim_states(rt, spec, row, claims, summary)
     if not won:
         return []
 
-    fired_tenants = list(dict.fromkeys(claim.tenant_id for claim in won))
-    extras = {
-        tenant: read.subscriptions[tenant].entry(spec.name).recipients
-        for tenant in fired_tenants if tenant in read.subscriptions
-    }
-    try:
-        async with rt.auth_session_factory() as session:
-            by_tenant, admins = await rt.recipients.for_tenants(session, fired_tenants, row.recipient_roles, extras)
-    except Exception as exc:
-        for claim in won:
-            await rt.failures.record(
-                FailureStage.RECIPIENTS, FailureCode.RECIPIENTS_LOOKUP_FAILED, notification_name=spec.name,
-                notification_id=row.id, tenant_id=claim.tenant_id, subject=claim.subject,
-                event_id=claim.event_id, operation=Operation.RECIPIENTS_LOOKUP, error=exc,
-                state_hash=claim.state_hash,
-            )
+    found = await _state_recipients(rt, spec, row, read, won)
+    if found is None:
         return []
+    by_tenant, admins = found
 
     consolidated = spec.name in _CONSOLIDATED_ADMIN_COPY
-    sent: List[uuid.UUID] = []
-    for claim in won:
-        item = by_event[claim.event_id]
-        recipients = by_tenant.get(claim.tenant_id, [])
-        if admins and not consolidated:
-            recipients = _with_admins(recipients, admins)
-        event_id = await _deliver(
-            rt, row, tenant_id=claim.tenant_id, subject=claim.subject, event_id=claim.event_id,
-            occurred_at=occurred_at, details=item.details, severity=item.severity,
-            state_hash_value=claim.state_hash, recipients=recipients,
-            tenant_name=item.tenant_name,
-        )
-        if event_id is not None:
-            sent.append(event_id)
-
+    sent = await _deliver_state_events(
+        rt, row, won, by_event, by_tenant, [] if consolidated else admins, occurred_at
+    )
     if admins and consolidated:
-        # One consolidated copy for the whole fan-out — not one per tenant
-        # and not one per changed subject (e.g. model task type): a tier
-        # save that changes several task types still gets the Admin exactly
-        # one email, naming every institution and every change.
-        head = by_event[won[0].event_id]
-        institution_names = list(dict.fromkeys(
-            by_event[claim.event_id].tenant_name or claim.tenant_id for claim in won
-        ))
-        changes = list(dict.fromkeys(
-            line for claim in won for line in by_event[claim.event_id].details[1]
-        ))
-        distinct_subjects = list({tuple(sorted(claim.subject.items())): claim.subject for claim in won}.values())
-        if len(institution_names) == 1:
-            tenant_name, details = institution_names[0], [head.details[0], changes, head.details[2]]
-        else:
-            tenant_name, details = "multiple institutions", [head.details[0], changes, head.details[2], institution_names]
-        event_id = await _deliver(
-            rt, row, tenant_id=PLATFORM_TENANT_ID, subject={}, event_id=uuid.uuid4(),
-            occurred_at=occurred_at, details=details, severity=Severity.INFO,
-            recipients=admins, tenant_name=tenant_name, subjects=distinct_subjects,
-        )
-        if event_id is not None:
-            sent.append(event_id)
+        sent += await _deliver_consolidated_admin_copy(rt, row, won, by_event, admins, occurred_at)
     return sent
 
 
