@@ -598,7 +598,7 @@ class _SpanFilterParams:
     error: Optional[str] = None
     service: Optional[str] = None
     url: Optional[str] = None
-    application: Optional[str] = None
+    application_ids: Optional[list[str]] = None
 
 
 def _build_search_filter_clauses(
@@ -643,8 +643,8 @@ def _build_search_filter_clauses(
         _categorize_filter("model_name", sf.model, filter_clauses, span_groups)
     if sf.url:
         _categorize_filter("url", sf.url, filter_clauses, span_groups)
-    if sf.application:
-        filter_clauses.append(_contains_attribute_match("app_id", sf.application))
+    if sf.application_ids:
+        filter_clauses.append({"terms": {"attributes.app_id.keyword": sf.application_ids}})
     if sf.error:
         filter_clauses.append(_contains_field_match("status.description", sf.error))
     if sf.service:
@@ -813,7 +813,8 @@ class TraceFilterParams:
     error: Optional[str] = None
     service: Optional[str] = None
     url: Optional[str] = None
-    application: Optional[str] = None
+    # Exact app_id values; an empty list matches nothing, None means no filter.
+    application_ids: Optional[list[str]] = None
 
 
 @dataclass
@@ -854,11 +855,14 @@ async def search_traces(
     model = filters.model
     service = filters.service
     url = filters.url
-    application = filters.application
+    application_ids = filters.application_ids
     sort_by = pagination.sort_by
     sort_order = pagination.sort_order
     page = pagination.page
     page_size = pagination.page_size
+
+    if application_ids is not None and not application_ids:
+        return {"data": [], "total": 0, "agg_total": 0, "by_level": {}, "by_task": {}, "is_partial": False}
 
     base_filter_clauses = _build_base_filter_clauses(tenant_filter, start_date, end_date)
 
@@ -874,7 +878,7 @@ async def search_traces(
         base_filter_clauses, task_types, effective_status, user,
         metadata_key, metadata_value, service_id, status_code_list,
         needs_request_anchor, keyword_trace_ids,
-        _SpanFilterParams(method=method, model=model, error=error, service=service, url=url, application=application),
+        _SpanFilterParams(method=method, model=model, error=error, service=service, url=url, application_ids=application_ids),
     )
 
     if len(span_groups) <= 1:
@@ -891,7 +895,7 @@ async def search_traces(
             base_filter_clauses, task_types, effective_status, user,
             metadata_key, metadata_value, service_id, status_code_list,
             needs_request_anchor, gating_trace_ids,
-            _SpanFilterParams(error=error, service=service, application=application),
+            _SpanFilterParams(error=error, service=service, application_ids=application_ids),
         )
 
     filter_query = _bool_filter(filter_clauses)

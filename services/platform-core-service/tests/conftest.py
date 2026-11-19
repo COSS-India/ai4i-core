@@ -191,7 +191,15 @@ _db_stub.get_engine = MagicMock()
 # app/routes/application_usage.py — needed so those route modules can be
 # loaded directly by file path (see test_application_usage_routes.py).
 _db_stub.get_auth_db = MagicMock()
-_db_stub.get_auth_db_optional = MagicMock()
+
+
+async def _auth_db_not_configured():
+    """A real dependency (FastAPI can't introspect a MagicMock's signature):
+    behaves as auth_db not configured."""
+    yield None
+
+
+_db_stub.get_auth_db_optional = _auth_db_not_configured
 
 # Stub app.dependencies.services so route modules (app/routes/model.py,
 # app/routes/service.py, ...) can be loaded directly by file path without
