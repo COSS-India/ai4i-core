@@ -109,8 +109,5 @@ __all__ = [
     "Config",
 ]
 
-# User preferences (no cross-domain FKs)
-from app.models.user_preferences.table_preference import UserTablePreference  # noqa: E402
-
 # Config management (no cross-domain FKs)
 from app.models.config_management.config import Config  # noqa: E402

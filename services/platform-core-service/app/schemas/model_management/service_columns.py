@@ -1,7 +1,5 @@
-"""Service List column catalogue — single source of truth for the column
-picker (GET /services/columns), the list endpoint's sort/filter whitelist and
-``columns`` projection (GET /services) and per-user column preference
-validation.
+"""Service List column catalogue — single source of truth for the list
+endpoint's sort/filter whitelist and ``columns`` projection (GET /services).
 
 Column ids are stable API identifiers; labels are display-only. List order
 is the display order.
@@ -72,7 +70,6 @@ SERVICE_LIST_COLUMNS: List[ServiceListColumn] = [
 COLUMNS_BY_ID = {col.id: col for col in SERVICE_LIST_COLUMNS}
 VALID_COLUMN_KEYS: FrozenSet[str] = frozenset(COLUMNS_BY_ID)
 MANDATORY_KEYS: FrozenSet[str] = frozenset(c.id for c in SERVICE_LIST_COLUMNS if c.mandatory)
-DEFAULT_VISIBLE_KEYS: FrozenSet[str] = frozenset(c.id for c in SERVICE_LIST_COLUMNS if c.default_visible)
 SORTABLE_KEYS: FrozenSet[str] = frozenset(c.id for c in SERVICE_LIST_COLUMNS if c.sortable)
 ADMIN_ONLY_KEYS: FrozenSet[str] = frozenset(c.id for c in SERVICE_LIST_COLUMNS if c.admin_only)
 # Filters of admin-only columns that every caller may still use: tier_ids backs
@@ -98,10 +95,3 @@ def response_fields_for(selected: FrozenSet[str], is_admin: bool) -> FrozenSet[s
     for col_id in selected:
         fields.update(COLUMNS_BY_ID[col_id].fields)
     return frozenset(fields)
-
-
-def columns_for_caller(is_admin: bool) -> List[ServiceListColumn]:
-    """Columns the caller may see, in display order."""
-    if is_admin:
-        return list(SERVICE_LIST_COLUMNS)
-    return [c for c in SERVICE_LIST_COLUMNS if not c.admin_only]
