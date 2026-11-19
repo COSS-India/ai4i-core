@@ -50,9 +50,9 @@ _OLD_MODEL_COLUMN_DATA = [
 
 _NEW_MODEL_COLUMN_DATA = [
     {"key": "name", "label": "Name", "required": True},
-    {"key": "version", "label": "Version", "required": False},
-    {"key": "taskType", "label": "Task Type", "required": False},
-    {"key": "providerName", "label": "Provider Name", "required": False},
+    {"key": "version", "label": "Version", "required": True},
+    {"key": "taskType", "label": "Task Type", "required": True},
+    {"key": "providerName", "label": "Provider Name", "required": True},
     {"key": "status", "label": "Status", "required": False},
     {"key": "createdAt", "label": "Created At", "required": False},
     {"key": "noOfServices", "label": "No. of Services", "required": False},
