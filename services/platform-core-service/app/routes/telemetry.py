@@ -4,6 +4,8 @@ import logging
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.telemetry import (
     SearchTracesResponse,
@@ -24,7 +26,12 @@ from app.services.telemetry_service import (
     TraceFilterParams,
     PaginationParams,
 )
+from app.core.database import get_auth_db_optional
 from app.core.exceptions import InsufficientPermissionsError
+from app.repositories.application_lookup import (
+    application_names_by_id,
+    find_application_ids_by_name,
+)
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -138,7 +145,7 @@ class _TraceSpanFilters:
         error: Annotated[Optional[str], Query(max_length=512, description="Phrase match on error/status description")] = None,
         service: Annotated[Optional[str], Query(max_length=256, description="Phrase match on service name")] = None,
         url: Annotated[Optional[str], Query(max_length=512, description="Contains match on request URL")] = None,
-        application: Annotated[Optional[str], Query(max_length=256, description="Contains match on application ID")] = None,
+        application: Annotated[Optional[str], Query(max_length=256, description="Contains match on application name")] = None,
     ):
         self.user = user
         self.metadata_key = metadata_key
@@ -165,6 +172,41 @@ class _TracePaginationQuery:
         self.sort_order = sort_order
 
 
+_APPLICATION_LOOKUP_UNAVAILABLE = "Application lookup unavailable"
+
+
+async def _resolve_application_filter(
+    auth_db: Optional[AsyncSession], name: Optional[str], tenant_filter: Optional[str]
+) -> Optional[list[str]]:
+    """app_id values matching the application-name filter; None when no filter is set.
+    The filter can't be applied without auth_db, so its absence or failure is a 503."""
+    if not name:
+        return None
+    if auth_db is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_APPLICATION_LOOKUP_UNAVAILABLE)
+    try:
+        return await find_application_ids_by_name(auth_db, name, tenant_filter)
+    except SQLAlchemyError as exc:
+        logger.error(f"Application filter lookup failed: {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_APPLICATION_LOOKUP_UNAVAILABLE
+        ) from exc
+
+
+async def _apply_application_names(auth_db: Optional[AsyncSession], rows: list[dict]) -> None:
+    """Replace each row's application id with its name. Names are display-only,
+    so the id is kept when the name is unknown or auth_db is unavailable."""
+    if auth_db is None:
+        return
+    try:
+        names = await application_names_by_id(auth_db, {row["application"] for row in rows if row.get("application")})
+    except SQLAlchemyError as exc:
+        logger.warning(f"Application name lookup failed, returning application ids: {exc}")
+        return
+    for row in rows:
+        row["application"] = names.get(row.get("application"), row.get("application"))
+
+
 @router.get("/traces/search", response_model=SearchTracesResponse)
 async def search_traces_opensearch(
     request: Request,
@@ -179,6 +221,7 @@ async def search_traces_opensearch(
             f"Valid keys: {','.join(sorted(VALID_COLUMN_KEYS))}"
         ),
     )] = None,
+    auth_db: Annotated[Optional[AsyncSession], Depends(get_auth_db_optional)] = None,
 ):
     """
     Search traces from OpenSearch for the Logs Dashboard.
@@ -213,6 +256,8 @@ async def search_traces_opensearch(
             f"user_filter={span.user is not None}, metadata_filter={span.metadata_key is not None}"
         )
 
+        application_ids = await _resolve_application_filter(auth_db, span.application, tenant_filter)
+
         result = await search_traces(
             opensearch_client,
             selected_columns=selected_columns,
@@ -234,7 +279,7 @@ async def search_traces_opensearch(
                 error=span.error,
                 service=span.service,
                 url=span.url,
-                application=span.application,
+                application_ids=application_ids,
             ),
             pagination=PaginationParams(
                 page=paging.page,
@@ -243,6 +288,9 @@ async def search_traces_opensearch(
                 sort_order=paging.sort_order,
             ),
         )
+
+        if "application" in selected_columns:
+            await _apply_application_names(auth_db, result["data"])
 
         summary = SearchTraceSummary(
             success=result["by_level"].get("success", 0),
