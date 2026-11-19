@@ -41,7 +41,7 @@ certifi==2026.10.23
     #   httpx
 cffi==2.1.1
     # via cryptography
-confluent-kafka==2.15.0
+confluent-kafka==2.16.1
     # via -r requirements.in
 cryptography==50.0.2
     # via -r requirements.in
@@ -79,7 +79,7 @@ iniconfig==2.3.1
     # via pytest
 jinja2==3.1.6
     # via ai4i-core
-kafka-python==2.3.2
+kafka-python==2.3.3
     # via
     #   -r requirements.in
     #   ai4i-core
