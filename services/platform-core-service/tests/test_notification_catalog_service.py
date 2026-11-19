@@ -103,7 +103,10 @@ class _Session:
         params = stmt.compile().params
         result = MagicMock()
         if "type_1" in params:
-            result.scalars.return_value.all.return_value = [row for row in self.rows if row.type == params["type_1"]]
+            hidden = next((v for k, v in params.items() if k.startswith("name") and isinstance(v, (list, tuple))), [])
+            result.scalars.return_value.all.return_value = [
+                row for row in self.rows if row.type == params["type_1"] and row.name not in hidden
+            ]
         elif "name_1" in params:
             found = self.found if self.found is not None and self.found.name == params["name_1"] else None
             result.scalar_one_or_none.return_value = found
@@ -186,6 +189,16 @@ class TestToCatalogItem:
 
 
 class TestListCatalog:
+    @pytest.mark.asyncio
+    async def test_key_expiry_rows_are_hidden(self):
+        rows = [
+            _row(id=1, name="KEY_ROTATED", module="API_KEY", scope="GLOBAL"),
+            _row(id=16, name="GRACE_PERIOD_EXPIRING", module="API_KEY", scope="GLOBAL"),
+            _row(id=17, name="API_KEY_EXPIRING", module="API_KEY", scope="GLOBAL"),
+        ]
+        items = await svc.list_catalog(_Session(rows=rows), NotificationType.NOTIFICATION)
+        assert [i.name for i in items] == ["KEY_ROTATED"]
+
     @pytest.mark.asyncio
     async def test_filters_by_type_in_query_order(self, bands):
         rows = [
@@ -411,3 +424,12 @@ class TestFixedGlobalScope:
             _Session(found=row), row.name, CatalogUpdate(scope="GLOBAL", recipient_roles={"ADMIN": True})
         )
         assert item.scope.value == "GLOBAL" and item.recipient_roles["ADMIN"] is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", ["GRACE_PERIOD_EXPIRING", "API_KEY_EXPIRING"])
+    async def test_key_expiry_rows_cannot_be_patched(self, name):
+        row = _row(name=name, module="API_KEY", scope="GLOBAL")
+        session = _Session(found=row)
+        with pytest.raises(EntityNotFoundError):
+            await svc.update_catalog(session, name, CatalogUpdate(recipient_roles={"ADMIN": True}))
+        assert session.commits == 0

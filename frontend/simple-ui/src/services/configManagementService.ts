@@ -1,9 +1,10 @@
 import { apiService } from "./api";
 import { apiEndpoints } from "./apiEndpoints";
 import {
+  columnsConfigDataSchema,
   configListResponseSchema,
   domainsConfigDataSchema,
-  modelColumnsConfigDataSchema,
+  serviceColumnsConfigDataSchema,
   statusReasonsConfigDataSchema,
   type ConfigItem,
 } from "./dto/schemas/configManagement";
@@ -48,7 +49,8 @@ export async function getDomainOptions(): Promise<DomainOption[]> {
   return Array.from(options.values());
 }
 
-export interface ModelColumnConfigEntry {
+/** One entry of a list column config (`model-column`, `service-column`). */
+export interface ColumnConfigEntry {
   key: string;
   label: string;
   required: boolean;
@@ -56,15 +58,21 @@ export interface ModelColumnConfigEntry {
   defaultVisible?: boolean;
 }
 
-/** Model List columns from the `model-column` config, in display order. */
-export async function getModelColumnConfig(): Promise<ModelColumnConfigEntry[]> {
-  const items = await listConfigs("model-column");
-  const config = items.find((item) => item.type === "model-column");
-  if (!config) return [];
-  const entries = new Map<string, ModelColumnConfigEntry>();
-  for (const { key, label, required, defaultVisible } of modelColumnsConfigDataSchema.parse(
-    config.data,
-  )) {
+export type ModelColumnConfigEntry = ColumnConfigEntry;
+
+export type ServiceColumnConfigEntry = ColumnConfigEntry;
+
+type ColumnConfigRow = {
+  key: string;
+  label?: string;
+  required?: boolean;
+  defaultVisible?: boolean;
+};
+
+/** Column config rows in display order. Blank and repeated keys are dropped. */
+function toColumnConfigEntries(rows: readonly ColumnConfigRow[]): ColumnConfigEntry[] {
+  const entries = new Map<string, ColumnConfigEntry>();
+  for (const { key, label, required, defaultVisible } of rows) {
     const id = key.trim();
     if (!id || entries.has(id)) continue;
     entries.set(id, {
@@ -75,6 +83,42 @@ export async function getModelColumnConfig(): Promise<ModelColumnConfigEntry[]> 
     });
   }
   return Array.from(entries.values());
+}
+
+async function getConfigData(type: string): Promise<unknown> {
+  const items = await listConfigs(type);
+  return items.find((item) => item.type === type)?.data;
+}
+
+/** Model List columns from the `model-column` config, in display order. */
+export async function getModelColumnConfig(): Promise<ModelColumnConfigEntry[]> {
+  const data = await getConfigData("model-column");
+  if (data === undefined) return [];
+  return toColumnConfigEntries(columnsConfigDataSchema.parse(data));
+}
+
+/**
+ * `service-column` config data → column entries in display order. Reads each
+ * column's `id`, `label` and `mandatory` (as `key` / `label` / `required`);
+ * every other field is ignored. Throws when the data is not that shape, so the
+ * Services list falls back to its built-in columns.
+ */
+export function parseServiceColumnConfig(data: unknown): ServiceColumnConfigEntry[] {
+  const [config] = serviceColumnsConfigDataSchema.parse(data);
+  return toColumnConfigEntries(
+    (config?.columns ?? []).map(({ id, label, mandatory }) => ({
+      key: id,
+      label,
+      required: mandatory,
+    })),
+  );
+}
+
+/** Service List columns from the `service-column` config, in display order. */
+export async function getServiceColumnConfig(): Promise<ServiceColumnConfigEntry[]> {
+  const data = await getConfigData("service-column");
+  if (data === undefined) return [];
+  return parseServiceColumnConfig(data);
 }
 
 export type StatusReasonConfigType = "suspend-reasons" | "deactivate-reasons";

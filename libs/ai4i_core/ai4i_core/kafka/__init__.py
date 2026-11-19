@@ -43,6 +43,7 @@ from .keys import (
     budget_subject,
     monitoring_subject,
     quota_limit_subject,
+    utc_seconds,
 )
 from .models import Band, Measurement, Recipient, SettingsRow, SettingsSnapshot, TenantSubscriptions
 from .bands import band_for
@@ -108,6 +109,7 @@ __all__ = [
     "budget_subject",
     "monitoring_subject",
     "quota_limit_subject",
+    "utc_seconds",
     # values
     "Band",
     "Measurement",

@@ -50,6 +50,7 @@ from app.services.notification_management.cache_refresh import (
 )
 from app.services.notification_management.catalog_metadata import (
     FIXED_GLOBAL_SCOPE_NAMES,
+    HIDDEN_CATALOG_NAMES,
     LEGAL_RECIPIENT_ROLES,
     MAX_THRESHOLD_PERCENT,
     MIN_THRESHOLD_PERCENT,
@@ -123,6 +124,7 @@ async def list_catalog(session: AsyncSession, catalog_type: NotificationType) ->
     result = await session.execute(
         select(ConfigNotificationAlert)
         .where(ConfigNotificationAlert.type == catalog_type.value)
+        .where(ConfigNotificationAlert.name.notin_([n.value for n in HIDDEN_CATALOG_NAMES]))
         .order_by(ConfigNotificationAlert.id)
     )
     rows = result.scalars().all()
@@ -195,6 +197,38 @@ def _validate_update_for_row(row: ConfigNotificationAlert, payload: CatalogUpdat
         )
 
 
+def _require_editable_name(name: str) -> None:
+    """404 for a name that isn't an Adopter-editable catalog entry.
+
+    Validated against the enum in Python before it ever reaches the query:
+    comparing a non-member string to a Postgres ENUM column raises a DB error
+    (a 500) rather than the clean 404 an unknown name should be. Hidden rows
+    aren't in the Adopter catalog, so they get the same 404."""
+    try:
+        catalog_name = NotificationName(name)
+    except ValueError:
+        raise EntityNotFoundError(f"Catalog entry '{name}'")
+    if catalog_name in HIDDEN_CATALOG_NAMES:
+        raise EntityNotFoundError(f"Catalog entry '{name}'")
+
+
+async def _unsubscribe_all_tenants(
+    session: AsyncSession, notification_id: int, updated_by: Optional[str]
+) -> List[str]:
+    """GLOBAL -> INSTITUTION: set every tenant's subscription to this row to
+    subscribed = False. Returns the tenant ids that were reset."""
+    reset_values = {"subscribed": False}
+    if updated_by is not None:
+        reset_values["updated_by"] = updated_by
+    reset = await session.execute(
+        update(TenantNotificationSubscription)
+        .where(TenantNotificationSubscription.notification_id == notification_id)
+        .values(**reset_values)
+        .returning(TenantNotificationSubscription.tenant_id)
+    )
+    return [str(tenant_id) for tenant_id in reset.scalars().all()]
+
+
 async def update_catalog(
     session: AsyncSession,
     name: str,
@@ -218,13 +252,7 @@ async def update_catalog(
     every tenant's ``tenant_notification_subscription.subscribed`` to False,
     unconditionally. Recipients are left untouched. A no-op PATCH that
     resends the row's current scope does not trigger this."""
-    # Validate against the enum in Python before it ever reaches the query:
-    # comparing a non-member string to a Postgres ENUM column raises a DB
-    # error (a 500) rather than the clean 404 an unknown name should be.
-    try:
-        NotificationName(name)
-    except ValueError:
-        raise EntityNotFoundError(f"Catalog entry '{name}'")
+    _require_editable_name(name)
 
     result = await session.execute(
         select(ConfigNotificationAlert).where(ConfigNotificationAlert.name == name)
@@ -248,16 +276,7 @@ async def update_catalog(
         and payload.scope.value == NotificationScope.INSTITUTION.value
         and previous_scope != NotificationScope.INSTITUTION.value
     ):
-        reset_values = {"subscribed": False}
-        if updated_by is not None:
-            reset_values["updated_by"] = updated_by
-        reset = await session.execute(
-            update(TenantNotificationSubscription)
-            .where(TenantNotificationSubscription.notification_id == row.id)
-            .values(**reset_values)
-            .returning(TenantNotificationSubscription.tenant_id)
-        )
-        reset_tenant_ids = [str(tenant_id) for tenant_id in reset.scalars().all()]
+        reset_tenant_ids = await _unsubscribe_all_tenants(session, row.id, updated_by)
 
     if payload.recipient_roles is not None:
         merged = {**(row.recipient_roles or {}), **payload.recipient_roles}

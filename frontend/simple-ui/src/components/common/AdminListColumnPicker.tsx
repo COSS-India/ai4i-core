@@ -20,6 +20,15 @@ export type AdminListColumnDef = {
   mandatory: boolean;
 };
 
+/** "Name, Task Type, and Actions stay visible." from the catalogue's mandatory columns. */
+export function mandatoryColumnsHint(columns: readonly AdminListColumnDef[]): string {
+  const labels = columns.filter((column) => column.mandatory).map((column) => column.label);
+  if (labels.length === 0) return "";
+  if (labels.length === 1) return `${labels[0]} stays visible.`;
+  if (labels.length === 2) return `${labels[0]} and ${labels[1]} stay visible.`;
+  return `${labels.slice(0, -1).join(", ")}, and ${labels.at(-1)} stay visible.`;
+}
+
 type AdminListColumnPickerProps<T extends AdminListColumnDef> = Readonly<{
   columns: readonly T[];
   visibleIds: readonly string[];
@@ -131,6 +140,9 @@ function AdminListColumnPicker<T extends AdminListColumnDef>({
                 }}
                 py={1.5}
                 cursor={locked ? "not-allowed" : "pointer"}
+                // Chakra fades disabled items and checkbox labels to 0.4 each;
+                // together the locked labels were barely readable.
+                _disabled={{ opacity: 1, cursor: "not-allowed" }}
               >
                 <Checkbox
                   isChecked={checked}
@@ -138,8 +150,14 @@ function AdminListColumnPicker<T extends AdminListColumnDef>({
                   pointerEvents="none"
                   colorScheme="blue"
                   mr={2}
+                  sx={{ "& .chakra-checkbox__label[data-disabled]": { opacity: 1 } }}
                 >
-                  <Text as="span" fontSize="sm">
+                  <Text
+                    as="span"
+                    fontSize="sm"
+                    color={locked ? "ink.400" : undefined}
+                    opacity={locked ? 0.75 : undefined}
+                  >
                     {column.label}
                     {column.mandatory ? (
                       <Text as="span" color="ink.400" ml={1}>
