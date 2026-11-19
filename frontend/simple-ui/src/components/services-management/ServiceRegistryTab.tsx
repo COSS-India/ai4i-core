@@ -8,10 +8,7 @@ import DataTable, {
 import type { ServiceTierFilterOption } from "../../hooks/useServicesManagement";
 import type { Service } from "../../services/servicesManagementService";
 import type { ServiceListColumnDef } from "./serviceListColumns";
-import {
-  buildClientServiceFilterDefs,
-  buildServerServiceFilterDefs,
-} from "./serviceRegistryFilters";
+import { buildServerServiceFilterDefs } from "./serviceRegistryFilters";
 
 interface ServiceRegistryTabProps {
   items: Service[];
@@ -24,71 +21,25 @@ interface ServiceRegistryTabProps {
   tableKey: string;
   searchQuery: string;
   onSearchChange: (value: string) => void;
-  filterStatus: string;
-  onFilterStatusChange: (value: string) => void;
-  filterTaskType: string;
-  onFilterTaskTypeChange: (value: string) => void;
   taskTypeNames: string[];
   tierFilterOptions: ServiceTierFilterOption[];
   hasActiveFilters: boolean;
   onClearFilters: () => void;
   /** Column picker, rendered at the end of the filter toolbar. */
   columnPicker?: React.ReactNode;
-  /** When set, filters and paging run on GET /services, using these columns' filter metadata. */
-  serverColumns?: readonly ServiceListColumnDef[];
-  serverFilterValues?: Record<string, string>;
-  onServerFilterChange?: (columnId: string, value: string) => void;
-  serverPage?: number;
-  serverPageSize?: number;
-  serverTotal?: number;
-  onServerPageChange?: (page: number) => void;
-  onServerPageSizeChange?: (size: number) => void;
+  /** Filters and paging run on GET /services, using these columns' filter metadata. */
+  serverColumns: readonly ServiceListColumnDef[];
+  serverFilterValues: Record<string, string>;
+  onServerFilterChange: (columnId: string, value: string) => void;
+  serverPage: number;
+  serverPageSize: number;
+  serverTotal: number;
+  onServerPageChange: (page: number) => void;
+  onServerPageSizeChange: (size: number) => void;
 }
 
 function serviceRegistryRowKey(service: Service): string {
   return service.serviceId || service.service_id || "";
-}
-
-function resolveServerFilterDefs(options: {
-  serverMode: boolean;
-  serverColumns?: readonly ServiceListColumnDef[];
-  serverFilterValues?: Record<string, string>;
-  taskTypeNames: string[];
-  tierFilterOptions: ServiceTierFilterOption[];
-  onServerFilterChange?: (columnId: string, value: string) => void;
-}) {
-  if (!options.serverMode || !options.onServerFilterChange) return [];
-  return buildServerServiceFilterDefs({
-    columns: options.serverColumns ?? [],
-    serverFilterValues: options.serverFilterValues,
-    taskTypeNames: options.taskTypeNames,
-    tierFilterOptions: options.tierFilterOptions,
-    onChange: options.onServerFilterChange,
-  });
-}
-
-function resolveServerPagination(options: {
-  serverMode: boolean;
-  serverPage: number;
-  serverPageSize: number;
-  serverTotal: number;
-  onServerPageChange?: (page: number) => void;
-  onServerPageSizeChange?: (size: number) => void;
-}) {
-  if (
-    !options.serverMode ||
-    !options.onServerPageChange ||
-    !options.onServerPageSizeChange
-  ) {
-    return undefined;
-  }
-  return {
-    page: options.serverPage,
-    pageSize: options.serverPageSize,
-    totalItems: options.serverTotal,
-    onPageChange: options.onServerPageChange,
-    onPageSizeChange: options.onServerPageSizeChange,
-  };
 }
 
 const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
@@ -102,10 +53,6 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
   tableKey,
   searchQuery,
   onSearchChange,
-  filterStatus,
-  onFilterStatusChange,
-  filterTaskType,
-  onFilterTaskTypeChange,
   taskTypeNames,
   tierFilterOptions,
   hasActiveFilters,
@@ -114,38 +61,26 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
   serverColumns,
   serverFilterValues,
   onServerFilterChange,
-  serverPage = 1,
-  serverPageSize = 25,
-  serverTotal = 0,
+  serverPage,
+  serverPageSize,
+  serverTotal,
   onServerPageChange,
   onServerPageSizeChange,
 }) => {
-  const serverMode = Boolean(
-    serverColumns && onServerFilterChange && onServerPageChange,
-  );
-  const serverFilterDefs = resolveServerFilterDefs({
-    serverMode,
-    serverColumns,
+  const filterDefs = buildServerServiceFilterDefs({
+    columns: serverColumns,
     serverFilterValues,
     taskTypeNames,
     tierFilterOptions,
-    onServerFilterChange,
+    onChange: onServerFilterChange,
   });
-  const clientFilterDefs = buildClientServiceFilterDefs({
-    filterStatus,
-    onFilterStatusChange,
-    filterTaskType,
-    onFilterTaskTypeChange,
-    taskTypeNames,
-  });
-  const serverPagination = resolveServerPagination({
-    serverMode,
-    serverPage,
-    serverPageSize,
-    serverTotal,
-    onServerPageChange,
-    onServerPageSizeChange,
-  });
+  const serverPagination = {
+    page: serverPage,
+    pageSize: serverPageSize,
+    totalItems: serverTotal,
+    onPageChange: onServerPageChange,
+    onPageSizeChange: onServerPageSizeChange,
+  };
 
   return (
     <DataTable
@@ -159,7 +94,7 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
       getRowKey={serviceRegistryRowKey}
       onRowClick={onRowClick}
       showRowChevron
-      paginate={serverMode ? "server" : "client"}
+      paginate="server"
       paginationPosition="bottom"
       pageSizeOptions={DEFAULT_PAGE_SIZE_OPTIONS}
       serverPagination={serverPagination}
@@ -179,7 +114,7 @@ const ServiceRegistryTab: React.FC<Readonly<ServiceRegistryTabProps>> = ({
         debounceMs: 400,
         width: { base: "full", sm: "220px" },
       }}
-      filterDefs={serverMode ? serverFilterDefs : clientFilterDefs}
+      filterDefs={filterDefs}
       autoColumnSort
     />
   );

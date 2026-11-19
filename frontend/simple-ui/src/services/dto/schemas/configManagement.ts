@@ -53,6 +53,3 @@ export const columnsConfigDataSchema = z.array(
     })
     .passthrough(),
 );
-
-/** `data` of the `model-column` config: Model List columns in display order. */
-export const modelColumnsConfigDataSchema = columnsConfigDataSchema;

@@ -12,7 +12,6 @@
 
 import type { ServiceColumnConfigEntry } from "../../services/configManagementService";
 import type { Service } from "../../types/platform";
-import { resolveTaskType } from "../../utils/platformService";
 import {
   canToggleOffColumn,
   resolveColumnSelection,
@@ -48,6 +47,11 @@ export type ServiceListColumnDef = {
    * default selection (first visit and Reset to default).
    */
   mandatory: boolean;
+  /**
+   * Shown only to Admins and Adopter Admins (backend `admin_only`); other
+   * roles never get the column or its data.
+   */
+  adminOnly?: boolean;
   filterable?: boolean;
   filter?: ServiceListColumnFilter | null;
 };
@@ -98,13 +102,18 @@ function serviceColumn(
   return filter ? { id, label, mandatory, filterable: true, filter } : { id, label, mandatory };
 }
 
+function adminOnly(column: ServiceListColumnDef): ServiceListColumnDef {
+  return { ...column, adminOnly: true };
+}
+
 /**
  * Every Service List column, in the built-in display order (used when the
  * `service-column` config is missing). Mirrors platform-core's
  * `SERVICE_LIST_COLUMNS` (app/schemas/model_management/service_columns.py):
- * ids and filter query params must match it. Only Admins and
- * Adopter Admins open Services Management, and they get every column.
- * Actions stay last, matching the rest of the admin tables.
+ * ids, filter query params and admin-only columns must match it. Admins and
+ * Adopter Admins get every column; other roles do not get the admin-only ones
+ * (see serviceListColumnsForRole). Actions stay last, matching the rest of
+ * the admin tables.
  */
 export const SERVICE_LIST_COLUMNS: readonly ServiceListColumnDef[] = [
   serviceColumn("name", "Name", true, serviceFilter("text", ["name"])),
@@ -112,7 +121,7 @@ export const SERVICE_LIST_COLUMNS: readonly ServiceListColumnDef[] = [
   serviceColumn("task_type", "Task Type", true, serviceFilter("multi_select", ["task_types"])),
   serviceColumn("model_name", "Model Name", true, serviceFilter("text", ["model_name"])),
   // Tier options come from the active tiers (tierFilterOptions).
-  serviceColumn("tier", "Tier", true, serviceFilter("multi_select", ["tier_ids"])),
+  adminOnly(serviceColumn("tier", "Tier", true, serviceFilter("multi_select", ["tier_ids"]))),
   serviceColumn(
     "status",
     "Status",
@@ -122,21 +131,25 @@ export const SERVICE_LIST_COLUMNS: readonly ServiceListColumnDef[] = [
       { value: "false", label: "Unpublished" },
     ]),
   ),
-  serviceColumn(
-    "created_at",
-    "Created At",
-    false,
-    serviceFilter("date_range", ["created_from", "created_to"]),
+  adminOnly(
+    serviceColumn(
+      "created_at",
+      "Created At",
+      false,
+      serviceFilter("date_range", ["created_from", "created_to"]),
+    ),
   ),
   serviceColumn("service_id", "Service ID", false, serviceFilter("text", ["service_id"])),
-  serviceColumn("input_price", "Input Price", false),
-  serviceColumn("output_price", "Output Price", false),
-  serviceColumn("cached_input_price", "Cached Input Price", false),
-  serviceColumn(
-    "published_at",
-    "Published On",
-    false,
-    serviceFilter("date_range", ["published_from", "published_to"]),
+  adminOnly(serviceColumn("input_price", "Input Price", false)),
+  adminOnly(serviceColumn("output_price", "Output Price", false)),
+  adminOnly(serviceColumn("cached_input_price", "Cached Input Price", false)),
+  adminOnly(
+    serviceColumn(
+      "published_at",
+      "Published On",
+      false,
+      serviceFilter("date_range", ["published_from", "published_to"]),
+    ),
   ),
   serviceColumn("actions", "Actions", true),
 ];
@@ -161,8 +174,6 @@ export const SERVICE_SORTABLE_COLUMN_IDS: ReadonlySet<string> = new Set([
 
 export const SERVICE_LIST_COLUMN_STORAGE_PREFIX = "service-list-columns";
 
-/** Missing dates and prices sort after real values when the column is ascending. */
-const MISSING_SORT_VALUE = Number.POSITIVE_INFINITY;
 
 /** The default selection: the mandatory columns only. Optional columns start hidden. */
 export function defaultServiceListColumnIds(
@@ -223,6 +234,20 @@ export function serviceListColumnsFromConfig(
   const actions = byCell.get("actions");
   if (actions && !used.has("actions")) configured.push({ ...actions, mandatory: true });
   return configured;
+}
+
+/**
+ * The columns this caller may see. Admins and Adopter Admins get the whole
+ * catalogue; other roles lose the admin-only columns, which the backend would
+ * strip from the rows and reject in `columns=` / `sort_by` anyway. Apply this
+ * after the config, so the config cannot bring those columns back.
+ */
+export function serviceListColumnsForRole(
+  catalogue: readonly ServiceListColumnDef[],
+  seesAdminColumns: boolean,
+): readonly ServiceListColumnDef[] {
+  if (seesAdminColumns) return catalogue;
+  return catalogue.filter((column) => !column.adminOnly);
 }
 
 export type ServiceListColumnPreferenceStore = {
@@ -461,38 +486,4 @@ export function formatServiceListPrice(value: number | null | undefined): string
   } catch {
     return `₹${value}`;
   }
-}
-
-function priceSortValue(value: number | null | undefined): number {
-  return value == null || !Number.isFinite(value) ? MISSING_SORT_VALUE : value;
-}
-
-function dateSortValue(ms: number): number {
-  return ms > 0 ? ms : MISSING_SORT_VALUE;
-}
-
-/** Accessors for the registry sort hook. Keys match the active catalogue ids. */
-export function serviceListSortAccessors(
-  columns: readonly ServiceListColumnDef[] = SERVICE_LIST_COLUMNS,
-): Record<string, (service: Service) => string | number> {
-  const byCell: Record<string, (service: Service) => string | number> = {
-    name: (service) => service.name ?? "",
-    task: (service) => resolveTaskType(service).toLowerCase(),
-    tier: (service) => (service.tierNames ?? service.tiers ?? []).join(", ").toLowerCase(),
-    status: (service) => (service.isPublished === true ? 1 : 0),
-    createdAt: (service) => dateSortValue(serviceCreatedAtMillis(service)),
-    modelName: (service) => serviceModelName(service).toLowerCase(),
-    serviceId: (service) => serviceListServiceId(service).toLowerCase(),
-    inputPrice: (service) => priceSortValue(service.costPerUnit),
-    outputPrice: (service) => priceSortValue(service.outputCostPerUnit),
-    cachedInputPrice: (service) => priceSortValue(service.cachedInputCostPerUnit),
-    publishedOn: (service) => dateSortValue(servicePublishedOnMillis(service)),
-  };
-  const accessors: Record<string, (service: Service) => string | number> = {};
-  for (const column of columns) {
-    if (!SERVICE_SORTABLE_COLUMN_IDS.has(column.id)) continue;
-    const accessor = byCell[serviceListCellKey(column.id)];
-    if (accessor) accessors[column.id] = accessor;
-  }
-  return accessors;
 }

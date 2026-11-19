@@ -87,35 +87,6 @@ function resolveDrawerFlags(options: {
   };
 }
 
-function serverRegistryProps(options: {
-  usesServer: boolean;
-  /** Columns the toolbar filters are built from. */
-  filterColumns: readonly ServiceListColumnDef[];
-  setServerFilterValue: (columnId: string, value: string) => void;
-  setRegistryPage: (page: number) => void;
-  setRegistryPageSize: (size: number) => void;
-}): {
-  serverColumns: readonly ServiceListColumnDef[] | undefined;
-  onServerFilterChange: ((columnId: string, value: string) => void) | undefined;
-  onServerPageChange: ((page: number) => void) | undefined;
-  onServerPageSizeChange: ((size: number) => void) | undefined;
-} {
-  if (!options.usesServer) {
-    return {
-      serverColumns: undefined,
-      onServerFilterChange: undefined,
-      onServerPageChange: undefined,
-      onServerPageSizeChange: undefined,
-    };
-  }
-  return {
-    serverColumns: options.filterColumns,
-    onServerFilterChange: options.setServerFilterValue,
-    onServerPageChange: options.setRegistryPage,
-    onServerPageSizeChange: options.setRegistryPageSize,
-  };
-}
-
 function createLeaveHref(
   createReturnTo: string | null,
 ): { href: string } | undefined {
@@ -353,10 +324,6 @@ const ServicesManagement: React.FC = () => {
     tableKey,
     searchQuery,
     setSearchQuery,
-    filterStatus,
-    setFilterStatus,
-    filterTaskType,
-    setFilterTaskType,
     taskTypeNames,
     tierFilterOptions,
     hasActiveFilters,
@@ -367,7 +334,6 @@ const ServicesManagement: React.FC = () => {
     resetVisibleColumns,
     handleRegistrySortChange,
     serviceListCatalogue,
-    serviceListUsesServer,
     registryPage,
     registryPageSize,
     setRegistryPage,
@@ -649,14 +615,6 @@ const ServicesManagement: React.FC = () => {
     isCreateServiceTabDisabled,
   });
   const pageDescription = pageDescriptionForRole(isRegistryReadOnly);
-  const serverProps = serverRegistryProps({
-    usesServer: serviceListUsesServer,
-    // Built-in columns, so the filters stay whichever columns the config lists.
-    filterColumns: SERVICE_LIST_COLUMNS,
-    setServerFilterValue,
-    setRegistryPage,
-    setRegistryPageSize,
-  });
   const actionsDisabled = formActionsDisabled(canCreateService, isSubmitting);
   const createAction = whenTrue(
     showCreateAction,
@@ -696,22 +654,19 @@ const ServicesManagement: React.FC = () => {
         tableKey={tableKey}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
-        filterStatus={filterStatus}
-        onFilterStatusChange={setFilterStatus}
-        filterTaskType={filterTaskType}
-        onFilterTaskTypeChange={setFilterTaskType}
         taskTypeNames={taskTypeNames}
         tierFilterOptions={tierFilterOptions}
         hasActiveFilters={hasActiveFilters}
         onClearFilters={clearAllFilters}
-        serverColumns={serverProps.serverColumns}
+        // Built-in columns, so the filters stay whichever columns the config lists.
+        serverColumns={SERVICE_LIST_COLUMNS}
         serverFilterValues={serverFilters}
-        onServerFilterChange={serverProps.onServerFilterChange}
+        onServerFilterChange={setServerFilterValue}
         serverPage={registryPage}
         serverPageSize={registryPageSize}
         serverTotal={totalServicesCount}
-        onServerPageChange={serverProps.onServerPageChange}
-        onServerPageSizeChange={serverProps.onServerPageSizeChange}
+        onServerPageChange={setRegistryPage}
+        onServerPageSizeChange={setRegistryPageSize}
         columnPicker={
           <ServiceListColumnPicker
             columns={serviceListCatalogue}

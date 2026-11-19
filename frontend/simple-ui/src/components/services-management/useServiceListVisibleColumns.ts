@@ -20,14 +20,12 @@ type RegistrySort = {
 export function useServiceListVisibleColumns(options: {
   userId: string;
   serviceListCatalogue: readonly ServiceListColumnDef[];
-  serviceListUsesServer: boolean;
   registrySort: RegistrySort;
   setRegistryPage: (page: number) => void;
 }) {
   const {
     userId,
     serviceListCatalogue,
-    serviceListUsesServer,
     registrySort,
     setRegistryPage,
   } = options;
@@ -35,7 +33,11 @@ export function useServiceListVisibleColumns(options: {
   const [visibleColumnIds, setVisibleColumnIds] = useState<string[]>(() =>
     defaultServiceListColumnIds(serviceListCatalogue),
   );
-  const catalogueKey = serviceListCatalogue.map((column) => column.id).join("|");
+  // Ids and mandatory flags: a config edit that only changes `required` must
+  // also reload the selection before the list is fetched.
+  const catalogueKey = serviceListCatalogue
+    .map((column) => `${column.id}:${column.mandatory}`)
+    .join("|");
   // Catalogue the current selection was loaded for. The list fetch waits for
   // this so it never requests columns for a selection that is about to change.
   const [loadedCatalogueKey, setLoadedCatalogueKey] = useState<string | null>(null);
@@ -57,10 +59,11 @@ export function useServiceListVisibleColumns(options: {
 
   const handleRegistrySortChange = useCallback(
     (next: { key: string; direction: "asc" | "desc" }) => {
-      if (serviceListUsesServer) setRegistryPage(1);
+      // Sorting runs on the server, so a new sort starts again from page 1.
+      setRegistryPage(1);
       registrySort.onSortChange(next);
     },
-    [registrySort, serviceListUsesServer, setRegistryPage],
+    [registrySort, setRegistryPage],
   );
 
   const resetSortIfColumnHidden = useCallback(
