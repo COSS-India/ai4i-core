@@ -140,11 +140,11 @@ CASES = [
     ),
     (
         "GRACE_PERIOD_EXPIRING",
-        ["Chatbot", "prod-key (ID 42)", "22 Nov 2026, 03:00 PM IST", 5],
+        ["Chatbot", "ab12******gh78", "22 Nov 2026, 03:00 PM IST", 5, "cd34******ij90"],
         f"Action required: Old API key for Chatbot will be revoked in 5 days — {TENANT}",
         ["The old API key for Chatbot will expire in 5 days, on 22 Nov 2026, 03:00 PM IST.",
          "API Key Rotation Details", "Application: Chatbot",
-         "Old API Key Identifier: prod-key (ID 42)", "New API Key Identifier: prod-key (ID 42)",
+         "Old API Key Identifier: ab12******gh78", "New API Key Identifier: cd34******ij90",
          "Days Remaining: 5", "Expiry Date: 22 Nov 2026, 03:00 PM IST", "Action Required",
          "Please ensure that the application is updated to use the new API key before the old key expires.",
          "this email does not include the API key values."],
@@ -484,7 +484,7 @@ def test_key_rotated_zero_day_grace_says_the_old_key_is_already_revoked():
 
 
 @pytest.mark.parametrize("event_name,details,headline", [
-    ("GRACE_PERIOD_EXPIRING", ["Chatbot", "prod-key (ID 42)", "18 Nov 2026, 10:00 AM IST", 0],
+    ("GRACE_PERIOD_EXPIRING", ["Chatbot", "ab12******gh78", "18 Nov 2026, 10:00 AM IST", 0, "cd34******ij90"],
      "The old API key for Chatbot will expire today, on 18 Nov 2026, 10:00 AM IST."),
     ("API_KEY_EXPIRING", ["Chatbot", "prod-key (ID 42)", "18 Nov 2026, 10:00 AM IST", 0],
      "The API key prod-key (ID 42) for Chatbot expires today, on 18 Nov 2026, 10:00 AM IST."),
