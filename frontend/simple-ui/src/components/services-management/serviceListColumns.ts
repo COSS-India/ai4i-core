@@ -3,8 +3,9 @@
  *
  * `SERVICE_LIST_COLUMNS` holds every column with the filter metadata
  * `GET /services` needs; its ids are the API column ids. The `service-column`
- * config (AI4IDS-3732), as for the Model List, sets which columns appear,
- * their order, labels and which are mandatory (`required`). Sortable columns
+ * config (AI4IDS-3732) sets which columns appear, their order, labels and
+ * which are mandatory (each `columns` entry's `id`, `label`, `mandatory`; see
+ * parseServiceColumnConfig). Sortable columns
  * are fixed in SERVICE_SORTABLE_COLUMN_IDS, as for the Model List.
  * Each user's column selection is kept in browser storage only, as for the
  * Model List.
@@ -206,13 +207,13 @@ export function toggleServiceListColumn(
 }
 
 /**
- * Apply the `service-column` config to the catalogue. Entries are matched to
- * catalogue columns by cell, so the config's keys may be camelCase
- * (`modelTaskType`) or API ids (`task_type`); the catalogue's ids are kept, as
- * `GET /services?columns=` and the saved selection need them. The config sets
- * which columns appear, their order, labels and which are mandatory
- * (`required`); any `defaultVisible` flag is ignored. Sorting and filters
- * stay with the catalogue. Entries the catalogue lacks are ignored, and
+ * Apply the `service-column` config entries (from parseServiceColumnConfig:
+ * the column `id` as `key`, `mandatory` as `required`) to the catalogue.
+ * Entries are matched to catalogue columns by cell, so keys may be API ids
+ * (`task_type`) or camelCase (`modelTaskType`); the catalogue's ids are kept,
+ * as `GET /services?columns=` and the saved selection need them. The config
+ * sets which columns appear, their order, labels and which are mandatory.
+ * Sorting, filters and default visibility stay with the catalogue. Entries the catalogue lacks are ignored, and
  * Actions is appended, as mandatory, if left out. Without a usable config the
  * catalogue is used as it is.
  */

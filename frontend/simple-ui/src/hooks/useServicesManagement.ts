@@ -66,10 +66,10 @@ import { refreshUntil } from "../utils/postMutationRefresh";
 import { useInferenceTypes } from "./useInferenceTypes";
 import { SERVICE_TIER } from "../config/constants";
 
-/** Query keys of per-task service lists that must refresh after registry mutations. */
 /** Rows arrive sorted from GET /services; the sort hook only tracks the header state. */
 const NO_CLIENT_SORT_ACCESSORS: Record<string, (row: Service) => string | number> = {};
 
+/** Query keys of per-task service lists that must refresh after registry mutations. */
 const SERVICE_QUERY_KEYS = [
   "asr-services",
   "tts-services",
@@ -638,7 +638,6 @@ export function useServicesManagement() {
   const [activeTab, setActiveTab] = useState(0);
   const [registryEpoch, setRegistryEpoch] = useState(0);
   const [searchQuery, setSearchQuery] = useState("");
-  const [filterStatus, setFilterStatus] = useState<string>("");
   const [filterTaskType, setFilterTaskType] = useState<string>("");
   const [filterTier, setFilterTier] = useState<string>(
     SERVICE_TIER.FILTER.ALL,
@@ -791,7 +790,6 @@ export function useServicesManagement() {
   );
   const clearAllFilters = () => {
     setSearchQuery("");
-    setFilterStatus("");
     setFilterTaskType(taskTypeNames.length === 1 ? taskTypeNames[0] : "");
     handleFilterTierChange(SERVICE_TIER.FILTER.ALL);
     setServerFilters({});
@@ -977,10 +975,8 @@ export function useServicesManagement() {
       const serverStatus = statusFilterColumnId
         ? serverFilters[statusFilterColumnId]
         : "";
-      const publishedOnly =
-        filterStatus === "published" || serverStatus === "true";
-      const unpublishedOnly =
-        filterStatus === "unpublished" || serverStatus === "false";
+      const publishedOnly = serverStatus === "true";
+      const unpublishedOnly = serverStatus === "false";
       setServices((prev) =>
         filterServicesForPublishStatus(prev, {
           serviceId,
@@ -1000,7 +996,7 @@ export function useServicesManagement() {
         );
       });
     },
-    [filterStatus, serverFilters, statusFilterColumnId],
+    [serverFilters, statusFilterColumnId],
   );
 
   useEffect(() => {
@@ -1279,9 +1275,10 @@ export function useServicesManagement() {
   const alignFiltersAfterMutation = (options: {
     submittedTaskType: string;
     wasCreate: boolean;
-  }): { listTaskType: string; listStatus: string } => {
+  }): { listTaskType: string; listStatus: string | undefined } => {
     let listTaskType = filterTaskType;
-    let listStatus = filterStatus;
+    // undefined → the refresh keeps the Status filter in serverFilters.
+    let listStatus: string | undefined;
     const serverTask = taskFilterColumnId
       ? serverFilters[taskFilterColumnId]
       : "";
@@ -1305,12 +1302,9 @@ export function useServicesManagement() {
       }
       setRegistryPage(1);
     }
-    if (
-      wasCreate &&
-      (filterStatus === "published" || serverStatus === "true")
-    ) {
+    if (wasCreate && serverStatus === "true") {
+      // A new service starts unpublished, so a Published-only list would hide it.
       listStatus = "";
-      setFilterStatus("");
       if (statusFilterColumnId) {
         setServerFilters((prev) => ({
           ...prev,
@@ -1867,8 +1861,6 @@ export function useServicesManagement() {
     setServerFilterValue,
     searchQuery,
     setSearchQuery: applyServiceSearch,
-    filterStatus,
-    setFilterStatus,
     filterTaskType,
     setFilterTaskType,
     filterTier,

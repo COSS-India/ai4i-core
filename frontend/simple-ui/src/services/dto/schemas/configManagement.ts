@@ -41,7 +41,7 @@ export const statusReasonsConfigDataSchema = z.array(
     .passthrough(),
 );
 
-/** `data` of a list column config (`model-column`, `service-column`): columns in display order. */
+/** `data` of the `model-column` config: Model List columns in display order. */
 export const columnsConfigDataSchema = z.array(
   z
     .object({
@@ -50,6 +50,28 @@ export const columnsConfigDataSchema = z.array(
       required: z.boolean().optional(),
       /** Shown on first visit and after "Reset to default"; omitted → built-in default. */
       defaultVisible: z.boolean().optional(),
+    })
+    .passthrough(),
+);
+
+/**
+ * `data` of the `service-column` config: one item whose `columns` lists the
+ * Service List columns in display order. The Services list reads only `id`,
+ * `label` and `mandatory`; sorting, filters, filter options and default
+ * visibility are fixed in the frontend, so those fields are ignored.
+ */
+export const serviceColumnsConfigDataSchema = z.array(
+  z
+    .object({
+      columns: z.array(
+        z
+          .object({
+            id: z.string(),
+            label: z.string().optional(),
+            mandatory: z.boolean().optional(),
+          })
+          .passthrough(),
+      ),
     })
     .passthrough(),
 );
