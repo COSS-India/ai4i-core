@@ -39,6 +39,8 @@ def _row(key_id: int, days_before: int, days_left: int, tenant_id: int = 7) -> d
     return {
         "api_key_id": key_id,
         "key_name": f"key-{key_id}",
+        "expiring_key": f"ab12{key_id:024d}gh78",
+        "new_key": None,
         "expires_at": datetime(2026, 11, 27, 10, 30, 15, 123456, tzinfo=timezone.utc),
         "application_name": "Billing App",
         "tenant_id": tenant_id,
@@ -89,8 +91,26 @@ def test_state_item():
     assert item.new_state == {"days_before": 5}
     assert item.severity is Severity.WARNING
     assert item.tenant_name == "Force India"
-    # [application, key label, expiry, days left]
-    assert item.details == ["Billing App", "key-901 (ID 901)", "27 Nov 2026, 04:00 PM IST", 4]
+    # [application, masked key, expiry, days left]
+    assert item.details == ["Billing App", "ab12******gh78", "27 Nov 2026, 04:00 PM IST", 4]
+
+
+def test_grace_details_add_the_masked_new_key():
+    _, severity = step.day_levels(DAY_BANDS)
+    row = {**_row(903, 10, 9), "new_key": "cd34" + "0" * 24 + "ij90"}
+    item = step._state_item(row, severity)
+    # [application, masked old key, expiry, days left, masked new key]
+    assert item.details == ["Billing App", "ab12******gh78", "27 Nov 2026, 04:00 PM IST", 9, "cd34******ij90"]
+    assert all(row["expiring_key"] not in str(d) and row["new_key"] not in str(d) for d in item.details)
+
+
+@pytest.mark.parametrize("value,masked", [
+    ("ab12cd34ef56gh78", "ab12******gh78"),
+    ("short", "********"),
+    (None, None),
+])
+def test_mask_api_key(value, masked):
+    assert step.mask_api_key(value) == masked
 
 
 def test_last_day_is_critical():

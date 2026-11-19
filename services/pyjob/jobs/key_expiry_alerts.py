@@ -17,6 +17,9 @@ t < span_days, all in calendar days of NOTIFICATION_TIMEZONE:
 * t < span_days: a level that had already passed when the key was rotated
   (grace) or created (normal key) is never sent.
 
+The emails identify a key by its masked value (first 4 and last 4
+characters); the full value never leaves the step.
+
 Eligibility is api_key.is_active only. applications and tenants are joined
 for lookups: tenant_id (api_key has none), the application name and the
 institution name in the email subject.
@@ -51,6 +54,7 @@ ALERT_NAMES = (NotificationName.GRACE_PERIOD_EXPIRING, NotificationName.API_KEY_
 
 # One run at a time; the ledger stops duplicates even without it.
 _LOCK_KEY = "api-key-expiry-alerts"
+_MASK_CHAR = "*"
 _TRY_LOCK_SQL = text("SELECT pg_try_advisory_lock(hashtext(:key))")
 _UNLOCK_SQL = text("SELECT pg_advisory_unlock(hashtext(:key))")
 
@@ -60,6 +64,8 @@ _GRACE_PERIOD_KEY_SQL = text(
     """
     SELECT k.id                      AS api_key_id,
            k.key_name,
+           k.rotated_key             AS expiring_key,   -- masked before it leaves the step
+           k.api_key                 AS new_key,
            k.rotated_key_expires_at  AS expires_at,
            a.name                    AS application_name,
            a.tenant_id,
@@ -99,6 +105,8 @@ _EXPIRING_API_KEY_SQL = text(
     """
     SELECT k.id                      AS api_key_id,
            k.key_name,
+           k.api_key                 AS expiring_key,   -- masked before it leaves the step
+           NULL::text                AS new_key,
            k.expires_at              AS expires_at,
            a.name                    AS application_name,
            a.tenant_id,
@@ -168,16 +176,29 @@ def email_datetime(value: datetime) -> str:
     return value.astimezone(zone).strftime("%d %b %Y, %I:%M %p %Z")
 
 
+def mask_api_key(value: Optional[str]) -> Optional[str]:
+    """Masked key identifier for the emails: first 4 and last 4 characters,
+    as auth-service's mask_api_key (``ab12cd34ef56gh78`` -> ``ab12******gh78``).
+    A value too short to mask that way is hidden entirely."""
+    if not value or len(value) <= 8:
+        return "********" if value else value
+    return f"{value[:4]}{_MASK_CHAR * 6}{value[-4:]}"
+
+
 def _details(row) -> list:
-    """Positional email details, the same for both alerts (see the .j2
-    templates): [application_name, key label, expiry, days_left]. Carries the
-    key's name and id only, never any part of its value."""
-    return [
+    """Positional email details (see the .j2 templates):
+    [application_name, masked expiring key, expiry, days_left], plus the
+    masked new key for GRACE_PERIOD_EXPIRING. The full key value never
+    leaves the step."""
+    details = [
         row["application_name"],
-        f"{row['key_name']} (ID {row['api_key_id']})",
+        mask_api_key(row["expiring_key"]),
         email_datetime(row["expires_at"]),
         int(row["days_left"]),
     ]
+    if row.get("new_key"):
+        details.append(mask_api_key(row["new_key"]))
+    return details
 
 
 def _state_item(row, severity: Dict[int, Severity]) -> StateItem:
