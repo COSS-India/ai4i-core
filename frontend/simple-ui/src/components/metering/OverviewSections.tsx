@@ -148,6 +148,9 @@ export const ConsumptionOverviewSection: React.FC<ConsumptionOverviewSectionProp
     [visibleTenants, tenantOrganisationById],
   );
 
+  // The API omits the block on purpose when an admin narrows to one Institution: hide the card.
+  if (!conc) return null;
+
   // No requests in the window: show the same empty state as Request Volume & Health.
   const isEmpty = visibleTenants.length === 0;
 
