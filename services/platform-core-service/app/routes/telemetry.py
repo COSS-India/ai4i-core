@@ -4,7 +4,6 @@ import logging
 from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.telemetry import (
@@ -173,6 +172,9 @@ class _TracePaginationQuery:
 
 
 _APPLICATION_LOOKUP_UNAVAILABLE = "Application lookup unavailable"
+# Lookups below catch Exception: query errors arrive as SQLAlchemyError, but
+# connect-time failures surface unwrapped from the driver (ConnectionRefusedError,
+# socket.gaierror, asyncpg.InvalidPasswordError, ...).
 
 
 async def _resolve_application_filter(
@@ -186,8 +188,8 @@ async def _resolve_application_filter(
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_APPLICATION_LOOKUP_UNAVAILABLE)
     try:
         return await find_application_ids_by_name(auth_db, name, tenant_filter)
-    except SQLAlchemyError as exc:
-        logger.error(f"Application filter lookup failed: {exc}")
+    except Exception as exc:
+        logger.error("Application filter lookup failed", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_APPLICATION_LOOKUP_UNAVAILABLE
         ) from exc
@@ -200,8 +202,8 @@ async def _apply_application_names(auth_db: Optional[AsyncSession], rows: list[d
         return
     try:
         names = await application_names_by_id(auth_db, {row["application"] for row in rows if row.get("application")})
-    except SQLAlchemyError as exc:
-        logger.warning(f"Application name lookup failed, returning application ids: {exc}")
+    except Exception:
+        logger.warning("Application name lookup failed, returning application ids", exc_info=True)
         return
     for row in rows:
         row["application"] = names.get(row.get("application"), row.get("application"))
