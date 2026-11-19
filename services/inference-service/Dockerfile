@@ -10,7 +10,9 @@ RUN apt-get update && apt-get install -y \
 COPY services/inference-service/requirements.txt .
 
 RUN pip install --upgrade pip setuptools wheel
-RUN pip install --no-cache-dir --user -r requirements.txt
+# --ignore-installed: install every pin into ~/.local, which is all the runtime
+# stage copies, even when the builder's system site-packages already has it.
+RUN pip install --no-cache-dir --user --ignore-installed -r requirements.txt
 
 # Stage 2: Runtime
 FROM python:3.11-slim
