@@ -399,7 +399,7 @@ describe("service list columns", () => {
         "actions",
       ]);
       expect(mandatoryColumnsHint(catalogue)).toBe(
-        "Name, Task Type, Model Name, and Actions stay visible.",
+        "Service Name, Task Type, Model Name, and Actions stay visible.",
       );
     });
 

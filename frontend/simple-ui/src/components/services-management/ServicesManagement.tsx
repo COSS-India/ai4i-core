@@ -452,7 +452,7 @@ const ServicesManagement: React.FC = () => {
     const columns: DataTableColumn<Service>[] = [
       {
         id: "name",
-        header: "Name",
+        header: "Service Name",
         sortable: true,
         minWidth: "9rem",
         sortAccessor: (service) => service.name ?? "",
