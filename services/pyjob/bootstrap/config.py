@@ -13,7 +13,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Optional
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -55,6 +55,10 @@ class PyJobSettings(BaseSettings):
     # ── daily_usage rollup ──
     # Closed days re-rolled before yesterday, to pick up late events.
     USAGE_ROLLUP_LOOKBACK_DAYS: int = Field(2, ge=0)
+    # Closed days of usage_events kept before today; older days are dropped
+    # once rolled up. More than USAGE_ROLLUP_LOOKBACK_DAYS, so every day the
+    # rollup re-reads still has its rows.
+    USAGE_EVENTS_RETENTION_DAYS: int = Field(3, ge=1)
 
     # ── Redis ──
     REDIS_HOST: str = "localhost"
@@ -84,6 +88,15 @@ class PyJobSettings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         extra = "ignore"
+
+    @model_validator(mode="after")
+    def _retention_covers_rollup(self) -> "PyJobSettings":
+        if self.USAGE_EVENTS_RETENTION_DAYS <= self.USAGE_ROLLUP_LOOKBACK_DAYS:
+            raise ValueError(
+                f"USAGE_EVENTS_RETENTION_DAYS ({self.USAGE_EVENTS_RETENTION_DAYS}) must be greater than "
+                f"USAGE_ROLLUP_LOOKBACK_DAYS ({self.USAGE_ROLLUP_LOOKBACK_DAYS})"
+            )
+        return self
 
     def _db_url(
         self,

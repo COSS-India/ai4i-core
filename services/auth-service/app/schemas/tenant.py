@@ -261,6 +261,10 @@ class TenantResponse(BaseSchema):
     # filled in by GET /auth/tenants/{tenant_id} only. Null when no tier is
     # assigned or it can't be read (tier_name says which).
     tier_limits: Optional[TierLimits] = None
+    # The current contact's user id (the active Institution Admin whose email
+    # matches ``email``). Filled in by GET /auth/tenants/{tenant_id} only;
+    # null everywhere else or when no such admin exists.
+    contact_user_id: Optional[UUID] = None
     allocated_budget: Optional[Decimal] = None
     budget_effective_from: Optional[datetime] = None
     budget_effective_to: Optional[datetime] = None

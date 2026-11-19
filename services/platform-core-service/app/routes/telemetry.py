@@ -130,9 +130,9 @@ class _TraceSpanFilters:
         # Annotated (not `= Query(None)`) so a direct call that omits these gets
         # None, not a truthy FieldInfo.
         self,
-        user: Annotated[Optional[str], Query(max_length=256, description="Exact end-user ID the caller sent as OpenAI `user`")] = None,
+        user: Annotated[Optional[str], Query(max_length=256, description="Contains match on the end-user ID the caller sent as OpenAI `user`")] = None,
         metadata_key: Annotated[Optional[str], Query(min_length=1, max_length=64, pattern=r"^[^=]+$", description="Caller metadata key (no '='); requires metadata_value")] = None,
-        metadata_value: Annotated[Optional[str], Query(max_length=512, description="Exact value for metadata_key")] = None,
+        metadata_value: Annotated[Optional[str], Query(max_length=512, description="Contains match on the value for metadata_key")] = None,
         method: Annotated[Optional[str], Query(max_length=16, description="Contains match on HTTP method (e.g. GET, POST)")] = None,
         model: Annotated[Optional[str], Query(max_length=256, description="Contains match on model name")] = None,
         error: Annotated[Optional[str], Query(max_length=512, description="Phrase match on error/status description")] = None,
@@ -310,7 +310,7 @@ async def get_trace_by_id(
         trace_response = TraceResponse(
             trace_id=trace_id,
             service=service,
-            tenant_id=tenant_scope or "system",
+            tenant_id=tenant_scope,
             environment=settings.environment,
             hostname="unknown",
             spans=spans,

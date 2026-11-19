@@ -240,7 +240,9 @@ function makeTierActionsColumn(
     actionCount: 3,
     getActions: (tier) => {
       const statusAction = getTierStatusAction(tier.status);
-      const canDelete = tier.status === "DEACTIVATED";
+      // A never-activated (INACTIVE) tier can be deleted directly; only an
+      // ACTIVE tier must be deactivated first.
+      const canDelete = effectiveTierStatus(tier) !== "ACTIVE";
       const busy = deletingId !== null || updatingStatusId !== null;
       return [
         {

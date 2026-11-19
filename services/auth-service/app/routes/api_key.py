@@ -358,7 +358,12 @@ async def rotate_api_key(
     if not db_key:
         raise EntityNotFoundError("API key")
 
-    new_value, db_key = await svc.rotate_by_obj(db_key, current_user.id, grace_days=body.grace_days)
+    new_value, db_key = await svc.rotate_by_obj(
+        db_key,
+        current_user.id,
+        actor_name=current_user.full_name or current_user.username,
+        grace_days=body.grace_days,
+    )
     return RotateAPIKeyResponse(
         data=RotateAPIKeyData(
             id=db_key.id,

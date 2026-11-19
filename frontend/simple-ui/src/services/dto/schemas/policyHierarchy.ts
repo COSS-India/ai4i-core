@@ -163,6 +163,15 @@ export const policyItemResponseSchema = z.object({
   meta: policyWriteMetaSchema,
 });
 
+/** GET /pii/entities (inference service): entity types the model detects for a language. */
+export const piiSupportedEntitiesSchema = z
+  .object({
+    language: z.string(),
+    model: z.string(),
+    entities: z.array(z.string()),
+  })
+  .passthrough();
+
 /** POST /pii/simulate (inference service). */
 export const policySimulationResponseSchema = z.object({
   originalText: z.string(),

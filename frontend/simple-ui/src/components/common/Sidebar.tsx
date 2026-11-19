@@ -12,22 +12,9 @@ import {
 } from "@chakra-ui/react";
 import { useRouter } from "next/router";
 import React, { useCallback, useMemo, useState } from "react";
-import { IconType } from "react-icons";
 import { MdPushPin } from "react-icons/md";
-import {
-  IoCompassOutline,
-  IoKeyOutline,
-  IoServerOutline,
-  IoDocumentTextOutline,
-  IoPeopleOutline,
-  IoPricetagOutline,
-  IoAppsOutline,
-  IoPulseOutline,
-  IoNotificationsOutline,
-  IoShieldOutline,
-  IoStatsChartOutline,
-} from "react-icons/io5";
-import { INSTITUTION, TABS } from "../../config/constants";
+import { TABS } from "../../config/constants";
+import { getNavSections, type NavItem } from "../../config/sidebarNav";
 import { useAuth } from "../../hooks/useAuth";
 import { useSessionExpiry } from "../../hooks/useSessionExpiry";
 import {
@@ -36,188 +23,7 @@ import {
 } from "../../hooks/useSidebarPin";
 import { getTenantIdFromToken } from "../../utils/helpers";
 import { getHomePath, getUsageDashboardOverviewPath } from "../../utils/navigation";
-import {
-  canAccessInstitutionManagement,
-  canAccessNotificationsAlerts,
-  canAccessServicesManagement,
-  canAccessUsageDashboard,
-  isPlatformAdminUser,
-  isTenantAdminUser,
-  isUsageDashboardOnlyUser,
-  userHasRole,
-  userMayManageApiKeys,
-} from "../../utils/rbac";
 import AdopterLogo from "./AdopterLogo";
-
-type NavSectionId = "try" | "monitor" | "manage" | "orchestration";
-
-interface NavItem {
-  id: string;
-  label: string;
-  shortLabel: string;
-  path: string;
-  icon: IconType;
-  requiresAuth?: boolean;
-  section: NavSectionId;
-}
-
-const NAV_SECTIONS: { id: NavSectionId; label: string }[] = [
-  { id: "try", label: "Try" },
-  { id: "monitor", label: "Track" },
-  { id: "manage", label: "Manage" },
-  { id: "orchestration", label: "Govern" },
-];
-
-// Unsigned-in users only see Explore. Remaining top-nav items are role-gated.
-const topNavItems: NavItem[] = [
-  {
-    id: TABS.home,
-    label: "Explore",
-    shortLabel: "Explore",
-    path: "/",
-    icon: IoCompassOutline,
-    requiresAuth: false,
-    section: "try",
-  },
-  {
-    id: TABS.usageDashboard,
-    label: "Usage Dashboard",
-    shortLabel: "Usage",
-    path: `/${TABS.usageDashboard}`,
-    icon: IoStatsChartOutline,
-    requiresAuth: true,
-    section: "monitor",
-  },
-  {
-    id: TABS.logs,
-    label: "Logs Dashboard",
-    shortLabel: "Logs",
-    path: `/${TABS.logs}`,
-    icon: IoDocumentTextOutline,
-    requiresAuth: true,
-    section: "monitor",
-  },
-  {
-    id: TABS.traces,
-    label: "Traces Dashboard",
-    shortLabel: "Traces",
-    path: `/${TABS.traces}`,
-    icon: IoPulseOutline,
-    requiresAuth: true,
-    section: "monitor",
-  },
-  {
-    id: TABS.modelManagement,
-    label: "Model Management",
-    shortLabel: "Models",
-    path: `/${TABS.modelManagement}`,
-    icon: IoServerOutline,
-    requiresAuth: true,
-    section: "manage",
-  },
-  {
-    id: TABS.servicesManagement,
-    label: "Services Management",
-    shortLabel: "Services",
-    path: `/${TABS.servicesManagement}`,
-    icon: IoAppsOutline,
-    requiresAuth: true,
-    section: "manage",
-  },
-  {
-    id: TABS.tenantManagement,
-    label: `${INSTITUTION} Management`,
-    shortLabel: INSTITUTION,
-    path: `/${TABS.tenantManagement}`,
-    icon: IoPeopleOutline,
-    requiresAuth: true,
-    section: "manage",
-  },
-  {
-    id: TABS.apiKeyManagement,
-    label: "API Key Management",
-    shortLabel: "API Keys",
-    path: `/${TABS.apiKeyManagement}`,
-    icon: IoKeyOutline,
-    requiresAuth: true,
-    section: "manage",
-  },
-  {
-    id: TABS.notificationsAlerts,
-    label: "Alerts & Notifications",
-    shortLabel: "Notifications",
-    path: `/${TABS.notificationsAlerts}`,
-    icon: IoNotificationsOutline,
-    requiresAuth: true,
-    section: "manage",
-  },
-  {
-    id: TABS.tierManagement,
-    label: "Tier Management",
-    shortLabel: "Tiers",
-    path: `/${TABS.tierManagement}`,
-    icon: IoPricetagOutline,
-    requiresAuth: true,
-    section: "orchestration",
-  },
-  {
-    id: TABS.policyManagement,
-    label: "Policy Management",
-    shortLabel: "Policies",
-    path: `/${TABS.policyManagement}`,
-    icon: IoShieldOutline,
-    requiresAuth: true,
-    section: "orchestration",
-  },
-];
-
-interface TopNavFilterContext {
-  isAuthenticated: boolean;
-  isGuest: boolean;
-  isUser: boolean;
-  isAdmin: boolean;
-  isTenantAdmin: boolean;
-  showTenantManagement: boolean;
-  tenantId: string | null;
-  userRoles?: string[];
-}
-
-function isTopNavItemVisible(itemId: string, ctx: TopNavFilterContext): boolean {
-  if (!ctx.isAuthenticated) {
-    return itemId === TABS.home;
-  }
-
-  if (isUsageDashboardOnlyUser(ctx.userRoles)) {
-    return itemId === TABS.usageDashboard;
-  }
-
-  switch (itemId) {
-    case TABS.home:
-      return true;
-    case TABS.traces:
-      return false;
-    case TABS.policyManagement:
-      return ctx.isAdmin || ctx.isTenantAdmin;
-    case TABS.modelManagement:
-      return !ctx.isGuest && !ctx.isUser;
-    case TABS.servicesManagement:
-      return !ctx.isGuest && !ctx.isUser && canAccessServicesManagement(ctx.userRoles);
-    case TABS.tenantManagement:
-      return ctx.showTenantManagement;
-    case TABS.apiKeyManagement:
-      return userMayManageApiKeys(ctx.userRoles);
-    case TABS.logs:
-      return !ctx.isUser && !ctx.isGuest && Boolean(ctx.tenantId || ctx.isAdmin);
-    case TABS.usageDashboard:
-      return canAccessUsageDashboard(ctx.userRoles);
-    case TABS.notificationsAlerts:
-      return canAccessNotificationsAlerts(ctx.userRoles);
-    case TABS.tierManagement:
-      return ctx.isAdmin;
-    default:
-      return true;
-  }
-}
 
 interface SidebarProps {
   pinned: boolean;
@@ -232,39 +38,11 @@ const Sidebar: React.FC<SidebarProps> = ({ pinned, onTogglePin }) => {
 
   const isExpanded = pinned || isHovered;
 
-  const isGuest = userHasRole(user?.roles, "GUEST");
-  const isUser = userHasRole(user?.roles, "USER");
-  const isAdmin = isPlatformAdminUser(user?.roles);
-  const isTenantAdmin = isTenantAdminUser(user?.roles);
-  const showTenantManagement = canAccessInstitutionManagement(user?.roles);
   const tenantId = getTenantIdFromToken();
 
-  const topNavFilterContext = useMemo<TopNavFilterContext>(
-    () => ({
-      isAuthenticated,
-      isGuest,
-      isUser,
-      isAdmin,
-      isTenantAdmin,
-      showTenantManagement,
-      tenantId,
-      userRoles: user?.roles,
-    }),
-    [
-      isAuthenticated,
-      isGuest,
-      isUser,
-      isAdmin,
-      isTenantAdmin,
-      showTenantManagement,
-      tenantId,
-      user?.roles,
-    ],
-  );
-
-  const topItems = useMemo(
-    () => topNavItems.filter((item) => isTopNavItemVisible(item.id, topNavFilterContext)),
-    [topNavFilterContext],
+  const navSections = useMemo(
+    () => getNavSections({ isAuthenticated, tenantId, roles: user?.roles }),
+    [isAuthenticated, tenantId, user?.roles],
   );
 
   const goHome = useCallback(() => {
@@ -420,9 +198,10 @@ const Sidebar: React.FC<SidebarProps> = ({ pinned, onTogglePin }) => {
           minH={0}
           align="stretch"
         >
-          {NAV_SECTIONS.map((section, sectionIndex) => {
-            const items = topItems.filter((item) => item.section === section.id);
-            if (items.length === 0) return null;
+          {navSections.map((section, sectionIndex) => {
+            // A section without a label is a standalone item (e.g. Playground):
+            // no header, set apart from the groups above by a divider.
+            const standalone = !section.label;
             return (
               <VStack
                 key={section.id}
@@ -430,8 +209,11 @@ const Sidebar: React.FC<SidebarProps> = ({ pinned, onTogglePin }) => {
                 w="full"
                 align="stretch"
                 pt={sectionIndex === 0 ? 0 : 2}
+                borderTop={standalone && sectionIndex > 0 ? "1px" : undefined}
+                borderColor={borderColor}
+                mt={standalone && sectionIndex > 0 ? 1 : 0}
               >
-                {isExpanded ? (
+                {isExpanded && !standalone ? (
                   <Text
                     px={2.5}
                     pt={1}
@@ -445,7 +227,7 @@ const Sidebar: React.FC<SidebarProps> = ({ pinned, onTogglePin }) => {
                     {section.label}
                   </Text>
                 ) : null}
-                {items.map((item) => (
+                {section.items.map((item) => (
                   <React.Fragment key={item.id}>{renderNavButton(item)}</React.Fragment>
                 ))}
               </VStack>

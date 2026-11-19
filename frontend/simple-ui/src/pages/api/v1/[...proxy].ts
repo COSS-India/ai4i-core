@@ -45,8 +45,8 @@ const INFERENCE_TASKS = new Set([
   "chat",
 ]);
 
-// /api/v1/pii is platform-core's (domains, redact, admin) except these
-// Presidio routes, which the inference service serves.
+// The inference service serves these Presidio routes under /api/v1/pii.
+// (Platform-core's legacy /pii domains, redact and admin routes were removed.)
 const INFERENCE_PII_PATH = /^\/api\/v1\/pii\/(simulate|analyze|anonymize|entities)(\/|$|\?)/;
 
 // Mirrors nginx public-auth-routes regex — no token required for these.

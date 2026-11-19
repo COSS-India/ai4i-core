@@ -80,7 +80,7 @@ const UsageDashboardPage: React.FC = () => {
       </Head>
 
       <ContentLayout>
-        <Box maxW="7xl" mx="auto" py={4} px={2}>
+        <Box pb={4} px={{ base: 2, md: 8 }}>
           <ManagementPageHeader
             title="Usage Dashboard"
             description={`Monitor consumption and spend across ${INSTITUTION.toLowerCase()}s and applications.`}

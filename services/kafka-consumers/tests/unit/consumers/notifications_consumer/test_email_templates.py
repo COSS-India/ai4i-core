@@ -128,6 +128,16 @@ CASES = [
         "LATENCY_P99", ["3", WHEN, "3.5"], "P99 Latency — Threshold 3s",
         ["P99 Latency has reached the configured threshold of", "3s", WHEN, "Current Value: 3.5s"],
     ),
+    (
+        "KEY_ROTATED",
+        ["Chatbot", "prod-key (ID 42)", "Asha Rao", "12 Nov 2026, 03:00 PM IST", "19 Nov 2026, 03:00 PM IST", False],
+        f"API Key Rotated for Chatbot — {TENANT}",
+        [f"An API key for {TENANT} has been rotated.", "Application: Chatbot",
+         "API Key: prod-key (ID 42)", "Initiated by: Asha Rao", "Rotated on: 12 Nov 2026, 03:00 PM IST",
+         "Old key will be revoked on: 19 Nov 2026, 03:00 PM IST",
+         "Move all applications to the new key before 19 Nov 2026, 03:00 PM IST.",
+         "If this rotation was not expected, confirm it with Asha Rao."],
+    ),
 ]
 
 
@@ -439,3 +449,14 @@ class TestResolveSmtpFromName:
         monkeypatch.setattr(get_settings(), "PLATFORM_NAME", "Custom Brand")
         assert get_settings().resolve_smtp_from_name("") == "Custom Brand"
         assert get_settings().resolve_smtp_from_name("   ") == "Custom Brand"
+
+
+def test_key_rotated_zero_day_grace_says_the_old_key_is_already_revoked():
+    when = "12 Nov 2026, 03:00 PM IST"
+    message = _render("KEY_ROTATED", ["Chatbot", "prod-key (ID 42)", "Asha Rao", when, when, True])
+    for body in (message.text_body, re.sub(r"</?strong>", "", message.html_body)):
+        assert f"An API key for {TENANT} has been rotated. The old key was revoked immediately." in body
+        assert f"Old key revoked on: {when}" in body
+        assert "Requests using the old key now fail." in body
+        assert "If this rotation was not expected, confirm it with Asha Rao." in body
+        assert "grace period" not in body and "Action required" not in body

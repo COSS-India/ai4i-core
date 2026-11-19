@@ -5,7 +5,6 @@ export * from './featureFlags';
 export * from './platform';
 export * from './inference';
 export * from './pipeline';
-export * from './pii';
 export * from './observability';
 export * from './alerting';
 export * from './notificationAlerts';

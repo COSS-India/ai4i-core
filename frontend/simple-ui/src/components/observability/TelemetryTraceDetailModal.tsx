@@ -140,8 +140,8 @@ const TelemetryTraceDetailModal: React.FC<TelemetryTraceDetailModalProps> = ({
       isOpen={isOpen}
       onClose={onClose}
       title="Trace details"
-      size="4xl"
-      bodyProps={{ maxH: "75vh", overflowY: "auto" }}
+      size="6xl"
+      bodyProps={{ maxH: "80vh", overflowY: "auto" }}
     >
       {error ? (
         <Alert status="error" borderRadius="md">
@@ -213,8 +213,6 @@ const TelemetryTraceDetailModal: React.FC<TelemetryTraceDetailModalProps> = ({
                     p={3}
                     borderRadius="md"
                     bg="gray.50"
-                    maxH="200px"
-                    overflowY="auto"
                   >
                     {formatAttributes(span.attributes ?? {})}
                   </Code>

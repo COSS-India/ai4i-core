@@ -22,9 +22,9 @@ import importlib
 import pytest
 
 # ── Module-level stubs ────────────────────────────────────────────────────────
-# The sqlalchemy stub inserted by test_pii_management.py lacks ``text``.
-# receiver_service.py does ``from sqlalchemy import text`` at module level, so
-# we add it before loading that module.
+# If an earlier-collected test left a bare sqlalchemy stub in sys.modules
+# (one lacking ``text``), patch it in: receiver_service.py does
+# ``from sqlalchemy import text`` at module level.
 
 
 def _stub(name: str, **attrs) -> types.ModuleType:

@@ -3,7 +3,7 @@ import { INSTITUTION } from "../config/constants";
 /** Catalog type discriminator — matches platform-core `NotificationType`. */
 export type NotificationAlertType = "NOTIFICATION" | "ALERT";
 
-export type NotificationAlertModule = "TIER" | "BUDGET" | "QUOTA";
+export type NotificationAlertModule = "TIER" | "BUDGET" | "QUOTA" | "API_KEY";
 
 export type NotificationChannel = "EMAIL" | "SMS" | "SLACK" | "WHATSAPP" | string;
 
