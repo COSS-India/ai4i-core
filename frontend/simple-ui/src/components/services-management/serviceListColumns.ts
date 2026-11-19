@@ -117,7 +117,7 @@ function adminOnly(column: ServiceListColumnDef): ServiceListColumnDef {
  * the admin tables.
  */
 export const SERVICE_LIST_COLUMNS: readonly ServiceListColumnDef[] = [
-  serviceColumn("name", "Name", true, serviceFilter("text", ["name"])),
+  serviceColumn("name", "Service Name", true, serviceFilter("text", ["name"])),
   // Task type options come from the enabled task types (useInferenceTypes).
   serviceColumn("task_type", "Task Type", true, serviceFilter("multi_select", ["task_types"])),
   serviceColumn("model_name", "Model Name", true, serviceFilter("text", ["model_name"])),
