@@ -2,23 +2,22 @@
 
 The model-column config row seeded in a3c5e7f9b1d4 labels the 'name' field
 as just "Name". This renames that label to "Model Name" to match what the
-model list UI column actually represents. No other fields in the row are
-changed.
+model list UI column actually represents.
 
-Only the data column is updated; id, is_default, created_by/at and
-updated_by/at are left untouched.
-
-This row is editable via PUT /config/{id}. upgrade() and downgrade()
-overwrite configs.data unconditionally, so any manual edit made between
-this migration running and a later downgrade (or re-run) is replaced by
-the hardcoded value below, not preserved or restored.
+This row has been editable via PUT /config/{id} since release-2.11, so
+admins may have already changed labels, reordered entries, or tweaked
+other fields on deployed environments. upgrade()/downgrade() therefore
+only rewrite the single array element whose key is 'name' and whose label
+still matches the expected before/after value, leaving every other entry
+(and its position) untouched. If an admin has already changed the 'name'
+label away from "Name", upgrade() is a no-op for that row; likewise
+downgrade() is a no-op if the label is no longer "Model Name".
 
 Revision ID: 602fce4c3c41
 Revises: fb79c598fb1b
 Create Date: 2026-11-19
 
 """
-import json
 from typing import Sequence, Union
 
 import sqlalchemy as sa
@@ -31,40 +30,32 @@ depends_on: Union[str, Sequence[str], None] = None
 
 _MODEL_COLUMN_TYPE = "model-column"
 
-_OLD_MODEL_COLUMN_DATA = [
-    {"key": "name", "label": "Name", "required": True},
-    {"key": "version", "label": "Version", "required": True},
-    {"key": "taskType", "label": "Task Type", "required": True},
-    {"key": "providerName", "label": "Provider Name", "required": True},
-    {"key": "status", "label": "Status", "required": False},
-    {"key": "createdAt", "label": "Created At", "required": False},
-    {"key": "noOfServices", "label": "No. of Services", "required": False},
-    {"key": "actions", "label": "Actions", "required": True},
-]
-
-_NEW_MODEL_COLUMN_DATA = [
-    {"key": "name", "label": "Model Name", "required": True},
-    {"key": "version", "label": "Version", "required": True},
-    {"key": "taskType", "label": "Task Type", "required": True},
-    {"key": "providerName", "label": "Provider Name", "required": True},
-    {"key": "status", "label": "Status", "required": False},
-    {"key": "createdAt", "label": "Created At", "required": False},
-    {"key": "noOfServices", "label": "No. of Services", "required": False},
-    {"key": "actions", "label": "Actions", "required": True},
-]
+_RELABEL_SQL = """
+    UPDATE configs c
+    SET data = (
+        SELECT jsonb_agg(
+            CASE WHEN e->>'key' = 'name' AND e->>'label' = :old_label
+                 THEN jsonb_set(e, '{label}', to_jsonb(CAST(:new_label AS text)))
+                 ELSE e END
+            ORDER BY i
+        )
+        FROM jsonb_array_elements(c.data) WITH ORDINALITY AS t(e, i)
+    )
+    WHERE c.type = :t
+"""
 
 
 def upgrade() -> None:
     conn = op.get_bind()
     conn.execute(
-        sa.text("UPDATE configs SET data = CAST(:d AS jsonb) WHERE type = :t"),
-        {"t": _MODEL_COLUMN_TYPE, "d": json.dumps(_NEW_MODEL_COLUMN_DATA)},
+        sa.text(_RELABEL_SQL),
+        {"t": _MODEL_COLUMN_TYPE, "old_label": "Name", "new_label": "Model Name"},
     )
 
 
 def downgrade() -> None:
     conn = op.get_bind()
     conn.execute(
-        sa.text("UPDATE configs SET data = CAST(:d AS jsonb) WHERE type = :t"),
-        {"t": _MODEL_COLUMN_TYPE, "d": json.dumps(_OLD_MODEL_COLUMN_DATA)},
+        sa.text(_RELABEL_SQL),
+        {"t": _MODEL_COLUMN_TYPE, "old_label": "Model Name", "new_label": "Name"},
     )
