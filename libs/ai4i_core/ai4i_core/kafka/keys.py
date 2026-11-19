@@ -36,13 +36,14 @@ def _check_value(key: SubjectKey, value: Any) -> str:
         raise InvalidSubject(f"budget_ceiling must have {c.AMOUNT_DECIMALS} decimals, got {value!r}")
     if key in (SubjectKey.API_KEY_ID, SubjectKey.DAYS_BEFORE) and not _DIGITS_RE.match(value):
         raise InvalidSubject(f"{key.value} must be a positive whole number, got {value!r}")
-    if key is SubjectKey.EXPIRES_AT and not _UTC_SECONDS_RE.match(value):
-        raise InvalidSubject(f"expires_at must be YYYY-MM-DDTHH:MM:SSZ, got {value!r}")
+    if key in (SubjectKey.EXPIRES_AT, SubjectKey.ROTATED_AT) and not _UTC_SECONDS_RE.match(value):
+        raise InvalidSubject(f"{key.value} must be YYYY-MM-DDTHH:MM:SSZ, got {value!r}")
     return value
 
 
 def utc_seconds(value: datetime) -> str:
-    """An aware datetime as the expires_at subject value: UTC, whole seconds, 'Z'."""
+    """An aware datetime as an expires_at / rotated_at subject value: UTC,
+    whole seconds, 'Z'."""
     return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 

@@ -201,6 +201,7 @@ class SubjectKey(str, Enum):
     SERVICE_ID = "service_id"
     API_KEY_ID = "api_key_id"
     EXPIRES_AT = "expires_at"
+    ROTATED_AT = "rotated_at"
     DAYS_BEFORE = "days_before"
 
 

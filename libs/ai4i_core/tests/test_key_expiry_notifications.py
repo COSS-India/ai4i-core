@@ -1,5 +1,6 @@
 """GRACE_PERIOD_EXPIRING / API_KEY_EXPIRING in the shared pipeline: their
-subject (api_key_id, expires_at, days_before), each item's own severity in
+subjects (api_key_id + rotated_at for the grace alert, expires_at for a
+key's own expiry, + days_before), each item's own severity in
 emit_state_bulk, and the platform ADMIN as a recipient of each event (the
 one consolidated ADMIN copy stays QUOTA_LIMIT_UPDATED's)."""
 
@@ -25,7 +26,8 @@ from ai4i_core.kafka.pipeline import StateItem, emit_state_bulk
 from ai4i_core.kafka.specs import get_spec
 
 NAME = NotificationName.GRACE_PERIOD_EXPIRING
-VALID_SUBJECT = {"api_key_id": "901", "expires_at": "2026-11-27T10:30:00Z", "days_before": "10"}
+VALID_SUBJECT = {"api_key_id": "901", "rotated_at": "2026-11-17T10:30:00Z", "days_before": "10"}
+EXPIRING_SUBJECT = {"api_key_id": "901", "expires_at": "2026-11-27T10:30:00Z", "days_before": "10"}
 
 
 def _row(admin: bool) -> SettingsRow:
@@ -70,7 +72,7 @@ def _runtime(monkeypatch, admin: bool):
 def _item(tenant_id: str, key_id: str, days_before: int, severity: Severity) -> StateItem:
     return StateItem(
         tenant_id=tenant_id,
-        subject={"api_key_id": key_id, "expires_at": "2026-11-27T10:30:00Z", "days_before": str(days_before)},
+        subject={"api_key_id": key_id, "rotated_at": "2026-11-17T10:30:00Z", "days_before": str(days_before)},
         new_state={"days_before": days_before},
         details=["Billing App", f"prod-key (ID {key_id})", "Asha", "17 Nov 2026", "27 Nov 2026", days_before],
         tenant_name=f"Institution {tenant_id}",
@@ -82,22 +84,32 @@ def _envelopes(runtime):
     return [call.args[0] for call in runtime.publisher.send.await_args_list]
 
 
-@pytest.mark.parametrize("name", [NotificationName.GRACE_PERIOD_EXPIRING, NotificationName.API_KEY_EXPIRING])
-def test_spec_is_state_with_key_expiry_subject(name):
+@pytest.mark.parametrize("name,subject", [
+    (NotificationName.GRACE_PERIOD_EXPIRING, VALID_SUBJECT),
+    (NotificationName.API_KEY_EXPIRING, EXPIRING_SUBJECT),
+])
+def test_spec_is_state_with_key_expiry_subject(name, subject):
     spec = get_spec(name)
     assert spec.is_state
-    assert validate_subject(spec, VALID_SUBJECT) == VALID_SUBJECT
+    assert validate_subject(spec, subject) == subject
+
+
+def test_grace_subject_is_keyed_on_rotation_not_expiry():
+    # An extension moves rotated_key_expires_at only; the subject must not
+    # carry it, or every level would be sent again.
+    with pytest.raises(InvalidSubject):
+        validate_subject(get_spec(NAME), EXPIRING_SUBJECT)
 
 
 @pytest.mark.parametrize(
     "bad",
     [
-        {**VALID_SUBJECT, "expires_at": "2026-11-27T10:30:00.123Z"},
-        {**VALID_SUBJECT, "expires_at": "2026-11-27 10:30:00"},
+        {**VALID_SUBJECT, "rotated_at": "2026-11-17T10:30:00.123Z"},
+        {**VALID_SUBJECT, "rotated_at": "2026-11-17 10:30:00"},
         {**VALID_SUBJECT, "days_before": "0"},
         {**VALID_SUBJECT, "days_before": "-1"},
         {**VALID_SUBJECT, "api_key_id": "abc"},
-        {"api_key_id": "901", "expires_at": "2026-11-27T10:30:00Z"},
+        {"api_key_id": "901", "rotated_at": "2026-11-17T10:30:00Z"},
     ],
 )
 def test_invalid_subject_is_rejected(bad):
