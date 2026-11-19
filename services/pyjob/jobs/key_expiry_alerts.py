@@ -6,8 +6,8 @@ on its own: ``python main.py --job key_expiry_alerts``.
 For each alert this reads its day thresholds from the cached catalog row,
 pages through the keys in the auth DB whose expiry is due a reminder today
 (the Grace Period Key Query / Expiring API Key Query), and hands them to
-emit_state_bulk. The ledger claim there sends each (key, expiry, level) once,
-however often the job runs.
+emit_state_bulk. The ledger claim there sends each level once per rotation
+(grace) or per expiry (normal key), however often the job runs.
 
 Due level = the smallest active threshold t with t >= days_left and
 t < span_days, all in calendar days of NOTIFICATION_TIMEZONE:
@@ -67,6 +67,7 @@ _GRACE_PERIOD_KEY_SQL = text(
            k.rotated_key             AS expiring_key,   -- masked before it leaves the step
            k.api_key                 AS new_key,
            k.rotated_key_expires_at  AS expires_at,
+           k.rotated_at              AS rotated_at,
            a.name                    AS application_name,
            a.tenant_id,
            t.organisation            AS tenant_name,
@@ -108,6 +109,7 @@ _EXPIRING_API_KEY_SQL = text(
            k.api_key                 AS expiring_key,   -- masked before it leaves the step
            NULL::text                AS new_key,
            k.expires_at              AS expires_at,
+           NULL::timestamptz         AS rotated_at,
            a.name                    AS application_name,
            a.tenant_id,
            t.organisation            AS tenant_name,
@@ -201,15 +203,23 @@ def _details(row) -> list:
     return details
 
 
+def _subject(row, days_before: int) -> Dict[str, str]:
+    """Ledger subject. A grace reminder is keyed on the rotation (rotated_at),
+    which an extension of the grace period doesn't change, so a level
+    already sent for that rotation is never sent again. A key's own expiry
+    is keyed on expires_at: a moved expiry starts its reminders again."""
+    if row["rotated_at"] is not None:
+        moment = {"rotated_at": utc_seconds(row["rotated_at"])}
+    else:
+        moment = {"expires_at": utc_seconds(row["expires_at"])}
+    return {"api_key_id": str(row["api_key_id"]), **moment, "days_before": str(days_before)}
+
+
 def _state_item(row, severity: Dict[int, Severity]) -> StateItem:
     days_before = int(row["days_before"])
     return StateItem(
         tenant_id=str(row["tenant_id"]),
-        subject={
-            "api_key_id": str(row["api_key_id"]),
-            "expires_at": utc_seconds(row["expires_at"]),
-            "days_before": str(days_before),
-        },
+        subject=_subject(row, days_before),
         new_state={"days_before": days_before},
         details=_details(row),
         tenant_name=row["tenant_name"],
