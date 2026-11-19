@@ -11,8 +11,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from asyncpg.exceptions import InvalidPasswordError
 from fastapi import HTTPException
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import OperationalError
 
 _APP = Path(__file__).resolve().parents[1] / "app"
 
@@ -166,19 +167,28 @@ def test_route_name_filter_without_auth_db_is_503(monkeypatch):
     assert exc.value.status_code == 503
 
 
-def test_route_name_filter_db_error_is_503_not_500(monkeypatch):
-    failing = AsyncMock(side_effect=SQLAlchemyError("connection refused"))
+# Connect-time failures reach the route unwrapped by SQLAlchemy (asyncpg 0.x,
+# SQLAlchemy 2.0); query-time failures arrive as SQLAlchemyError.
+_AUTH_DB_FAILURES = [
+    ConnectionRefusedError("Connect call failed ('10.0.0.5', 5432)"),
+    InvalidPasswordError("password authentication failed for user \"auth\""),
+    OperationalError("SELECT 1", {}, Exception("server closed the connection")),
+]
 
+
+@pytest.mark.parametrize("error", _AUTH_DB_FAILURES, ids=type)
+def test_route_name_filter_db_error_is_503_not_500(monkeypatch, error):
     with pytest.raises(HTTPException) as exc:
-        _call_route(monkeypatch, application="bot", find_ids=failing)
+        _call_route(monkeypatch, application="bot", find_ids=AsyncMock(side_effect=error))
 
     assert exc.value.status_code == 503
-    assert "connection refused" not in exc.value.detail
+    assert exc.value.detail == "Application lookup unavailable"
 
 
-def test_route_name_lookup_db_error_keeps_ids(monkeypatch):
+@pytest.mark.parametrize("error", _AUTH_DB_FAILURES, ids=type)
+def test_route_name_lookup_db_error_keeps_ids(monkeypatch, error):
     """Names are display-only: a lookup failure must not fail the log search."""
-    failing = AsyncMock(side_effect=SQLAlchemyError("timeout"))
+    failing = AsyncMock(side_effect=error)
 
     response, _, _ = _call_route(
         monkeypatch, rows=[{"trace_id": "t1", "application": "6"}], names=failing,
