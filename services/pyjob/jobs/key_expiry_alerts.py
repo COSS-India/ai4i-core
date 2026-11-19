@@ -275,7 +275,12 @@ async def send_reminders(names: Sequence[NotificationName] = ALERT_NAMES) -> Run
         raise ExpiryAlertsUnavailable(f"notification settings unavailable: {read.settings_error}")
 
     async with rt.auth_session_factory() as lock_session:
-        locked = (await lock_session.execute(_TRY_LOCK_SQL, {"key": _LOCK_KEY})).scalar()
+        # A session-level advisory lock outlives transactions, so it is taken
+        # on an autocommit connection: otherwise the SELECT would leave this
+        # connection idle in transaction for the whole run, and an
+        # idle_in_transaction_session_timeout would kill it before the unlock.
+        lock_conn = await lock_session.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
+        locked = (await lock_conn.execute(_TRY_LOCK_SQL, {"key": _LOCK_KEY})).scalar()
         if not locked:
             logger.info("Key expiry reminders skipped: another run holds the lock")
             return RunResult(skipped="locked")
@@ -290,7 +295,7 @@ async def send_reminders(names: Sequence[NotificationName] = ALERT_NAMES) -> Run
                 )
             return result
         finally:
-            await lock_session.execute(_UNLOCK_SQL, {"key": _LOCK_KEY})
+            await lock_conn.execute(_UNLOCK_SQL, {"key": _LOCK_KEY})
 
 
 async def run_key_expiry_alerts() -> RunResult:

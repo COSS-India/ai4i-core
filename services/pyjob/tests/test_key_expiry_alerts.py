@@ -51,10 +51,17 @@ def _row(key_id: int, days_before: int, days_left: int, tenant_id: int = 7) -> d
     }
 
 
+def _lock_conn(locked=True):
+    conn = MagicMock()
+    conn.execute = AsyncMock(return_value=SimpleNamespace(scalar=lambda: locked))
+    return conn
+
+
 @asynccontextmanager
-async def _lock_session(locked=True):
+async def _lock_session(locked=True, conn=None):
     session = MagicMock()
-    session.execute = AsyncMock(return_value=SimpleNamespace(scalar=lambda: locked))
+    session.connection = AsyncMock(return_value=conn or _lock_conn(locked))
+    session.execute = AsyncMock(side_effect=AssertionError("lock must use the autocommit connection"))
     yield session
 
 
@@ -195,6 +202,41 @@ async def test_locked_run_is_skipped(runtime, monkeypatch):
 
     assert result.skipped == "locked"
     page.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_lock_is_taken_and_released_on_an_autocommit_connection(runtime, monkeypatch):
+    conn = _lock_conn()
+    runtime.auth_session_factory = lambda: _lock_session(conn=conn)
+    monkeypatch.setattr(step, "_candidate_page", AsyncMock(return_value=[]))
+
+    await step.send_reminders()
+
+    statements = [c.args[0] for c in conn.execute.await_args_list]
+    assert statements == [step._TRY_LOCK_SQL, step._UNLOCK_SQL]
+
+
+@pytest.mark.asyncio
+async def test_lock_connection_is_autocommit(runtime, monkeypatch):
+    captured = {}
+
+    @asynccontextmanager
+    async def factory():
+        session = MagicMock()
+
+        async def connection(**kwargs):
+            captured.update(kwargs)
+            return _lock_conn()
+
+        session.connection = connection
+        yield session
+
+    runtime.auth_session_factory = factory
+    monkeypatch.setattr(step, "_candidate_page", AsyncMock(return_value=[]))
+
+    await step.send_reminders()
+
+    assert captured == {"execution_options": {"isolation_level": "AUTOCOMMIT"}}
 
 
 @pytest.mark.asyncio
