@@ -5,6 +5,8 @@ the usage dashboard tables:
   backfill of existing LLM services
 * 3b5d7f9a1c2e / 4c6e8a0b2d3f: the partitioned usage_events and daily_usage
   tables
+* b7d3f1a9c2e5: daily_usage.fallback_count as a JSON of count, success and
+  failure, with the failures of days already rolled up recounted from usage_events
 
 Same approach as auth-service's test_migration_* tests: each test runs the
 migration's own upgrade()/downgrade() against a real Postgres, inside a
@@ -13,13 +15,14 @@ NULLS NOT DISTINCT are Postgres behaviour a mock can't stand in for.
 
 Connection settings come from the environment, falling back to the alembic
 .env: CORE_SERVICE_DB_*, then POSTGRES_*. The tests skip when no database is
-reachable. The database must be migrated at least to f4a8c2d6e1b7.
+reachable. The database must be migrated at least to f4a8c2d6e1b7 (the
+fallback_count JSON tests: to 7229140c5c89).
 """
 
 import importlib.util
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 
@@ -41,6 +44,7 @@ _USAGE_EVENTS = "3b5d7f9a1c2e_create_usage_events_table.py"
 _DAILY_USAGE = "4c6e8a0b2d3f_create_daily_usage_table.py"
 _LLM_PRICES = "5d7f9b1c3e4a_add_llm_token_prices_to_mm_services.py"
 _DROP_SPAN_ID = "a7c3e9f1b5d2_drop_span_id_from_usage_events.py"
+_FALLBACK_JSON = "b7d3f1a9c2e5_make_daily_usage_fallback_count_json.py"
 
 _MODEL_ID = "test-migr-llm-prices-model"
 
@@ -427,3 +431,107 @@ class TestDailyUsage:
             (now.date(), now.strftime("daily_usage_%Y_%m")),
             (later, "daily_usage_default"),
         ]
+
+
+# ── b7d3f1a9c2e5: fallback_count as JSON, failures recounted ──────────────
+
+_FB_TENANT = -9002
+_IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def _fallback_count_type(conn) -> str:
+    return conn.scalar(text(
+        "SELECT data_type FROM information_schema.columns"
+        " WHERE table_name = 'daily_usage' AND column_name = 'fallback_count'"
+    ))
+
+
+@pytest.fixture()
+def before_fallback_json(conn):
+    """The live tables put back to just before b7d3f1a9c2e5. They are the
+    current schema (sent_to_fallback, bigint fallback_count), which
+    usage_tables' freshly created ones predate."""
+    if _fallback_count_type(conn) == "jsonb":
+        _run(conn, _load(_FALLBACK_JSON).downgrade)
+    return conn
+
+
+def _fb_day() -> tuple[datetime, date, str]:
+    """A request time at 20:00 UTC (01:30 IST the next day) a few days back:
+    the rolled-up day it lands on is its IST date, its billing month the UTC one."""
+    at = (datetime.now(timezone.utc) - timedelta(days=3)).replace(hour=20, minute=0, second=0, microsecond=0)
+    return at, at.astimezone(_IST).date(), at.strftime("%Y-%m")
+
+
+def _fb_request(conn, corr: str, at: datetime, status: int, fallback: bool, api_key_id: int) -> None:
+    _insert(conn, "usage_events", correlation_id=corr, occurred_at=at, tenant_id=_FB_TENANT,
+            api_key_id=api_key_id, status_code=status, total_units=0, sent_to_fallback=fallback)
+
+
+def _fb_rolled_up(conn, day, month: str, api_key_id: int, requests: int, failed: int, fallback: int) -> None:
+    _insert(conn, "daily_usage", usage_date=day, billing_month=month, tenant_id=_FB_TENANT,
+            api_key_id=api_key_id, request_count=requests, success_count=requests - failed,
+            failed_count=failed, fallback_count=fallback)
+
+
+def _fb_json(conn, api_key_id: int):
+    return conn.scalar(text(
+        "SELECT fallback_count FROM daily_usage WHERE tenant_id = :t AND api_key_id = :k"
+    ), {"t": _FB_TENANT, "k": api_key_id})
+
+
+class TestFallbackCountJson:
+    def test_rolled_up_day_gets_its_failed_fallbacks(self, before_fallback_json) -> None:
+        """Two fallbacks on one rolled-up day, one of them a 502: one failed.
+        A 500 that wasn't sent to a fallback is a failure, not a failed fallback."""
+        conn = before_fallback_json
+        at, day, month = _fb_day()
+        _fb_request(conn, "test-migr-fb-1", at, 200, True, api_key_id=1)
+        _fb_request(conn, "test-migr-fb-2", at + timedelta(minutes=1), 502, True, api_key_id=1)
+        _fb_request(conn, "test-migr-fb-3", at + timedelta(minutes=2), 500, False, api_key_id=1)
+        _fb_rolled_up(conn, day, month, api_key_id=1, requests=3, failed=2, fallback=2)
+
+        _run(conn, _load(_FALLBACK_JSON).upgrade)
+
+        assert _fb_json(conn, api_key_id=1) == {"count": 2, "success": 1, "failure": 1}
+
+    def test_each_rolled_up_row_counts_only_its_own_dimensions(self, before_fallback_json) -> None:
+        """Same tenant and day, two API keys: a failed fallback on one key
+        never lands on the other key's row."""
+        conn = before_fallback_json
+        at, day, month = _fb_day()
+        _fb_request(conn, "test-migr-fb-4", at, 429, True, api_key_id=1)
+        _fb_request(conn, "test-migr-fb-5", at, 200, True, api_key_id=2)
+        _fb_rolled_up(conn, day, month, api_key_id=1, requests=1, failed=1, fallback=1)
+        _fb_rolled_up(conn, day, month, api_key_id=2, requests=1, failed=0, fallback=1)
+
+        _run(conn, _load(_FALLBACK_JSON).upgrade)
+
+        assert _fb_json(conn, api_key_id=1) == {"count": 1, "success": 0, "failure": 1}
+        assert _fb_json(conn, api_key_id=2) == {"count": 1, "success": 1, "failure": 0}
+
+    def test_rows_without_fallbacks_and_new_rows_are_zero(self, before_fallback_json) -> None:
+        conn = before_fallback_json
+        _, day, month = _fb_day()
+        _fb_rolled_up(conn, day, month, api_key_id=1, requests=4, failed=1, fallback=0)
+
+        _run(conn, _load(_FALLBACK_JSON).upgrade)
+        _insert(conn, "daily_usage", usage_date=day, billing_month=month, tenant_id=_FB_TENANT, api_key_id=2)
+
+        zero = {"count": 0, "success": 0, "failure": 0}
+        assert (_fb_json(conn, api_key_id=1), _fb_json(conn, api_key_id=2)) == (zero, zero)
+
+    def test_downgrade_keeps_the_count(self, before_fallback_json) -> None:
+        conn = before_fallback_json
+        at, day, month = _fb_day()
+        _fb_request(conn, "test-migr-fb-6", at, 502, True, api_key_id=1)
+        _fb_rolled_up(conn, day, month, api_key_id=1, requests=3, failed=1, fallback=3)
+        migration = _load(_FALLBACK_JSON)
+        _run(conn, migration.upgrade)
+
+        _run(conn, migration.downgrade)
+
+        assert _fallback_count_type(conn) == "bigint"
+        assert conn.scalar(text(
+            "SELECT fallback_count AS fb FROM daily_usage WHERE tenant_id = :t AND api_key_id = 1"
+        ), {"t": _FB_TENANT}) == 3

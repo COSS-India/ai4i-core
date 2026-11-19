@@ -10,6 +10,9 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
 _TELEMETRY_ROUTE_PATH = Path(__file__).resolve().parents[1] / "app" / "routes" / "telemetry.py"
 _spec = importlib.util.spec_from_file_location("app.routes.telemetry", _TELEMETRY_ROUTE_PATH)
 _telemetry = importlib.util.module_from_spec(_spec)
@@ -50,3 +53,33 @@ def test_trace_detail_requests_and_returns_span_ids():
     spans = response["spans"] if isinstance(response, dict) else response.spans
     span_ids = [(s["context"] if isinstance(s, dict) else s.context.model_dump())["span_id"] for s in spans]
     assert len(span_ids) == 5 and len(set(span_ids)) == 5
+
+
+def test_trace_with_no_service_name_returns_200_with_null_service():
+    """No span in the trace carries service_name (e.g. an old/edge-case
+    emitter) - TraceResponse.service is Optional[str], so this must come back
+    as a 200 with service: null, not a 500 from pydantic validation rejecting
+    a required field that was never populated."""
+    client = MagicMock()
+    client.get_trace_by_id.return_value = {"hits": {"hits": [{
+        "_source": {
+            "@timestamp": "2026-10-27T16:20:18.000Z",
+            "name": "request",
+            "kind": "SpanKind.INTERNAL",
+            "context": {"trace_id": TRACE, "span_id": "0x01", "parent_span_id": None},
+            "attributes": {"tenantId": "1", "status": "success", "status_code": 200},
+        }
+    }]}}
+
+    app = FastAPI()
+    app.include_router(_telemetry.router)
+    app.dependency_overrides[_telemetry._get_opensearch_client] = lambda: client
+    http_client = TestClient(app)
+
+    response = http_client.get(
+        f"/telemetry/traces/{TRACE}",
+        headers={"X-Permission-IDS": "1", "X-Tenant-Id": "1"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["service"] is None

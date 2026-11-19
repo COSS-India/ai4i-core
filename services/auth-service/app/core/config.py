@@ -6,6 +6,7 @@ Reads its own environment variables; no dependency on a shared env library.
 
 from pathlib import Path
 from typing import Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -71,6 +72,9 @@ class AuthSettings(BaseSettings):
     kafka_enabled: bool = False
     kafka_server: str = "localhost:9093"
     topic_notification: str = "notification.events"
+    # IANA zone for dates and times shown in notification emails (e.g. Asia/Kolkata).
+    # Required, no in-code default, same as PLATFORM_NAME.
+    notification_timezone: str
 
     # ── RS256 JWT ──
     rs256_key_directory: str = "keys"
@@ -244,6 +248,15 @@ class AuthSettings(BaseSettings):
         v = v.strip()
         if not v:
             raise ValueError("PLATFORM_NAME must be set to the product name used in emails")
+        return v
+
+    @field_validator("notification_timezone")
+    @classmethod
+    def validate_notification_timezone(cls, v: str) -> str:
+        try:
+            ZoneInfo(v)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"NOTIFICATION_TIMEZONE must be an IANA time zone, got {v!r}") from exc
         return v
 
     @field_validator("access_token_expire_minutes", "reset_token_expire_minutes")

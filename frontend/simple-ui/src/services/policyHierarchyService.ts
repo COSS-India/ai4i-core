@@ -1,6 +1,8 @@
-import apiClient from "./api";
+import apiClient, { apiService } from "./api";
 import { apiEndpoints } from "./apiEndpoints";
+import { PII_ENTITY_COUNTRY } from "../config/constants";
 import {
+  piiSupportedEntitiesSchema,
   policyCategoryCreateResponseSchema,
   policyCategoryListResponseSchema,
   policyCategoryStatusResponseSchema,
@@ -238,6 +240,16 @@ export async function updatePolicy(id: number, body: PolicyPatch): Promise<Polic
 
 export async function deletePolicy(id: number): Promise<void> {
   await apiClient.delete(apiEndpoints.policyHierarchy.policyById(id));
+}
+
+/** Entity types inference-service can detect for this language (GET /pii/entities). */
+export async function getPiiSupportedEntities(language: string): Promise<string[]> {
+  const response = await apiService.get(apiEndpoints.pii.entities, {
+    params: { language, country: PII_ENTITY_COUNTRY },
+    responseSchema: piiSupportedEntitiesSchema,
+    suppressErrorAlert: true,
+  });
+  return response.data.entities;
 }
 
 /** POST /pii/simulate on the inference service. policyId is the platform-core policy id. */

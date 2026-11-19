@@ -67,10 +67,9 @@ def summary_lines(data: ReportData) -> list[str]:
         if data.total_requests is not None else f"Requests served: {fmt.NA}."
     )
     h = fmt.platform_health(data.platform_health)
-    health = (
-        f"response time (P95) {h['latency_p95']}, "
-        f"error rate {h['error_rate']}, fallback rate {h['fallback_rate']}."
-    )
+    # Latency P95 is commented out pending a decision (see collector._platform_health):
+    # f"response time (P95) {h['latency_p95']}, "
+    health = f"error rate {h['error_rate']}, fallback rate {h['fallback_rate']}."
     return [f"Platform health: {health}", f"Model portfolio: {models}", f"Adoption: {live} {served}"]
 
 

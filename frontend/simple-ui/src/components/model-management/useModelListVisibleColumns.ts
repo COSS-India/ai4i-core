@@ -45,10 +45,9 @@ export function useModelListVisibleColumns(options: {
   );
 
   useLayoutEffect(() => {
-    const id = preferenceUserId();
-    if (!id) return;
+    // No user id yet → catalogue defaults, so the table is never stuck waiting.
     const next = loadVisibleModelColumns({
-      userId: id,
+      userId: preferenceUserId(),
       catalogue: resolvedCatalogue,
     });
     setVisibleColumnIds((current) => nextVisibleModelColumnIds(current, next));

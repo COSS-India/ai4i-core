@@ -44,6 +44,8 @@ _spec.loader.exec_module(_telemetry)
 search_traces_opensearch = _telemetry.search_traces_opensearch
 _build_page_data = _telemetry_svc._build_page_data
 _build_search_filter_clauses = _telemetry_svc._build_search_filter_clauses
+_SpanFilterParams = _telemetry_svc._SpanFilterParams
+_inline_span_filters = _telemetry_svc._inline_span_filters
 VALID_COLUMN_KEYS = _schemas.VALID_COLUMN_KEYS
 DEFAULT_COLUMN_KEYS = _schemas.DEFAULT_COLUMN_KEYS
 
@@ -118,19 +120,39 @@ def _make_client(trace_ids: list, span_hits_by_trace: dict | None = None):
     return client
 
 
+_BASE_FIELDS = (
+    "task_types", "status_filter", "tenant_id", "start_date", "end_date",
+    "q", "log_status", "status_code", "service_id",
+)
+_SPAN_FIELDS = (
+    "user", "metadata_key", "metadata_value", "method", "model",
+    "error", "service", "url", "application",
+)
+_PAGING_FIELDS = ("page", "page_size", "sort_by", "sort_order")
+
+
 def _search(client, request=None, **params):
-    base = dict(
+    """Build base/span/paging dependency objects and call the route function
+    directly — search_traces_opensearch takes these (not flat kwargs) since
+    the _TraceBaseFilters/_TraceSpanFilters/_TracePaginationQuery refactor."""
+    defaults = dict(
         task_types=None, status_filter=None, tenant_id=None,
-        start_date=None, end_date=None, page=1, page_size=15,
-        q=None, log_status=None, status_code=None, service_id=None,
-        sort_by=None, sort_order=None, user=None,
-        metadata_key=None, metadata_value=None, columns=None,
-        method=None, model=None, error=None, service=None,
+        start_date=None, end_date=None, q=None, log_status=None,
+        status_code=None, service_id=None,
+        user=None, metadata_key=None, metadata_value=None,
+        method=None, model=None, error=None, service=None, url=None, application=None,
+        page=1, page_size=15, sort_by=None, sort_order=None,
+        columns=None,
     )
+    merged = {**defaults, **params}
+    columns = merged.pop("columns")
+    base = _telemetry._TraceBaseFilters(**{k: merged[k] for k in _BASE_FIELDS})
+    span = _telemetry._TraceSpanFilters(**{k: merged[k] for k in _SPAN_FIELDS})
+    paging = _telemetry._TracePaginationQuery(**{k: merged[k] for k in _PAGING_FIELDS})
     return asyncio.run(search_traces_opensearch(
         request=request or _request(),
         opensearch_client=client,
-        **{**base, **params},
+        base=base, span=span, paging=paging, columns=columns,
     ))
 
 
@@ -506,41 +528,50 @@ def test_http_columns_response_contains_only_selected_keys():
 # ── New filter params: clause building ───────────────────────────────────────
 
 def test_method_filter_adds_attribute_method_clause():
-    clauses = _build_search_filter_clauses(
-        [], None, None, None, None, None, None, [], False, None, method="POST"
+    # method is span-exclusive (owned by "request"), so it lands in span_groups,
+    # not filter_clauses directly — inline it the same way search_traces() does
+    # when there's no cross-span conflict (<=1 group).
+    clauses, span_groups = _build_search_filter_clauses(
+        [], None, None, None, None, None, None, [], False, None,
+        span_filters=_SpanFilterParams(method="POST"),
     )
+    _inline_span_filters(span_groups, clauses)
     assert any("attributes.method" in str(c) for c in clauses)
 
 
 def test_model_filter_adds_attribute_model_name_clause():
-    clauses = _build_search_filter_clauses(
-        [], None, None, None, None, None, None, [], False, None, model="gemma-7b"
+    clauses, span_groups = _build_search_filter_clauses(
+        [], None, None, None, None, None, None, [], False, None,
+        span_filters=_SpanFilterParams(model="gemma-7b"),
     )
+    _inline_span_filters(span_groups, clauses)
     assert any("attributes.model_name" in str(c) for c in clauses)
 
 
 def test_error_filter_adds_status_description_clause():
-    clauses = _build_search_filter_clauses(
-        [], None, None, None, None, None, None, [], False, None, error="timeout"
+    clauses, _ = _build_search_filter_clauses(
+        [], None, None, None, None, None, None, [], False, None,
+        span_filters=_SpanFilterParams(error="timeout"),
     )
-    assert {"match_phrase": {"status.description": "timeout"}} in clauses
+    assert any("status.description" in str(c) and "timeout" in str(c) for c in clauses)
 
 
 def test_service_filter_adds_service_name_clause():
-    clauses = _build_search_filter_clauses(
-        [], None, None, None, None, None, None, [], False, None, service="inference-service"
+    clauses, _ = _build_search_filter_clauses(
+        [], None, None, None, None, None, None, [], False, None,
+        span_filters=_SpanFilterParams(service="inference-service"),
     )
     assert {"match_phrase": {"service_name": "inference-service"}} in clauses
 
 
 def test_no_new_filters_adds_no_extra_clauses():
     """With all new filters None, clause count is unchanged."""
-    base_clauses = _build_search_filter_clauses(
+    base_clauses, _ = _build_search_filter_clauses(
         [], None, None, None, None, None, None, [], False, None
     )
-    new_clauses = _build_search_filter_clauses(
+    new_clauses, _ = _build_search_filter_clauses(
         [], None, None, None, None, None, None, [], False, None,
-        method=None, model=None, error=None, service=None,
+        span_filters=_SpanFilterParams(method=None, model=None, error=None, service=None),
     )
     assert base_clauses == new_clauses
 

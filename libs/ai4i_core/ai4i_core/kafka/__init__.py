@@ -47,6 +47,7 @@ from .keys import (
 from .models import Band, Measurement, Recipient, SettingsRow, SettingsSnapshot, TenantSubscriptions
 from .bands import band_for
 from .ledger import purge_old_quota_rows, resettable_subjects
+from .recipients import ACTIVE_USER_SQL
 from .failure_log import producer_scope, purge_failures
 from .runtime import (
     configure as configure_notifications,
@@ -115,6 +116,8 @@ __all__ = [
     "SettingsSnapshot",
     "TenantSubscriptions",
     "band_for",
+    # recipients: the Active-user filter every email recipient query uses
+    "ACTIVE_USER_SQL",
     # runtime
     "configure_notifications",
     "start_notifications",

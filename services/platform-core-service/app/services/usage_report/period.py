@@ -55,7 +55,7 @@ _MONTH_RE = re.compile(r"^(\d{4})-(\d{2})$")
 # scrapes and usage_events writes for its last minutes are in.
 SETTLE = timedelta(minutes=2)
 # UsagePeriod.key that makes period_sources read usage_events by occurred_at;
-# any other key reads daily_usage by whole IST days once the rollup is on.
+# any other key reads daily_usage by whole IST days.
 _EVENTS_KEY = "today"
 
 

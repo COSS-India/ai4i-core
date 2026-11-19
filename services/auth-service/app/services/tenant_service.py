@@ -16,6 +16,7 @@ from uuid import UUID
 
 import httpx
 
+from ai4i_core.audit import AuditAction, AuditEntity, AuditLogWriter, noop_audit_writer
 from ai4i_core.email import EmailClient, EmailMessage
 from fastapi import BackgroundTasks, HTTPException, status
 
@@ -76,6 +77,10 @@ from app.services.tenant_lifecycle import (
     assert_valid_tenant_status_transition,
     is_default_tenant,
     sync_tenant_users_for_status,
+)
+from app.services.audit_messages import (
+    TENANT_STATUS_AUDIT_PROPERTIES,
+    tenant_status_template,
 )
 from app.services.email_helpers import (
     enqueue_email,
@@ -428,6 +433,7 @@ class TenantService:
         api_key_service: Optional[APIKeyService] = None,
         refresh_token_repo: Optional[RefreshTokenRepository] = None,
         allocation_service: Optional[AllocationService] = None,
+        audit: Optional[AuditLogWriter] = None,
     ) -> None:
         self._tenants = tenant_repo
         self._users = user_repo
@@ -439,6 +445,9 @@ class TenantService:
         self._api_keys = api_key_service
         self._refresh_tokens = refresh_token_repo
         self._allocations = allocation_service
+        # Status changes are audited to ai4iplatform_core: track() before the
+        # change, log() after ai4iplatform_auth is committed.
+        self._audit = audit or noop_audit_writer()
 
     # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -1039,6 +1048,17 @@ class TenantService:
             ],
         }
 
+    async def resolve_contact_user_id(self, tenant: Tenant) -> Optional[UUID]:
+        """Id of the tenant's current contact: the active Institution Admin of
+        this tenant whose email matches ``tenant.email``. Lets the "Change
+        contact" dropdown hide the current contact. None when no such user."""
+        if not tenant.email:
+            return None
+        user = await self._users.get_by_email(tenant.email)
+        if user is None or not await self._is_institution_admin(user, tenant.id):
+            return None
+        return user.id
+
     @staticmethod
     def build_tenant_response(tenant: Tenant, *, unmask: bool = False) -> dict:
         """Shape a tenant into its API dict, applying the PII-masking policy.
@@ -1130,8 +1150,8 @@ class TenantService:
             )
         return old_email, new_email, admin
 
-    async def _resolve_new_contact_email(self, tenant: Tenant, contact_user_id: UUID) -> str:
-        """Email of the Institution Admin chosen by "Change contact". The
+    async def _resolve_new_contact(self, tenant: Tenant, contact_user_id: UUID) -> User:
+        """The Institution Admin chosen by "Change contact". The
         tenant must be ACTIVE, and the user an active, set-up Institution
         Admin of it who is not already its contact; the change then applies
         immediately (they are already verified, so no email is sent)."""
@@ -1167,7 +1187,7 @@ class TenantService:
                 code="CONTACT_ALREADY_CURRENT",
                 status_code=409,
             )
-        return user.email
+        return user
 
     @staticmethod
     def _assert_typed_email_allowed(tenant: Tenant, old_email: str, new_email: str) -> None:
@@ -1235,9 +1255,12 @@ class TenantService:
         await self._assert_organisation_available(data, tenant_id)
         contact_user_id = data.pop("contact_user_id", None)
         if contact_user_id is not None:
-            # "Change contact": the picked admin's email replaces any email
-            # the client echoed back.
-            data["email"] = await self._resolve_new_contact_email(tenant, contact_user_id)
+            # "Change contact": the picked admin's email and name replace any
+            # the client echoed back, so both always belong to the same person.
+            contact = await self._resolve_new_contact(tenant, contact_user_id)
+            data["email"] = contact.email
+            if (contact.full_name or "").strip():
+                data["name"] = contact.full_name.strip()
             old_email, new_email, admin = "", "", None
         else:
             old_email, new_email, admin = await self._resolve_pending_email_admin(tenant, data)
@@ -1311,8 +1334,14 @@ class TenantService:
         await sync_tenant_users_for_status(
             self._users, tenant_id, body.status, updated_by=current_user.id
         )
+        # Audit: old values are read before the change; the row is written
+        # after the commit, in the background (not awaited).
+        trace = await self._audit.track(
+            self._tenants._db, AuditEntity.TENANT, tenant_id, TENANT_STATUS_AUDIT_PROPERTIES
+        )
+        old_status = tenant.status
         # Every status change carries a reason (assert_status_reason), which
-        # replaces the previous one.
+        # replaces the previous one; earlier reasons stay in the audit rows.
         await self._tenants.update(
             tenant,
             {
@@ -1322,6 +1351,13 @@ class TenantService:
             },
         )
         await self._tenants.save_and_refresh(tenant)
+        self._audit.log(
+            trace,
+            AuditAction.STATUS_CHANGE,
+            tenant_status_template(old_status, body.status),
+            {"status": body.status, "reason": body.reason},
+            performed_by=current_user.id,
+        )
         if self._api_keys is not None:
             if body.status == TenantStatus.SUSPENDED:
                 # Keep is_active=True (Inactive): same key auto-resumes on reactivation.

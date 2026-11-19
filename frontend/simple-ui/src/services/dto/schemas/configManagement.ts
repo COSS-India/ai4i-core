@@ -40,3 +40,16 @@ export const statusReasonsConfigDataSchema = z.array(
     })
     .passthrough(),
 );
+
+/** `data` of the `model-column` config: Model List columns in display order. */
+export const modelColumnsConfigDataSchema = z.array(
+  z
+    .object({
+      key: z.string(),
+      label: z.string().optional(),
+      required: z.boolean().optional(),
+      /** Shown on first visit and after "Reset to default"; omitted → built-in default. */
+      defaultVisible: z.boolean().optional(),
+    })
+    .passthrough(),
+);

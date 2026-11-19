@@ -18,7 +18,6 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
-from app.core.config import settings
 from app.repositories.pay_per_use.application_usage_repository import ApplicationUsageRepository
 from app.repositories.pay_per_use.usage_repository import UsageRepository
 from app.utils.usage_period import resolve_period
@@ -81,17 +80,6 @@ async def session():
         await engine.dispose()
 
 
-@pytest.fixture()
-def rollup_on(monkeypatch):
-    """USAGE_DAILY_ROLLUP_ENABLED: past periods read daily_usage."""
-    monkeypatch.setattr(settings, "usage_daily_rollup_enabled", True)
-
-
-@pytest.fixture()
-def rollup_off(monkeypatch):
-    monkeypatch.setattr(settings, "usage_daily_rollup_enabled", False)
-
-
 async def _type_id(session, name: str) -> int:
     return await session.scalar(text("SELECT id FROM inference_types WHERE name = :n"), {"n": name})
 
@@ -148,7 +136,7 @@ class TestGetPeriodUsage:
         rows = await UsageRepository(session).get_period_usage(today)
         assert {_TENANT, _OTHER_TENANT} <= {r.tenant_id for r in rows}
 
-    async def test_past_periods_read_daily_usage_once_the_rollup_is_on(self, session, rollup_on):
+    async def test_past_periods_read_daily_usage(self, session):
         yesterday = resolve_period("yesterday", None, None)
         nmt = await _type_id(session, "nmt")
         await _daily(session, usage_date=yesterday.from_date, type_id=nmt, units=1900, cost=Decimal("0.08"))
@@ -162,19 +150,17 @@ class TestGetPeriodUsage:
         # A daily_usage day comes back as its IST midnight.
         assert row.first_seen == row.last_seen == yesterday.start
 
-    async def test_past_periods_read_usage_events_until_the_rollup_is_on(self, session, rollup_off):
-        """Without the rollup daily_usage stays empty, so reading it would turn
-        every past period into "no institutions"."""
+    async def test_past_periods_never_read_usage_events(self, session):
+        """A past day's usage_events rows are dropped once past their
+        retention, so past periods read daily_usage only: a day without
+        rollup rows has no usage, whatever usage_events still holds."""
         yesterday = resolve_period("yesterday", None, None)
         nmt = await _type_id(session, "nmt")
         await _event(session, span="y", occurred_at=yesterday.start + timedelta(seconds=1), type_id=nmt, units=40)
-        await _event(session, span="e", occurred_at=yesterday.end, type_id=nmt, units=7)  # today 00:00 IST
-        await _daily(session, usage_date=yesterday.from_date, type_id=nmt, units=1900)
 
-        (row,) = await UsageRepository(session).get_period_usage(yesterday, tenant_ids=[str(_TENANT)])
-        assert (row.task_type, row.total_units) == ("nmt", 40)
+        assert await UsageRepository(session).get_period_usage(yesterday, tenant_ids=[str(_TENANT)]) == []
 
-    async def test_a_period_ending_today_adds_daily_usage_and_todays_events(self, session, rollup_on):
+    async def test_a_period_ending_today_adds_daily_usage_and_todays_events(self, session):
         """Last 7 days with today (the dashboard's filter): the past days from
         daily_usage plus today up to now from usage_events, one row from each
         for the same group; callers add them up."""
@@ -239,7 +225,7 @@ class TestGetPeriodSpendByApiKeyIds:
         spend = await ApplicationUsageRepository(session).get_period_spend_by_api_key_ids(today, [_KEY])
         assert spend == {_KEY: Decimal("3.000000")}
 
-    async def test_past_period_from_daily_usage(self, session, rollup_on):
+    async def test_past_period_from_daily_usage(self, session):
         last_7 = resolve_period("last_7_days", None, None)
         await _daily(session, usage_date=last_7.from_date, cost=Decimal("2"))
         await _daily(session, usage_date=last_7.to_date, cost=Decimal("3"))
@@ -248,7 +234,7 @@ class TestGetPeriodSpendByApiKeyIds:
         spend = await ApplicationUsageRepository(session).get_period_spend_by_api_key_ids(last_7, [_KEY, _OTHER_KEY])
         assert spend == {_KEY: Decimal("5.000000")}
 
-    async def test_a_period_ending_today_adds_daily_usage_and_todays_events(self, session, rollup_on):
+    async def test_a_period_ending_today_adds_daily_usage_and_todays_events(self, session):
         last_7 = resolve_period("last_7_days", None, None, include_today=True)
         today_start = resolve_period("today", None, None).start
         await _daily(session, usage_date=last_7.from_date, cost=Decimal("2"))
@@ -262,12 +248,6 @@ class TestGetPeriodSpendByApiKeyIds:
         spend = await ApplicationUsageRepository(session).get_period_spend_by_api_key_ids(last_7, [_KEY, _OTHER_KEY])
         assert spend == {_KEY: Decimal("5.000000"), _OTHER_KEY: Decimal("4.000000")}
 
-    async def test_past_period_from_usage_events_without_the_rollup(self, session, rollup_off):
-        last_7 = resolve_period("last_7_days", None, None)
-        await _event(session, span="p", occurred_at=last_7.end - timedelta(seconds=1), costs=(Decimal("4"), 0, 0))
-        spend = await ApplicationUsageRepository(session).get_period_spend_by_api_key_ids(last_7, [_KEY])
-        assert spend == {_KEY: Decimal("4.000000")}
-
     async def test_no_keys_is_empty_without_a_query(self, session):
         today = resolve_period("today", None, None)
         assert await ApplicationUsageRepository(session).get_period_spend_by_api_key_ids(today, []) == {}
@@ -275,12 +255,17 @@ class TestGetPeriodSpendByApiKeyIds:
 
 @pytest.mark.asyncio
 class TestUsageDataFrom:
-    async def test_rows_before_the_period_mean_it_is_fully_covered(self, session, rollup_off):
+    async def test_rows_before_the_period_mean_it_is_fully_covered(self, session):
+        today = resolve_period("today", None, None)
+        await _event(session, span="old", occurred_at=today.start - timedelta(hours=1))
+        assert await UsageRepository(session).get_usage_data_from(today) == today.start
+
+    async def test_rolled_up_days_before_a_past_period_mean_it_is_fully_covered(self, session):
         yesterday = resolve_period("yesterday", None, None)
-        await _event(session, span="old", occurred_at=yesterday.start - timedelta(hours=1))
+        await _daily(session, usage_date=yesterday.from_date - timedelta(days=30), units=10)
         assert await UsageRepository(session).get_usage_data_from(yesterday) == yesterday.start
 
-    async def test_recording_began_inside_the_period(self, session, rollup_off):
+    async def test_recording_began_inside_the_period(self, session):
         """Holds only while the test DB has no rows from before today; the
         transaction is rolled back, so the shared DB keeps none."""
         today = resolve_period("today", None, None)
@@ -292,14 +277,14 @@ class TestUsageDataFrom:
         await _event(session, span="later", occurred_at=first + timedelta(seconds=1))
         assert await ApplicationUsageRepository(session).get_usage_data_from(today) == first
 
-    async def test_no_data_for_the_period(self, session, rollup_off):
+    async def test_no_data_for_the_period(self, session):
         today = resolve_period("today", None, None)
         if await session.scalar(text("SELECT 1 FROM usage_events WHERE occurred_at < :e LIMIT 1"),
                                 {"e": today.end}):
             pytest.skip("usage_events already holds rows")
         assert await UsageRepository(session).get_usage_data_from(today) is None
 
-    async def test_daily_usage_with_the_rollup_on(self, session, rollup_on):
+    async def test_daily_usage_for_a_past_period(self, session):
         last_7 = resolve_period("last_7_days", None, None)
         if await session.scalar(text("SELECT 1 FROM daily_usage WHERE usage_date <= :d LIMIT 1"),
                                 {"d": last_7.to_date}):

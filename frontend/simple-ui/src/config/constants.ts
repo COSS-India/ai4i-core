@@ -949,7 +949,6 @@ export const TABS = {
   traces: "traces",
   alertsManagement: "alerts-management",
   notificationsAlerts: "notifications-alerts",
-  piiManagement: "pii-management",
   tierManagement: "tier-management",
   policyManagement: "policy-management",
   nmt: "nmt",
@@ -1367,6 +1366,11 @@ export const MODEL_VERSION = {
     ACTIVE: "active",
     DEPRECATED: "deprecated",
   },
+} as const;
+
+/** Model registry list (model-management). */
+export const MODEL_REGISTRY_ERRORS = {
+  LOAD_FAILED: "Couldn't load models. Check your connection and try again.",
 } as const;
 
 export const MODEL_VERSION_FILTER_LIST: readonly (typeof MODEL_VERSION.FILTER)[keyof typeof MODEL_VERSION.FILTER][] =

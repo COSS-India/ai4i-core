@@ -23,6 +23,7 @@ _EXAMPLE_ITEM = {
     "id": 1,
     "type": _EXAMPLE_TYPE,
     "data": _EXAMPLE_DATA,
+    "is_default": False,
     "created_by": _EXAMPLE_USER,
     "created_at": _EXAMPLE_TS,
     "updated_by": _EXAMPLE_USER,
@@ -103,6 +104,7 @@ class ConfigItem(BaseModel):
     id: int
     type: str
     data: Any
+    is_default: bool = False
     created_by: Optional[str] = None
     created_at: datetime
     updated_by: Optional[str] = None

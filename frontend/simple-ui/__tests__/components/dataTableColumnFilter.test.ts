@@ -181,11 +181,17 @@ describe("logs column filters", () => {
     keyword_searchable: true,
   });
 
-  it("leaves toolbar selects without a column box; Method and latency get search", () => {
+  it("disables column boxes the toolbar owns; Method and latency get search", () => {
     expect(logsColumnFilterConfig(def("status", true))).toBe(false);
-    expect(logsColumnFilterConfig(def("task_type", true))).toBe(false);
-    expect(logsColumnFilterConfig(def("institution", true))).toBe(false);
-    expect(logsColumnFilterConfig(def("timestamp", true))).toBe(false);
+    for (const key of ["task_type", "institution", "timestamp"]) {
+      expect(logsColumnFilterConfig(def(key, true))).toMatchObject({
+        type: "text",
+        disabledReason: expect.any(String),
+      });
+    }
+    expect(
+      logsColumnFilterConfig(def("institution", true), { canPickTenant: false }),
+    ).toMatchObject({ disabledReason: expect.stringContaining("limited to your") });
     expect(logsColumnFilterConfig(def("method", true))).toMatchObject({
       type: "text",
     });
@@ -202,14 +208,12 @@ describe("logs column filters", () => {
     expect(
       columnFiltersToTraceParams({
         end_user: "u-1",
-        service: "svc",
         status_code: "500, 503",
         metadata: "env = prod",
         url: "/v1/asr",
       }),
     ).toMatchObject({
       user: "u-1",
-      serviceId: "svc",
       statusCode: "500,503",
       metadataKey: "env",
       metadataValue: "prod",

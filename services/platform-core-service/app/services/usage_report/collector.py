@@ -3,8 +3,9 @@
 Only figures the platform tracks are collected. Availability, provider
 count and financial-year totals are not tracked, so they are left out.
 
-Platform health (latency P95, error rate, fallback rate) comes from request
-rows through MeteringUsageRepository. The error rate counts server errors and
+Platform health (error rate, fallback rate; latency P95 is commented out
+pending a decision, see _platform_health) comes from request rows through
+MeteringUsageRepository. The error rate counts server errors and
 timeouts (status 500 or above; an empty response returns 200 and isn't
 counted), read with its requests from usage_events, which has every day's
 status codes; the fallback rate reads usage_events / daily_usage, the
@@ -418,7 +419,15 @@ class UsageReportCollector:
         health.tracked_from = max(period.start, since)
         tracked = (await usage.aggregate(health.tracked_from, period.end)).get((), UsageAgg())
         health.tracked_requests, health.fallbacks = tracked.requests, tracked.fallback
-        health.latency_p95_ms = await usage.response_time_p95(health.tracked_from, period.end)
+        # Latency P95 is commented out (here, in pdf._health and in
+        # mailer.summary_lines) until it is decided how to compute it once
+        # usage_events keeps only the last few days (pyjob's
+        # USAGE_EVENTS_RETENTION_DAYS): a percentile can't be built from
+        # daily_usage, so a weekly or monthly P95 would cover just those days.
+        # Also open: whether P95 is needed at all, or the average response
+        # time (daily_usage.total_response_time_ms / response_time_count) is
+        # enough. Uncomment the three once that is decided.
+        # health.latency_p95_ms = await usage.response_time_p95(health.tracked_from, period.end)
         return health
 
     async def _period_spend(self, period: UsagePeriod, subdaily: bool = False) -> Optional[PeriodSpend]:

@@ -110,7 +110,7 @@ class TestRotate:
         key = _key()
         svc, repo, cache = _service(key)
 
-        new_value, row = await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=7)
+        new_value, row = await svc.rotate_by_obj(key, actor_user_id="u-1", actor_name="Asha Rao", grace_days=7)
 
         assert new_value == _NEW
         _id, current, new, rotated_expires_at, updated_by = repo.rotate.await_args.args
@@ -164,7 +164,7 @@ class TestRotate:
 
         repo.refresh = AsyncMock(side_effect=_refresh)
 
-        await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=7)
+        await svc.rotate_by_obj(key, actor_user_id="u-1", actor_name="Asha Rao", grace_days=7)
 
         assert set(_set_values(cache)) == {_NEW, _OLD}
         cache.delete_api_key_cache.assert_has_awaits([call(_NEW), call(_OLD)], any_order=True)
@@ -175,7 +175,7 @@ class TestRotate:
         key = _key()
         svc, _repo, cache = _service(key)
 
-        await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=7)
+        await svc.rotate_by_obj(key, actor_user_id="u-1", actor_name="Asha Rao", grace_days=7)
 
         ttls = _set_values(cache)
         assert set(ttls) == {_NEW, _OLD}
@@ -192,7 +192,7 @@ class TestRotate:
         svc, repo, _cache = _service(key)
 
         with pytest.raises(AppError) as exc:
-            await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=7)
+            await svc.rotate_by_obj(key, actor_user_id="u-1", actor_name="Asha Rao", grace_days=7)
 
         assert exc.value.status_code == 409
         assert exc.value.code == "ROTATION_IN_PROGRESS"
@@ -204,7 +204,7 @@ class TestRotate:
         key = _rotated_key(days_left=-1)
         svc, repo, _cache = _service(key)
 
-        new_value, _row = await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=7)
+        new_value, _row = await svc.rotate_by_obj(key, actor_user_id="u-1", actor_name="Asha Rao", grace_days=7)
 
         assert new_value == "c" * 32
         repo.rotate.assert_awaited_once()
@@ -216,7 +216,7 @@ class TestRotate:
         repo.rotate = AsyncMock(return_value=False)
 
         with pytest.raises(AppError) as exc:
-            await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=7)
+            await svc.rotate_by_obj(key, actor_user_id="u-1", actor_name="Asha Rao", grace_days=7)
 
         assert exc.value.status_code == 409
         repo.commit.assert_not_awaited()
@@ -236,7 +236,7 @@ class TestRotate:
         svc, repo, _cache = _service(key, **service_kwargs)
 
         with pytest.raises(AppError) as exc:
-            await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=7)
+            await svc.rotate_by_obj(key, actor_user_id="u-1", actor_name="Asha Rao", grace_days=7)
 
         assert (exc.value.status_code, exc.value.code) == (409, "API_KEY_NOT_ROTATABLE")
         repo.rotate.assert_not_awaited()
@@ -249,7 +249,7 @@ class TestRotate:
         svc, repo, _cache = _service(key)
         repo.key_value_in_use = AsyncMock(side_effect=[True, False])
 
-        new_value, _row = await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=7)
+        new_value, _row = await svc.rotate_by_obj(key, actor_user_id="u-1", actor_name="Asha Rao", grace_days=7)
 
         assert new_value == _NEW
 
@@ -260,7 +260,7 @@ class TestRotate:
         svc, _repo, cache = _service(key)
         cache.set_api_key_cache = AsyncMock(side_effect=ConnectionError("redis down"))
 
-        new_value, _row = await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=7)
+        new_value, _row = await svc.rotate_by_obj(key, actor_user_id="u-1", actor_name="Asha Rao", grace_days=7)
 
         assert new_value == _NEW
         cache.delete_api_key_cache.assert_has_awaits([call(_NEW), call(_OLD)], any_order=True)
@@ -271,7 +271,7 @@ class TestRotate:
         key = _key()
         svc, _repo, cache = _service(key)
 
-        await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=0)
+        await svc.rotate_by_obj(key, actor_user_id="u-1", actor_name="Asha Rao", grace_days=0)
 
         assert set(_set_values(cache)) == {_NEW}
         cache.delete_api_key_cache.assert_awaited_with(_OLD)
@@ -667,9 +667,11 @@ class TestResponsesShowThePreviousValueMasked:
 
         response = await rotate_api_key(
             key_id=key.id, request=request, body=RotateAPIKeyRequest(grace_days=7),
-            current_user=SimpleNamespace(id=uuid4(), tenant_id=None), svc=svc,
+            current_user=SimpleNamespace(id=uuid4(), tenant_id=None, full_name="Asha Rao", username="asha"),
+            svc=svc,
         )
         assert svc.rotate_by_obj.await_args.kwargs["grace_days"] == 7
+        assert svc.rotate_by_obj.await_args.kwargs["actor_name"] == "Asha Rao"
         assert response.data.api_key == _NEW
         assert response.data.rotated_key == mask_api_key(_OLD)
         assert response.data.rotated_key_expires_at == key.rotated_key_expires_at
@@ -702,7 +704,7 @@ class TestRotateGraceDays:
         monkeypatch.setattr(APIKeyService, "generate_api_key", staticmethod(lambda: _NEW))
         key = _key()
         svc, repo, cache = _service(key)
-        await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=30)
+        await svc.rotate_by_obj(key, actor_user_id="u-1", actor_name="Asha Rao", grace_days=30)
         rotated_expires_at = repo.rotate.await_args.args[3]
         expected = datetime.now(timezone.utc) + timedelta(days=30)
         assert abs((rotated_expires_at - expected).total_seconds()) < 5
@@ -712,7 +714,7 @@ class TestRotateGraceDays:
         key = _key(expires_at=datetime.now(timezone.utc) + timedelta(days=3))
         svc, repo, cache = _service(key)
         with pytest.raises(AppError) as exc:
-            await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=7)
+            await svc.rotate_by_obj(key, actor_user_id="u-1", actor_name="Asha Rao", grace_days=7)
         assert (exc.value.status_code, exc.value.code) == (422, "INVALID_GRACE_PERIOD")
         repo.rotate.assert_not_called()
 
@@ -721,7 +723,7 @@ class TestRotateGraceDays:
         monkeypatch.setattr(APIKeyService, "generate_api_key", staticmethod(lambda: _NEW))
         key = _key(expires_at=datetime.now(timezone.utc) + timedelta(days=3))
         svc, repo, cache = _service(key)
-        await svc.rotate_by_obj(key, actor_user_id="u-1", grace_days=1)
+        await svc.rotate_by_obj(key, actor_user_id="u-1", actor_name="Asha Rao", grace_days=1)
         repo.rotate.assert_awaited_once()
 
     @pytest.mark.parametrize("grace_days", [-1, 36501])
@@ -906,3 +908,35 @@ class TestRotatedAt:
         key = _rotated_key()
         key.rotated_at = datetime.now(timezone.utc) - timedelta(days=1)
         assert _key_item(key, permission_names=[]).rotated_at == key.rotated_at
+
+
+class TestKeyRotatedNotification:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("grace_days, revoked_immediately", [(7, False), (0, True)])
+    async def test_a_rotation_publishes_key_rotated_once(self, monkeypatch, grace_days, revoked_immediately) -> None:
+        monkeypatch.setattr(APIKeyService, "generate_api_key", staticmethod(lambda: _NEW))
+        key = _key()
+        key.rotated_at = datetime(2026, 11, 12, 9, 30, tzinfo=timezone.utc)
+        svc, _repo, _cache = _service(key)
+
+        with patch("app.services.api_key_service.publish_key_rotated") as publish:
+            await svc.rotate_by_obj(key, actor_user_id="u-1", actor_name="Asha Rao", grace_days=grace_days)
+
+        publish.assert_called_once_with(
+            tenant_id=3, api_key_id=7, key_name="prod", application_name="App",
+            initiator_name="Asha Rao", rotated_at=key.rotated_at, revoked_at=key.rotated_key_expires_at,
+            revoked_immediately=revoked_immediately,
+        )
+        assert _OLD not in str(publish.call_args) and _NEW not in str(publish.call_args)
+
+    @pytest.mark.asyncio
+    async def test_a_lost_rotation_publishes_nothing(self) -> None:
+        key = _key()
+        svc, repo, _cache = _service(key)
+        repo.rotate = AsyncMock(return_value=False)
+
+        with patch("app.services.api_key_service.publish_key_rotated") as publish:
+            with pytest.raises(AppError):
+                await svc.rotate_by_obj(key, actor_user_id="u-1", actor_name="Asha Rao", grace_days=7)
+
+        publish.assert_not_called()
