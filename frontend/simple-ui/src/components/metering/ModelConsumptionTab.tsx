@@ -36,6 +36,7 @@ import {
 import { normalizeModelTaskType } from "../../utils/meteringTaskType";
 import DataTable, { type DataTableColumn } from "../common/table";
 import MeteringAsyncState from "./MeteringAsyncState";
+import { MeteringEmptyState } from "./MeteringChartPanel";
 import MeteringDonutChart, { DonutRankedLayout } from "./MeteringDonutChart";
 import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
 import { ModelTokenBreakdownRows } from "./ModelTokenBreakdownRows";
@@ -292,6 +293,11 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
         }`
       : undefined;
 
+  // No usage at all in the window, vs usage that the Task Type filter hides.
+  const hasNoUsage = breakdown.length === 0 && topModels.length === 0;
+  const isConsumptionEmpty = slices.length === 0;
+  const consumptionEmptyMessage = hasNoUsage ? METERING.EMPTY.PERIOD : METERING.EMPTY.FILTERED;
+
   const hasMostUsed = Boolean(
     insights && insights.mostUsedName !== METERING.GRAPH.EMPTY_VALUE,
   );
@@ -369,57 +375,64 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
             subtitle={section.SUBTITLE}
             sectionLabel
             action={
-              <SegmentedTabBar
-                options={[...METERING.MODEL_TOP_N_SEGMENT_OPTIONS]}
-                activeId={String(topN)}
-                onChange={(id) => setTopN(Number(id) as ModelTopN)}
-                justify="flex-end"
-              />
+              isConsumptionEmpty ? undefined : (
+                <SegmentedTabBar
+                  options={[...METERING.MODEL_TOP_N_SEGMENT_OPTIONS]}
+                  activeId={String(topN)}
+                  onChange={(id) => setTopN(Number(id) as ModelTopN)}
+                  justify="flex-end"
+                />
+              )
             }
           >
-            <DonutRankedLayout
-              chart={
-                <MeteringDonutChart
-                  data={slices.map(({ name, value, color }) => ({ name, value, color }))}
-                  height={260}
-                  innerRadius={65}
-                  outerRadius={100}
-                  showTooltip
-                  centerPrimary={section.DONUT_PRIMARY}
-                  centerSecondary={section.DONUT_SECONDARY}
-                  total={
-                    visibleTopModels.length
-                      ? data.top_models_total_requests
-                      : undefined
-                  }
-                />
-              }
-              list={
-                <RankedShareList
-                  rows={visibleTopModels.map((row, i) => ({
-                    rank: row.rank,
-                    label: row.model_name,
-                    taskType: row.task_type ?? undefined,
-                    subtitle: row.task_type
-                      ? formatModelTaskTypeLabel(row.task_type)
-                      : undefined,
-                    formattedValue:
-                      row.formatted_requests ||
-                      formatCompactNumber(row.requests, "indian"),
-                    percentage: row.consumption_pct,
-                    color: modelConsumptionTaskTypeColor(row.task_type, i),
-                  }))}
-                  variant="modelWithTaskType"
-                  headerLeft={section.TABLE_MODEL}
-                  headerTaskType={section.TABLE_TASK_TYPE}
-                  headerTotal={METERING.SECTIONS.RANKED_SHARE.HEADER_TOTAL_REQUESTS}
-                  headerRight={METERING.SECTIONS.RANKED_SHARE.HEADER_RIGHT}
-                  tipTotal={METERING.SECTIONS.RANKED_SHARE.TOOLTIPS.TOTAL_REQUESTS}
-                  tipTaskType={section.TOOLTIPS.TASK_TYPE}
-                  tipRight={section.TOOLTIPS.CONSUMPTION_PCT}
-                />
-              }
-            />
+            {isConsumptionEmpty ? (
+              // Same height as the donut, so the card doesn't grow when there is no data.
+              <MeteringEmptyState height={260} message={consumptionEmptyMessage} />
+            ) : (
+              <DonutRankedLayout
+                chart={
+                  <MeteringDonutChart
+                    data={slices.map(({ name, value, color }) => ({ name, value, color }))}
+                    height={260}
+                    innerRadius={65}
+                    outerRadius={100}
+                    showTooltip
+                    centerPrimary={section.DONUT_PRIMARY}
+                    centerSecondary={section.DONUT_SECONDARY}
+                    total={
+                      visibleTopModels.length
+                        ? data.top_models_total_requests
+                        : undefined
+                    }
+                  />
+                }
+                list={
+                  <RankedShareList
+                    rows={visibleTopModels.map((row, i) => ({
+                      rank: row.rank,
+                      label: row.model_name,
+                      taskType: row.task_type ?? undefined,
+                      subtitle: row.task_type
+                        ? formatModelTaskTypeLabel(row.task_type)
+                        : undefined,
+                      formattedValue:
+                        row.formatted_requests ||
+                        formatCompactNumber(row.requests, "indian"),
+                      percentage: row.consumption_pct,
+                      color: modelConsumptionTaskTypeColor(row.task_type, i),
+                    }))}
+                    variant="modelWithTaskType"
+                    headerLeft={section.TABLE_MODEL}
+                    headerTaskType={section.TABLE_TASK_TYPE}
+                    headerTotal={METERING.SECTIONS.RANKED_SHARE.HEADER_TOTAL_REQUESTS}
+                    headerRight={METERING.SECTIONS.RANKED_SHARE.HEADER_RIGHT}
+                    tipTotal={METERING.SECTIONS.RANKED_SHARE.TOOLTIPS.TOTAL_REQUESTS}
+                    tipTaskType={section.TOOLTIPS.TASK_TYPE}
+                    tipRight={section.TOOLTIPS.CONSUMPTION_PCT}
+                  />
+                }
+              />
+            )}
           </MeteringSectionCard>
 
           <MeteringSectionCard
@@ -428,7 +441,11 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
             sectionLabel
             bare
           >
-            {taskTypeNames.length > 0 ? (
+            {/* Nothing to filter or list: one empty state instead of the filter and an empty table. */}
+            {hasNoUsage ? (
+              <MeteringEmptyState height={260} />
+            ) : null}
+            {!hasNoUsage && taskTypeNames.length > 0 ? (
               <Box mb={4} maxW={{ base: "full", sm: "320px" }}>
                 <Text fontSize="xs" fontWeight="semibold" color="gray.600" mb={2}>
                   {section.FILTER_TASK_TYPES}
@@ -478,24 +495,26 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
               </Box>
             ) : null}
 
-            <DataTable
-              columns={breakdownColumns}
-              rows={filteredBreakdown}
-              rowKey={breakdownRowKey}
-              defaultSortKey="requests"
-              defaultSortDirection="desc"
-              theadBg="gray.50"
-              containerMt={0}
-              isEmpty={filteredBreakdown.length === 0}
-              emptyMessage={
-                breakdown.length > 0 ? METERING.EMPTY.FILTERED : METERING.EMPTY.PERIOD
-              }
-              renderAfterRow={(row) =>
-                hasTokenBreakdown(row) && expandedRows.has(breakdownRowKey(row)) ? (
-                  <ModelTokenBreakdownRows row={row} />
-                ) : null
-              }
-            />
+            {hasNoUsage ? null : (
+              <DataTable
+                columns={breakdownColumns}
+                rows={filteredBreakdown}
+                rowKey={breakdownRowKey}
+                defaultSortKey="requests"
+                defaultSortDirection="desc"
+                theadBg="gray.50"
+                containerMt={0}
+                isEmpty={filteredBreakdown.length === 0}
+                emptyMessage={
+                  breakdown.length > 0 ? METERING.EMPTY.FILTERED : METERING.EMPTY.PERIOD
+                }
+                renderAfterRow={(row) =>
+                  hasTokenBreakdown(row) && expandedRows.has(breakdownRowKey(row)) ? (
+                    <ModelTokenBreakdownRows row={row} />
+                  ) : null
+                }
+              />
+            )}
           </MeteringSectionCard>
         </VStack>
       ) : null}

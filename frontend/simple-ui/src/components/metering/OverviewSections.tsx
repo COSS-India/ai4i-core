@@ -1,4 +1,4 @@
-import { Box, SimpleGrid, Tooltip, VStack } from "@chakra-ui/react";
+import { SimpleGrid, VStack } from "@chakra-ui/react";
 import React, { useMemo } from "react";
 import { METERING } from "../../config/meteringConstants";
 import type {
@@ -13,6 +13,7 @@ import {
   parseCompactTotal,
 } from "../../utils/meteringFormatters";
 import { meteringColorAt } from "../../utils/meteringColors";
+import { MeteringEmptyState } from "./MeteringChartPanel";
 import MeteringDonutChart, { DonutRankedLayout } from "./MeteringDonutChart";
 import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
 import RankedShareList from "./RankedShareList";
@@ -22,10 +23,7 @@ interface OverviewKpiCardsProps {
   data: OverviewResponse;
   /** When false, omit the all-institutions helper on Total Requests. */
   isPlatformWide?: boolean;
-  /**
-   * Institution Admin only: split the cards into a Requests group and a
-   * Fallback group (Fallback Requests / Successful / Failed), each titled.
-   */
+  /** Institution Admin only: show the Fallback Requests / Successful / Failed cards after Failed. */
   showFallbackRequests?: boolean;
 }
 
@@ -56,125 +54,61 @@ const FALLBACK_KPI_KEYS: readonly string[] = [
   KPI_KEYS.FALLBACK_FAILED,
 ];
 
-// Cards whose helper is a rate of another card's count: rate key → the count it is a rate of.
-const RATE_BASE_KPI: Record<string, string> = {
-  [KPI_KEYS.SUCCESSFUL]: KPI_KEYS.TOTAL_REQUESTS,
-  [KPI_KEYS.FAILED]: KPI_KEYS.TOTAL_REQUESTS,
-  [KPI_KEYS.FALLBACK_SUCCESSFUL]: KPI_KEYS.FALLBACK_REQUESTS,
-  [KPI_KEYS.FALLBACK_FAILED]: KPI_KEYS.FALLBACK_REQUESTS,
-};
+// Cards whose helper is a rate of Total Requests; a rate of nothing shows an em dash.
+const RATE_OF_TOTAL_KPIS = new Set<string>([KPI_KEYS.SUCCESSFUL, KPI_KEYS.FAILED]);
 
-/** True when a KPI count (formatted by the API, e.g. "0", "1.2K") is zero. */
-function isZeroCount(cell: MeteringCell | undefined): boolean {
-  return cell?.value != null && parseCompactTotal(cell.value) === 0;
+/** Drop the fallback KPIs, or reposition them so they sit right after Failed. */
+function orderOverviewKpis(kpis: MeteringCell[], showFallbackRequests: boolean): MeteringCell[] {
+  const rest = kpis.filter((kpi) => !FALLBACK_KPI_KEYS.includes(kpi.key));
+  if (!showFallbackRequests) return rest;
+  const fallbacks = FALLBACK_KPI_KEYS.flatMap((key) => kpis.filter((kpi) => kpi.key === key));
+  if (fallbacks.length === 0) return rest;
+  const failedIndex = rest.findIndex((kpi) => kpi.key === KPI_KEYS.FAILED);
+  if (failedIndex === -1) return [...rest, ...fallbacks];
+  return [...rest.slice(0, failedIndex + 1), ...fallbacks, ...rest.slice(failedIndex + 1)];
 }
 
-/**
- * A rate of nothing has no value, so an em dash alone replaces the API's
- * "0.00% success rate" / "0.00% failure rate". The fallback rates explain it on hover.
- */
-function noRateHelper(key: string): React.ReactNode {
-  const dash = METERING.GRAPH.EMPTY_VALUE;
-  if (!FALLBACK_KPI_KEYS.includes(key)) return dash;
-  const tip = METERING.KPI.NO_RATE.NO_FALLBACKS_TOOLTIP;
-  return (
-    <Tooltip label={tip} hasArrow placement="top" openDelay={200}>
-      <Box as="span" cursor="help" aria-label={tip}>
-        {dash}
-      </Box>
-    </Tooltip>
-  );
-}
-
-interface KpiCardGridProps {
-  kpis: MeteringCell[];
-  byKey: Map<string, MeteringCell>;
-  isPlatformWide: boolean;
-  columns: number;
-}
-
-const KpiCardGrid: React.FC<KpiCardGridProps> = ({ kpis, byKey, isPlatformWide, columns }) => (
-  <SimpleGrid columns={{ base: 1, sm: 2, lg: columns }} spacing={4}>
-    {kpis.map((kpi) => {
-      const fallbackHelper =
-        kpi.key === KPI_KEYS.TOTAL_REQUESTS && !isPlatformWide
-          ? undefined
-          : METERING.KPI.HELPERS[kpi.key as keyof typeof METERING.KPI.HELPERS];
-      const rateBase = RATE_BASE_KPI[kpi.key];
-      const helper =
-        rateBase && isZeroCount(byKey.get(rateBase))
-          ? noRateHelper(kpi.key)
-          : (kpi.helper ?? fallbackHelper);
-      return (
-        <KpiCard
-          key={kpi.key}
-          label={METERING.KPI.LABELS[kpi.key as keyof typeof METERING.KPI.LABELS] ?? kpi.label}
-          value={formatMeteringKpiValue(kpi.key, kpi.value)}
-          pctChange={kpi.pct_change}
-          valueColor={KPI_VALUE_COLORS[kpi.key] ?? "gray.800"}
-          invertTrend={INVERTED_TREND_KPIS.has(kpi.key)}
-          helper={helper}
-          tooltip={METERING.KPI.TOOLTIPS[kpi.key as keyof typeof METERING.KPI.TOOLTIPS]}
-        />
-      );
-    })}
-  </SimpleGrid>
-);
-
-/**
- * Summary KPI cards: Total, Successful, Failed and Average Requests per Second.
- * Institution Admins also get the Fallback cards, as a separate titled group.
- */
+/** Top-row summary KPI cards (Total, Successful, Failed, Average Requests per Second). */
 export const OverviewKpiCards: React.FC<OverviewKpiCardsProps> = ({
   data,
   isPlatformWide = true,
   showFallbackRequests = false,
 }) => {
-  const { requestKpis, fallbackKpis, byKey } = useMemo(() => {
-    const fallbacks = FALLBACK_KPI_KEYS.flatMap((key) =>
-      data.kpis.filter((kpi) => kpi.key === key),
-    );
-    return {
-      requestKpis: data.kpis.filter((kpi) => !FALLBACK_KPI_KEYS.includes(kpi.key)),
-      fallbackKpis: fallbacks,
-      byKey: new Map(data.kpis.map((kpi) => [kpi.key, kpi])),
-    };
+  const kpis = useMemo(
+    () => orderOverviewKpis(data.kpis, showFallbackRequests),
+    [data.kpis, showFallbackRequests],
+  );
+  // The API's "0.00% success rate" means nothing when there were no requests.
+  const noRequests = useMemo(() => {
+    const total = data.kpis.find((kpi) => kpi.key === KPI_KEYS.TOTAL_REQUESTS);
+    return total?.value != null && parseCompactTotal(total.value) === 0;
   }, [data.kpis]);
 
-  const requestGrid = (
-    <KpiCardGrid
-      kpis={requestKpis}
-      byKey={byKey}
-      isPlatformWide={isPlatformWide}
-      columns={Math.max(requestKpis.length, 4)}
-    />
-  );
-
-  if (!showFallbackRequests) return requestGrid;
-
-  const groups = METERING.KPI.GROUPS;
   return (
-    <VStack align="stretch" spacing={6}>
-      <MeteringSectionCard title={groups.REQUESTS_TITLE} sectionLabel bare>
-        {requestGrid}
-      </MeteringSectionCard>
-      {/* Only the usage_events metering store records fallbacks; other stores omit them. */}
-      {fallbackKpis.length > 0 ? (
-        <MeteringSectionCard
-          title={groups.FALLBACK_TITLE}
-          subtitle={groups.FALLBACK_SUBTITLE}
-          sectionLabel
-          bare
-        >
-          <KpiCardGrid
-            kpis={fallbackKpis}
-            byKey={byKey}
-            isPlatformWide={isPlatformWide}
-            columns={3}
+    <SimpleGrid columns={{ base: 1, sm: 2, lg: Math.max(kpis.length, 4) }} spacing={4}>
+      {kpis.map((kpi) => {
+        const fallbackHelper =
+          kpi.key === KPI_KEYS.TOTAL_REQUESTS && !isPlatformWide
+            ? undefined
+            : METERING.KPI.HELPERS[kpi.key as keyof typeof METERING.KPI.HELPERS];
+        const helper =
+          noRequests && RATE_OF_TOTAL_KPIS.has(kpi.key)
+            ? METERING.GRAPH.EMPTY_VALUE
+            : (kpi.helper ?? fallbackHelper);
+        return (
+          <KpiCard
+            key={kpi.key}
+            label={METERING.KPI.LABELS[kpi.key as keyof typeof METERING.KPI.LABELS] ?? kpi.label}
+            value={formatMeteringKpiValue(kpi.key, kpi.value)}
+            pctChange={kpi.pct_change}
+            valueColor={KPI_VALUE_COLORS[kpi.key] ?? "gray.800"}
+            invertTrend={INVERTED_TREND_KPIS.has(kpi.key)}
+            helper={helper}
+            tooltip={METERING.KPI.TOOLTIPS[kpi.key as keyof typeof METERING.KPI.TOOLTIPS]}
           />
-        </MeteringSectionCard>
-      ) : null}
-    </VStack>
+        );
+      })}
+    </SimpleGrid>
   );
 };
 
@@ -214,7 +148,8 @@ export const ConsumptionOverviewSection: React.FC<ConsumptionOverviewSectionProp
     [visibleTenants, tenantOrganisationById],
   );
 
-  if (!conc) return null;
+  // No requests in the window: show the same empty state as Request Volume & Health.
+  const isEmpty = visibleTenants.length === 0;
 
   return (
     <MeteringSectionCard
@@ -222,7 +157,7 @@ export const ConsumptionOverviewSection: React.FC<ConsumptionOverviewSectionProp
       subtitle={section.SUBTITLE}
       sectionLabel
       action={
-        isScopedTenant ? undefined : (
+        isScopedTenant || isEmpty ? undefined : (
           <SegmentedTabBar
             options={[...METERING.TOP_N_SEGMENT_OPTIONS]}
             activeId={String(topN)}
@@ -231,29 +166,34 @@ export const ConsumptionOverviewSection: React.FC<ConsumptionOverviewSectionProp
         )
       }
     >
-      <DonutRankedLayout
-        chart={
-          <MeteringDonutChart
-            data={pieData}
-            height={260}
-            innerRadius={65}
-            outerRadius={100}
-            showTooltip
-            centerPrimary={donutPrimary}
-            centerSecondary={section.DONUT_SECONDARY}
-          />
-        }
-        list={
-          <RankedShareList
-            rows={visibleTenants.map((row) => ({
-              rank: row.rank,
-              label: formatTenantLabel(row.tenant, row.organisation, tenantOrganisationById),
-              formattedValue: row.formatted_requests,
-              percentage: row.percentage,
-            }))}
-          />
-        }
-      />
+      {isEmpty ? (
+        // Same height as the donut, so the card doesn't grow when there is no data.
+        <MeteringEmptyState height={260} />
+      ) : (
+        <DonutRankedLayout
+          chart={
+            <MeteringDonutChart
+              data={pieData}
+              height={260}
+              innerRadius={65}
+              outerRadius={100}
+              showTooltip
+              centerPrimary={donutPrimary}
+              centerSecondary={section.DONUT_SECONDARY}
+            />
+          }
+          list={
+            <RankedShareList
+              rows={visibleTenants.map((row) => ({
+                rank: row.rank,
+                label: formatTenantLabel(row.tenant, row.organisation, tenantOrganisationById),
+                formattedValue: row.formatted_requests,
+                percentage: row.percentage,
+              }))}
+            />
+          }
+        />
+      )}
     </MeteringSectionCard>
   );
 };
