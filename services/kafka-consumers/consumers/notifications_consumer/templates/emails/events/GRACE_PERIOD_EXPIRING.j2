@@ -1,4 +1,4 @@
-{# details: [application_name, api_key, expires_on, days_left] #}
+{# details: [application_name, old_api_key (masked), expires_on, days_left, new_api_key (masked)] #}
 {% set layout = "notification" %}
 {% set days_left = details[3] %}
 {% set when = "today" if days_left == 0 else ("in 1 day" if days_left == 1 else "in " ~ days_left ~ " days") %}
@@ -8,7 +8,7 @@
     "API Key Rotation Details",
     {"label": "Application", "value": details[0]},
     {"label": "Old API Key Identifier", "value": details[1]},
-    {"label": "New API Key Identifier", "value": details[1]},
+    {"label": "New API Key Identifier", "value": details[4]},
     {"label": "Days Remaining", "value": days_left},
     {"label": "Expiry Date", "value": details[2]},
     "Action Required",
