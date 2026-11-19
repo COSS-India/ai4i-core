@@ -65,10 +65,10 @@ scripts/
     profiles.sh           # translate a profile name → compose --profile flags + native service set
     prereqs.sh            # OS guard (refuse non-WSL Windows) + check docker / python3.11 / node18+ / git
     env-bootstrap.sh      # generate root .env (dev defaults) if missing, run scripts/setup-env.sh, toggle KAFKA_ENABLED
-    venv.sh               # create ONE shared .venv at the repo root + single pip install of every backend's requirements.txt
+    venv.sh               # create one .venv per backend from its pinned requirements.txt, plus the repo-root .venv for migrations
     infra.sh              # `docker compose up` with the right --profile flags for the chosen profile
     health.sh             # profile-aware health waits (postgres/redis always; kafka/opensearch per profile; service /docs)
-    migrate.sh            # run scripts/migrate.sh all upgrade under the shared venv (after postgres healthy)
+    migrate.sh            # run scripts/migrate.sh all upgrade under the repo-root .venv (after postgres healthy)
     services.sh           # start each backend under uvicorn --reload in the background, write PID (idempotent)
     frontend.sh           # npm install + npm run dev for simple-ui in the background (idempotent)
     pids.sh               # write/read/check/kill PIDs under .run/<service>.pid (SIGTERM → 10s → SIGKILL)
@@ -113,13 +113,13 @@ This is the contract. Every step prints one line and bails out loudly on failure
 3. **Ensure root `.env`** — if `.env` is missing, copy from `env.template` and fill the credential placeholders. Credentials are **never hardcoded in this public repo**; they resolve in order: (1) `AI4I_*` env vars, (2) an untracked `dev.secrets` file (see `dev.secrets.example`) that `up` sources first, (3) a randomly-generated value for any password left unset (username defaults to `ai4i_user`). Whatever is resolved is written **once** into the gitignored `.env`, which drives both the dockerised postgres/redis and every service `.env` (via `setup-env.sh`) — one source of truth, so container and service credentials always match. **Never overwrite an existing `.env`.** If a postgres data volume already exists, warn that it may carry old credentials (postgres only applies them on first init).
 4. **Generate service `.env` files** — call `scripts/setup-env.sh` (existing). Idempotent. Then `fill_smtp` substitutes the SMTP placeholders in the platform-core `.env` from `AI4I_SMTP_*` env vars (default empty) — **live SMTP/SES secrets are never committed; they're injected at runtime only**.
 5. **Bring up Docker infra** — `docker compose -f docker-compose-local.yml [--profile frontend …] up -d`. `up` relies on compose's **default pull policy (`missing`)**: images already in the local cache are **never re-pulled**, and only absent images are fetched (so a first run still works). The explicit `./scripts/dev/up --pull` escape hatch adds `--pull always` to force a refresh. `docker compose up -d` is itself incremental: containers already running and healthy are left as-is, and only the services newly introduced by the selected profile are created. So running `up frontend` after `up core` starts just the native `simple-ui` and skips the already-up `postgres`/`redis`. Wait for postgres + redis (and kafka + opensearch if in profile) to report healthy. Hard cap of 180 seconds; on timeout, exit with a clear message.
-6. **Create / update the shared `.venv`** —
-   - Create `.venv` at the repo root if absent (`python3.11 -m venv .venv`).
-   - `pip install -r services/auth-service/requirements.txt -r services/platform-core-service/requirements.txt -r services/inference-service/requirements.txt`. One pip invocation; pip's resolver picks a single version that satisfies all three lockfiles, and the shared deps (`fastapi`, `uvicorn`, `ai4i-core`, `sqlalchemy`, `redis`, …) only get downloaded once. (`pip install` is itself idempotent — skips already-satisfied packages.)
-   - If pip reports a dependency conflict, fail loudly — that means two services pin incompatible versions of the same library, which is a real bug to fix in `requirements.txt`, not something the script should paper over.
-7. **Run migrations** — `./scripts/migrate.sh all upgrade` (existing). Only after postgres is healthy. Migrations run under the shared `.venv` as well.
+6. **Create / update the virtualenvs** —
+   - One `.venv` per backend (`services/<service>/.venv`), installed from that backend's pinned `requirements.txt` — the same file its Docker image installs, so local runs the same library versions as the image. Services pin different versions of some shared packages, so they cannot share one environment.
+   - The repo-root `.venv` holds `infrastructure/databases/requirements.txt` only, for migrations (the same file the deployed migration job installs).
+   - `pip install` is idempotent — it skips already-satisfied packages.
+7. **Run migrations** — `./scripts/migrate.sh all upgrade` (existing). Only after postgres is healthy. Migrations run under the repo-root `.venv`.
 8. **Start each backend service in the background** — for each of the three:
-   - Source the shared `.venv/bin/activate` (or call `.venv/bin/python` directly).
+   - Source the service's own `services/<service>/.venv/bin/activate`.
    - `cd` into the service directory so `app.main:app` / `main:app` imports resolve.
    - `nohup python -m uvicorn …:app --host 0.0.0.0 --port <port> --reload > logs/<svc>.log 2>&1 &`
    - Write PID to `.run/<svc>.pid`.
@@ -148,7 +148,7 @@ Optional flag: `--prune` runs `docker compose down -v` to also wipe volumes. Hid
 | Long-running processes in a single script | **Background each app service with `nohup … &`**, track PIDs in `.run/`, redirect logs to `logs/`. | Foreground would require tmux/screen/foreman/honcho — extra dependency. Backgrounding is plain bash and survives terminal close. |
 | User wants to see live logs | Provide `./scripts/dev/logs <service>` — wraps `tail -F logs/<svc>.log`. | Decouples "start everything" from "watch one thing". |
 | A backgrounded service crashes silently | `./scripts/dev/status` probes each port. The success banner from `up` also reminds about `logs/`. | No process supervisor needed for v1. If this hurts in practice, we add one later. |
-| Initial pip install is slow | **One shared `.venv` at the repo root**, populated by a single `pip install -r ... -r ... -r ...` invocation across all three services' `requirements.txt`. | Three separate venvs would each re-download the ~60 shared packages (`fastapi`, `uvicorn`, `ai4i-core`, `sqlalchemy`, …). One shared venv downloads each package exactly once. Cold install drops from ~15 min to ~5. Trade-off: if two services pin incompatible versions of the same lib, pip fails fast — which we want, because that's a real bug. |
+| Local versions must match each service's image | **One `.venv` per service**, each installed from that service's pinned `requirements.txt`. | A shared venv resolves one version set for all services, so a service runs locally with versions its image does not have. pip's cache keeps repeat downloads cheap. |
 | Postgres has to be healthy before migrations | Bash `wait_for_port` helper that polls `docker compose exec postgres pg_isready` until success or 90 s timeout. | Same pattern auth-service's `depends_on: condition: service_healthy` uses, ported to bash. |
 | User reruns `up` while services are already running, or runs a wider profile on top of a narrower one | Each step is idempotent and additive: venv create is skipped if `.venv` exists, pip install is no-op when packages are present, `docker compose up -d` no-ops for already-healthy containers and only creates the services the new profile adds, uvicorn/`simple-ui` start checks `.run/<svc>.pid` and re-uses it if the process is alive. So `up frontend` after `up core` only starts the missing `simple-ui` (run natively). | The "double-run" (and "I started core, now I want the UI too") are the most common new-dev flows; making them safe and incremental is non-negotiable. |
 | User has `.env` files already configured | Never overwrite. `env-bootstrap.sh` only **creates** missing files; existing files are left alone. | Trashing customised dev secrets would be the worst possible footgun. |
@@ -187,7 +187,7 @@ All defaults can be overridden via environment variables, kept short and obvious
 | `AI4I_SMTP_AUTH_PASSWORD` | unset → empty | SMTP/SES password. Supply at runtime only — never hardcoded into the repo. |
 | `AI4I_SMTP_SMARTHOST` | template default | Override the alert-email SMTP host:port. |
 | `AI4I_SMTP_FROM` | template default | Override the alert-email From address. |
-| `AI4I_SKIP_VENV` | unset | Skip step 6 (the shared venv create + pip install) — useful when only the docker layer changed. |
+| `AI4I_SKIP_VENV` | unset | Skip step 6 (virtualenv create + pip install) — useful when only the docker layer changed. |
 | `AI4I_SKIP_FRONTEND` | unset | Force-skip step 9 even on `frontend` profile. |
 | `AI4I_LOGS_DIR` | `./logs` | Where backgrounded logs go. |
 

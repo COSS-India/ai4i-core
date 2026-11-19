@@ -12,7 +12,7 @@ echo ""
 echo "This will remove:"
 echo "  docker volumes"
 echo "  .env files"
-echo "  the shared .venv (and any leftover per-service .venv)"
+echo "  the per-service .venv folders and the repo-root .venv (migrations)"
 echo "  logs and PID files"
 echo ""
 read -rp "Continue? [y/N] " confirm
@@ -31,10 +31,10 @@ rm -rf "$ROOT_DIR/.run"
 
 rm -rf "$ROOT_DIR/logs"
 
-# Shared root venv (current layout).
+# Repo-root venv: migrations only.
 rm -rf "$ROOT_DIR/.venv"
 
-# Leftover per-service venvs from earlier layouts.
+# Per-service venvs: one per service, from its own requirements.txt.
 find "$ROOT_DIR/services" \
     -name ".venv" \
     -type d \

@@ -167,7 +167,7 @@ All commands live under `scripts/dev/` and act on the clone you set up:
 | `./scripts/dev/status` | Show native services (PID + log path) and Docker containers. |
 | `./scripts/dev/logs [auth\|platform\|inference\|frontend\|all]` | Tail service logs. |
 | `./scripts/dev/down [--prune]` | Stop everything (volumes kept). `--prune` also removes Docker volumes. |
-| `./scripts/dev/reset` | Wipe volumes, the shared `.venv`, `.env` files, and logs (confirms first). |
+| `./scripts/dev/reset` | Wipe volumes, the virtualenvs (per service and repo-root), `.env` files, and logs (confirms first). |
 | `./scripts/dev/install-prereqs.sh` | Install prerequisites (apt/brew/apk) — run manually if you skipped them. |
 
 - **Changed `dev.secrets` or a config value?** Run `./scripts/dev/restart` (or
@@ -195,8 +195,8 @@ All commands live under `scripts/dev/` and act on the clone you set up:
   you previously ran the stack with different credentials, the old volume sticks
   around and won't match the generated `.env`. Reset the volume and re-run:
   `./scripts/dev/down --prune` (or `./scripts/dev/reset`), then `./scripts/dev/up core`.
-- **Start over from scratch.** `./scripts/dev/reset` wipes volumes, the shared
-  `.venv`, `.env` files, and logs (it asks for confirmation first).
+- **Start over from scratch.** `./scripts/dev/reset` wipes volumes, the
+  virtualenvs, `.env` files, and logs (it asks for confirmation first).
 
 ### Optional: alert email (SMTP/SES)
 
