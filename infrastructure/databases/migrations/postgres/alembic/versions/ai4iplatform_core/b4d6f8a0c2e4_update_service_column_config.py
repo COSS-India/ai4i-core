@@ -1,4 +1,4 @@
-"""update service and model column config
+"""update service column config
 
 The service-column config row seeded in a3c5e7f9b1d4 used a placeholder
 key/label/required shape that nothing ever read. This replaces configs.data
@@ -6,14 +6,10 @@ for type='service-column' with the actual column-definition shape consumed
 by the services list UI (id/label/filter/sortable/mandatory/filterable/
 defaultVisible), matching the payload the frontend already renders against.
 
-It also updates configs.data for type='model-column': version, taskType
-and providerName move from required=True to required=False, matching the
-model list UI which no longer treats those columns as mandatory.
+Only the data column is updated; id, is_default, created_by/at and
+updated_by/at are left untouched.
 
-Only the data column is updated for either row; id, is_default,
-created_by/at and updated_by/at are left untouched.
-
-Both rows are editable via PUT /config/{id}. upgrade() and downgrade()
+This row is editable via PUT /config/{id}. upgrade() and downgrade()
 overwrite configs.data unconditionally, so any manual edit made between
 this migration running and a later downgrade (or re-run) is replaced by
 the hardcoded value below, not preserved or restored.
@@ -35,29 +31,6 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 _SERVICE_COLUMN_TYPE = "service-column"
-_MODEL_COLUMN_TYPE = "model-column"
-
-_OLD_MODEL_COLUMN_DATA = [
-    {"key": "name", "label": "Name", "required": True},
-    {"key": "version", "label": "Version", "required": True},
-    {"key": "taskType", "label": "Task Type", "required": True},
-    {"key": "providerName", "label": "Provider Name", "required": True},
-    {"key": "status", "label": "Status", "required": False},
-    {"key": "createdAt", "label": "Created At", "required": False},
-    {"key": "noOfServices", "label": "No. of Services", "required": False},
-    {"key": "actions", "label": "Actions", "required": True},
-]
-
-_NEW_MODEL_COLUMN_DATA = [
-    {"key": "name", "label": "Name", "required": True},
-    {"key": "version", "label": "Version", "required": True},
-    {"key": "taskType", "label": "Task Type", "required": True},
-    {"key": "providerName", "label": "Provider Name", "required": True},
-    {"key": "status", "label": "Status", "required": False},
-    {"key": "createdAt", "label": "Created At", "required": False},
-    {"key": "noOfServices", "label": "No. of Services", "required": False},
-    {"key": "actions", "label": "Actions", "required": True},
-]
 
 _OLD_SERVICE_COLUMN_DATA = [
     {"key": "name", "label": "Name", "required": True},
@@ -232,10 +205,6 @@ def upgrade() -> None:
         sa.text("UPDATE configs SET data = CAST(:d AS jsonb) WHERE type = :t"),
         {"t": _SERVICE_COLUMN_TYPE, "d": json.dumps(_NEW_SERVICE_COLUMN_DATA)},
     )
-    conn.execute(
-        sa.text("UPDATE configs SET data = CAST(:d AS jsonb) WHERE type = :t"),
-        {"t": _MODEL_COLUMN_TYPE, "d": json.dumps(_NEW_MODEL_COLUMN_DATA)},
-    )
 
 
 def downgrade() -> None:
@@ -243,8 +212,4 @@ def downgrade() -> None:
     conn.execute(
         sa.text("UPDATE configs SET data = CAST(:d AS jsonb) WHERE type = :t"),
         {"t": _SERVICE_COLUMN_TYPE, "d": json.dumps(_OLD_SERVICE_COLUMN_DATA)},
-    )
-    conn.execute(
-        sa.text("UPDATE configs SET data = CAST(:d AS jsonb) WHERE type = :t"),
-        {"t": _MODEL_COLUMN_TYPE, "d": json.dumps(_OLD_MODEL_COLUMN_DATA)},
     )
