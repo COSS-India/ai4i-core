@@ -6,6 +6,12 @@
  * Column visibility is browser-local for 2.11 (server prefs follow-up).
  */
 
+import {
+  canToggleOffColumn,
+  resolveColumnSelection,
+  toggleColumnSelection,
+} from "../common/adminListColumnSelection";
+
 export type ModelListColumnId =
   | "name"
   | "version"
@@ -113,46 +119,27 @@ export function defaultModelListColumnIds(
     .map((column) => column.id);
 }
 
-/**
- * Keep mandatory columns and drop unknown ids. Optional columns may all be
- * hidden; defaults apply only when nothing usable is stored (first visit, or
- * every stored id is gone from the catalogue). Result is catalogue order.
- */
 export function resolveModelListColumns(
   selected: readonly string[] | null | undefined,
   catalogue: readonly ModelListColumnDef[] = MODEL_LIST_COLUMNS,
 ): string[] {
-  const known = new Set(catalogue.map((column) => column.id));
-  const picked = new Set((selected ?? []).filter((id) => known.has(id)));
-  if (picked.size === 0) return defaultModelListColumnIds(catalogue);
-  return catalogue
-    .filter((column) => column.mandatory || picked.has(column.id))
-    .map((column) => column.id);
+  return resolveColumnSelection(selected, catalogue, defaultModelListColumnIds);
 }
 
-/** Only mandatory columns are locked; every optional column can be turned off. */
 export function canToggleOffModelListColumn(
   _current: readonly string[],
   id: string,
   catalogue: readonly ModelListColumnDef[] = MODEL_LIST_COLUMNS,
 ): boolean {
-  const column = catalogue.find((entry) => entry.id === id);
-  return column != null && !column.mandatory;
+  return canToggleOffColumn(id, catalogue);
 }
 
-/** Turn an optional column on or off. Mandatory columns stay. */
 export function toggleModelListColumn(
   current: readonly string[],
   id: string,
   catalogue: readonly ModelListColumnDef[] = MODEL_LIST_COLUMNS,
 ): string[] {
-  if (!canToggleOffModelListColumn(current, id, catalogue)) {
-    return resolveModelListColumns(current, catalogue);
-  }
-  const next = current.includes(id)
-    ? current.filter((columnId) => columnId !== id)
-    : [...current, id];
-  return resolveModelListColumns(next, catalogue);
+  return toggleColumnSelection(current, id, catalogue, defaultModelListColumnIds);
 }
 
 export type ModelListColumnPreferenceStore = {

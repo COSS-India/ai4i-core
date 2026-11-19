@@ -20,6 +20,8 @@ import ServiceRegistryTab from "./ServiceRegistryTab";
 import ServiceFormTab from "./ServiceFormTab";
 import ServiceDetailTab from "./ServiceDetailTab";
 import {
+  SERVICE_LIST_COLUMNS,
+  SERVICE_SORTABLE_COLUMN_IDS,
   serviceListCellKey,
   type ServiceListColumnDef,
 } from "./serviceListColumns";
@@ -82,34 +84,6 @@ function resolveDrawerFlags(options: {
     showServiceEdit,
     showServiceCreate,
     showCreateAction,
-  };
-}
-
-function serverRegistryProps(options: {
-  usesServer: boolean;
-  catalogue: readonly ServiceListColumnDef[];
-  setServerFilterValue: (columnId: string, value: string) => void;
-  setRegistryPage: (page: number) => void;
-  setRegistryPageSize: (size: number) => void;
-}): {
-  serverColumns: readonly ServiceListColumnDef[] | undefined;
-  onServerFilterChange: ((columnId: string, value: string) => void) | undefined;
-  onServerPageChange: ((page: number) => void) | undefined;
-  onServerPageSizeChange: ((size: number) => void) | undefined;
-} {
-  if (!options.usesServer) {
-    return {
-      serverColumns: undefined,
-      onServerFilterChange: undefined,
-      onServerPageChange: undefined,
-      onServerPageSizeChange: undefined,
-    };
-  }
-  return {
-    serverColumns: options.catalogue,
-    onServerFilterChange: options.setServerFilterValue,
-    onServerPageChange: options.setRegistryPage,
-    onServerPageSizeChange: options.setRegistryPageSize,
   };
 }
 
@@ -321,7 +295,7 @@ function buildVisibleServiceColumns(
           ...template,
           id: definition.id,
           header,
-          sortable: definition.sortable !== false && Boolean(template.sortable),
+          sortable: SERVICE_SORTABLE_COLUMN_IDS.has(definition.id) && Boolean(template.sortable),
         }
       : {
           id: definition.id,
@@ -350,10 +324,6 @@ const ServicesManagement: React.FC = () => {
     tableKey,
     searchQuery,
     setSearchQuery,
-    filterStatus,
-    setFilterStatus,
-    filterTaskType,
-    setFilterTaskType,
     taskTypeNames,
     tierFilterOptions,
     hasActiveFilters,
@@ -364,7 +334,6 @@ const ServicesManagement: React.FC = () => {
     resetVisibleColumns,
     handleRegistrySortChange,
     serviceListCatalogue,
-    serviceListUsesServer,
     registryPage,
     registryPageSize,
     setRegistryPage,
@@ -646,13 +615,6 @@ const ServicesManagement: React.FC = () => {
     isCreateServiceTabDisabled,
   });
   const pageDescription = pageDescriptionForRole(isRegistryReadOnly);
-  const serverProps = serverRegistryProps({
-    usesServer: serviceListUsesServer,
-    catalogue: serviceListCatalogue,
-    setServerFilterValue,
-    setRegistryPage,
-    setRegistryPageSize,
-  });
   const actionsDisabled = formActionsDisabled(canCreateService, isSubmitting);
   const createAction = whenTrue(
     showCreateAction,
@@ -692,22 +654,19 @@ const ServicesManagement: React.FC = () => {
         tableKey={tableKey}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
-        filterStatus={filterStatus}
-        onFilterStatusChange={setFilterStatus}
-        filterTaskType={filterTaskType}
-        onFilterTaskTypeChange={setFilterTaskType}
         taskTypeNames={taskTypeNames}
         tierFilterOptions={tierFilterOptions}
         hasActiveFilters={hasActiveFilters}
         onClearFilters={clearAllFilters}
-        serverColumns={serverProps.serverColumns}
+        // Built-in columns, so the filters stay whichever columns the config lists.
+        serverColumns={SERVICE_LIST_COLUMNS}
         serverFilterValues={serverFilters}
-        onServerFilterChange={serverProps.onServerFilterChange}
+        onServerFilterChange={setServerFilterValue}
         serverPage={registryPage}
         serverPageSize={registryPageSize}
         serverTotal={totalServicesCount}
-        onServerPageChange={serverProps.onServerPageChange}
-        onServerPageSizeChange={serverProps.onServerPageSizeChange}
+        onServerPageChange={setRegistryPage}
+        onServerPageSizeChange={setRegistryPageSize}
         columnPicker={
           <ServiceListColumnPicker
             columns={serviceListCatalogue}

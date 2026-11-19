@@ -1,16 +1,11 @@
-import {
-  fetchAllServicesMatchingFilters,
-  listServicesPaginated,
-} from "../../services/servicesManagementService";
+import { listServicesPaginated } from "../../services/servicesManagementService";
 import type { Service } from "../../types/platform";
 import {
+  SERVICE_LIST_COLUMNS,
+  SERVICE_SORTABLE_COLUMN_IDS,
   serviceListFilterParams,
-  type ServiceListColumnDef,
 } from "./serviceListColumns";
-import {
-  statusFilterToApiValue,
-  statusFilterToPublished,
-} from "./serviceRegistryFilters";
+import { statusFilterToApiValue } from "./serviceRegistryFilters";
 
 export type RegistryFetchOptions = {
   silent?: boolean;
@@ -20,15 +15,10 @@ export type RegistryFetchOptions = {
 };
 
 export type RegistryFetchContext = {
-  filterStatus: string;
-  filterTaskType: string;
   enabledTaskTypesParam?: string;
-  taskTypeNames: string[];
-  serviceListUsesServer: boolean;
   serverFilters: Record<string, string>;
   taskFilterColumnId?: string;
   statusFilterColumnId?: string;
-  serviceListCatalogue: readonly ServiceListColumnDef[];
   registryPage: number;
   registryPageSize: number;
   sortMode: "time" | "sorted";
@@ -68,38 +58,20 @@ export async function fetchRegistryServicesPage(
   context: RegistryFetchContext,
   options: RegistryFetchOptions = {},
 ): Promise<{ items: Service[]; total: number }> {
-  let statusFilter = context.filterStatus;
-  if (options.status !== undefined) statusFilter = options.status;
-  let taskTypeFilter = context.filterTaskType;
-  if (options.taskType !== undefined) taskTypeFilter = options.taskType;
-
-  if (!context.serviceListUsesServer) {
-    const result = await fetchAllServicesMatchingFilters({
-      taskType: taskTypeFilter || undefined,
-      taskTypes: context.enabledTaskTypesParam,
-      isPublished: statusFilterToPublished(statusFilter),
-    });
-    return { items: result.items, total: result.total };
-  }
-
   // Server-side sort over the full dataset (incl. prices). Omit sort_by when
   // the user has not chosen a column — BE default is published first, then newest.
   let sortBy: string | undefined;
   let sortOrder: "asc" | "desc" | undefined;
-  if (context.sortMode === "sorted" && context.sortKey) {
-    const column = context.serviceListCatalogue.find(
-      (entry) => entry.id === context.sortKey,
-    );
-    if (column?.sortable) {
-      sortBy = column.id;
-      sortOrder = context.sortDirection;
-    }
+  if (context.sortMode === "sorted" && SERVICE_SORTABLE_COLUMN_IDS.has(context.sortKey)) {
+    sortBy = context.sortKey;
+    sortOrder = context.sortDirection;
   }
   const params = {
     offset: (context.registryPage - 1) * context.registryPageSize,
     limit: context.registryPageSize,
     query: serviceListFilterParams({
-      columns: context.serviceListCatalogue,
+      // Built-in columns: filters do not depend on the configured columns.
+      columns: SERVICE_LIST_COLUMNS,
       filters: mergeServerFilters(context, options),
       enabledTaskTypes: context.enabledTaskTypesParam,
       sortBy,
@@ -116,32 +88,6 @@ export async function fetchRegistryServicesPage(
     const result = await listServicesPaginated(params);
     return { items: result.items, total: result.total };
   }
-}
-
-export function shouldReplaceFullServiceIds(
-  statusFilter: string,
-  taskTypeFilter: string,
-  taskTypeNames: string[],
-): boolean {
-  const statusNarrows =
-    statusFilter === "published" || statusFilter === "unpublished";
-  const onlyEnabledTask =
-    taskTypeNames.length === 1 && taskTypeFilter === taskTypeNames[0];
-  const taskNarrows = Boolean(taskTypeFilter) && !onlyEnabledTask;
-  return !statusNarrows && !taskNarrows;
-}
-
-export function serviceIdsFromItems(items: Service[]): string[] {
-  return items
-    .map((service) => service.serviceId || service.service_id || "")
-    .filter((id): id is string => Boolean(id));
-}
-
-export function mergeServiceIdLists(
-  previous: string[] | null | undefined,
-  next: string[],
-): string[] {
-  return Array.from(new Set([...(previous ?? []), ...next]));
 }
 
 export function applyServicePublishPatch(
@@ -191,11 +137,4 @@ export function filterServicesForPublishStatus(
     return next.filter((service) => service.isPublished !== true);
   }
   return next;
-}
-
-export function resolveOptionalFilterValue(
-  override: string | undefined,
-  current: string,
-): string {
-  return override ?? current;
 }

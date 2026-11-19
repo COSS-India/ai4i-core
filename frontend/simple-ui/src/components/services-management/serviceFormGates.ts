@@ -211,19 +211,6 @@ export function computeServiceFormGates(input: FormGateInput): ServiceFormGates 
   };
 }
 
-export function hasActiveClientServiceFilters(options: {
-  filterStatus: string;
-  filterTaskType: string;
-  searchQuery?: string;
-  showTaskTypeAllOption: boolean;
-}): boolean {
-  if (options.filterStatus !== "") return true;
-  if (options.showTaskTypeAllOption && options.filterTaskType !== "") {
-    return true;
-  }
-  return (options.searchQuery ?? "").trim() !== "";
-}
-
 export function hasActiveServerServiceFilters(
   serverFilters: Record<string, string>,
   taskFilterColumnId: string | undefined,

@@ -59,6 +59,15 @@ export function canAccessPlatformMetering(roles?: string[]): boolean {
   return isPlatformAdminUser(roles) || userHasRole(roles, "MODERATOR");
 }
 
+/**
+ * Platform ADMIN or Adopter Admin (MODERATOR): sees the admin-only Service List
+ * columns (Tier, Created At, prices, Published On). Matches platform-core's
+ * `is_platform_admin`, which decides who gets that data.
+ */
+export function seesAdminServiceListColumns(roles?: string[]): boolean {
+  return isPlatformAdminUser(roles) || userHasRole(roles, "MODERATOR");
+}
+
 /** Default / platform ADMIN — adopter-wide metering view. */
 export function isDefaultAdminUser(roles?: string[]): boolean {
   return isPlatformAdminUser(roles);
