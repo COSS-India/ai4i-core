@@ -1,7 +1,7 @@
 """add GRACE_PERIOD_EXPIRING / API_KEY_EXPIRING names and the DAYS threshold unit
 
 Revision ID: 23e621f010ba
-Revises: 445916bf95f9
+Revises: b4d6f8a0c2e4
 Create Date: 2026-11-17
 
 """
@@ -10,7 +10,7 @@ from typing import Sequence, Union
 from alembic import op
 
 revision: str = '23e621f010ba'
-down_revision: Union[str, None] = '445916bf95f9'
+down_revision: Union[str, None] = 'b4d6f8a0c2e4'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
