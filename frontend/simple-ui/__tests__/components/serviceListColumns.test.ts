@@ -22,6 +22,7 @@ import {
 } from "../../src/components/services-management/serviceListColumns";
 import { mandatoryColumnsHint } from "../../src/components/common/AdminListColumnPicker";
 import { seesAdminServiceListColumns } from "../../src/utils/rbac";
+import { parseServiceColumnConfig } from "../../src/services/configManagementService";
 import type { Service } from "../../src/types/platform";
 
 const memoryStore = (): ServiceListColumnPreferenceStore & { data: Map<string, string[]> } => {
@@ -403,6 +404,99 @@ describe("service list columns", () => {
       expect(seesAdminServiceListColumns(["USER"])).toBe(false);
       expect(seesAdminServiceListColumns(["USAGE VIEWER"])).toBe(false);
       expect(seesAdminServiceListColumns(undefined)).toBe(false);
+    });
+  });
+
+  describe("service-column config data", () => {
+    // Shape written by the backend migration (b4d6f8a0c2e4), trimmed.
+    const stored = [
+      {
+        columns: [
+          {
+            id: "name",
+            label: "Service Name",
+            filter: { type: "text", params: ["name"], options: null },
+            sortable: true,
+            mandatory: true,
+            filterable: true,
+            defaultVisible: true,
+          },
+          {
+            id: "actions",
+            label: "Actions",
+            filter: null,
+            sortable: false,
+            mandatory: true,
+            filterable: false,
+            defaultVisible: true,
+          },
+          {
+            id: "task_type",
+            label: "Task Type",
+            filter: {
+              type: "multi_select",
+              params: ["task_types"],
+              options: [{ label: "asr", value: "asr" }],
+            },
+            sortable: true,
+            mandatory: true,
+            filterable: true,
+            defaultVisible: true,
+          },
+          { id: "model_name", label: "Model Name", mandatory: true, sortable: false },
+          { id: "tier", label: "Tier", mandatory: true },
+          { id: "status", label: "Status", mandatory: false, defaultVisible: true },
+          { id: "service_id", label: "Service ID", mandatory: false },
+        ],
+      },
+    ];
+
+    it("reads id, label and mandatory from the columns list", () => {
+      expect(parseServiceColumnConfig(stored)).toEqual([
+        { key: "name", label: "Service Name", required: true },
+        { key: "actions", label: "Actions", required: true },
+        { key: "task_type", label: "Task Type", required: true },
+        { key: "model_name", label: "Model Name", required: true },
+        { key: "tier", label: "Tier", required: true },
+        { key: "status", label: "Status", required: false },
+        { key: "service_id", label: "Service ID", required: false },
+      ]);
+    });
+
+    it("builds the Services columns from it, ignoring sortable, filters and defaults", () => {
+      const catalogue = serviceListColumnsFromConfig(
+        SERVICE_LIST_COLUMNS,
+        parseServiceColumnConfig(stored),
+      );
+      expect(catalogue.map((column) => column.id)).toEqual([
+        "name",
+        "actions",
+        "task_type",
+        "model_name",
+        "tier",
+        "status",
+        "service_id",
+      ]);
+      expect(defaultServiceListColumnIds(catalogue)).toEqual([
+        "name",
+        "actions",
+        "task_type",
+        "model_name",
+        "tier",
+      ]);
+      // Filters stay with the built-in columns (no config options).
+      const taskType = catalogue.find((column) => column.id === "task_type");
+      expect(taskType?.filter?.options).toBeNull();
+      // sortable: false in the config does not change the fixed sortable list.
+      expect(SERVICE_SORTABLE_COLUMN_IDS.has("model_name")).toBe(true);
+    });
+
+    it("rejects other shapes so the built-in columns are used", () => {
+      expect(() =>
+        parseServiceColumnConfig([{ key: "name", label: "Name", required: true }]),
+      ).toThrow();
+      expect(() => parseServiceColumnConfig([{ id: "name", mandatory: true }])).toThrow();
+      expect(parseServiceColumnConfig([])).toEqual([]);
     });
   });
 });
