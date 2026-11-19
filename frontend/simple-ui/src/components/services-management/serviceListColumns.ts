@@ -207,14 +207,36 @@ export function toggleServiceListColumn(
 }
 
 /**
+ * Fixed leading columns (by cell key), in display order: Service Name, Task
+ * Type, Model Name, Tier. Actions always goes last. Other columns keep the
+ * config's order in between.
+ */
+const SERVICE_LIST_LEADING_CELLS: readonly string[] = ["name", "task", "modelName", "tier"];
+
+/** Leading columns first in their fixed order, then the rest as given, Actions last. */
+export function orderServiceListColumns(
+  columns: readonly ServiceListColumnDef[],
+): ServiceListColumnDef[] {
+  const rank = (column: ServiceListColumnDef): number => {
+    const cell = serviceListCellKey(column.id);
+    if (cell === "actions") return SERVICE_LIST_LEADING_CELLS.length + 1;
+    const leading = SERVICE_LIST_LEADING_CELLS.indexOf(cell);
+    return leading === -1 ? SERVICE_LIST_LEADING_CELLS.length : leading;
+  };
+  // Array.prototype.sort is stable, so columns of equal rank keep their order.
+  return [...columns].sort((a, b) => rank(a) - rank(b));
+}
+
+/**
  * Apply the `service-column` config entries (from parseServiceColumnConfig:
  * the column `id` as `key`, `mandatory` as `required`) to the catalogue.
  * Entries are matched to catalogue columns by cell, so keys may be API ids
  * (`task_type`) or camelCase (`modelTaskType`); the catalogue's ids are kept,
  * as `GET /services?columns=` and the saved selection need them. The config
- * sets which columns appear, their order, labels and which are mandatory.
+ * sets which columns appear, their labels, which are mandatory and the order
+ * of the columns after the fixed leading ones (orderServiceListColumns).
  * Sorting, filters and default visibility stay with the catalogue. Entries the catalogue lacks are ignored, and
- * Actions is appended, as mandatory, if left out. Without a usable config the
+ * Actions is added last, as mandatory, if left out. Without a usable config the
  * catalogue is used as it is.
  */
 export function serviceListColumnsFromConfig(
@@ -234,7 +256,7 @@ export function serviceListColumnsFromConfig(
   if (configured.length === 0) return catalogue;
   const actions = byCell.get("actions");
   if (actions && !used.has("actions")) configured.push({ ...actions, mandatory: true });
-  return configured;
+  return orderServiceListColumns(configured);
 }
 
 /**

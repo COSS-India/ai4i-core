@@ -322,6 +322,45 @@ describe("service list columns", () => {
       }
     });
 
+    it("puts Service Name, Task Type, Model Name and Tier first and Actions last, whatever the config order", () => {
+      // Order of the older seeded config (a3c5e7f9b1d4).
+      const catalogue = serviceListColumnsFromConfig(SERVICE_LIST_COLUMNS, [
+        { key: "actions", label: "Actions", required: true },
+        { key: "name", label: "Name", required: true },
+        { key: "modelTaskType", label: "Model Task Type", required: false },
+        { key: "tier", label: "Tier", required: false },
+        { key: "status", label: "Status", required: false },
+        { key: "createdAt", label: "Created At", required: false },
+        { key: "modelName", label: "Model Name", required: false },
+        { key: "serviceId", label: "Service ID", required: false },
+      ]);
+      expect(catalogue.map((column) => column.id)).toEqual([
+        "name",
+        "task_type",
+        "model_name",
+        "tier",
+        "status",
+        "created_at",
+        "service_id",
+        "actions",
+      ]);
+    });
+
+    it("keeps the fixed order for roles without the admin-only Tier column", () => {
+      const catalogue = serviceListColumnsForRole(
+        serviceListColumnsFromConfig(SERVICE_LIST_COLUMNS, [...config].reverse()),
+        false,
+      );
+      expect(catalogue.map((column) => column.id)).toEqual([
+        "name",
+        "task_type",
+        "model_name",
+        "service_id",
+        "status",
+        "actions",
+      ]);
+    });
+
     it("lists the mandatory columns in the picker hint", () => {
       expect(mandatoryColumnsHint(serviceListColumnsFromConfig(SERVICE_LIST_COLUMNS, config))).toBe(
         "Service Name, Task Type, Model Name, Tier, and Actions stay visible.",
@@ -468,22 +507,26 @@ describe("service list columns", () => {
         SERVICE_LIST_COLUMNS,
         parseServiceColumnConfig(stored),
       );
+      // Actions is second in the stored config but always goes last.
       expect(catalogue.map((column) => column.id)).toEqual([
         "name",
-        "actions",
         "task_type",
         "model_name",
         "tier",
         "status",
         "service_id",
+        "actions",
       ]);
       expect(defaultServiceListColumnIds(catalogue)).toEqual([
         "name",
-        "actions",
         "task_type",
         "model_name",
         "tier",
+        "actions",
       ]);
+      expect(mandatoryColumnsHint(catalogue)).toBe(
+        "Service Name, Task Type, Model Name, Tier, and Actions stay visible.",
+      );
       // Filters stay with the built-in columns (no config options).
       const taskType = catalogue.find((column) => column.id === "task_type");
       expect(taskType?.filter?.options).toBeNull();
