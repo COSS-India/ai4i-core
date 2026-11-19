@@ -633,7 +633,7 @@ const ModelManagementPage: React.FC = () => {
     return [
       {
         id: "name",
-        header: "Name",
+        header: "Model Name",
         sortable: true,
         sortAccessor: (model) => model.name ?? "",
         cell: renderModelNameCell,
