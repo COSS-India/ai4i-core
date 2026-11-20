@@ -22,6 +22,13 @@ describe('formatPercent (Model tab: one decimal place with a % sign)', () => {
     expect(formatPercent(18.333, 2)).toBe('18.33%');
   });
 
+  it('rounds halves up where scaling alone falls just short', () => {
+    // 1.005 * 100 = 100.49999…, 0.145 * 100 = 14.499…: Math.round would go down.
+    expect(formatPercent(1.005, 2)).toBe('1.01%');
+    expect(formatPercent(0.145, 2)).toBe('0.15%');
+    expect(formatPercent(4.015, 2)).toBe('4.02%');
+  });
+
   it('shows the empty placeholder for missing values', () => {
     expect(formatPercent(null)).toBe(METERING.GRAPH.EMPTY_VALUE);
     expect(formatPercent(undefined)).toBe(METERING.GRAPH.EMPTY_VALUE);
