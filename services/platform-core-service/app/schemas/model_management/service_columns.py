@@ -19,7 +19,6 @@ class ServiceListColumn:
     id: str
     label: str
     mandatory: bool = False
-    default_visible: bool = False
     sortable: bool = True
     # None → not filterable. Otherwise one of the FILTER_* constants.
     filter_type: Optional[str] = None
@@ -38,20 +37,20 @@ class ServiceListColumn:
 
 
 SERVICE_LIST_COLUMNS: List[ServiceListColumn] = [
-    ServiceListColumn("name", "Name", mandatory=True, default_visible=True,
+    ServiceListColumn("name", "Name", mandatory=True,
                       filter_type=FILTER_TEXT, filter_params=("name",), fields=("name",)),
-    ServiceListColumn("actions", "Actions", mandatory=True, default_visible=True, sortable=False,
+    ServiceListColumn("actions", "Actions", mandatory=True, sortable=False,
                       fields=("serviceId", "name", "isPublished", "versionStatus")),
-    ServiceListColumn("task_type", "Model Task Type", default_visible=True,
+    ServiceListColumn("task_type", "Model Task Type",
                       filter_type=FILTER_MULTI_SELECT, filter_params=("task_types",),
                       fields=("taskType", "task")),
-    ServiceListColumn("tier", "Tier", default_visible=True,
+    ServiceListColumn("tier", "Tier",
                       filter_type=FILTER_MULTI_SELECT, filter_params=("tier_ids",), admin_only=True,
                       fields=("tierNames",)),
-    ServiceListColumn("status", "Status", default_visible=True,
+    ServiceListColumn("status", "Status",
                       filter_type=FILTER_SINGLE_SELECT, filter_params=("is_published",),
                       fields=("isPublished",)),
-    ServiceListColumn("created_at", "Created At", default_visible=True,
+    ServiceListColumn("created_at", "Created At",
                       filter_type=FILTER_DATE_RANGE, filter_params=("created_from", "created_to"),
                       admin_only=True, fields=("createdAt",)),
     ServiceListColumn("model_name", "Model Name",
