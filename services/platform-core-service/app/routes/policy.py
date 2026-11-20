@@ -13,7 +13,7 @@ sub-category or policy is in effect only when it and every ancestor are
 enabled, so re-enabling a parent restores each child's own state.
 """
 
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -425,7 +425,7 @@ async def list_policies(
     request: Request,
     response: Response,
     name: Optional[str] = Query(None, description="Case-insensitive partial match on policy name."),
-    sub_category_id: Optional[int] = Query(None, gt=0, le=2_147_483_647, description="Filter policies by sub-category ID."),
+    sub_category_id: Annotated[Optional[int], Query(gt=0, le=2_147_483_647, description="Filter policies by sub-category ID.")] = None,
     offset: int = Query(0, ge=0, le=2_147_483_647, description="Number of items to skip (for pagination)."),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of items to return. Defaults to 100."),
     session: AsyncSession = Depends(get_db),
