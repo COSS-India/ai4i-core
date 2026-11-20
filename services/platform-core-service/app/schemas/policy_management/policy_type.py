@@ -120,9 +120,22 @@ class PolicyTypeItem(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
-    policy_type: str
-    policy_fields: Dict[str, Any]
+    id: int = Field(..., description="Auto-incremented integer primary key.")
+    policy_type: str = Field(
+        ...,
+        description=(
+            "Classifier for what kind of policy this is (e.g. 'PII'). Free-form "
+            "today, but intended to support future categories, such as a "
+            "'Security' policy type, without requiring a schema change."
+        ),
+    )
+    policy_fields: Dict[str, Any] = Field(
+        ...,
+        description=(
+            "Field contract that any policy of this policy_type must conform to "
+            "— defines what data a policy of this type (e.g. PII) must capture."
+        ),
+    )
 
 
 class PolicyTypeListData(BaseModel):
@@ -171,8 +184,22 @@ class PolicyTypeCreate(BaseModel):
         }
     )
 
-    policy_type: str = Field(..., max_length=NAME_MAX_LEN)
-    policy_fields: Dict[str, Any] = Field(default_factory=dict)
+    policy_type: str = Field(
+        ...,
+        max_length=NAME_MAX_LEN,
+        description=(
+            "Classifier for what kind of policy this is (e.g. 'PII'). Free-form "
+            "today, but intended to support future categories, such as a "
+            "'Security' policy type, without requiring a schema change."
+        ),
+    )
+    policy_fields: Dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Field contract that any policy of this policy_type must conform to "
+            "— defines what data a policy of this type (e.g. PII) must capture."
+        ),
+    )
 
     @field_validator("policy_type", mode="before")
     @classmethod
