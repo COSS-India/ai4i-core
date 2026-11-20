@@ -219,6 +219,11 @@ export interface DataTableCardProps<T> extends DataTableSharedProps<T> {
   theadBg?: string;
   cellPy?: number | string;
   tableMinWidth?: string;
+  /**
+   * Scroll horizontally when the table is wider than its card (e.g. with
+   * `tableMinWidth`) instead of clipping the overflow. Default false.
+   */
+  scrollX?: boolean;
   containerMt?: number | string;
   tableProps?: Omit<TableProps, "size" | "variant">;
 }
@@ -1340,6 +1345,7 @@ function CardLayoutDataTable<T>({
   theadBg = "ink.50",
   cellPy,
   tableMinWidth,
+  scrollX = false,
   containerMt,
   tableProps,
 }: Readonly<DataTableCardProps<T>>) {
@@ -1392,7 +1398,7 @@ function CardLayoutDataTable<T>({
 
   const table = (
     <Box
-      overflowX="hidden"
+      overflowX={scrollX ? "auto" : "hidden"}
       mt={resolvedContainerMt}
       borderWidth="1px"
       borderColor="ink.200"

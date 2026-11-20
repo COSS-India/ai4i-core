@@ -52,20 +52,35 @@ const breakdownRowKey = (row: ModelConsumptionRow) =>
  * its cells use (see NUMERIC_TEXT_PROPS). Re-check these if a header is renamed.
  *
  * Total Requests, Successful and Failed share one width so their values sit at
- * even intervals.
+ * even intervals. 190px is the floor: "TOTAL REQUESTS" + icons + padding
+ * measures ~180px, and anything narrower wraps it onto two lines.
  */
-const NUMERIC_COLUMN_WIDTH = "190px";
+const NUMERIC_COLUMN_PX = 190;
+const TASK_TYPE_COLUMN_PX = 160;
+// "TOTAL NATIVE UNITS" + icons + padding measures ~196px; the widest value
+// ("1,23,45,678 chars" + inset) about the same.
+const NATIVE_UNITS_COLUMN_PX = 210;
+/** Narrowest Model Name / Service Name may get before the table scrolls instead. */
+const NAME_COLUMN_MIN_PX = 150;
 
 const COLUMN_WIDTHS = {
-  task_type: "160px",
+  task_type: `${TASK_TYPE_COLUMN_PX}px`,
   model_name: undefined,
   name: undefined,
-  requests: NUMERIC_COLUMN_WIDTH,
-  success_pct: NUMERIC_COLUMN_WIDTH,
-  failure_rate_pct: NUMERIC_COLUMN_WIDTH,
-  // Longer header ("TOTAL NATIVE UNITS"), so a little wider than the rest.
-  native_units: "230px",
+  requests: `${NUMERIC_COLUMN_PX}px`,
+  success_pct: `${NUMERIC_COLUMN_PX}px`,
+  failure_rate_pct: `${NUMERIC_COLUMN_PX}px`,
+  native_units: `${NATIVE_UNITS_COLUMN_PX}px`,
 } as const;
+
+/**
+ * Below this width (1240px) the table scrolls sideways rather than squeezing
+ * the name columns to an ellipsis, or clipping Total Native Units off the card:
+ * all fixed columns plus both name columns at their minimum.
+ */
+const TABLE_MIN_WIDTH = `${
+  TASK_TYPE_COLUMN_PX + 3 * NUMERIC_COLUMN_PX + NATIVE_UNITS_COLUMN_PX + 2 * NAME_COLUMN_MIN_PX
+}px`;
 
 /**
  * Numeric cells: right-aligned (set per column) with equal-width digits, so
@@ -442,6 +457,8 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
                   defaultSortDirection="desc"
                   theadBg="gray.50"
                   containerMt={0}
+                  tableMinWidth={TABLE_MIN_WIDTH}
+                  scrollX
                   isEmpty={filteredBreakdown.length === 0}
                   emptyMessage={tableEmptyMessage}
                   renderAfterRow={renderTokenBreakdown}
