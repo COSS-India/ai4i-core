@@ -129,7 +129,7 @@ export function TableSortHeader({
   hint,
   wrap = false,
   align,
-}: {
+}: Readonly<{
   label: string;
   direction: SortDirection;
   onAsc: () => void;
@@ -148,7 +148,7 @@ export function TableSortHeader({
    * values. Unset keeps the previous layout (start-aligned, inherited text-align).
    */
   align?: "left" | "right" | "center";
-}) {
+}>) {
   const ascTooltip = ascTooltipLabel ?? `Sort ${label} ascending`;
   const descTooltip = descTooltipLabel ?? `Sort ${label} descending`;
   const ascActive = active && direction === "asc";
