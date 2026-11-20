@@ -51,7 +51,7 @@ class PolicyCreate(BaseModel):
     guardrail_scope: GuardrailScope = Field(..., description="Enforcement side: input, output, or both.")
     is_global: bool = Field(..., description="Whether this policy applies globally across all tenants.")
     sub_category_id: int = Field(..., gt=0, le=2_147_483_647, description="Sub-category this policy belongs to.")
-    policy_type_id: List[Annotated[int, Field(gt=0, le=2_147_483_647, strict=True)]] = Field(..., min_length=1, description="References policy_type rows (e.g. PII) that define which fields this policy must populate.")
+    policy_type_id: List[Annotated[int, Field(gt=0, le=2_147_483_647, strict=True)]] = Field(..., min_length=1, description="IDs of the policy types (e.g. PII) whose entity lists the guardrail applies to this policy.")
 
     @field_validator("name", mode="before")
     @classmethod
@@ -154,7 +154,7 @@ class PolicyItem(BaseModel):
     is_global: bool = Field(..., description="Whether this policy is global.")
     sub_category_id: int = Field(..., description="Parent sub-category ID.")
     is_active: bool = Field(..., description="Whether this policy is currently active.")
-    policy_type_id: Optional[List[int]] = Field(None, description="References policy_type rows (e.g. PII) that define which fields this policy must populate.")
+    policy_type_id: Optional[List[int]] = Field(None, description="IDs of the policy types (e.g. PII) whose entity lists the guardrail applies to this policy.")
     created_at: Optional[datetime] = Field(None, description="Creation timestamp.")
     updated_at: Optional[datetime] = Field(None, description="Last update timestamp.")
     created_by: Optional[str] = Field(None, description="User ID who created this policy.")

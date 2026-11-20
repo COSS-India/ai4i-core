@@ -125,15 +125,19 @@ class PolicyTypeItem(BaseModel):
         ...,
         description=(
             "Classifier for what kind of policy this is (e.g. 'PII'). Free-form "
-            "today, but intended to support future categories, such as a "
-            "'Security' policy type, without requiring a schema change."
+            "— new labels don't require a schema change — though policy_fields "
+            "validation is currently the same for every type."
         ),
     )
     policy_fields: Dict[str, Any] = Field(
         ...,
         description=(
-            "Field contract that any policy of this policy_type must conform to "
-            "— defines what data a policy of this type (e.g. PII) must capture."
+            "The entities that inference-service's guardrail detects and masks "
+            "for policies of this type — `custom_field` entries (entity_name, "
+            "examples, regex) and/or `model_supported_field` entries (built-in "
+            "entities grouped by language). Stored as free-form JSON so future "
+            "policy types can reuse this structure; today the same shape is "
+            "enforced regardless of policy_type."
         ),
     )
 
@@ -189,15 +193,19 @@ class PolicyTypeCreate(BaseModel):
         max_length=NAME_MAX_LEN,
         description=(
             "Classifier for what kind of policy this is (e.g. 'PII'). Free-form "
-            "today, but intended to support future categories, such as a "
-            "'Security' policy type, without requiring a schema change."
+            "— new labels don't require a schema change — though policy_fields "
+            "validation is currently the same for every type."
         ),
     )
     policy_fields: Dict[str, Any] = Field(
         default_factory=dict,
         description=(
-            "Field contract that any policy of this policy_type must conform to "
-            "— defines what data a policy of this type (e.g. PII) must capture."
+            "The entities that inference-service's guardrail detects and masks "
+            "for policies of this type — `custom_field` entries (entity_name, "
+            "examples, regex) and/or `model_supported_field` entries (built-in "
+            "entities grouped by language). Stored as free-form JSON so future "
+            "policy types can reuse this structure; today the same shape is "
+            "enforced regardless of policy_type."
         ),
     )
 

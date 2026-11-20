@@ -90,7 +90,7 @@ async def get_config(
     session: Annotated[AsyncSession, Depends(get_db)] = None,
 ) -> GetConfigResponse:
     """Fetch a single config entry (one admin-configurable list) by ID.
-    Admin only."""
+    404 if it does not exist. Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     item = await config_service.get_config(session, config_id)
@@ -108,7 +108,8 @@ async def update_config(
     session: Annotated[AsyncSession, Depends(get_db)] = None,
 ) -> UpdateConfigResponse:
     """Update a config entry's `type` and/or `data`. Only the fields sent are
-    changed. Admin only."""
+    changed. 404 if it does not exist, 409 if the new `type` is already
+    taken. Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
@@ -122,15 +123,16 @@ async def update_config(
 
 @router.delete(
     "/{config_id}",
-    responses=error_responses(403, 404),
+    responses=error_responses(403, 404, 409),
 )
 async def delete_config(
     request: Request,
     config_id: Annotated[int, Path(gt=0, description=_CONFIG_ID_DESC)],
     session: Annotated[AsyncSession, Depends(get_db)] = None,
 ) -> DeleteConfigResponse:
-    """Delete a config entry (one admin-configurable list) by ID. Blocked for
-    default/seeded configs (`is_default=true`). Admin only."""
+    """Delete a config entry (one admin-configurable list) by ID. 404 if it
+    does not exist, 409 if it is a protected default config
+    (`is_default=true`). Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     deleted_id = await config_service.delete_config(session, config_id)

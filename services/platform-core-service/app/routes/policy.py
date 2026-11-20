@@ -105,7 +105,7 @@ async def create_category(
     session: AsyncSession = Depends(get_db),
 ) -> CreateCategoryResponse:
     """Create a category. Name is required and must be unique
-    (case-insensitive). Adopter Admin only."""
+    (case-insensitive) — 409 if it already exists. Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
@@ -128,9 +128,9 @@ async def update_category_status(
     redis: aioredis.Redis = Depends(get_redis),
 ) -> UpdateCategoryStatusResponse:
     """Enable or disable a category, which switches off everything under it
-    without changing the children's own status. Nothing is deleted, so
-    re-enabling resumes its sub-categories and policies as configured.
-    Adopter Admin only."""
+    without changing the children's own status; 404 if the category does
+    not exist. Nothing is deleted, so re-enabling resumes its sub-categories
+    and policies as configured. Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
@@ -156,9 +156,9 @@ async def update_category(
     redis: aioredis.Redis = Depends(get_redis),
 ) -> UpdateCategoryResponse:
     """Update a category's name and/or description; only the fields sent
-    change. The name must not already be taken by another category
-    (case-insensitive). Status changes go through PATCH .../status.
-    Adopter Admin only."""
+    change. 404 if the category does not exist, 409 if another category
+    already has the name (case-insensitive). Status changes go through
+    PATCH .../status. Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
@@ -181,8 +181,8 @@ async def delete_category(
     category_id: int = Path(..., gt=0, le=ID_MAX),
     session: AsyncSession = Depends(get_db),
 ) -> Response:
-    """Delete a category. Fails if it still has sub-categories.
-    Adopter Admin only."""
+    """Delete a category. 404 if it does not exist, 409 if it still has
+    sub-categories. Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     await category_service.delete_category(session, category_id)
@@ -197,8 +197,8 @@ async def list_sub_categories(
     category_id: Optional[int] = Query(None, gt=0, le=ID_MAX, description="Only sub-categories of this category."),
     session: AsyncSession = Depends(get_db),
 ) -> ListSubCategoryResponse:
-    """List sub-categories, optionally only those under one category.
-    Adopter Admin only."""
+    """List sub-categories, optionally only those under one category (404 if
+    that category does not exist). Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     items = await sub_category_service.list_sub_categories(session, category_id)
@@ -217,8 +217,9 @@ async def create_sub_category(
     session: AsyncSession = Depends(get_db),
 ) -> CreateSubCategoryResponse:
     """Create a sub-category under an existing, enabled category. Name and
-    parent category are required; the category must be enabled and the name
-    must not already be taken (case-insensitive). Adopter Admin only."""
+    parent category are required; 404 if the category does not exist, 409 if
+    it is disabled or the name is already taken (case-insensitive). Adopter
+    Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
@@ -241,9 +242,10 @@ async def update_sub_category_status(
     redis: aioredis.Redis = Depends(get_redis),
 ) -> UpdateSubCategoryStatusResponse:
     """Enable or disable a sub-category, which switches off its policies
-    without changing their own status. Cannot be enabled while its category
-    is disabled. The parent category and sibling sub-categories are
-    unaffected. Adopter Admin only."""
+    without changing their own status; 404 if it does not exist, 409 if
+    enabling it while its category is disabled.
+    The parent category and sibling sub-categories are unaffected. Adopter
+    Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
@@ -270,8 +272,9 @@ async def update_sub_category(
 ) -> UpdateSubCategoryResponse:
     """Update a sub-category's name, description and/or category_id, which
     moves it and its policies under another category; only the fields sent
-    change. The name must not already be taken (case-insensitive). Status
-    changes go through PATCH .../status. Adopter Admin only."""
+    change. 404 if the sub-category or the target category does not exist,
+    409 if the name is already taken (case-insensitive). Status changes go
+    through PATCH .../status. Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
@@ -294,8 +297,8 @@ async def delete_sub_category(
     sub_category_id: int = Path(..., gt=0, le=ID_MAX),
     session: AsyncSession = Depends(get_db),
 ) -> Response:
-    """Delete a sub-category. Fails if any policy still belongs to it.
-    Adopter Admin only."""
+    """Delete a sub-category. 404 if it does not exist, 409 if any policy
+    still belongs to it. Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     await sub_category_service.delete_sub_category(session, sub_category_id)
@@ -316,9 +319,10 @@ async def list_policy_types(
     entity: Optional[str] = Query(None, description="Case-insensitive partial match on entity name (e.g. aadhaar, phone_number)."),
 ) -> ListPolicyTypeResponse:
     """List policy types. A policy type classifies what a policy governs
-    (e.g. 'PII' today) and defines, via `policy_fields`, the data a policy of
-    that type must capture — new types (e.g. 'Security') can be added without
-    a schema change. Optionally filter by entity name. Adopter Admin only."""
+    (e.g. 'PII'), and its `policy_fields` lists the entities that policies of
+    that type detect and mask — new labels can be added without a schema
+    change, though policy_fields validation is the same for every type today.
+    Optionally filter by entity name. Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     items = await policy_type_service.list_policy_types(session, entity=entity)
@@ -327,7 +331,7 @@ async def list_policy_types(
 
 @router.post(
     "/policy-types",
-    summary="Create Policy Type — define a new policy classification (e.g. PII, Security)",
+    summary="Create Policy Type — define a new policy classification (e.g. PII)",
     response_model=CreatePolicyTypeResponse,
     status_code=status.HTTP_201_CREATED,
     responses=error_responses(403),
@@ -337,9 +341,11 @@ async def create_policy_type(
     request: Request,
     session: AsyncSession = Depends(get_db),
 ) -> CreatePolicyTypeResponse:
-    """Create a policy type — a new classification of what a policy governs
-    (e.g. 'PII', or a future 'Security' type), along with the `policy_fields`
-    contract policies of that type must satisfy. Adopter Admin only."""
+    """Create a policy type — a new classification label for what a policy
+    governs (e.g. 'PII'). New labels don't require a schema change, but
+    `policy_fields` must still follow the same entity-masking shape
+    (custom_field/model_supported_field) used by every type today. Adopter
+    Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
@@ -361,7 +367,8 @@ async def get_policy_type(
     policy_type_id: int = Path(..., gt=0, le=2_147_483_647),
     session: AsyncSession = Depends(get_db),
 ) -> GetPolicyTypeResponse:
-    """Fetch a single policy type by ID. Adopter Admin only."""
+    """Fetch a single policy type by ID. 404 if it does not exist.
+    Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     item = await policy_type_service.get_policy_type(session, policy_type_id)
@@ -380,7 +387,8 @@ async def update_policy_type(
     redis: aioredis.Redis = Depends(get_redis),
 ) -> UpdatePolicyTypeResponse:
     """Update name and/or policy_fields of a policy type. policy_type_id is
-    required in the request body. Adopter Admin only."""
+    required in the request body. 404 if it does not exist. Adopter Admin
+    only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
@@ -402,7 +410,8 @@ async def delete_policy_type(
     policy_type_id: int = Path(..., gt=0, le=2_147_483_647),
     session: AsyncSession = Depends(get_db),
 ) -> DeletePolicyTypeResponse:
-    """Delete a policy type by ID. Adopter Admin only."""
+    """Delete a policy type by ID. 404 if it does not exist.
+    Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     deleted_id = await policy_type_service.delete_policy_type(session, policy_type_id)
@@ -425,16 +434,17 @@ async def list_policies(
     request: Request,
     response: Response,
     name: Optional[str] = Query(None, description="Case-insensitive partial match on policy name."),
-    sub_category_id: Annotated[Optional[int], Query(gt=0, le=2_147_483_647, description="Filter policies by sub-category ID.")] = None,
+    sub_category_id: Annotated[Optional[int], Query(gt=0, le=2_147_483_647, description="Filter policies by sub-category ID. 404 if it does not exist.")] = None,
     offset: int = Query(0, ge=0, le=2_147_483_647, description="Number of items to skip (for pagination)."),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of items to return. Defaults to 100."),
     session: AsyncSession = Depends(get_db),
 ) -> ListPolicyResponse:
-    """List policies. A policy sits under a sub-category and is linked to one
-    or more policy types (e.g. PII today; future types like Security are
-    supported without a schema change) via `policy_type_id`. Optionally
-    filtered by name (partial match) and/or sub-category. ADMIN and TENANT
-    ADMIN only."""
+    """List policies. A policy sits under a sub-category and is linked to a
+    policy type (e.g. 'PII') via `policy_type_id` — new policy-type labels
+    can be added without a schema change, though all types share the same
+    `policy_fields` entity shape today. Optionally filtered by name (partial
+    match) and/or sub-category — 404 if the given sub-category does not
+    exist. ADMIN and TENANT ADMIN only."""
     if not permission_ids(request) & {ROLE_ADMIN, ROLE_TENANT_ADMIN}:
         raise InsufficientPermissionsError()
     items, total = await policy_service.list_policies(session, name=name, sub_category_id=sub_category_id, offset=offset, limit=limit)
@@ -460,8 +470,8 @@ async def create_policy(
     redis: aioredis.Redis = Depends(get_redis),
 ) -> CreatePolicyResponse:
     """Create a policy. Name must be unique (case-insensitive); policy_id is
-    auto-generated in SPP-XXXX format. The sub-category and its category
-    must be enabled. Adopter Admin only."""
+    auto-generated in SPP-XXXX format. 409 if the name already exists, or
+    if the sub-category or its category is disabled. Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
@@ -483,7 +493,8 @@ async def get_policy(
     id: int = Path(..., gt=0, le=2_147_483_647),
     session: AsyncSession = Depends(get_db),
 ) -> GetPolicyResponse:
-    """Fetch a single policy by its integer primary key. Adopter Admin only."""
+    """Fetch a single policy by its integer primary key. 404 if it does not
+    exist. Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     item = await policy_service.get_policy(session, id)
@@ -502,8 +513,8 @@ async def update_policy(
     redis: aioredis.Redis = Depends(get_redis),
 ) -> UpdatePolicyResponse:
     """Update a policy. ``id`` (integer primary key) is required in the request
-    body. The new name, if changed, must not already be taken. Adopter Admin
-    only."""
+    body. 404 if it does not exist, 409 if the new name is already taken.
+    Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
@@ -527,8 +538,8 @@ async def delete_policy(
     auth_db: AsyncSession = Depends(get_auth_db),
     redis: aioredis.Redis = Depends(get_redis),
 ) -> DeletePolicyResponse:
-    """Delete a policy by integer primary key. Fails if it is linked to one
-    or more applications. Adopter Admin only."""
+    """Delete a policy by integer primary key. 404 if it does not exist.
+    409 if it is linked to one or more applications. Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     deleted_id = await policy_service.delete_policy(session, id, auth_db=auth_db, redis=redis)
