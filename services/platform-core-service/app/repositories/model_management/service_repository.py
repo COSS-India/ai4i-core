@@ -125,7 +125,7 @@ def _apply_list_filters(stmt, filters: ServiceListFilters):
 
 def _sort_expressions() -> Dict[str, Any]:
     tier_name = (
-        select(func.min(Tier.name))
+        select(func.min(func.lower(Tier.name)))
         .where(cast(Tier.id, String) == any_(Service.tier_ids))
         .scalar_subquery()
     )
