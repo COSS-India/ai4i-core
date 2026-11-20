@@ -53,7 +53,7 @@ export const tenantSuccessEnvelopeSchema = <T extends z.ZodTypeAny>(dataSchema: 
   z.object({
     success: z.boolean(),
     data: dataSchema,
-    meta: z.record(z.unknown()).optional(),
+    meta: z.record(z.string(), z.unknown()).optional(),
   });
 
 /** GET /tenants — `{ data: Tenant[] }` (no `success` field). */

@@ -4,7 +4,7 @@ const flagValueSchema = z.union([
   z.boolean(),
   z.string(),
   z.number(),
-  z.record(z.unknown()),
+  z.record(z.string(), z.unknown()),
 ]);
 
 export const featureFlagEvaluationResponseSchema = z.object({
