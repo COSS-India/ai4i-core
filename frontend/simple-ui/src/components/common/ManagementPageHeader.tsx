@@ -12,6 +12,11 @@ interface ManagementPageHeaderProps {
   actions?: React.ReactNode;
   /** Override auto trail, or `false` to hide. */
   crumbs?: Crumb[] | false;
+  /**
+   * Space below the header's divider. Default 6. Pass 0 when the page already
+   * spaces its sections (e.g. a `VStack spacing`), or the gaps add up.
+   */
+  mb?: number;
 }
 
 const ManagementPageHeader: React.FC<ManagementPageHeaderProps> = ({
@@ -19,6 +24,7 @@ const ManagementPageHeader: React.FC<ManagementPageHeaderProps> = ({
   description,
   actions,
   crumbs,
+  mb = 6,
 }) => {
   const router = useRouter();
   const items =
@@ -27,7 +33,7 @@ const ManagementPageHeader: React.FC<ManagementPageHeaderProps> = ({
       : crumbs ?? getPageBreadcrumbs(router.pathname, title);
 
   return (
-    <Box w="full" mb={6} pb={6} borderBottom="1px" borderColor="ink.200">
+    <Box w="full" mb={mb} pb={6} borderBottom="1px" borderColor="ink.200">
       {items ? <PageBreadcrumb items={items} /> : null}
       <Flex
         align={{ base: "flex-start", md: "center" }}

@@ -23,6 +23,19 @@ describe("distributeColumnWidths", () => {
     expect(sum(widths)).toBeLessThanOrEqual(720);
   });
 
+  it("spreads leftover space by grow weight once any column opts in", () => {
+    const widths = distributeColumnWidths(
+      [
+        { natural: 200, header: 60, mode: "shrink", grow: 2 },
+        { natural: 100, header: 80, mode: "content", grow: 1 },
+        { natural: 120, header: 70, mode: "fixed", grow: 1 },
+        { natural: 40, header: 40, mode: "fixed" },
+      ],
+      860,
+    );
+    expect(widths).toEqual([400, 200, 220, 40]);
+  });
+
   it("treats price columns as shrinkable, not content-locked", () => {
     expect(resolveColumnSizingMode({ id: "inputPrice" })).toBe("shrink");
     expect(resolveColumnSizingMode({ id: "cached_input_price" })).toBe("shrink");
@@ -81,6 +94,12 @@ describe("resolveColumnSizingMode", () => {
     expect(resolveColumnSizingMode({ id: "createdAt" })).toBe("fixed");
     expect(resolveColumnSizingMode({ id: "name" })).toBe("shrink");
     expect(resolveColumnSizingMode({ id: "email" })).toBe("shrink");
+  });
+
+  it("sizes Model List No. of Services and Provider Name to content, leaving Model Name to flex", () => {
+    expect(resolveColumnSizingMode({ id: "noOfServices" })).toBe("content");
+    expect(resolveColumnSizingMode({ id: "providerName", maxW: "16rem" })).toBe("content");
+    expect(resolveColumnSizingMode({ id: "name" })).toBe("shrink");
   });
 });
 

@@ -52,15 +52,31 @@ import { ServicesMappedSection } from "./ServicesMappedSection";
 import { TierDetailDrawer } from "./TierDetailDrawer";
 import { TierForm } from "./TierForm";
 import { getTaskTypeBadgeColor } from "./tierDisplay";
+import { sortHeaderTrailingWidthPx } from "../common/TableControls";
 
 /** Flip to true to restore Remove from Tier in the tier edit drawer. */
 const TIER_REMOVAL_ENABLED = false;
 
 // ─── Column cell renderers (defined outside TierManagement to avoid S6478) ───
 
+/**
+ * Shares of spare table width (see DataTableColumn.grow). Services gets none:
+ * its counts are right-aligned, so extra width would only open a gap after
+ * Task Types. Actions gets a double share for room around its icons.
+ */
+const TIER_COLUMN_GROW: Record<string, number> = {
+  name: 3,
+  status: 1,
+  taskTypes: 1,
+  services: 0,
+  institutions: 1,
+  actions: 2,
+};
+
 const TIER_NAME_COLUMN: DataTableColumn<Tier> = {
   id: "name",
   header: "Tier Name",
+  grow: TIER_COLUMN_GROW.name,
   sortable: true,
   sortAccessor: (tier) => tier.name ?? "",
   cell: (tier) => (
@@ -97,6 +113,7 @@ const TIER_STATUS_COLUMN: DataTableColumn<Tier> = {
   id: "status",
   header: "Status",
   thProps: { w: "120px" },
+  grow: TIER_COLUMN_GROW.status,
   cell: (tier) => {
     const badge = TIER_STATUS_BADGE[effectiveTierStatus(tier)];
     return (
@@ -132,6 +149,10 @@ const TIER_TASK_TYPES_COLUMN: DataTableColumn<Tier> = {
   header: "Task Types",
   thProps: { w: "220px", maxW: "280px" },
   tdProps: { maxW: "280px" },
+  // Column-level cap so the measured layout honours it (thProps/tdProps alone
+  // do not); more badges than fit wrap onto a second line.
+  maxW: "280px",
+  grow: TIER_COLUMN_GROW.taskTypes,
   truncate: false,
   cell: (tier) => (
     <HStack spacing={1} flexWrap="wrap">
@@ -164,6 +185,9 @@ const TIER_TASK_TYPES_COLUMN: DataTableColumn<Tier> = {
  * Header text + sort control + cell padding, on one line. Institutions is sized
  * for "INSTITUTIONS"; re-check if the INSTITUTIONS label gets longer.
  */
+/** Right-aligned counts end under the header text, not its sort control. */
+const TIER_COUNT_VALUE_INSET = `${sortHeaderTrailingWidthPx(false)}px`;
+
 const TIER_COUNT_COLUMN_WIDTHS = {
   services: "8.5rem",
   institutions: "10.5rem",
@@ -191,18 +215,27 @@ function makeTierCountColumn(
     // so the header showed as "SERVIC…" / "INSTITUT…".
     width,
     thProps: { w: width },
+    grow: TIER_COLUMN_GROW[id],
     sortable: true,
-    // Left, not centred: the sortable header is a flex row that ignores
-    // textAlign, so a centred column leaves its values off from the label.
-    align: "left",
+    // Right-aligned like the other count columns; the sortable header lines
+    // up with it via TableSortHeader's `align`.
+    align: "right",
     cell: (tier) => {
       if (isLoading) {
-        return <Skeleton height="20px" width="28px" borderRadius="md" />;
+        return (
+          <Skeleton
+            height="20px"
+            width="28px"
+            borderRadius="md"
+            ml="auto"
+            mr={TIER_COUNT_VALUE_INSET}
+          />
+        );
       }
       if (hasError) {
         return (
           <Tooltip label={errorLabel} placement="top" hasArrow>
-            <Text fontSize="sm" color="gray.400">
+            <Text fontSize="sm" color="gray.400" mr={TIER_COUNT_VALUE_INSET}>
               —
             </Text>
           </Tooltip>
@@ -220,6 +253,7 @@ function makeTierCountColumn(
             display="inline-block"
             minW="28px"
             textAlign="center"
+            mr={TIER_COUNT_VALUE_INSET}
           >
             0
           </Text>
@@ -235,6 +269,7 @@ function makeTierCountColumn(
           borderRadius="md"
           minW="28px"
           textAlign="center"
+          mr={TIER_COUNT_VALUE_INSET}
         >
           {count}
         </Badge>
@@ -250,7 +285,7 @@ function makeTierActionsColumn(
   onDelete: (tier: Tier) => void,
   onStatusChange: (tier: Tier) => void,
 ): DataTableColumn<Tier> {
-  return createActionsColumn<Tier>({
+  const column = createActionsColumn<Tier>({
     actionCount: 3,
     getActions: (tier) => {
       const statusAction = getTierStatusAction(tier.status);
@@ -296,6 +331,7 @@ function makeTierActionsColumn(
       ];
     },
   });
+  return { ...column, grow: TIER_COLUMN_GROW.actions };
 }
 
 function RowActions({

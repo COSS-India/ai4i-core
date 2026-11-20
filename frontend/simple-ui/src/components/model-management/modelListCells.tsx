@@ -6,6 +6,7 @@ import {
   isModelVersionStatusActive,
 } from "../../config/constants";
 import { resolveTaskType } from "../../utils/platformService";
+import { sortHeaderTrailingWidthPx } from "../common/TableControls";
 import type { ModelDetails } from "../../types/platform";
 
 /** Minimal row shape for list cells (matches Model Management table rows). */
@@ -16,21 +17,45 @@ export type ModelListCellModel = ModelDetails & {
 
 /**
  * Pinned widths for the short Model List columns, sized for the header text plus
- * its sort / info icon. Name and Provider Name stay fluid and share what is left.
+ * its sort / info icon. No. of Services and Provider Name are sized to their
+ * measured content instead (see CONTENT_WIDTH_IDS).
  */
 const MODEL_LIST_FIXED_COLUMN_WIDTHS: Record<string, string> = {
   version: "7.5rem",
   taskType: "8.5rem",
   status: "8.5rem",
   createdAt: "10rem",
-  noOfServices: "11rem",
 };
 
-export function modelListColumnWidth(
-  id: string,
-): { width: string; minWidth: string; maxW: string } | undefined {
+/** Content-sized, but a long provider name truncates (full name on hover) past this. */
+const PROVIDER_NAME_MAX_WIDTH = "16rem";
+
+/**
+ * Spare table width is spread over the columns so no single gap opens up;
+ * Model Name takes a double share. No. of Services stays at its content width
+ * and Actions takes a share instead, so the right-aligned count and the
+ * switch are not crowded together.
+ */
+const MODEL_LIST_COLUMN_GROW: Record<string, number> = {
+  name: 2,
+  version: 1,
+  taskType: 1,
+  providerName: 1,
+  status: 1,
+  createdAt: 1,
+  actions: 2,
+};
+
+export function modelListColumnSizing(id: string): {
+  width?: string;
+  minWidth?: string;
+  maxW?: string;
+  grow?: number;
+} {
+  const grow = MODEL_LIST_COLUMN_GROW[id];
+  if (id === "providerName") return { maxW: PROVIDER_NAME_MAX_WIDTH, grow };
   const width = MODEL_LIST_FIXED_COLUMN_WIDTHS[id];
-  return width ? { width, minWidth: width, maxW: width } : undefined;
+  return width ? { width, minWidth: width, maxW: width, grow } : { grow };
 }
 
 function modelCreatedAtMs(model: {
@@ -127,7 +152,13 @@ export function renderModelServiceCountCell(
 ): React.ReactNode {
   const count = model.noOfServices ?? 0;
   return (
-    <Text fontSize="sm" color="ink.600">
+    <Text
+      fontSize="sm"
+      color="ink.600"
+      // Right-aligned column: end under the header text, not its info + sort icons.
+      pr={`${sortHeaderTrailingWidthPx(true)}px`}
+      sx={{ fontVariantNumeric: "tabular-nums" }}
+    >
       {count > 0 ? count : "-"}
     </Text>
   );

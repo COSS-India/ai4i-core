@@ -203,6 +203,10 @@ const CONTENT_WIDTH_IDS = new Set([
   "publishedat",
   "publishedon",
   "published_on",
+  // Model List: count with a long "No. of Services" header, and short provider
+  // names that would otherwise split the leftover width with Model Name.
+  "noofservices",
+  "providername",
 ]);
 
 function isContentWidthColumn(col: { id: string }): boolean {
@@ -281,6 +285,7 @@ type AdminColumnInput = {
   width?: TableCellProps["w"];
   minWidth?: TableCellProps["minW"];
   maxW?: TableCellProps["maxW"];
+  grow?: number;
 };
 
 /** Fixed rem rail for status / task-type / method-style columns. */
@@ -431,6 +436,8 @@ export type ColumnSizingInput = {
   header: number;
   mode: ColumnSizingMode;
   minPx?: number;
+  /** Weight for spare width; see `DataTableColumn.grow`. */
+  grow?: number;
 };
 
 /** Below this a truncated value stops being recognisable. */
@@ -481,7 +488,10 @@ function shrinkableIndexes(cols: readonly ColumnSizingInput[]): number[] {
     .filter((i) => i >= 0);
 }
 
-/** Give leftover viewport space to shrink columns, proportional to natural width. */
+/**
+ * Give leftover viewport space to columns that opted in with `grow` (by weight),
+ * or else to shrink columns, proportional to natural width.
+ */
 function growShrinkColumns(
   widths: number[],
   cols: readonly ColumnSizingInput[],
@@ -489,11 +499,17 @@ function growShrinkColumns(
   available: number,
   total: number,
 ): number[] {
-  const weight = shrinkable.reduce((sum, i) => sum + cols[i].natural, 0);
+  const growing = cols
+    .map((c, i) => ((c.grow ?? 0) > 0 ? i : -1))
+    .filter((i) => i >= 0);
+  const targets = growing.length > 0 ? growing : shrinkable;
+  const weightOf = (i: number) =>
+    growing.length > 0 ? (cols[i].grow ?? 0) : cols[i].natural;
+  const weight = targets.reduce((sum, i) => sum + weightOf(i), 0);
   if (weight > 0) {
     const extra = available - total;
-    for (const i of shrinkable) {
-      widths[i] += (extra * cols[i].natural) / weight;
+    for (const i of targets) {
+      widths[i] += (extra * weightOf(i)) / weight;
     }
   }
   return widths.map((w) => Math.floor(w));
@@ -660,20 +676,22 @@ function sizingInputForColumn(
   measured: number,
 ): ColumnSizingInput {
   const mode = resolveColumnSizingMode(col);
+  const { grow } = col;
   if (mode === "fixed") {
     const px = resolveFixedColumnWidthPx(col) ?? measured;
-    return { natural: px, header: px, mode };
+    return { natural: px, header: px, mode, grow };
   }
   const cap = cssLengthToPx(col.maxW);
   const uncapped = Math.max(header, measured);
   if (cap == null) {
-    return { natural: uncapped, header, mode, minPx: cssLengthToPx(col.minWidth) };
+    return { natural: uncapped, header, mode, minPx: cssLengthToPx(col.minWidth), grow };
   }
   return {
     natural: Math.min(uncapped, cap),
     header: Math.min(header, cap),
     mode,
     minPx: cssLengthToPx(col.minWidth),
+    grow,
   };
 }
 

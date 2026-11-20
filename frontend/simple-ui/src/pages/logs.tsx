@@ -770,44 +770,40 @@ function LogsAggregationStats({
   successCount: number;
   failureCount: number;
 }>) {
+  // Compact cards: label above the number, tighter padding than the default
+  // CardBody so the row is a little shorter; they share the full width.
+  const stats = [
+    { label: "Total Requests", value: total, color: "ink.800", border: borderColor },
+    { label: "Success", value: successCount, color: "green.500", border: "green.200" },
+    { label: "Failures", value: failureCount, color: "red.500", border: "red.200" },
+  ];
   return (
     <SimpleGrid columns={{ base: 2, md: 3 }} spacing={4}>
-      <Card bg={cardBg} border="1px" borderColor={borderColor} boxShadow="sm">
-        <CardBody>
-          <Stat>
-            <StatLabel fontSize="sm" color="ink.600" fontWeight="medium">
-              Total Requests
-            </StatLabel>
-            <StatNumber fontSize="2xl" fontWeight="bold" color="ink.800">
-              {total.toLocaleString()}
-            </StatNumber>
-          </Stat>
-        </CardBody>
-      </Card>
-      <Card bg={cardBg} border="1px" borderColor="green.200" boxShadow="sm">
-        <CardBody>
-          <Stat>
-            <StatLabel fontSize="sm" color="ink.600" fontWeight="medium">
-              Success
-            </StatLabel>
-            <StatNumber fontSize="2xl" fontWeight="bold" color="green.500">
-              {successCount.toLocaleString()}
-            </StatNumber>
-          </Stat>
-        </CardBody>
-      </Card>
-      <Card bg={cardBg} border="1px" borderColor="red.200" boxShadow="sm">
-        <CardBody>
-          <Stat>
-            <StatLabel fontSize="sm" color="ink.600" fontWeight="medium">
-              Failures
-            </StatLabel>
-            <StatNumber fontSize="2xl" fontWeight="bold" color="red.500">
-              {failureCount.toLocaleString()}
-            </StatNumber>
-          </Stat>
-        </CardBody>
-      </Card>
+      {stats.map((stat) => (
+        <Card
+          key={stat.label}
+          bg={cardBg}
+          border="1px"
+          borderColor={stat.border}
+          boxShadow="sm"
+        >
+          <CardBody px={4} py={2}>
+            <Stat>
+              <StatLabel fontSize="sm" color="ink.600" fontWeight="medium">
+                {stat.label}
+              </StatLabel>
+              <StatNumber
+                fontSize="2xl"
+                fontWeight="bold"
+                color={stat.color}
+                lineHeight="short"
+              >
+                {stat.value.toLocaleString()}
+              </StatNumber>
+            </Stat>
+          </CardBody>
+        </Card>
+      ))}
     </SimpleGrid>
   );
 }
@@ -958,6 +954,8 @@ function LogsDashboardMain(props: LogsDashboardMainProps) {
       <ManagementPageHeader
         title="Logs Dashboard"
         description="View telemetry traces and request outcomes"
+        // The page's VStack already puts 24px between sections.
+        mb={0}
       />
 
       {props.showLoginPrompt ? (
