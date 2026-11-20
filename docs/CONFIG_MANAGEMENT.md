@@ -61,8 +61,9 @@ GET /api/v1/config?type=suspend-reasons&sort_order=asc
 ## Adding a new configurable list
 
 1. Decide on a unique `type` string and the JSON shape of `data`.
-2. Seed it (migration or admin API call) with `is_default=true` if it must
-   always exist.
+2. Seed it with `is_default=true` via a migration if it must always exist —
+   `ConfigCreate` only accepts `type` and `data`, so `is_default` cannot be
+   set through the admin API.
 3. In the consuming frontend/backend code, fetch via
    `GET /api/v1/config?type=<your-type>` and parse `data` according to your
    chosen shape — no backend route/model changes required.
