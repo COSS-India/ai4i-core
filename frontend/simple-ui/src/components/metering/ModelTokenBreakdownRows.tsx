@@ -41,7 +41,7 @@ export function ModelTokenBreakdownRows({ row }: Readonly<{ row: ModelConsumptio
           </Td>
           <Td textAlign="right" {...childTd}>
             <Text fontSize="sm" color="gray.600" whiteSpace="nowrap" pr={VALUE_INSET} sx={TABULAR_NUMS}>
-              {formatModelNativeUnits(share.units, row.native_unit_suffix)}
+              {formatModelNativeUnits(share.units)}
             </Text>
           </Td>
         </Tr>

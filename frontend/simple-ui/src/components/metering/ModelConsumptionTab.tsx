@@ -57,8 +57,8 @@ const breakdownRowKey = (row: ModelConsumptionRow) =>
  */
 const NUMERIC_COLUMN_PX = 190;
 const TASK_TYPE_COLUMN_PX = 160;
-// "TOTAL NATIVE UNITS" + icons + padding measures ~196px; the widest value
-// ("1,23,45,678 chars" + inset) about the same.
+// "TOTAL NATIVE UNITS" + icons + padding measures ~196px, wider than any value
+// ("1,23,45,678" + inset; values carry no unit suffix).
 const NATIVE_UNITS_COLUMN_PX = 210;
 /** Narrowest Model Name / Service Name may get before the table scrolls instead. */
 const NAME_COLUMN_MIN_PX = 150;
@@ -176,14 +176,11 @@ function renderFailureCell(row: ModelConsumptionRow): React.ReactNode {
   );
 }
 
-/**
- * "267", not "267 tokens" (as the story asks); other units are kept
- * ("19 chars", "4 min") so non-LLM rows still say what they count.
- */
+/** The bare number for every task type: "267", "19", not "267 tokens", "19 chars". */
 function renderNativeUnitsCell(row: ModelConsumptionRow): React.ReactNode {
   return (
     <Text {...NUMERIC_TEXT_PROPS} color="gray.600">
-      {formatModelNativeUnits(row.native_units, row.native_unit_suffix)}
+      {formatModelNativeUnits(row.native_units)}
     </Text>
   );
 }

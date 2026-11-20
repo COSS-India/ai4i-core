@@ -187,22 +187,13 @@ export function formatNativeConsumption(
   return unit ? `${nativeUnits.toLocaleString()} ${unit}` : nativeUnits.toLocaleString();
 }
 
-/** Unit suffixes the Model tab leaves off its native-unit values (parent and drill-down rows). */
-const MODEL_TAB_HIDDEN_UNIT_SUFFIXES = new Set(["tokens"]);
-
 /**
- * Native units on the Model tab: "22,625", not "22,625 tokens". Other units
- * (chars, min, images) are kept, since nothing else on the row names them.
+ * Native units on the Model tab (parent and drill-down rows): the bare number,
+ * with no unit suffix of any kind ("22,625", "280", "0" rather than
+ * "22,625 tokens", "280 chars", "0 images").
  */
-export function formatModelNativeUnits(
-  nativeUnits?: number | null,
-  suffix?: string | null,
-): string {
-  const unit = suffix?.trim().toLowerCase() ?? "";
-  return formatNativeConsumption(
-    nativeUnits,
-    MODEL_TAB_HIDDEN_UNIT_SUFFIXES.has(unit) ? "" : suffix,
-  );
+export function formatModelNativeUnits(nativeUnits?: number | null): string {
+  return formatNativeConsumption(nativeUnits, "");
 }
 
 /**

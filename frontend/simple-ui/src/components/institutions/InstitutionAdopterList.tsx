@@ -62,6 +62,9 @@ export function InstitutionAdopterList({
       {
         id: "organisation",
         header: INSTITUTION,
+        // Spare width is spread over the columns (Institution takes a double
+        // share) instead of piling up in Tier; see DataTableColumn.grow.
+        grow: 2,
         sortable: true,
         sortAccessor: (t) => t.organisation ?? "",
         cell: (t) => (
@@ -108,6 +111,7 @@ export function InstitutionAdopterList({
         header: "Contact",
         thProps: { w: "180px", maxW: "180px" },
         tdProps: { maxW: "180px" },
+        grow: 1,
         sortable: true,
         sortAccessor: (t) => t.contact_name ?? "",
         cell: (t) => (
@@ -127,6 +131,7 @@ export function InstitutionAdopterList({
         id: "email",
         header: "Email",
         truncate: false,
+        grow: 1,
         sortable: true,
         sortAccessor: (t) => t.email ?? "",
         cell: renderInstitutionEmailTableCell,
@@ -136,6 +141,7 @@ export function InstitutionAdopterList({
         header: "Status",
         hint: FIELD_HINTS.tenantCol.status,
         thProps: { w: "120px" },
+        grow: 1,
         cell: (t) => (
           <Badge colorScheme={getTenantStatusColorScheme(t.status)}>
             {formatTenantStatusLabel(t.status)}
@@ -152,6 +158,10 @@ export function InstitutionAdopterList({
               hint: FIELD_HINTS.tenantCol.tier,
               thProps: { w: "180px", maxW: "180px" },
               tdProps: { maxW: "180px" },
+              // Column-level cap so the measured layout keeps Tier at 180px
+              // (thProps/tdProps alone do not); long names truncate with a
+              // tooltip. No `grow`, so it takes no spare width.
+              maxW: "180px",
               sortable: true,
               // Badge treatment mirrors the Service Registry "Tiers" column.
               truncate: false,
@@ -195,6 +205,10 @@ export function InstitutionAdopterList({
         id: "created",
         header: "Onboarded",
         hint: FIELD_HINTS.tenantCol.onboarded,
+        // The shared `created` pin (7.5rem) fits a bare "Created" header, not
+        // "Onboarded" + hint + sort icons or the locale date-time value.
+        width: "11.5rem",
+        grow: 1,
         sortable: true,
         sortAccessor: (t) =>
           t.created_at ? new Date(t.created_at).getTime() : 0,
@@ -206,6 +220,7 @@ export function InstitutionAdopterList({
         align: "right" as const,
         truncate: false,
         ...actionsColumnSize(3),
+        grow: 1,
         thProps: { textAlign: "right", whiteSpace: "nowrap", px: 2, overflow: "visible" },
         tdProps: {
           onClick: (e) => e.stopPropagation(),

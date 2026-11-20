@@ -163,6 +163,12 @@ export interface DataTableColumn<T> {
   tdProps?: TableCellProps;
   width?: string;
   minWidth?: string;
+  /**
+   * Admin layout: relative share of spare width when the table is wider than
+   * its content. Once any column sets it, only columns with `grow` take spare
+   * width (by weight); otherwise text columns absorb it all.
+   */
+  grow?: number;
   isNumeric?: boolean;
   /** Text alignment for header/cells. */
   align?: "left" | "center" | "right";

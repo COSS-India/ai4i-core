@@ -16,8 +16,8 @@ import {
 } from "react-icons/io5";
 import {
   canAccessInstitutionManagement,
-  canAccessNotificationsAlerts,
   canAccessServicesManagement,
+  canAccessNotificationsAlerts,
   canAccessUsageDashboard,
   isAdopterInstitutionManager,
   isPlatformAdminUser,
@@ -193,8 +193,8 @@ const ADOPTER_ADMIN_NAV: NavLayout = {
       items: [{ id: TABS.policyManagement }, { id: TABS.notificationsAlerts }],
     },
     {
-      id: "publish",
-      label: "Publish/Provision",
+      id: "catalog",
+      label: "Catalog",
       items: [
         { id: TABS.modelManagement },
         { id: TABS.servicesManagement },
@@ -221,15 +221,16 @@ const INSTITUTION_ADMIN_NAV: NavLayout = {
       items: [{ id: TABS.policyManagement }, { id: TABS.notificationsAlerts }],
     },
     {
+      id: "catalog",
+      label: "Catalog",
+      items: [{ id: TABS.modelManagement }],
+    },
+    {
       id: "manage",
       label: "Manage",
       items: [{ id: TABS.tenantManagement }, { id: TABS.apiKeyManagement }],
     },
-    {
-      id: "explore",
-      label: "Explore",
-      items: [{ id: TABS.modelManagement }, { id: TABS.home }],
-    },
+    { id: "playground", items: [{ id: TABS.home }] },
   ],
 };
 

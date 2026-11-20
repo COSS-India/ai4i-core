@@ -44,6 +44,14 @@ const TOTAL_COL_MIN_W = "104px";
 const PCT_COL_MIN_W = "80px";
 const COLUMN_GAP = 6;
 
+// Values end under the header text, not under its info icon: the icon is
+// 14px with a 4px gap (InfoTip in an HStack spacing={1}), and the header row
+// is inset 4px (px={1}) while the value rows are not.
+const HEADER_INSET_PX = 4;
+const INFO_TIP_TRAILING_PX = 18;
+const valueInset = (hasTip: boolean) =>
+  `${HEADER_INSET_PX + (hasTip ? INFO_TIP_TRAILING_PX : 0)}px`;
+
 const RankedShareList: React.FC<RankedShareListProps> = ({
   rows,
   headerLeft = METERING.SECTIONS.RANKED_SHARE.HEADER_LEFT,
@@ -139,6 +147,7 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
             minW={TOTAL_COL_MIN_W}
             textAlign="right"
             whiteSpace="nowrap"
+            pr={valueInset(Boolean(tipTotal))}
           >
             {row.formattedValue}
           </Text>
@@ -168,6 +177,7 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
             textAlign="right"
             whiteSpace="nowrap"
             minW={PCT_COL_MIN_W}
+            pr={valueInset(Boolean(tipRight))}
           >
             {percentDecimals == null
               ? row.percentage.toFixed(2)
