@@ -187,6 +187,36 @@ export function formatNativeConsumption(
   return unit ? `${nativeUnits.toLocaleString()} ${unit}` : nativeUnits.toLocaleString();
 }
 
+/** Unit suffixes the Model tab leaves off its native-unit values (parent and drill-down rows). */
+const MODEL_TAB_HIDDEN_UNIT_SUFFIXES = new Set(["tokens"]);
+
+/**
+ * Native units on the Model tab: "22,625", not "22,625 tokens". Other units
+ * (chars, min, images) are kept, since nothing else on the row names them.
+ */
+export function formatModelNativeUnits(
+  nativeUnits?: number | null,
+  suffix?: string | null,
+): string {
+  const unit = suffix?.trim().toLowerCase() ?? "";
+  return formatNativeConsumption(
+    nativeUnits,
+    MODEL_TAB_HIDDEN_UNIT_SUFFIXES.has(unit) ? "" : suffix,
+  );
+}
+
+/**
+ * Percentage with a fixed number of decimals and a "%" sign, rounded half up:
+ * 65.35 → "65.4%", 25 → "25.0%". Plain `toFixed` would give "65.3%" here,
+ * because 65.35 is stored as 65.3499…; the epsilon nudge corrects that.
+ */
+export function formatPercent(value?: number | null, decimals = 1): string {
+  if (value == null || !Number.isFinite(value)) return METERING.GRAPH.EMPTY_VALUE;
+  const factor = 10 ** decimals;
+  const rounded = Math.round((value + Math.sign(value) * Number.EPSILON) * factor) / factor;
+  return `${rounded.toFixed(decimals)}%`;
+}
+
 export function formatMeteringRefreshTime(iso?: string, nowMs = Date.now()): string {
   if (!iso) return METERING.REFRESH.JUST_NOW;
   const diff = Math.max(0, nowMs - new Date(iso).getTime());

@@ -161,6 +161,15 @@ const TIER_TASK_TYPES_COLUMN: DataTableColumn<Tier> = {
 };
 
 /**
+ * Header text + sort control + cell padding, on one line. Institutions is sized
+ * for "INSTITUTIONS"; re-check if the INSTITUTIONS label gets longer.
+ */
+const TIER_COUNT_COLUMN_WIDTHS = {
+  services: "8.5rem",
+  institutions: "10.5rem",
+} as const;
+
+/**
  * A per-tier count column. Counts are aggregated in the hook from one fetch,
  * and render blank rather than `0` until it settles — "0" and "not loaded yet"
  * read very differently.
@@ -172,11 +181,16 @@ function makeTierCountColumn(
   isLoading: boolean,
   hasError: boolean,
   errorLabel: string,
+  width: string,
 ): DataTableColumn<Tier> {
   return {
     id,
     header,
-    thProps: { w: "140px" },
+    // Overrides the shared compact pin for "services" / "institutions" ids
+    // (6.5rem / 7rem), which fits the count but not the header + sort control,
+    // so the header showed as "SERVIC…" / "INSTITUT…".
+    width,
+    thProps: { w: width },
     sortable: true,
     // Left, not centred: the sortable header is a flex row that ignores
     // textAlign, so a centred column leaves its values off from the label.
@@ -489,6 +503,7 @@ const TierManagement: React.FC = () => {
         isServiceCountLoading,
         hasServiceCountError,
         "Could not load services",
+        TIER_COUNT_COLUMN_WIDTHS.services,
       ),
       makeTierCountColumn(
         "institutions",
@@ -497,6 +512,7 @@ const TierManagement: React.FC = () => {
         isInstitutionCountLoading,
         hasInstitutionCountError,
         `Could not load ${INSTITUTIONS.toLowerCase()}`,
+        TIER_COUNT_COLUMN_WIDTHS.institutions,
       ),
       makeTierActionsColumn(
         deletingId,

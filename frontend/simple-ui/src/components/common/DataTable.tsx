@@ -127,6 +127,11 @@ export interface DataTableColumn<T> {
   /** Optional circled-i tooltip on the header (preferred name). */
   hint?: string;
   /**
+   * Card layout: wrap a long header onto more lines instead of truncating it
+   * with an ellipsis. Default false.
+   */
+  wrapHeader?: boolean;
+  /**
    * When true, DataTable renders sort UI.
    * - Card: click-to-toggle header (client sort unless `onSortChange` is set)
    * - Admin: asc/desc buttons driven by `sort` / `onSortChange`
@@ -1157,6 +1162,8 @@ function AdminSortableHeader<T>({
         direction={direction}
         active={isActive}
         hint={hint}
+        wrap={col.wrapHeader}
+        align={col.align}
         onAsc={() => onSortChange({ key, direction: "asc" })}
         onDesc={() => onSortChange({ key, direction: "desc" })}
         ascAriaLabel={`Sort ${labelText} ascending`}
@@ -1180,7 +1187,7 @@ function columnHeaderSx<T>(col: DataTableColumn<T>) {
   return {
     ...DATA_TABLE_HEADER_SX,
     overflow: "hidden",
-    textOverflow: "ellipsis",
+    ...(col.wrapHeader ? {} : { textOverflow: "ellipsis" }),
     ...(col.isNumeric || col.align === "right"
       ? { textAlign: "right" as const }
       : {}),

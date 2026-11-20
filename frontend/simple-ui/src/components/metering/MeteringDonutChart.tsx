@@ -2,6 +2,7 @@ import { Box, Flex, HStack, Text, VStack } from "@chakra-ui/react";
 import React from "react";
 import { Cell, Pie, PieChart, Tooltip } from "recharts";
 import { getMeteringChartColor } from "../../utils/meteringColors";
+import { formatPercent } from "../../utils/meteringFormatters";
 import { replaceTenantCopy } from "../../utils/replaceTenantCopy";
 import MeteringChartPanel from "./MeteringChartPanel";
 
@@ -25,15 +26,23 @@ interface DonutTooltipProps {
     payload?: DonutChartDatum;
   }>;
   total: number;
+  percentDecimals?: number;
 }
 
-const DonutTooltip: React.FC<DonutTooltipProps> = ({ active, payload, total }) => {
+const DonutTooltip: React.FC<DonutTooltipProps> = ({
+  active,
+  payload,
+  total,
+  percentDecimals,
+}) => {
   if (!active || !payload?.length) return null;
 
   const entry = payload[0];
   const name = entry.payload?.name ?? entry.name ?? "Unknown";
   const value = Number(entry.value ?? entry.payload?.value ?? 0);
-  const pct = total > 0 ? ((value / total) * 100).toFixed(2) : "0.00";
+  const share = total > 0 ? (value / total) * 100 : 0;
+  const pctLabel =
+    percentDecimals == null ? `${share.toFixed(2)}%` : formatPercent(share, percentDecimals);
 
   return (
     <Box
@@ -53,7 +62,7 @@ const DonutTooltip: React.FC<DonutTooltipProps> = ({ active, payload, total }) =
         {value.toLocaleString()} requests
       </Text>
       <Text fontSize="xs" color="gray.500" mt={0.5}>
-        {pct}% of total
+        {pctLabel} of total
       </Text>
     </Box>
   );
@@ -72,6 +81,8 @@ interface MeteringDonutChartProps {
   chartMaxW?: string | Record<string, string>;
   /** Denominator for tooltip %. Defaults to the sum of slice values. */
   total?: number;
+  /** Rounded decimals for the tooltip % (Model tab: 1). Unset keeps 2 decimals. */
+  percentDecimals?: number;
 }
 
 const DonutLegend: React.FC<{
@@ -112,6 +123,7 @@ const MeteringDonutChart: React.FC<MeteringDonutChartProps> = ({
   legendVariant = "dotted",
   chartMaxW,
   total: totalOverride,
+  percentDecimals,
 }) => {
   const sliceTotal = data.reduce((sum, d) => sum + d.value, 0);
   const total = totalOverride && totalOverride > 0 ? totalOverride : sliceTotal;
@@ -146,7 +158,7 @@ const MeteringDonutChart: React.FC<MeteringDonutChartProps> = ({
             </Pie>
             {showTooltip ? (
               <Tooltip
-                content={<DonutTooltip total={total} />}
+                content={<DonutTooltip total={total} percentDecimals={percentDecimals} />}
                 wrapperStyle={{ zIndex: 20, outline: "none" }}
                 allowEscapeViewBox={{ x: true, y: true }}
               />

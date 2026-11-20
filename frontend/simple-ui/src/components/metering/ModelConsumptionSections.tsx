@@ -19,6 +19,7 @@ import { METERING } from "../../config/meteringConstants";
 import type { ModelTopN, TopModelRow } from "../../types/metering";
 import {
   formatCompactNumber,
+  formatPercent,
   modelConsumptionTaskTypeColor,
   type ModelInsights,
   type ServiceChartSlice,
@@ -73,7 +74,7 @@ export const ModelInsightCards: React.FC<ModelInsightCardsProps> = ({
       ) : null}
       <KpiCard
         label={section.OVERALL_SUCCESS}
-        value={insights.overallSuccessRate?.toFixed(2) ?? METERING.GRAPH.EMPTY_VALUE}
+        value={formatPercent(insights.overallSuccessRate)}
         helper={section.SUCCESS_RATE_SUFFIX}
         tooltip={section.TOOLTIPS.OVERALL_SUCCESS}
         valueColor="green.600"
@@ -155,6 +156,7 @@ export const ModelConsumptionCard: React.FC<ModelConsumptionCardProps> = ({
               centerPrimary={section.DONUT_PRIMARY}
               centerSecondary={section.DONUT_SECONDARY}
               total={topModels.length ? topModelsTotalRequests : undefined}
+              percentDecimals={1}
             />
           }
           list={
@@ -177,6 +179,7 @@ export const ModelConsumptionCard: React.FC<ModelConsumptionCardProps> = ({
               tipTotal={rankedShare.TOOLTIPS.TOTAL_REQUESTS}
               tipTaskType={section.TOOLTIPS.TASK_TYPE}
               tipRight={section.TOOLTIPS.CONSUMPTION_PCT}
+              percentDecimals={1}
             />
           }
         />
@@ -191,7 +194,19 @@ interface TaskTypeFilterMenuProps {
   selectedTaskTypes: Set<string>;
   label: string;
   onToggle: (taskType: string) => void;
+  onSelectAll: () => void;
+  onClearAll: () => void;
 }
+
+const FILTER_ACTION_PROPS = {
+  w: "auto",
+  fontSize: "xs",
+  fontWeight: "semibold",
+  color: "blue.600",
+  borderRadius: "md",
+  px: 2,
+  py: 1,
+} as const;
 
 /** Multi-select Task Type filter for the Model Consumption Drill Down; hidden with no task types. */
 export const TaskTypeFilterMenu: React.FC<TaskTypeFilterMenuProps> = ({
@@ -199,8 +214,15 @@ export const TaskTypeFilterMenu: React.FC<TaskTypeFilterMenuProps> = ({
   selectedTaskTypes,
   label,
   onToggle,
-}) =>
-  taskTypeNames.length === 0 ? null : (
+  onSelectAll,
+  onClearAll,
+}) => {
+  if (taskTypeNames.length === 0) return null;
+  const allSelected = taskTypeNames.every((taskType) =>
+    selectedTaskTypes.has(normalizeModelTaskType(taskType)),
+  );
+  const noneSelected = selectedTaskTypes.size === 0;
+  return (
     <Box mb={4} maxW={{ base: "full", sm: "320px" }}>
       <Text fontSize="xs" fontWeight="semibold" color="gray.600" mb={2}>
         {section.FILTER_TASK_TYPES}
@@ -224,7 +246,38 @@ export const TaskTypeFilterMenu: React.FC<TaskTypeFilterMenuProps> = ({
           </Text>
         </MenuButton>
         <Portal>
-          <MenuList maxH="320px" overflowY="auto" zIndex={10}>
+          <MenuList maxH="320px" overflowY="auto" zIndex={10} pt={0}>
+            <HStack
+              justify="space-between"
+              spacing={2}
+              px={1}
+              py={1}
+              borderBottomWidth="1px"
+              borderColor="gray.100"
+              position="sticky"
+              top={0}
+              bg="white"
+              zIndex={1}
+            >
+              {/* MenuItems (not Buttons) so arrow keys reach them like the checkboxes. */}
+              <MenuItem
+                {...FILTER_ACTION_PROPS}
+                onClick={onSelectAll}
+                isDisabled={allSelected}
+                closeOnSelect={false}
+              >
+                {section.FILTER_SELECT_ALL}
+              </MenuItem>
+              <MenuItem
+                {...FILTER_ACTION_PROPS}
+                justifyContent="flex-end"
+                onClick={onClearAll}
+                isDisabled={noneSelected}
+                closeOnSelect={false}
+              >
+                {section.FILTER_CLEAR_ALL}
+              </MenuItem>
+            </HStack>
             {taskTypeNames.map((taskType) => (
               <MenuItem key={taskType} onClick={() => onToggle(taskType)} closeOnSelect={false}>
                 <Checkbox
@@ -241,3 +294,4 @@ export const TaskTypeFilterMenu: React.FC<TaskTypeFilterMenuProps> = ({
       </Menu>
     </Box>
   );
+};

@@ -93,6 +93,25 @@ function SortCaretButton({
 }
 
 /**
+ * Width of what follows the label in a {@link TableSortHeader}: 6px gap +
+ * 14px InfoTip (when there is a hint) + 6px gap + 18px caret box (14px button
+ * + 2px padding each side). Right-aligned cells pad by this so their values end
+ * under the label text, not under the sort icon. Keep in sync with the layout below.
+ */
+export function sortHeaderTrailingWidthPx(hasHint: boolean): number {
+  const GAP = 6;
+  const INFO_TIP = 14;
+  const CARET_BOX = 18;
+  return (hasHint ? GAP + INFO_TIP : 0) + GAP + CARET_BOX;
+}
+
+const SORT_HEADER_JUSTIFY = {
+  left: "flex-start",
+  center: "center",
+  right: "flex-end",
+} as const;
+
+/**
  * Column header with optional hint and a compact stacked asc/desc caret control.
  * Inactive columns show muted dual carets; the active direction uses an ink caret.
  */
@@ -108,6 +127,8 @@ export function TableSortHeader({
   /** When false, neither caret is emphasized (inactive column). Default true. */
   active = true,
   hint,
+  wrap = false,
+  align,
 }: {
   label: string;
   direction: SortDirection;
@@ -120,6 +141,13 @@ export function TableSortHeader({
   active?: boolean;
   /** Optional circled-i tip beside the label. */
   hint?: string;
+  /** Let a long label wrap onto more lines instead of truncating to one. Default false. */
+  wrap?: boolean;
+  /**
+   * "right" lines the label + controls up with right-aligned (numeric) cell
+   * values. Unset keeps the previous layout (start-aligned, inherited text-align).
+   */
+  align?: "left" | "right" | "center";
 }) {
   const ascTooltip = ascTooltipLabel ?? `Sort ${label} ascending`;
   const descTooltip = descTooltipLabel ?? `Sort ${label} descending`;
@@ -127,11 +155,19 @@ export function TableSortHeader({
   const descActive = active && direction === "desc";
 
   return (
-    <HStack spacing={1.5} align="center" minW={0} maxW="100%">
+    <HStack
+      spacing={1.5}
+      align="center"
+      minW={0}
+      maxW="100%"
+      justify={align ? SORT_HEADER_JUSTIFY[align] : undefined}
+    >
       <Text
         as="span"
         minW={0}
-        noOfLines={1}
+        noOfLines={wrap ? undefined : 1}
+        whiteSpace={wrap ? "normal" : undefined}
+        textAlign={align}
         title={label}
         fontSize="11.5px"
         letterSpacing="0.05em"
