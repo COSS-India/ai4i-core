@@ -234,8 +234,8 @@ export const permissionSchema = z
 export const permissionListSchema = z.array(permissionSchema);
 
 export const guestServicesListSchema = z.union([
-  z.array(z.union([z.string(), z.record(z.unknown())])),
+  z.array(z.union([z.string(), z.record(z.string(), z.unknown())])),
   z.object({
-    services: z.array(z.union([z.string(), z.record(z.unknown())])),
+    services: z.array(z.union([z.string(), z.record(z.string(), z.unknown())])),
   }),
 ]);

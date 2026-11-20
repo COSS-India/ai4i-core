@@ -74,7 +74,7 @@ export const policySubCategoryStatusResponseSchema = z.object({
 
 const policyFieldsSchema = z.preprocess(
   (value) => (value && typeof value === "object" && !Array.isArray(value) ? value : {}),
-  z.record(z.unknown()),
+  z.record(z.string(), z.unknown()),
 );
 
 /** Platform-core `PolicyTypeItem`. A PII definition. */
