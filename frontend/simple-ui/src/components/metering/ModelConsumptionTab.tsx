@@ -50,8 +50,10 @@ const breakdownRowKey = (row: ModelConsumptionRow) =>
  * icons + cell padding; a wrapped header next to one-line ones looks broken)
  * and its widest value ("1,23,45,678 tokens", "100.0%") plus the icon inset
  * its cells use (see NUMERIC_TEXT_PROPS). Re-check these if a header is renamed.
+ *
+ * Total Requests, Successful and Failed share one width so their values sit at
+ * even intervals.
  */
-/** Shared by Total Requests, Successful and Failed, so their values sit at even intervals. */
 const NUMERIC_COLUMN_WIDTH = "190px";
 
 const COLUMN_WIDTHS = {
@@ -81,6 +83,95 @@ const NUMERIC_TEXT_PROPS = {
 /** LLM rows carry a token breakdown and can be expanded to show it. */
 const hasTokenBreakdown = (row: ModelConsumptionRow) =>
   (row.native_breakdown?.length ?? 0) > 0;
+
+/*
+ * Cell renderers live at module level (not inline in the column definitions)
+ * so they are not re-created on every render of the tab.
+ */
+
+/** Expand toggle (LLM rows only) + task type label. */
+function renderTaskTypeCell(
+  row: ModelConsumptionRow,
+  index: number,
+  isOpen: boolean,
+  onToggle: (key: string) => void,
+): React.ReactNode {
+  const key = breakdownRowKey(row);
+  return (
+    <HStack spacing={1}>
+      <IconButton
+        aria-label={`${METERING.SECTIONS.MODEL.TOGGLE_TOKEN_BREAKDOWN} ${row.name}`}
+        aria-expanded={isOpen}
+        icon={<ChevronRightIcon />}
+        size="xs"
+        variant="ghost"
+        visibility={hasTokenBreakdown(row) ? "visible" : "hidden"}
+        transform={isOpen ? "rotate(90deg)" : undefined}
+        transition="transform 0.15s ease"
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggle(key);
+        }}
+      />
+      {row.task_type ? (
+        <TaskTypeLabel
+          taskType={row.task_type}
+          color={modelConsumptionTaskTypeColor(row.task_type, index)}
+        />
+      ) : (
+        <Text fontSize="sm">{METERING.GRAPH.EMPTY_VALUE}</Text>
+      )}
+    </HStack>
+  );
+}
+
+function renderModelNameCell(row: ModelConsumptionRow): React.ReactNode {
+  return (
+    <Text fontSize="sm" color="gray.800" fontWeight="medium">
+      {row.model_name?.trim() || METERING.GRAPH.EMPTY_VALUE}
+    </Text>
+  );
+}
+
+function renderServiceNameCell(row: ModelConsumptionRow): React.ReactNode {
+  return (
+    <Text fontWeight="medium" fontSize="sm">
+      {row.name}
+    </Text>
+  );
+}
+
+function renderRequestsCell(row: ModelConsumptionRow): React.ReactNode {
+  return <Text {...NUMERIC_TEXT_PROPS}>{formatCompactNumber(row.requests, "indian")}</Text>;
+}
+
+function renderSuccessCell(row: ModelConsumptionRow): React.ReactNode {
+  return (
+    <Text {...NUMERIC_TEXT_PROPS} color="green.600" fontWeight="medium">
+      {formatPercent(row.success_pct)}
+    </Text>
+  );
+}
+
+function renderFailureCell(row: ModelConsumptionRow): React.ReactNode {
+  return (
+    <Text {...NUMERIC_TEXT_PROPS} color="red.500" fontWeight="medium">
+      {formatPercent(row.failure_rate_pct)}
+    </Text>
+  );
+}
+
+/**
+ * "267", not "267 tokens" (as the story asks); other units are kept
+ * ("19 chars", "4 min") so non-LLM rows still say what they count.
+ */
+function renderNativeUnitsCell(row: ModelConsumptionRow): React.ReactNode {
+  return (
+    <Text {...NUMERIC_TEXT_PROPS} color="gray.600">
+      {formatModelNativeUnits(row.native_units, row.native_unit_suffix)}
+    </Text>
+  );
+}
 
 interface ModelConsumptionTabProps {
   data?: ModelConsumptionResponse;
@@ -194,36 +285,8 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
         hint: section.TOOLTIPS.TASK_TYPE,
         wrapHeader: true,
         width: COLUMN_WIDTHS.task_type,
-        cell: (row, i) => {
-          const key = breakdownRowKey(row);
-          const isOpen = expandedRows.has(key);
-          return (
-            <HStack spacing={1}>
-              <IconButton
-                aria-label={`${section.TOGGLE_TOKEN_BREAKDOWN} ${row.name}`}
-                aria-expanded={isOpen}
-                icon={<ChevronRightIcon />}
-                size="xs"
-                variant="ghost"
-                visibility={hasTokenBreakdown(row) ? "visible" : "hidden"}
-                transform={isOpen ? "rotate(90deg)" : undefined}
-                transition="transform 0.15s ease"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  toggleRow(key);
-                }}
-              />
-              {row.task_type ? (
-                <TaskTypeLabel
-                  taskType={row.task_type}
-                  color={modelConsumptionTaskTypeColor(row.task_type, i)}
-                />
-              ) : (
-                <Text fontSize="sm">{METERING.GRAPH.EMPTY_VALUE}</Text>
-              )}
-            </HStack>
-          );
-        },
+        cell: (row, i) =>
+          renderTaskTypeCell(row, i, expandedRows.has(breakdownRowKey(row)), toggleRow),
       },
       {
         id: "model_name",
@@ -233,11 +296,7 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
         width: COLUMN_WIDTHS.model_name,
         sortable: true,
         sortAccessor: sortAccessors.model_name,
-        cell: (row) => (
-          <Text fontSize="sm" color="gray.800" fontWeight="medium">
-            {row.model_name?.trim() || METERING.GRAPH.EMPTY_VALUE}
-          </Text>
-        ),
+        cell: renderModelNameCell,
       },
       {
         id: "name",
@@ -247,11 +306,7 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
         width: COLUMN_WIDTHS.name,
         sortable: true,
         sortAccessor: sortAccessors.name,
-        cell: (row) => (
-          <Text fontWeight="medium" fontSize="sm">
-            {row.name}
-          </Text>
-        ),
+        cell: renderServiceNameCell,
       },
       // Request counts and their success / failure split sit together; native
       // units come last. ModelTokenBreakdownRows mirrors this order.
@@ -264,9 +319,7 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
         wrapHeader: true,
         width: COLUMN_WIDTHS.requests,
         align: "right",
-        cell: (row) => (
-          <Text {...NUMERIC_TEXT_PROPS}>{formatCompactNumber(row.requests, "indian")}</Text>
-        ),
+        cell: renderRequestsCell,
       },
       {
         id: "success_pct",
@@ -277,11 +330,7 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
         wrapHeader: true,
         width: COLUMN_WIDTHS.success_pct,
         align: "right",
-        cell: (row) => (
-          <Text {...NUMERIC_TEXT_PROPS} color="green.600" fontWeight="medium">
-            {formatPercent(row.success_pct)}
-          </Text>
-        ),
+        cell: renderSuccessCell,
       },
       {
         id: "failure_rate_pct",
@@ -292,11 +341,7 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
         wrapHeader: true,
         width: COLUMN_WIDTHS.failure_rate_pct,
         align: "right",
-        cell: (row) => (
-          <Text {...NUMERIC_TEXT_PROPS} color="red.500" fontWeight="medium">
-            {formatPercent(row.failure_rate_pct)}
-          </Text>
-        ),
+        cell: renderFailureCell,
       },
       {
         id: "native_units",
@@ -307,13 +352,7 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
         wrapHeader: true,
         width: COLUMN_WIDTHS.native_units,
         align: "right",
-        // "267", not "267 tokens" (as the story asks); other units are kept
-        // ("19 chars", "4 min") so non-LLM rows still say what they count.
-        cell: (row) => (
-          <Text {...NUMERIC_TEXT_PROPS} color="gray.600">
-            {formatModelNativeUnits(row.native_units, row.native_unit_suffix)}
-          </Text>
-        ),
+        cell: renderNativeUnitsCell,
       },
     ],
     [section, sortAccessors, expandedRows, toggleRow],
