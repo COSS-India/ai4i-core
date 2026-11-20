@@ -2,6 +2,7 @@ import { Box, Grid, HStack, Progress, Text, VStack } from "@chakra-ui/react";
 import React from "react";
 import { METERING } from "../../config/meteringConstants";
 import { meteringColorAt } from "../../utils/meteringColors";
+import { formatPercent } from "../../utils/meteringFormatters";
 import { replaceTenantCopy } from "../../utils/replaceTenantCopy";
 import InfoTip from "../common/InfoTip";
 import MeteringTableText from "./MeteringTableText";
@@ -30,6 +31,11 @@ interface RankedShareListProps {
   tipRight?: string;
   /** Donut list: Model Name, Task Type, Total requests, % of total. */
   variant?: "default" | "modelWithTaskType";
+  /**
+   * Rounded decimals for the % column, shown with a "%" sign (Model tab: 1).
+   * Unset keeps the original 2-decimal value without a sign (Overview tab).
+   */
+  percentDecimals?: number;
 }
 
 // Total Requests and % of Total columns: fixed widths and a wide gap, so the
@@ -48,6 +54,7 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
   tipTaskType,
   tipRight = METERING.SECTIONS.RANKED_SHARE.TOOLTIPS.PCT_OF_TOTAL,
   variant = "default",
+  percentDecimals,
 }) => {
   const modelWithTaskType = variant === "modelWithTaskType" && Boolean(headerTaskType);
   const gridColumns = modelWithTaskType
@@ -162,7 +169,9 @@ const RankedShareList: React.FC<RankedShareListProps> = ({
             whiteSpace="nowrap"
             minW={PCT_COL_MIN_W}
           >
-            {row.percentage.toFixed(2)}
+            {percentDecimals == null
+              ? row.percentage.toFixed(2)
+              : formatPercent(row.percentage, percentDecimals)}
           </Text>
         );
 

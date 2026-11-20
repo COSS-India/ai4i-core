@@ -1,5 +1,4 @@
 import {
-  Box,
   HStack,
   IconButton,
   Text,
@@ -20,12 +19,14 @@ import {
   buildTopModelsChart,
   deriveModelInsights,
   formatCompactNumber,
-  formatNativeConsumption,
+  formatModelNativeUnits,
+  formatPercent,
   getScopePeriodLabel,
   modelConsumptionTaskTypeColor,
 } from "../../utils/meteringFormatters";
 import { normalizeModelTaskType } from "../../utils/meteringTaskType";
 import DataTable, { type DataTableColumn } from "../common/table";
+import { sortHeaderTrailingWidthPx } from "../common/TableControls";
 import MeteringAsyncState from "./MeteringAsyncState";
 import { MeteringEmptyState } from "./MeteringChartPanel";
 import {
@@ -39,6 +40,43 @@ import { TaskTypeLabel } from "./UsageSpendCells";
 
 const breakdownRowKey = (row: ModelConsumptionRow) =>
   `${row.service_id}-${row.model_name ?? row.name}`;
+
+/**
+ * Fixed table layout gives every column without a width an equal share, so
+ * "LLM" would get as much room as a long service name. Task Type and the
+ * numeric columns get fixed widths; Model Name and Service Name share the rest.
+ *
+ * The numeric widths fit the whole header on one line (text + info and sort
+ * icons + cell padding; a wrapped header next to one-line ones looks broken)
+ * and its widest value ("1,23,45,678 tokens", "100.0%") plus the icon inset
+ * its cells use (see NUMERIC_TEXT_PROPS). Re-check these if a header is renamed.
+ */
+/** Shared by Total Requests, Successful and Failed, so their values sit at even intervals. */
+const NUMERIC_COLUMN_WIDTH = "190px";
+
+const COLUMN_WIDTHS = {
+  task_type: "160px",
+  model_name: undefined,
+  name: undefined,
+  requests: NUMERIC_COLUMN_WIDTH,
+  success_pct: NUMERIC_COLUMN_WIDTH,
+  failure_rate_pct: NUMERIC_COLUMN_WIDTH,
+  // Longer header ("TOTAL NATIVE UNITS"), so a little wider than the rest.
+  native_units: "230px",
+} as const;
+
+/**
+ * Numeric cells: right-aligned (set per column) with equal-width digits, so
+ * units, tenths and decimal points line up down the column.
+ */
+const NUMERIC_TEXT_PROPS = {
+  fontSize: "sm",
+  // Values end under the header text, not under its info + sort icons.
+  pr: `${sortHeaderTrailingWidthPx(true)}px`,
+  whiteSpace: "nowrap",
+  // Not a Chakra style prop, so it goes through sx.
+  sx: { fontVariantNumeric: "tabular-nums" },
+} as const;
 
 /** LLM rows carry a token breakdown and can be expanded to show it. */
 const hasTokenBreakdown = (row: ModelConsumptionRow) =>
@@ -154,6 +192,8 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
         id: "task_type",
         header: section.TABLE_TASK_TYPE,
         hint: section.TOOLTIPS.TASK_TYPE,
+        wrapHeader: true,
+        width: COLUMN_WIDTHS.task_type,
         cell: (row, i) => {
           const key = breakdownRowKey(row);
           const isOpen = expandedRows.has(key);
@@ -188,6 +228,9 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
       {
         id: "model_name",
         header: section.TABLE_MODEL,
+        hint: section.TOOLTIPS.MODEL_NAME,
+        wrapHeader: true,
+        width: COLUMN_WIDTHS.model_name,
         sortable: true,
         sortAccessor: sortAccessors.model_name,
         cell: (row) => (
@@ -199,42 +242,30 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
       {
         id: "name",
         header: section.TABLE_SERVICE,
+        hint: section.TOOLTIPS.SERVICE_NAME,
+        wrapHeader: true,
+        width: COLUMN_WIDTHS.name,
         sortable: true,
         sortAccessor: sortAccessors.name,
-        cell: (row, i) => {
-          const rowColor = modelConsumptionTaskTypeColor(row.task_type, i);
-          return (
-            <HStack spacing={2}>
-              <Box w={1} h={5} borderRadius="sm" bg={rowColor} />
-              <Text fontWeight="medium" fontSize="sm">
-                {row.name}
-              </Text>
-            </HStack>
-          );
-        },
+        cell: (row) => (
+          <Text fontWeight="medium" fontSize="sm">
+            {row.name}
+          </Text>
+        ),
       },
+      // Request counts and their success / failure split sit together; native
+      // units come last. ModelTokenBreakdownRows mirrors this order.
       {
         id: "requests",
         header: section.TABLE_TOTAL_REQUESTS,
         sortable: true,
         sortAccessor: sortAccessors.requests,
         hint: section.TOOLTIPS.TOTAL_REQUESTS,
-        isNumeric: true,
+        wrapHeader: true,
+        width: COLUMN_WIDTHS.requests,
+        align: "right",
         cell: (row) => (
-          <Text fontSize="sm">{formatCompactNumber(row.requests, "indian")}</Text>
-        ),
-      },
-      {
-        id: "native_units",
-        header: section.TABLE_NATIVE,
-        sortable: true,
-        sortAccessor: sortAccessors.native_units,
-        hint: section.TOOLTIPS.TOKEN_CONSUMPTION,
-        isNumeric: true,
-        cell: (row) => (
-          <Text fontSize="sm" color="gray.600">
-            {formatNativeConsumption(row.native_units, row.native_unit_suffix)}
-          </Text>
+          <Text {...NUMERIC_TEXT_PROPS}>{formatCompactNumber(row.requests, "indian")}</Text>
         ),
       },
       {
@@ -243,10 +274,12 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
         sortable: true,
         sortAccessor: sortAccessors.success_pct,
         hint: section.TOOLTIPS.SUCCESS_RATE,
-        isNumeric: true,
+        wrapHeader: true,
+        width: COLUMN_WIDTHS.success_pct,
+        align: "right",
         cell: (row) => (
-          <Text fontSize="sm" color="green.600" fontWeight="medium">
-            {row.success_pct.toFixed(2)}
+          <Text {...NUMERIC_TEXT_PROPS} color="green.600" fontWeight="medium">
+            {formatPercent(row.success_pct)}
           </Text>
         ),
       },
@@ -256,10 +289,29 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
         sortable: true,
         sortAccessor: sortAccessors.failure_rate_pct,
         hint: section.TOOLTIPS.FAILURE_RATE,
-        isNumeric: true,
+        wrapHeader: true,
+        width: COLUMN_WIDTHS.failure_rate_pct,
+        align: "right",
         cell: (row) => (
-          <Text fontSize="sm" color="red.500" fontWeight="medium">
-            {row.failure_rate_pct.toFixed(2)}
+          <Text {...NUMERIC_TEXT_PROPS} color="red.500" fontWeight="medium">
+            {formatPercent(row.failure_rate_pct)}
+          </Text>
+        ),
+      },
+      {
+        id: "native_units",
+        header: section.TABLE_NATIVE,
+        sortable: true,
+        sortAccessor: sortAccessors.native_units,
+        hint: section.TOOLTIPS.TOKEN_CONSUMPTION,
+        wrapHeader: true,
+        width: COLUMN_WIDTHS.native_units,
+        align: "right",
+        // "267", not "267 tokens" (as the story asks); other units are kept
+        // ("19 chars", "4 min") so non-LLM rows still say what they count.
+        cell: (row) => (
+          <Text {...NUMERIC_TEXT_PROPS} color="gray.600">
+            {formatModelNativeUnits(row.native_units, row.native_unit_suffix)}
           </Text>
         ),
       },
@@ -284,6 +336,14 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
       return next;
     });
   };
+
+  const selectAllTaskTypes = useCallback(() => {
+    setSelectedTaskTypes(new Set(taskTypeNames.map(normalizeModelTaskType)));
+  }, [taskTypeNames]);
+
+  const clearAllTaskTypes = useCallback(() => {
+    setSelectedTaskTypes(new Set());
+  }, []);
 
   // No usage at all in the window, vs usage that the Task Type filter hides.
   const hasNoUsage = breakdown.length === 0 && topModels.length === 0;
@@ -332,6 +392,8 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
                   selectedTaskTypes={selectedTaskTypes}
                   label={taskTypeFilterLabel}
                   onToggle={toggleTaskType}
+                  onSelectAll={selectAllTaskTypes}
+                  onClearAll={clearAllTaskTypes}
                 />
                 <DataTable
                   columns={breakdownColumns}

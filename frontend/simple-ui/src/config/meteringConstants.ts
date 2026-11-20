@@ -443,7 +443,8 @@ export const METERING = {
       TOTAL_MODELS: "Total Models",
       ACTIVE_MODELS: "Active Models",
       MOST_USED: "Most Used Model",
-      OVERALL_SUCCESS: "Overall Success Rate %",
+      // Values carry their own "%" sign, so the label does not repeat it.
+      OVERALL_SUCCESS: "Overall Success Rate",
       SUCCESS_RATE_SUFFIX: "Across all models",
       REQUESTS_SUFFIX: "requests",
       REQUESTS_ACROSS_INSTITUTIONS: `requests across all ${INSTITUTIONS}`,
@@ -452,17 +453,21 @@ export const METERING = {
       TABLE_MODEL: "Model Name",
       TABLE_SERVICE: "Service Name",
       TABLE_TOTAL_REQUESTS: "Total Requests",
-      TABLE_NATIVE: "Native Consumption",
-      TABLE_SUCCESS: "Success Rate %",
-      TABLE_FAILURE: "Failure Rate %",
+      TABLE_NATIVE: "Total Native Units",
+      TABLE_SUCCESS: "Successful",
+      TABLE_FAILURE: "Failed",
       FILTER_TASK_TYPES: "Task Type",
+      FILTER_SELECT_ALL: "Select all",
+      FILTER_CLEAR_ALL: "Clear all",
       /** Expandable LLM rows: input / cached input / output tokens. */
       TOGGLE_TOKEN_BREAKDOWN: "Toggle token breakdown for",
       TOKEN_SHARE_SUFFIX: "% of tokens",
-      BREAKDOWN_TOTAL: "Total",
       TOOLTIPS: {
         TASK_TYPE:
-          "The task type this model performs, as registered in the Model Registry.",
+          "The kind of work this model does, such as translation or speech to text, as recorded in the Model Registry.",
+        MODEL_NAME: "The name of the model that handled the requests.",
+        SERVICE_NAME:
+          "The service through which requests reach this model.",
         TOTAL_MODELS:
           "Registered model versions for enabled task types in the Registry (active and deprecated).",
         ACTIVE_MODELS:
