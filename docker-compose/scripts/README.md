@@ -9,7 +9,7 @@ Run from a host terminal where Docker works. Set `AI4I_LOCAL` to the parent of `
 |--------|---------|
 | [`setup-env.sh`](setup-env.sh) | Sync Compose credentials into the repo-root `.env` and generate per-service `.env` files |
 | [`cleanup-local.sh`](cleanup-local.sh) | Tear down local stack (host apps, NMT container, Compose `down -v`) |
-| [`setup-local.sh`](setup-local.sh) | Fresh install: Compose → migrate → start apps + NMT; prints verify curls (does not wait/E2E) |
+| [`setup-local.sh`](setup-local.sh) | Interactive fresh install: choose mode (§2.1–§2.4) → confirm each step → apps → optional NMT |
 | [`init-kafka-topics.sh`](init-kafka-topics.sh) | Used by Compose `kafka-init` — creates default Kafka topics (not run by hand) |
 
 ---
@@ -22,12 +22,11 @@ export AI4I_LOCAL=/path/to/cloned-repos   # parent of ai4i-core/
 # 1) Wipe previous local stack (optional)
 bash "$AI4I_LOCAL/ai4i-core/docker-compose/scripts/cleanup-local.sh"
 
-# 2) Fresh setup (needs HF_TOKEN for NMT image/weights)
-export HF_TOKEN=hf_...   # HuggingFace Read token
+# 2) Interactive fresh setup (TTY required)
 bash "$AI4I_LOCAL/ai4i-core/docker-compose/scripts/setup-local.sh"
 ```
 
-Then run the verify commands printed by `setup-local.sh` (auth → platform-core → inference → Triton → NMT).
+The script prompts for mode (app-minimal / +monitoring / +logging / both), confirms each step, then optionally **Simple UI**, then optionally **NMT Triton**. HuggingFace `HF_TOKEN` is requested only if you continue with NMT.
 
 ---
 
@@ -38,7 +37,7 @@ Then run the verify commands printed by `setup-local.sh` (auth → platform-core
 - **When:** After Compose `.env` exists and core infra is up (or before migrations).
 - **Where:** `cd ai4i-core/docker-compose && ./scripts/setup-env.sh`
 - **Also:** Repo root `./scripts/setup-env.sh` is a thin wrapper to this script.
-- Sets `TRITON_ENDPOINT_NMT` yourself in **repo-root** `.env` **before** migrations if you need NMT E2E (see SETUP-GUIDE § C1b). `setup-local.sh` sets a default for you.
+- Set `TRITON_ENDPOINT_NMT` yourself in **repo-root** `.env` **before** migrations if you need NMT E2E (see SETUP-GUIDE § C1b). `setup-local.sh` sets a default for you.
 - Manual migrate (same as the guide / `setup-local.sh`):  
   `ai4iplatform_auth upgrade` → `ai4i_platform_db upgrade` → `ai4iplatform_core upgrade heads`.
 
@@ -51,12 +50,14 @@ Then run the verify commands printed by `setup-local.sh` (auth → platform-core
 
 ### `setup-local.sh`
 
-- Requires: Docker, `python3.11`, `curl`, `HF_TOKEN`, and `model-hosting/nmt-triton` (or `NMT_SRC=`).
-- Optional: `FORCE_NMT_BUILD=1`, `TRITON_ENDPOINT_NMT=http://127.0.0.1:8000`.
-- **Preflight:** if an existing stack is found (`ai4i-*` / `indictrans`, ports `8081`/`8095`/`8090`/`8000`, or setup PIDs), **exits** and tells you to run `cleanup-local.sh` first (does not clean up automatically).
-- Writes `TRITON_ENDPOINT_NMT` into repo-root `.env` before migrate (no API PATCH).
-- Starts apps in the background; logs under `docker-compose/.local-run-logs/`.
-- Exits after printing manual verify steps — first inference `pip install` can still be running.
+- Requires: Docker, `python3.11`, `curl`, and an interactive terminal.
+- **Modes:** (1) app-minimal (2) + monitoring (3) + logging / optional tracing (4) + monitoring + logging.
+- Confirms each major step. Preflight exits if a stack is already present, or if any **host port** needed for the chosen mode is busy (prints PORT / SERVICE / ENV KEY / listener). Change the ENV KEY in `docker-compose/.env` and re-run (no need to free foreign services).
+- Configurable uvicorn ports in `docker-compose/.env`: `AUTH_SERVICE_PORT`, `PLATFORM_CORE_PORT`, `INFERENCE_SERVICE_PORT`. UI stays `:3000`; NMT stays `:8000`/`:8002`.
+- After the UI step: probes auth / platform-core / inference (+ UI if started) and prints status; if UI skipped, prints sample login curls; then asks about NMT.
+- Seeds `TRITON_ENDPOINT_NMT` before migrate so NMT can be added later without PATCH.
+- After apps: optional **Simple UI** (`npm` / `:3000`, sets `ENABLED_TASK_TYPES=llm,nmt`), then optional **NMT Triton** (`HF_TOKEN` / `NMT_SRC` only then). Optional: `FORCE_NMT_BUILD=1`.
+- Logs under `docker-compose/.local-run-logs/`. Prints verify curls (does not wait/E2E).
 
 ### `init-kafka-topics.sh`
 

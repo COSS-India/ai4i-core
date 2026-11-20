@@ -265,6 +265,21 @@ while IFS= read -r -d '' template; do
         upsert_env_var "${target}" "KAFKA_SERVER" "${kafka_server}"
     fi
 
+    # Simple UI: align proxy targets with docker-compose/.env uvicorn ports (UI stays :3000).
+    if [ "${target}" = "${CORE_ROOT}/frontend/simple-ui/.env" ]; then
+        auth_port="$(read_env_file_var "${COMPOSE_ENV}" "AUTH_SERVICE_PORT")"
+        core_port="$(read_env_file_var "${COMPOSE_ENV}" "PLATFORM_CORE_PORT")"
+        inf_port="$(read_env_file_var "${COMPOSE_ENV}" "INFERENCE_SERVICE_PORT")"
+        : "${auth_port:=8081}"
+        : "${core_port:=8095}"
+        : "${inf_port:=8090}"
+        upsert_env_var "${target}" "AUTH_SERVICE_URL" "http://localhost:${auth_port}"
+        upsert_env_var "${target}" "PLATFORM_CORE_SERVICE_URL" "http://localhost:${core_port}"
+        upsert_env_var "${target}" "INFERENCE_SERVICE_URL" "http://localhost:${inf_port}"
+        upsert_env_var "${target}" "API_URL" "http://localhost:3000"
+        echo "  UI proxy → auth:${auth_port} core:${core_port} inference:${inf_port} (UI :3000)"
+    fi
+
     echo "  GEN   ${target}"
     generated=$((generated + 1))
 
@@ -273,4 +288,13 @@ done < <(find "${CORE_ROOT}" -name "env.template" -not -path "*/node_modules/*" 
 echo ""
 echo "Done — ${generated} .env file(s) generated."
 echo "Kafka broker for host apps: ${kafka_server:-localhost:9092}"
-echo "Next: run ./scripts/migrate.sh from the repo root (if not already done), then start services."
+# When embedded in setup-local.sh, that script continues with migrate + apps —
+# skip the standalone "next steps" footer to avoid looking mid-flight.
+if [ "${SETUP_ENV_FROM_LOCAL:-0}" != 1 ]; then
+  echo "Next (from ai4i-core repo root), if not already done:"
+  echo "  # Set TRITON_ENDPOINT_NMT in repo-root .env before migrate for NMT E2E (SETUP-GUIDE § C1b)"
+  echo "  ./scripts/migrate.sh ai4iplatform_auth upgrade"
+  echo "  ./scripts/migrate.sh ai4i_platform_db upgrade"
+  echo "  ./scripts/migrate.sh ai4iplatform_core upgrade heads"
+  echo "  # then start auth → platform-core → inference (SETUP-GUIDE Part D)"
+fi

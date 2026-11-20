@@ -65,7 +65,7 @@ docker rm -f indictrans 2>/dev/null && echo "  removed indictrans" || echo "  in
 ########################################
 echo "=== 3) Docker Compose down -v (containers + volumes) ==="
 cd "${COMPOSE}"
-docker compose --profile monitoring --profile logging down -v
+docker compose --profile monitoring --profile logging --profile gateway down -v
 echo "  compose project removed (data volumes wiped)."
 
 ########################################
@@ -90,7 +90,7 @@ echo
 echo "=== Cleanup complete ==="
 echo "Nothing left to auto-start on reboot (no Compose containers)."
 echo
-echo "Next — fresh setup:"
+echo "Next — interactive fresh setup:"
 echo "  export AI4I_LOCAL=${AI4I_LOCAL}"
-echo "  export HF_TOKEN=hf_...   # required for NMT"
 echo "  bash \"${COMPOSE}/scripts/setup-local.sh\""
+echo "  (HF_TOKEN is asked only if you continue with NMT)"
