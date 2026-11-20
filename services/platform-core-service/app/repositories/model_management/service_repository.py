@@ -130,9 +130,9 @@ def _sort_expressions() -> Dict[str, Any]:
         .scalar_subquery()
     )
     return {
-        "name": Service.name,
-        "service_id": Service.service_id,
-        "model_name": Model.name,
+        "name": func.lower(Service.name),
+        "service_id": func.lower(Service.service_id),
+        "model_name": func.lower(Model.name),
         "task_type": func.lower(Model.task["type"].astext),
         "tier": tier_name,
         "status": Service.is_published,
