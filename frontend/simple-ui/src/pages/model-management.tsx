@@ -37,7 +37,7 @@ import {
   renderModelStatusCell,
   renderModelTaskTypeCell,
   renderModelVersionCell,
-  modelListColumnWidth,
+  modelListColumnSizing,
 } from "../components/model-management/modelListCells";
 import { modelListColumnsParam } from "../components/model-management/modelListColumns";
 import { useModelRegistryList } from "../components/model-management/useModelRegistryList";
@@ -683,6 +683,8 @@ const ModelManagementPage: React.FC = () => {
         id: "noOfServices",
         header: "No. of Services",
         hint: FIELD_HINTS.model.col.services,
+        // Counts read and compare best right-aligned.
+        align: "right" as const,
         sortable: true,
         sortAccessor: (model) => model.noOfServices ?? 0,
         // Row's own count; the services list is only for the action switches.
@@ -799,7 +801,7 @@ const ModelManagementPage: React.FC = () => {
         col.id,
         {
           ...col,
-          ...modelListColumnWidth(col.id),
+          ...modelListColumnSizing(col.id),
           header: labels.get(col.id) ?? col.header,
         },
       ]),

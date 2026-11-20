@@ -28,13 +28,15 @@ const signedIn = (roles: string[], tenantId: string | null = "tenant-1") =>
 describe("Institution Admin menu", () => {
   const sections = signedIn(["TENANT_ADMIN"]);
 
-  it("shows the groups and items in priority order", () => {
+  it("shows the groups in priority order with Playground standalone at the bottom", () => {
     expect(outline(sections)).toEqual([
       "Monitor: Usage, Logs",
       "Govern: Policies, Alerts & Notifications",
+      "Catalog: Models",
       "Manage: Institution, API Keys",
-      "Explore: Models, Playground",
+      "Playground",
     ]);
+    expect(sections[sections.length - 1].label).toBeUndefined();
   });
 
   it("does not show Services Management", () => {
@@ -49,9 +51,9 @@ describe("Institution Admin menu", () => {
       ["Logs", "/logs", IoDocumentTextOutline],
       ["Policies", "/policy-management", IoShieldOutline],
       ["Alerts & Notifications", "/notifications-alerts", IoNotificationsOutline],
+      ["Models", "/model-management", IoServerOutline],
       ["Institution", "/institution-management", IoPeopleOutline],
       ["API Keys", "/api-key-management", IoKeyOutline],
-      ["Models", "/model-management", IoServerOutline],
       ["Playground", "/", IoCompassOutline],
     ]);
   });
@@ -64,7 +66,7 @@ describe("Adopter Admin menu", () => {
     expect(outline(sections)).toEqual([
       "Monitor: Usage, Logs",
       "Govern: Policies, Alerts & Notifications",
-      "Publish/Provision: Models, Services, Tiers",
+      "Catalog: Models, Services, Tiers",
       "Manage: Institutions, API Keys",
       "Playground",
     ]);
@@ -89,14 +91,14 @@ describe("Adopter Admin menu", () => {
 
   it("wins over Institution Admin when a user holds both roles", () => {
     expect(outline(signedIn(["ADMIN", "TENANT ADMIN"]))[2]).toBe(
-      "Publish/Provision: Models, Services, Tiers",
+      "Catalog: Models, Services, Tiers",
     );
   });
 
   it("uses the same layout for MODERATOR, keeping its existing access", () => {
     expect(outline(signedIn(["MODERATOR"]))).toEqual([
       "Monitor: Logs",
-      "Publish/Provision: Models, Services",
+      "Catalog: Models, Services",
       "Playground",
     ]);
   });

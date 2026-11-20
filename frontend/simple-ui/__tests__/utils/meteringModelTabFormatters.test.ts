@@ -37,17 +37,14 @@ describe('formatPercent (Model tab: one decimal place with a % sign)', () => {
 });
 
 describe('formatModelNativeUnits', () => {
-  it('drops the "tokens" suffix', () => {
-    expect(formatModelNativeUnits(22625, 'tokens')).toBe((22625).toLocaleString());
-    expect(formatModelNativeUnits(22625, ' Tokens ')).toBe((22625).toLocaleString());
-  });
-
-  it('keeps other units, which no label on the row names', () => {
-    expect(formatModelNativeUnits(19, 'chars')).toBe('19 chars');
-    expect(formatModelNativeUnits(4, 'min')).toBe('4 min');
+  it('shows the bare number, with no unit suffix', () => {
+    expect(formatModelNativeUnits(22625)).toBe((22625).toLocaleString());
+    expect(formatModelNativeUnits(19)).toBe((19).toLocaleString());
+    expect(formatModelNativeUnits(4)).toBe((4).toLocaleString());
+    expect(formatModelNativeUnits(0)).toBe((0).toLocaleString());
   });
 
   it('shows the empty placeholder for missing values', () => {
-    expect(formatModelNativeUnits(null, 'tokens')).toBe(METERING.GRAPH.EMPTY_VALUE);
+    expect(formatModelNativeUnits(null)).toBe(METERING.GRAPH.EMPTY_VALUE);
   });
 });

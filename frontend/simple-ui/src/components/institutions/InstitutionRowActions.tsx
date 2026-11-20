@@ -1,4 +1,5 @@
 import {
+  Box,
   HStack,
   IconButton,
   Image,
@@ -43,7 +44,9 @@ function renderOverflowActionMenu(
   stopRowClick: (e: React.MouseEvent) => void,
   menuAriaLabel: string,
 ) {
-  if (items.length === 0) return null;
+  // Keep the slot (same size as the sm IconButton) so the other icons stay
+  // lined up with rows that do have a menu, e.g. the protected default org.
+  if (items.length === 0) return <Box w={8} h={8} flexShrink={0} aria-hidden="true" />;
   return (
     <Menu>
       <MenuButton
