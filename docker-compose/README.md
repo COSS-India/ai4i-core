@@ -1,6 +1,6 @@
 # Docker Compose — AI4I local platform infra
 
-Local **platform infrastructure** for ai4i-core (Postgres, Redis, Kafka, APISIX, plus optional monitoring and logging). Application services (auth, platform-core, inference, Simple UI) run on the host against this stack — **one service per terminal**.
+Local **platform infrastructure** for ai4i-core (Postgres, Redis, optional Kafka for tracing/logging, plus optional monitoring and logging). Application services (auth, platform-core, inference, Simple UI) run **natively on the host** and talk to each other directly — **no APISIX/etcd in the local path** (those are for production).
 
 | Doc | Use when |
 |-----|----------|
@@ -29,7 +29,9 @@ git clone -b feat/nmt-local-setup git@github.com:COSS-India/model-hosting.git
 
 | Tier | Compose | Services |
 |------|---------|----------|
-| **Core (compulsory)** | default — no profile | `postgres`, `redis`, `kafka` (+ `kafka-init`), `etcd`, `apisix` |
+| **App-minimal** | `postgres redis` | DBs for host apps (local required) |
+| **+ Kafka** | `kafka` (+ `kafka-init`) | Optional tracing / logging bus only |
+| **Gateway (production only)** | `--profile gateway` | `etcd`, `apisix` — not used for local uvicorn/UI |
 | **Monitoring (optional)** | `--profile monitoring` | `prometheus`, `alertmanager`, `grafana`, `node-exporter`, `kafka-exporter` |
 | **Logging (optional)** | `--profile logging` | `opensearch`, `opensearch-dashboards`, `fluent-bit` |
 
@@ -62,11 +64,11 @@ cd docker-compose          # from the ai4i-core repo root
 cp .env.example .env
 # edit credentials if needed
 
-# 1) Data stores
+# 1) App-minimal (required for host apps)
 docker compose up -d postgres redis
-# 2) Messaging + gateway (required core)
-docker compose up -d kafka kafka-init etcd apisix
-# or all core at once: docker compose up -d
+# 2) Optional tracing — see MINIMAL-INFRA-REQUIREMENTS §2.3
+# docker compose up -d kafka kafka-init
+# Do NOT start etcd/apisix for local setup (production gateway only)
 
 docker compose ps
 
@@ -96,11 +98,15 @@ cd docker-compose          # from the ai4i-core repo root
 3. Sync Postgres/Redis/Kafka/branding from **docker-compose/.env** into the root `.env`  
 4. Fill every `env.template` → service `.env` files (auth, platform-core, inference, Simple UI, Alembic, …)
 
-Then from the **ai4i-core repo root**:
+For NMT E2E, set **`TRITON_ENDPOINT_NMT=http://127.0.0.1:8000`** in the **ai4i-core repo-root** `.env` **before** migrate (not in this Compose `.env`). Do not PATCH `/api/v1/services` (SSRF) — see [SETUP-GUIDE § C1b](SETUP-GUIDE.md#c1b-set-nmt-triton-endpoint-before-migrations-required-for-nmt-e2e).
+
+Then from the **ai4i-core repo root** (core has dual Alembic heads — use `heads`, not `all upgrade`):
 
 ```bash
-./scripts/migrate.sh all upgrade
-# start auth / platform-core / inference / UI (see SETUP-GUIDE.md Part C)
+./scripts/migrate.sh ai4iplatform_auth upgrade
+./scripts/migrate.sh ai4i_platform_db upgrade
+./scripts/migrate.sh ai4iplatform_core upgrade heads
+# start auth / platform-core / inference / UI (see SETUP-GUIDE.md Parts D–F)
 ```
 
 Host apps use:
@@ -156,5 +162,7 @@ docker-compose/
 ├── config/                        # redis, apisix, prometheus, opensearch, …
 └── scripts/
     ├── setup-env.sh               # generate ai4i-core per-service .env files
+    ├── cleanup-local.sh           # tear down apps + Compose volumes + NMT
+    ├── setup-local.sh             # fresh install; prints verify commands
     └── init-kafka-topics.sh       # used by kafka-init container
 ```
