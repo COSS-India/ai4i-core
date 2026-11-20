@@ -1,10 +1,18 @@
 """drop user_table_preferences
 
 Added in b8d2f4a6c0e1 for the Service List column picker's per-user
-preferences (GET/PUT/DELETE /preferences/columns/{view_key}). That endpoint
-and the GET /services/columns catalogue endpoint were never called by the
-frontend — column visibility is stored client-side instead — so both routes
-and this table's backing code have been removed.
+preferences (GET/PUT/DELETE /preferences/columns/{view_key}). The v2.10 and
+v2.11 frontend called that endpoint and the GET /services/columns catalogue
+endpoint (servicesManagementService.ts:327-353 at those tags), so
+environments upgrading from those releases hold saved per-user column
+selections in this table. Column visibility is now stored client-side, so
+both routes and this table's backing code have been removed.
+
+upgrade() drops the table, permanently deleting any saved preferences.
+downgrade() only recreates the empty table structure — it does not restore
+the deleted rows. Recovering saved preferences after a rollback requires
+restoring from a pre-migration database backup; note this data loss in the
+deployment ticket.
 
 Revision ID: ba861b49230d
 Revises: 602fce4c3c41
