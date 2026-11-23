@@ -32,6 +32,7 @@ export type ServiceListColumnId =
   | "output_price"
   | "cached_input_price"
   | "published_at"
+  | "availability"
   | "actions";
 
 export type ServiceListColumnFilter = {
@@ -80,6 +81,7 @@ const CELL_KEYS: Record<string, string> = {
   published_at: "publishedOn",
   published_on: "publishedOn",
   publishedOn: "publishedOn",
+  availability: "availability",
 };
 
 export function serviceListCellKey(id: string): string {
@@ -132,6 +134,9 @@ export const SERVICE_LIST_COLUMNS: readonly ServiceListColumnDef[] = [
       { value: "false", label: "Unpublished" },
     ]),
   ),
+  // Live from Prometheus, computed only when requested; not sortable or
+  // filterable. Kept right after Status (SERVICE_LIST_PINNED_AFTER).
+  serviceColumn("availability", "Availability", false),
   adminOnly(
     serviceColumn(
       "created_at",
@@ -213,7 +218,16 @@ export function toggleServiceListColumn(
  */
 const SERVICE_LIST_LEADING_CELLS: readonly string[] = ["name", "task", "modelName", "tier"];
 
-/** Leading columns first in their fixed order, then the rest as given, Actions last. */
+/** Columns (by cell key) kept directly after another one, whatever the config order. */
+const SERVICE_LIST_PINNED_AFTER: Readonly<Record<string, string>> = {
+  availability: "status",
+};
+
+/**
+ * Leading columns first in their fixed order, then the rest as given, Actions
+ * last. Pinned columns (SERVICE_LIST_PINNED_AFTER) then move directly after
+ * their anchor when it is present.
+ */
 export function orderServiceListColumns(
   columns: readonly ServiceListColumnDef[],
 ): ServiceListColumnDef[] {
@@ -224,7 +238,15 @@ export function orderServiceListColumns(
     return leading === -1 ? SERVICE_LIST_LEADING_CELLS.length : leading;
   };
   // Array.prototype.sort is stable, so columns of equal rank keep their order.
-  return [...columns].sort((a, b) => rank(a) - rank(b));
+  const ordered = [...columns].sort((a, b) => rank(a) - rank(b));
+  for (const [cell, anchorCell] of Object.entries(SERVICE_LIST_PINNED_AFTER)) {
+    const from = ordered.findIndex((column) => serviceListCellKey(column.id) === cell);
+    if (from === -1) continue;
+    const [pinned] = ordered.splice(from, 1);
+    const anchor = ordered.findIndex((column) => serviceListCellKey(column.id) === anchorCell);
+    ordered.splice(anchor === -1 ? from : anchor + 1, 0, pinned);
+  }
+  return ordered;
 }
 
 /**

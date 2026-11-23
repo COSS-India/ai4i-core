@@ -49,12 +49,59 @@ describe("service list columns", () => {
     ).toEqual(["name", "task_type", "model_name", "tier", "actions"]);
   });
 
-  it("sorts every column except Actions", () => {
+  it("sorts every column except Actions and Availability", () => {
     expect([...SERVICE_SORTABLE_COLUMN_IDS].sort()).toEqual(
       SERVICE_LIST_COLUMNS.map((column) => column.id)
-        .filter((id) => id !== "actions")
+        .filter((id) => id !== "actions" && id !== "availability")
         .sort(),
     );
+  });
+
+  it("offers Availability as an optional, unfiltered column for every role", () => {
+    const availability = SERVICE_LIST_COLUMNS.find((column) => column.id === "availability");
+    expect(availability).toEqual({ id: "availability", label: "Availability", mandatory: false });
+    expect(serviceListCellKey("availability")).toBe("availability");
+    expect(defaultServiceListColumnIds()).not.toContain("availability");
+  });
+
+  it("applies the service-column config's Availability entry", () => {
+    const entries = parseServiceColumnConfig([
+      {
+        columns: [
+          { id: "name", label: "Service Name", mandatory: true },
+          {
+            id: "availability",
+            label: "Availability",
+            filter: null,
+            sortable: false,
+            mandatory: false,
+            filterable: false,
+            defaultVisible: false,
+          },
+        ],
+      },
+    ]);
+    const columns = serviceListColumnsFromConfig(SERVICE_LIST_COLUMNS, entries);
+    expect(columns.map((column) => column.id)).toEqual(["name", "availability", "actions"]);
+    expect(columns.find((column) => column.id === "availability")?.mandatory).toBe(false);
+  });
+
+  it("keeps Availability right after Status, whatever the config order", () => {
+    const entries = parseServiceColumnConfig([
+      {
+        columns: [
+          { id: "name", mandatory: true },
+          { id: "status" },
+          { id: "service_id" },
+          { id: "published_at" },
+          { id: "availability" },
+          { id: "actions", mandatory: true },
+        ],
+      },
+    ]);
+    expect(
+      serviceListColumnsFromConfig(SERVICE_LIST_COLUMNS, entries).map((column) => column.id),
+    ).toEqual(["name", "status", "availability", "service_id", "published_at", "actions"]);
   });
 
   it("carries the filter metadata GET /services needs", () => {
@@ -369,7 +416,15 @@ describe("service list columns", () => {
   });
 
   describe("columns by role", () => {
-    const otherRoleIds = ["name", "task_type", "model_name", "status", "service_id", "actions"];
+    const otherRoleIds = [
+      "name",
+      "task_type",
+      "model_name",
+      "status",
+      "availability",
+      "service_id",
+      "actions",
+    ];
 
     it("marks the backend's admin-only columns", () => {
       expect(
