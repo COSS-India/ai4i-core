@@ -114,8 +114,8 @@ class UsageAgg:
         self.units += Decimal(row.units or 0)
         self.cached_units += Decimal(row.cached_units or 0)
         self.output_units += Decimal(row.output_units or 0)
-        self.response_time_ms += int(getattr(row, "response_time_ms", None) or 0)
-        self.response_time_count += int(getattr(row, "response_time_count", None) or 0)
+        self.response_time_ms += int(row.response_time_ms or 0)
+        self.response_time_count += int(row.response_time_count or 0)
 
 
 def _ist_midnight(day: date) -> datetime:
