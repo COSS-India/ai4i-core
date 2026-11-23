@@ -52,13 +52,17 @@ class PyJobSettings(BaseSettings):
     # Days created ahead of today.
     USAGE_EVENTS_DAYS_AHEAD: int = Field(7, ge=0)
 
-    # ── daily_usage rollup ──
-    # Closed days re-rolled before yesterday, to pick up late events.
-    USAGE_ROLLUP_LOOKBACK_DAYS: int = Field(2, ge=0)
-    # Closed days of usage_events kept before today; older days are dropped
-    # once rolled up. More than USAGE_ROLLUP_LOOKBACK_DAYS, so every day the
-    # rollup re-reads still has its rows.
-    USAGE_EVENTS_RETENTION_DAYS: int = Field(3, ge=1)
+    # ── daily_usage rollup and usage_events retention ──
+    # Closed days re-rolled before yesterday, to pick up late events. Unless
+    # USAGE_EVENTS_RETENTION is set, it also sets the retention: usage_events
+    # keeps yesterday and these days, the days the rollup re-reads; older
+    # days are dropped once rolled up (see usage_events_retention_days).
+    EVENT_USAGE_ROLLUP: int = Field(2, ge=0)
+    # Closed days of usage_events kept before today, when they must be kept
+    # longer than the rollup re-reads (explicit deletion). Unset → retention
+    # follows EVENT_USAGE_ROLLUP. Must be greater than EVENT_USAGE_ROLLUP, so
+    # every day the rollup re-reads still has its rows.
+    USAGE_EVENTS_RETENTION: Optional[int] = Field(None, ge=1)
 
     # ── Redis ──
     REDIS_HOST: str = "localhost"
@@ -100,12 +104,20 @@ class PyJobSettings(BaseSettings):
         env_file_encoding = "utf-8"
         extra = "ignore"
 
+    @property
+    def usage_events_retention_days(self) -> int:
+        """Closed days of usage_events kept before today: USAGE_EVENTS_RETENTION
+        when set, else yesterday and the EVENT_USAGE_ROLLUP days before it."""
+        if self.USAGE_EVENTS_RETENTION is not None:
+            return self.USAGE_EVENTS_RETENTION
+        return self.EVENT_USAGE_ROLLUP + 1
+
     @model_validator(mode="after")
     def _retention_covers_rollup(self) -> "PyJobSettings":
-        if self.USAGE_EVENTS_RETENTION_DAYS <= self.USAGE_ROLLUP_LOOKBACK_DAYS:
+        if self.USAGE_EVENTS_RETENTION is not None and self.USAGE_EVENTS_RETENTION <= self.EVENT_USAGE_ROLLUP:
             raise ValueError(
-                f"USAGE_EVENTS_RETENTION_DAYS ({self.USAGE_EVENTS_RETENTION_DAYS}) must be greater than "
-                f"USAGE_ROLLUP_LOOKBACK_DAYS ({self.USAGE_ROLLUP_LOOKBACK_DAYS})"
+                f"USAGE_EVENTS_RETENTION ({self.USAGE_EVENTS_RETENTION}) must be greater than "
+                f"EVENT_USAGE_ROLLUP ({self.EVENT_USAGE_ROLLUP})"
             )
         return self
 
