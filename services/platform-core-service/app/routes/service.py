@@ -105,6 +105,10 @@ _NON_ADMIN_SERVICE_FIELDS = {
     "versionStatus",
     "model",
     "tierIds",  # required by inference-service tier enforcement
+    # Computed (_annotate_availability), not read from the stored row — the
+    # live up/down boolean isn't sensitive, only the raw endpoint used to
+    # derive it, which isn't in this allow-list and never reaches the response.
+    "availability",
     # NOTE: the new nested `inferenceEndPoint` object is deliberately NOT
     # in this allow-list. It bundles `infraDescription`
     # (== the existing `hardwareDescription`, already admin-only) together
@@ -128,11 +132,16 @@ def _select_fields(item: Dict[str, Any], fields: FrozenSet[str]) -> Dict[str, An
 
 
 async def _annotate_availability(request: Request, items: List[Dict[str, Any]]) -> None:
-    """Sets item["availability"] in place via one bulk Prometheus `up` query
-    over every item's endpoint IP. Leaves it unset (null in the response) when
-    Prometheus/the job name isn't configured or the query fails — see
-    get_ip_availability — rather than failing the whole services list."""
+    """Sets item["availability"] on every item, always — True/False from
+    Prometheus's `up` when known, None when it can't be determined
+    (Prometheus/the job name isn't configured, the endpoint can't be parsed
+    to an IP, PROMETHEUS_VLLM_JOB_NAME never scrapes that IP at all — e.g. a
+    Triton ASR/NMT/TTS service — or the query itself fails; see
+    get_ip_availability). A caller that asks for the column always gets an
+    explicit value per row, never a missing key."""
     if not settings.prometheus_url or not settings.prometheus_vllm_job_name:
+        for item in items:
+            item["availability"] = None
         return
     ip_by_service = {
         item["serviceId"]: extract_ip(
@@ -143,12 +152,9 @@ async def _annotate_availability(request: Request, items: List[Dict[str, Any]]) 
     status_by_ip = await get_ip_availability(
         get_prometheus_client(request), settings.prometheus_vllm_job_name, ip_by_service.values()
     )
-    if not status_by_ip:
-        return
     for item in items:
         ip = ip_by_service.get(item["serviceId"])
-        if ip is not None:
-            item["availability"] = status_by_ip.get(ip, False)
+        item["availability"] = status_by_ip.get(ip) if ip is not None else None
 
 
 _TRY_IT_SUPPORTED_TASK_TYPES = {TaskTypeEnum.nmt.value, TaskTypeEnum.llm.value}
