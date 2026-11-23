@@ -998,6 +998,9 @@ class ServiceListItem(ServiceResponse):
     languages: List[LanguagePairLenient] = Field(default_factory=list)
     versionStatus: Optional[str] = None
     modelName: Optional[str] = None
+    # Not persisted — filled in by routes/service.py only when the "availability"
+    # column is requested (live Prometheus lookup). None = not requested/unknown.
+    availability: Optional[bool] = None
 
 
 class ServiceListResponse(BaseSchema):

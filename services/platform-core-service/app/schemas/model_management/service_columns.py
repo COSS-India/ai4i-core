@@ -64,6 +64,9 @@ SERVICE_LIST_COLUMNS: List[ServiceListColumn] = [
     ServiceListColumn("published_at", "Published On",
                       filter_type=FILTER_DATE_RANGE, filter_params=("published_from", "published_to"),
                       admin_only=True, fields=("publishedAt",)),
+    # Not stored — computed live from Prometheus (app/utils/service_availability.py)
+    # when selected. Non-sortable: there's nothing persisted to ORDER BY on.
+    ServiceListColumn("availability", "Availability", sortable=False, fields=("availability",)),
 ]
 
 COLUMNS_BY_ID = {col.id: col for col in SERVICE_LIST_COLUMNS}
