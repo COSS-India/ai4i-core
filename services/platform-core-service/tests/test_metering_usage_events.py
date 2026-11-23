@@ -323,15 +323,12 @@ class TestPlatformHealthReads:
         # D3 from daily_usage (3, 1), D4 from usage_events (200, 429 -> 2, 0)
         assert (after[0] - before[0], after[1] - before[1]) == (5, 1)
 
-    async def test_p95_and_when_response_times_begin(self, session):
+    async def test_when_response_times_begin(self, session):
         await _seed(session)
         repo = MeteringUsageRepository(session)
         day = (_mid(_D3), _mid(_D3 + timedelta(days=1)))
-        assert await repo.response_time_p95(*day) is None   # none recorded yet
         for corr, ms in (("mue-1", 100), ("mue-2", 4000), ("mue-3", 200)):
             await _timed(session, corr, ms)
-        # percentile_cont over 100, 200, 4000: 200 + 0.9 * (4000 - 200)
-        assert await repo.response_time_p95(*day) == pytest.approx(3620.0)
         # The first timed request row (other tests' rows may be older), never
         # one after the end it is asked about.
         first = await repo.response_times_from(day[1])

@@ -424,17 +424,6 @@ class MeteringUsageRepository:
             return min(end, _ist_midnight(rolled_first))
         return first
 
-    async def response_time_p95(self, start: datetime, end: datetime) -> Optional[float]:
-        """The 95th-percentile response time (ms) of the requests in
-        [start, end), failed ones included; None when none has one. Read from
-        usage_events: a percentile can't be combined from daily figures."""
-        return await self._scalar(
-            "SELECT percentile_cont(0.95) WITHIN GROUP (ORDER BY response_time_ms) FROM usage_events"
-            f" WHERE occurred_at >= :start AND occurred_at < :end AND {REQUEST_ROWS}"
-            " AND response_time_ms IS NOT NULL",
-            {"start": start, "end": end},
-        )
-
     async def first_usage(self, tenant_id: Optional[int]) -> Optional[datetime]:
         """When API-key usage begins: the first day in the rollup (the
         tenant's, by ix_daily_usage_tenant_date), as usage_events drops old
