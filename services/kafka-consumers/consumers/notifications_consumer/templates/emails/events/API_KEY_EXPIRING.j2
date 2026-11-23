@@ -1,17 +1,20 @@
-{# details: [application_name, api_key, expires_on, days_left] #}
+{# details: [application_name, api_key, expires_on, days_left]
+   Same layout and line order as GRACE_PERIOD_EXPIRING.j2 — keep the two in step. #}
 {% set layout = "notification" %}
 {% set days_left = details[3] %}
 {% set when = "today" if days_left == 0 else ("in 1 day" if days_left == 1 else "in " ~ days_left ~ " days") %}
 {% set time_remaining = "Less than a day" if days_left == 0 else ("1 day" if days_left == 1 else days_left ~ " days") %}
 {% set name = "Action required: API key for " ~ details[0] ~ " expires " ~ when %}
+{% set heading = name %}
+{% set subject = "API key expiry alert: " ~ details[0] ~ " — Expires " ~ when %}
 {% set headline = "The API key " ~ details[1] ~ " for " ~ details[0] ~ " expires " ~ when ~ ", on " ~ details[2] ~ "." %}
 {% set lines = [
     "Key details",
     {"label": "Application", "value": details[0]},
-    {"label": "Key identifier", "value": details[1]},
+    {"label": "Key", "value": details[1]},
     {"label": "Expires on", "value": details[2]},
     {"label": "Time remaining", "value": time_remaining},
-    "What you need to do",
-    "Requests using this key will fail after it expires. Please create a new key, or extend the existing one, and move the application to it before " ~ details[2] ~ ".",
+    {"label": "What you need to do"},
+    "Any Application still using this key will lose access when it expires. Please create a new key, or extend the existing one, and make sure all Applications are moved to it before " ~ details[2] ~ ".",
     "For security reasons, this email does not include the API key value.",
 ] %}

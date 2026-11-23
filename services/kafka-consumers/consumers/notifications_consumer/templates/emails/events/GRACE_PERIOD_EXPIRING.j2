@@ -1,17 +1,22 @@
-{# details: [application_name, old_api_key (masked), expires_on, days_left, new_api_key (masked)] #}
+{# details: [application_name, old_api_key (masked), expires_on, days_left, new_api_key (masked)]
+   details[4] (the new key) is sent by the producer but deliberately not shown:
+   this email is only about the old key that is expiring.
+   Same layout and line order as API_KEY_EXPIRING.j2 — keep the two in step. #}
 {% set layout = "notification" %}
 {% set days_left = details[3] %}
 {% set when = "today" if days_left == 0 else ("in 1 day" if days_left == 1 else "in " ~ days_left ~ " days") %}
-{% set name = "Action required: Old API key for " ~ details[0] ~ " will be revoked " ~ when %}
-{% set headline = "The old API key for " ~ details[0] ~ " will expire " ~ when ~ ", on " ~ details[2] ~ "." %}
+{% set time_remaining = "Less than a day" if days_left == 0 else ("1 day" if days_left == 1 else days_left ~ " days") %}
+{% set name = "Action required: Old API key for " ~ details[0] ~ " expires " ~ when %}
+{% set heading = name %}
+{% set subject = "Grace period expiry alert: " ~ details[0] ~ " — Expires " ~ when %}
+{% set headline = "The old API key " ~ details[1] ~ " for " ~ details[0] ~ " expires " ~ when ~ ", on " ~ details[2] ~ "." %}
 {% set lines = [
-    "API Key Rotation Details",
+    "Key details",
     {"label": "Application", "value": details[0]},
-    {"label": "Old API Key Identifier", "value": details[1]},
-    {"label": "New API Key Identifier", "value": details[4]},
-    {"label": "Days Remaining", "value": days_left},
-    {"label": "Expiry Date", "value": details[2]},
-    "Action Required",
-    "Please ensure that the application is updated to use the new API key before the old key expires. Any application still using the old key will lose access after its expiry.",
-    "For security reasons, this email does not include the API key values.",
+    {"label": "Key", "value": details[1]},
+    {"label": "Expires on", "value": details[2]},
+    {"label": "Time remaining", "value": time_remaining},
+    {"label": "What you need to do"},
+    "Any Application still using the old key will lose access when it is revoked. Please make sure all Applications are moved to the new key before " ~ details[2] ~ ".",
+    "For security reasons, this email does not include the API key value.",
 ] %}
