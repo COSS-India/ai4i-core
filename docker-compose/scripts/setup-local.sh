@@ -39,6 +39,31 @@ NMT_ENDPOINT="${TRITON_ENDPOINT_NMT:-http://127.0.0.1:8000}"
 die() { echo "ERROR: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing command: $1"; }
 
+# Prefer PYTHON_BIN if set; else python3.11 → 3.12 → 3.13 → python3 (must be ≥3.11).
+PYTHON_BIN="${PYTHON_BIN:-}"
+resolve_python() {
+  local cand ver major minor
+  if [ -n "${PYTHON_BIN}" ]; then
+    command -v "${PYTHON_BIN}" >/dev/null 2>&1 || die "PYTHON_BIN=${PYTHON_BIN} not found"
+    cand="${PYTHON_BIN}"
+  else
+    for cand in python3.11 python3.12 python3.13 python3; do
+      if command -v "${cand}" >/dev/null 2>&1; then
+        break
+      fi
+      cand=""
+    done
+    [ -n "${cand}" ] || die "need Python 3.11+ (python3.11 / python3.12 / python3). Install python3.11 or set PYTHON_BIN."
+  fi
+  ver="$("${cand}" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null || true)"
+  major="${ver%%.*}"
+  minor="${ver#*.}"
+  if [ -z "${ver}" ] || [ "${major}" -lt 3 ] 2>/dev/null || { [ "${major}" -eq 3 ] && [ "${minor}" -lt 11 ]; }; then
+    die "Python 3.11+ required (found ${cand} → ${ver:-unknown}). Install python3.11+ or set PYTHON_BIN."
+  fi
+  PYTHON_BIN="${cand}"
+}
+
 confirm() {
   local prompt="$1"
   local default="${2:-y}"
@@ -166,7 +191,7 @@ sync_prometheus_host_targets() {
   local prom="${COMPOSE}/config/prometheus/prometheus.yml"
   [ -f "${prom}" ] || return 0
   # Replace the three host.docker.internal:<port> lines under ai4i-host-services.
-  python3.11 - "${prom}" "${AUTH_SERVICE_PORT}" "${INFERENCE_SERVICE_PORT}" "${PLATFORM_CORE_PORT}" <<'PY' || true
+  "${PYTHON_BIN}" - "${prom}" "${AUTH_SERVICE_PORT}" "${INFERENCE_SERVICE_PORT}" "${PLATFORM_CORE_PORT}" <<'PY' || true
 import pathlib, re, sys
 path, auth, inf, core = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
 text = path.read_text()
@@ -427,7 +452,7 @@ curl -s http://127.0.0.1:${INFERENCE_SERVICE_PORT}/health
 TOKEN=\$(curl -s -X POST http://127.0.0.1:${AUTH_SERVICE_PORT}/api/v1/auth/login \\
   -H "Content-Type: application/json" \\
   -d '{"email":"admin@ai4inclusion.org","password":"ADMIN_PASSWORD","remember_me":false}' \\
-  | python3.11 -c 'import sys,json; print(json.load(sys.stdin)["access_token"])')
+  | ${PYTHON_BIN} -c 'import sys,json; print(json.load(sys.stdin)["access_token"])')
 echo "token length: \${#TOKEN}"
 
 EOF
@@ -509,7 +534,7 @@ curl -s -X POST http://127.0.0.1:8000/v2/models/nmt/infer \\
 TOKEN=\$(curl -s -X POST http://127.0.0.1:${AUTH_SERVICE_PORT}/api/v1/auth/login \\
   -H "Content-Type: application/json" \\
   -d '{"email":"admin@ai4inclusion.org","password":"ADMIN_PASSWORD","remember_me":false}' \\
-  | python3.11 -c 'import sys,json; print(json.load(sys.stdin)["access_token"])')
+  | ${PYTHON_BIN} -c 'import sys,json; print(json.load(sys.stdin)["access_token"])')
 echo "token length: \${#TOKEN}"
 
 --- 4) NMT via inference API (expect Hindi in output[].target) ---
@@ -541,7 +566,7 @@ start_svc() {
   rm -rf "${dir}/.venv"
   (
     cd "${dir}"
-    python3.11 -m venv .venv
+    "${PYTHON_BIN}" -m venv .venv
     # shellcheck disable=SC1091
     source .venv/bin/activate
     python -m pip install -U pip
@@ -557,21 +582,21 @@ start_svc() {
 ########################################
 echo "=== Prerequisite checks ==="
 need docker
-need python3.11
 need curl
+resolve_python
 [ -t 0 ] || die "This script is interactive — run it from a terminal (TTY)."
 [ -f "${COMPOSE}/docker-compose.yml" ] || die "missing ${COMPOSE}/docker-compose.yml"
 docker info >/dev/null 2>&1 || die "Docker daemon not reachable (docker info failed)"
 
 DOCKER_VER="$(docker --version 2>/dev/null || echo unknown)"
 COMPOSE_VER="$(docker compose version 2>/dev/null || echo unknown)"
-PY_VER="$(python3.11 --version 2>/dev/null || echo unknown)"
+PY_VER="$("${PYTHON_BIN}" --version 2>/dev/null || echo unknown)"
 CURL_VER="$(curl --version 2>/dev/null | head -n1 || echo unknown)"
 
 echo "  docker:         ${DOCKER_VER}"
 echo "  docker compose: ${COMPOSE_VER}"
 echo "  docker daemon:  reachable"
-echo "  python3.11:     ${PY_VER}"
+echo "  python:         ${PY_VER} (${PYTHON_BIN})"
 echo "  curl:           ${CURL_VER}"
 echo "  compose file:   ${COMPOSE}/docker-compose.yml"
 echo "  TTY:            ok"
@@ -733,9 +758,9 @@ fi
 echo "  Postgres port reachable."
 
 cd "${CORE}"
-echo "Installing Alembic/migration deps (fresh .venv)..."
+echo "Installing Alembic/migration deps (fresh .venv via ${PYTHON_BIN})..."
 rm -rf .venv
-python3.11 -m venv .venv
+"${PYTHON_BIN}" -m venv .venv
 # shellcheck disable=SC1091
 source .venv/bin/activate
 python -m pip install -U pip

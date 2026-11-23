@@ -173,7 +173,7 @@ Build/run steps: SETUP-GUIDE Part A.
 | Docker Engine | 24+ | Compose + NMT container |
 | Docker Compose | v2.20+ (`docker compose`) | Profiles + `deploy.resources` |
 | Git | any recent | Clone `ai4i-core` + `model-hosting` |
-| Python | **3.11+** (`python3.11`) | Host apps + migrations; PyPI `ai4i-core` requires `>=3.11` |
+| Python | **3.11+** (`python3.11` / `python3.12` / `python3`) | Host apps + migrations; PyPI `ai4i-core` requires `>=3.11` |
 | Node.js | 18+ | Optional Simple UI |
 | HuggingFace **Read** token | for Part A NMT | Gated IndicTrans2 weights (`HF_TOKEN`) |
 | `curl` / `psql` | optional | Health checks |
@@ -184,7 +184,7 @@ Verify:
 docker --version
 docker compose version
 docker ps
-python3.11 --version   # must be 3.11.x+ (do not use system python3 if it is 3.10)
+python3.11 --version || python3 --version   # must be 3.11+ (not 3.10)
 ```
 
 ---

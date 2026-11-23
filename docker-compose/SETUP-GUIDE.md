@@ -55,19 +55,20 @@ Full sizing by mode (incl. NMT add-on): [MINIMAL-INFRA-REQUIREMENTS.md](MINIMAL-
 |------|----------------|
 | Docker Engine 24+ & Compose v2.20+ | Compose infra + optional NMT container |
 | Git | Clone repos |
-| **Python 3.11+** (`python3.11`) + pip | Migrations + host apps (`ai4i-core` needs `>=3.11`) |
+| **Python 3.11+** (`python3.11` / `python3.12` / `python3`) + pip | Migrations + host apps (`ai4i-core` needs `>=3.11`) |
 | HuggingFace Read token | Step 9 only — gated IndicTrans2 |
 | Node.js 18+ & npm | Step 8 only |
 
 ```bash
 docker --version && docker compose version && docker ps
 git --version
-python3.11 --version          # must be 3.11+ (not system python3 if that is 3.10)
-python3.11 -m pip --version
+python3.11 --version || python3 --version   # must be 3.11+ (not 3.10)
+# setup-local.sh auto-picks python3.11 → 3.12 → 3.13 → python3
+# or: export PYTHON_BIN=python3.12
 # node --version              # optional — Simple UI
 ```
 
-On many Ubuntu hosts `python3` is still **3.10** — always use **`python3.11`** for venvs.
+On older Ubuntu hosts `python3` may still be **3.10** — use **`python3.11+`** for venvs (or set `PYTHON_BIN`).
 
 #### HuggingFace (only if you run Step 9 NMT)
 

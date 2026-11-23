@@ -50,7 +50,7 @@ The script prompts for mode (app-minimal / +monitoring / +logging / both), confi
 
 ### `setup-local.sh`
 
-- Requires: Docker, `python3.11`, `curl`, and an interactive terminal.
+- Requires: Docker, Python **3.11+** (`python3.11` / `3.12` / `python3`), `curl`, and an interactive terminal. Override with `PYTHON_BIN` if needed.
 - **Modes:** (1) app-minimal (2) + monitoring (3) + logging / optional tracing (4) + monitoring + logging.
 - Confirms each major step. Preflight exits if a stack is already present, or if any **host port** needed for the chosen mode is busy (prints PORT / SERVICE / ENV KEY / listener). Change the ENV KEY in `docker-compose/.env` and re-run (no need to free foreign services).
 - Configurable uvicorn ports in `docker-compose/.env`: `AUTH_SERVICE_PORT`, `PLATFORM_CORE_PORT`, `INFERENCE_SERVICE_PORT`. UI stays `:3000`; NMT stays `:8000`/`:8002`.
