@@ -10,11 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import importlib as _importlib
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.utils.route_helpers import DATE_PARAM_HELP, DateOrDatetime, split_csv
 from app.core.exceptions import AppError, ValidationError
 from app.core.permissions import is_platform_admin
-from app.dependencies.services import ServiceService, get_service_service
+from app.dependencies.services import ServiceService, get_prometheus_client, get_service_service
+from app.utils.service_availability import extract_ip, get_ip_availability
 from app.repositories.model_management.service_repository import (
     ServiceListFilters,
     range_end_exclusive,
@@ -123,6 +125,30 @@ def _filter_service_fields(item: Dict[str, Any]) -> Dict[str, Any]:
 def _select_fields(item: Dict[str, Any], fields: FrozenSet[str]) -> Dict[str, Any]:
     """Keep only the response fields the selected columns need."""
     return {k: v for k, v in item.items() if k in fields}
+
+
+async def _annotate_availability(request: Request, items: List[Dict[str, Any]]) -> None:
+    """Sets item["availability"] in place via one bulk Prometheus `up` query
+    over every item's endpoint IP. Leaves it unset (null in the response) when
+    Prometheus/the job name isn't configured or the query fails — see
+    get_ip_availability — rather than failing the whole services list."""
+    if not settings.prometheus_url or not settings.prometheus_vllm_job_name:
+        return
+    ip_by_service = {
+        item["serviceId"]: extract_ip(
+            item.get("endpoint") or (item.get("inferenceEndPoint") or {}).get("callbackUrl")
+        )
+        for item in items
+    }
+    status_by_ip = await get_ip_availability(
+        get_prometheus_client(request), settings.prometheus_vllm_job_name, ip_by_service.values()
+    )
+    if not status_by_ip:
+        return
+    for item in items:
+        ip = ip_by_service.get(item["serviceId"])
+        if ip is not None:
+            item["availability"] = status_by_ip.get(ip, False)
 
 
 _TRY_IT_SUPPORTED_TASK_TYPES = {TaskTypeEnum.nmt.value, TaskTypeEnum.llm.value}
@@ -453,6 +479,11 @@ async def list_services(
         sort_order=paging.sort_order,
         include_tier_names=selected is None or "tier" in selected,
     )
+    # Before the role filter below strips `endpoint`/`inferenceEndPoint` for
+    # non-admins: the boolean result itself isn't sensitive, only the raw
+    # endpoint used to compute it, which never reaches the response either way.
+    if selected is not None and "availability" in selected:
+        await _annotate_availability(request, items)
     # Non-admin already loses api_key/inferenceEndPoint entirely below, so
     # masking them first would be wasted work — only admins need it.
     if is_admin:

@@ -10,7 +10,7 @@ from app.schemas.model_management.service_columns import (
 
 def test_ids_are_unique():
     ids = [c.id for c in SERVICE_LIST_COLUMNS]
-    assert len(ids) == len(set(ids)) == 12
+    assert len(ids) == len(set(ids)) == 13
 
 
 def test_mandatory_columns_are_name_and_actions():
@@ -19,7 +19,8 @@ def test_mandatory_columns_are_name_and_actions():
 
 def test_actions_is_not_sortable():
     assert "actions" not in SORTABLE_KEYS
-    assert SORTABLE_KEYS == {c.id for c in SERVICE_LIST_COLUMNS} - {"actions"}
+    # availability is also non-sortable: it's computed live, nothing stored to ORDER BY on.
+    assert SORTABLE_KEYS == {c.id for c in SERVICE_LIST_COLUMNS} - {"actions", "availability"}
 
 
 def test_filterable_columns_declare_params():

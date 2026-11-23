@@ -204,6 +204,10 @@ _deps_stub.get_model_service = MagicMock()
 _deps_stub.ServiceService = MagicMock
 _deps_stub.get_service_service = MagicMock()
 _deps_stub.get_metering_service = MagicMock()
+# app/routes/service.py's availability column (GET /services?columns=...,availability)
+# looks this up directly (not via Depends) — tests that exercise it monkeypatch
+# this name on the loaded route module with their own mock PrometheusClient.
+_deps_stub.get_prometheus_client = MagicMock()
 
 # Stub app.core.redis (routes/metering.py's get_redis dependency) — the real
 # module pulls in ai4i_core.bootstrap.redis, which isn't stubbed here.
