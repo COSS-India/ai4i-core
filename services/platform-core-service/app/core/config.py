@@ -80,11 +80,13 @@ class CoreSettings(BaseSettings):
     default_receiver_emails: Optional[str] = None
     prometheus_url: Optional[str] = None
     prometheus_timeout: float = 10.0
-    # Scrape job label (infrastructure/prometheus/prometheus.yml job_name) for the
-    # vLLM fleet queried by the Service List's Availability column (routes/service.py
-    # list_services, app/utils/service_availability.py). Rename the scrape job →
-    # update this env var only, no code change needed. None → Availability always
-    # reports unknown (null) rather than guessing a job name.
+    # Scrape job label for the vLLM fleet queried by the Service List's
+    # Availability column (routes/service.py list_services,
+    # app/utils/service_availability.py). Deployment-specific — not one of the
+    # jobs in infrastructure/prometheus/prometheus.yml's docker-compose stack —
+    # so each environment with a vLLM fleet sets this to its own Prometheus
+    # job_name. None/unset → Availability always reports unknown (null)
+    # rather than guessing a job name that doesn't match anything.
     prometheus_vllm_job_name: Optional[str] = None
     # ── Monitoring alerts evaluator (ERROR_RATE_* / LATENCY_*) ──
     # One tick per interval; only the pod that wins the evaluator lock runs it.

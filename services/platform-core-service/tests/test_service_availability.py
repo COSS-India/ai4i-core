@@ -20,7 +20,7 @@ ServiceListFilterParams = _route.ServiceListFilterParams
 ServiceListSortParams = _route.ServiceListSortParams
 settings = _route.settings
 
-ADMIN = "1"
+ADMIN, NON_ADMIN = "1", "50"
 
 # What service_to_dict + the list's model join produce for one row — trimmed
 # to the fields ServiceResponse requires plus `endpoint`.
@@ -103,12 +103,14 @@ class TestGetIpAvailability:
         client.query.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_matched_ip_is_online_unmatched_is_offline(self):
+    async def test_matched_ip_is_online_unscraped_ip_is_unknown(self):
+        # An IP with no series at all (this job never targets it — Triton
+        # ASR/NMT/TTS, an external LLM endpoint, ...) is unknown, not offline.
         client = _mock_prom([
             {"metric": {"instance": "45.194.2.154:8080"}, "value": [0, "1"]},
         ])
         status = await get_ip_availability(client, "ace-h200-vllm", ["45.194.2.154", "10.0.0.9"])
-        assert status == {"45.194.2.154": True, "10.0.0.9": False}
+        assert status == {"45.194.2.154": True, "10.0.0.9": None}
 
     @pytest.mark.asyncio
     async def test_up_value_zero_is_offline(self):
@@ -163,6 +165,20 @@ class TestRouteAnnotatesAvailability:
         prom.query.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_set_for_non_admin_too(self, monkeypatch):
+        # Regression: the computed boolean isn't sensitive (only the raw
+        # endpoint used to derive it is), but _filter_service_fields strips
+        # anything not in _NON_ADMIN_SERVICE_FIELDS — without "availability"
+        # in that allow-list, a non-admin's own selected column was silently
+        # dropped after the Prometheus query had already run.
+        monkeypatch.setattr(settings, "prometheus_url", "http://prometheus:9090")
+        monkeypatch.setattr(settings, "prometheus_vllm_job_name", "ace-h200-vllm")
+        prom = _mock_prom([{"metric": {"instance": "45.194.2.154:8080"}, "value": [0, "1"]}])
+        row = await _call(NON_ADMIN, "name,availability", _ITEM, monkeypatch, prom_client=prom)
+        assert row["availability"] is True
+        prom.query.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_absent_when_column_not_selected(self, monkeypatch):
         monkeypatch.setattr(settings, "prometheus_url", "http://prometheus:9090")
         monkeypatch.setattr(settings, "prometheus_vllm_job_name", "ace-h200-vllm")
@@ -183,34 +199,45 @@ class TestRouteAnnotatesAvailability:
         prom.query.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_absent_when_job_name_unset(self, monkeypatch):
+    async def test_null_when_job_name_unset(self, monkeypatch):
         monkeypatch.setattr(settings, "prometheus_url", "http://prometheus:9090")
         monkeypatch.setattr(settings, "prometheus_vllm_job_name", None)
         row = await _call(ADMIN, "name,availability", _ITEM, monkeypatch)
-        assert "availability" not in row
+        assert row["availability"] is None
 
     @pytest.mark.asyncio
-    async def test_absent_when_prometheus_url_unset(self, monkeypatch):
+    async def test_null_when_prometheus_url_unset(self, monkeypatch):
         monkeypatch.setattr(settings, "prometheus_url", None)
         monkeypatch.setattr(settings, "prometheus_vllm_job_name", "ace-h200-vllm")
         row = await _call(ADMIN, "name,availability", _ITEM, monkeypatch)
-        assert "availability" not in row
+        assert row["availability"] is None
 
     @pytest.mark.asyncio
-    async def test_absent_when_endpoint_unparseable(self, monkeypatch):
+    async def test_null_when_endpoint_unparseable(self, monkeypatch):
         monkeypatch.setattr(settings, "prometheus_url", "http://prometheus:9090")
         monkeypatch.setattr(settings, "prometheus_vllm_job_name", "ace-h200-vllm")
         prom = _mock_prom([])
         item = dict(_ITEM, endpoint=None)
         row = await _call(ADMIN, "name,availability", item, monkeypatch, prom_client=prom)
-        assert "availability" not in row
+        assert row["availability"] is None
         prom.query.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_absent_when_prometheus_query_fails(self, monkeypatch):
+    async def test_null_when_prometheus_query_fails(self, monkeypatch):
         monkeypatch.setattr(settings, "prometheus_url", "http://prometheus:9090")
         monkeypatch.setattr(settings, "prometheus_vllm_job_name", "ace-h200-vllm")
         prom = MagicMock()
         prom.query = AsyncMock(side_effect=RuntimeError("Prometheus unreachable"))
         row = await _call(ADMIN, "name,availability", _ITEM, monkeypatch, prom_client=prom)
-        assert "availability" not in row
+        assert row["availability"] is None
+
+    @pytest.mark.asyncio
+    async def test_null_not_false_when_ip_is_not_scraped_by_this_job(self, monkeypatch):
+        # Regression: a service whose IP this job never targets (e.g. Triton
+        # ASR/NMT/TTS) must not be reported as offline just because the vLLM
+        # job's query came back empty for it — it's unknown (null), not false.
+        monkeypatch.setattr(settings, "prometheus_url", "http://prometheus:9090")
+        monkeypatch.setattr(settings, "prometheus_vllm_job_name", "ace-h200-vllm")
+        prom = _mock_prom([])  # no series for this IP at all
+        row = await _call(ADMIN, "name,availability", _ITEM, monkeypatch, prom_client=prom)
+        assert row["availability"] is None
