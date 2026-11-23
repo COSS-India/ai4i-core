@@ -141,22 +141,23 @@ CASES = [
     (
         "GRACE_PERIOD_EXPIRING",
         ["Chatbot", "ab12******gh78", "22 Nov 2026, 03:00 PM IST", 5, "cd34******ij90"],
-        f"Action required: Old API key for Chatbot will be revoked in 5 days — {TENANT}",
-        ["The old API key for Chatbot will expire in 5 days, on 22 Nov 2026, 03:00 PM IST.",
-         "API Key Rotation Details", "Application: Chatbot",
-         "Old API Key Identifier: ab12******gh78", "New API Key Identifier: cd34******ij90",
-         "Days Remaining: 5", "Expiry Date: 22 Nov 2026, 03:00 PM IST", "Action Required",
-         "Please ensure that the application is updated to use the new API key before the old key expires.",
-         "this email does not include the API key values."],
+        "Grace period expiry alert: Chatbot — Expires in 5 days",
+        ["The old API key ab12******gh78 for Chatbot expires in 5 days, on 22 Nov 2026, 03:00 PM IST.",
+         "Key details", "Application: Chatbot", "Key: ab12******gh78",
+         "Expires on: 22 Nov 2026, 03:00 PM IST", "Time remaining: 5 days", "What you need to do:",
+         "Any Application still using the old key will lose access when it is revoked.",
+         "Please make sure all Applications are moved to the new key before 22 Nov 2026, 03:00 PM IST.",
+         "this email does not include the API key value."],
     ),
     (
         "API_KEY_EXPIRING",
         ["Chatbot", "prod-key (ID 42)", "18 Nov 2026, 10:00 AM IST", 1],
-        f"Action required: API key for Chatbot expires in 1 day — {TENANT}",
+        "API key expiry alert: Chatbot — Expires in 1 day",
         ["The API key prod-key (ID 42) for Chatbot expires in 1 day, on 18 Nov 2026, 10:00 AM IST.",
-         "Key details", "Application: Chatbot", "Key identifier: prod-key (ID 42)",
-         "Expires on: 18 Nov 2026, 10:00 AM IST", "Time remaining: 1 day", "What you need to do",
-         "Please create a new key, or extend the existing one, and move the application to it before 18 Nov 2026, 10:00 AM IST.",
+         "Key details", "Application: Chatbot", "Key: prod-key (ID 42)",
+         "Expires on: 18 Nov 2026, 10:00 AM IST", "Time remaining: 1 day", "What you need to do:",
+         "Any Application still using this key will lose access when it expires.",
+         "Please create a new key, or extend the existing one, and make sure all Applications are moved to it before 18 Nov 2026, 10:00 AM IST.",
          "this email does not include the API key value."],
     ),
 ]
@@ -483,9 +484,29 @@ def test_key_rotated_zero_day_grace_says_the_old_key_is_already_revoked():
         assert "grace period" not in body and "Action required" not in body
 
 
+def test_grace_period_email_names_only_the_old_key():
+    message = _render("GRACE_PERIOD_EXPIRING",
+                      ["Chatbot", "ab12******gh78", "22 Nov 2026, 03:00 PM IST", 5, "cd34******ij90"])
+    for body in (message.text_body, message.html_body):
+        assert "cd34******ij90" not in body
+        assert "New API Key" not in body and "Identifier" not in body
+    assert "revoked" not in message.subject.lower()
+    assert TENANT not in message.subject
+
+
+@pytest.mark.parametrize("event_name,details", [
+    ("API_KEY_EXPIRING", ["Chatbot", "prod-key (ID 42)", "18 Nov 2026, 10:00 AM IST", 1]),
+    ("GRACE_PERIOD_EXPIRING", ["Chatbot", "ab12******gh78", "22 Nov 2026, 03:00 PM IST", 5, "cd34******ij90"]),
+])
+def test_key_expiry_emails_leave_the_tenant_name_out(event_name, details):
+    message = _render(event_name, details)
+    assert TENANT not in message.subject
+    assert TENANT not in message.html_body
+
+
 @pytest.mark.parametrize("event_name,details,headline", [
     ("GRACE_PERIOD_EXPIRING", ["Chatbot", "ab12******gh78", "18 Nov 2026, 10:00 AM IST", 0, "cd34******ij90"],
-     "The old API key for Chatbot will expire today, on 18 Nov 2026, 10:00 AM IST."),
+     "The old API key ab12******gh78 for Chatbot expires today, on 18 Nov 2026, 10:00 AM IST."),
     ("API_KEY_EXPIRING", ["Chatbot", "prod-key (ID 42)", "18 Nov 2026, 10:00 AM IST", 0],
      "The API key prod-key (ID 42) for Chatbot expires today, on 18 Nov 2026, 10:00 AM IST."),
 ])
