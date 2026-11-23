@@ -14,7 +14,7 @@ The flow:
     1. Check the dates; that no day already has recorded rows in daily_usage
        (source = 'rollup': the dashboard reads past days from daily_usage, so
        the day would be counted twice); and that no day is still within the
-       nightly rollup's reach (yesterday and USAGE_ROLLUP_LOOKBACK_DAYS before
+       nightly rollup's reach (yesterday and EVENT_USAGE_ROLLUP before
        it), whose re-roll would mix with the backfill rows. A day with
        usage_events but no rollup rows (e.g. the day recording started, whose
        events cover only part of it) can be backfilled from Prometheus.
@@ -356,7 +356,7 @@ async def check_days_not_recorded(first: date, last: date, today: date, lookback
     if last >= reach:
         raise BackfillError(
             f"BACKFILL_TO ({last}) is within the nightly rollup's reach (from {reach}: yesterday and"
-            f" USAGE_ROLLUP_LOOKBACK_DAYS={lookback_days} before it); its re-roll would mix with the"
+            f" EVENT_USAGE_ROLLUP={lookback_days} before it); its re-roll would mix with the"
             f" backfill rows. Use a day before {reach}, or wait."
         )
     async with platform_core_session() as session:
@@ -399,7 +399,7 @@ async def run() -> None:
         raise BackfillError(f"BACKFILL_TO ({last}) must be a past day")
 
     await check_days_not_recorded(
-        first, last, datetime.now(IST).date(), get_pyjob_settings().USAGE_ROLLUP_LOOKBACK_DAYS,
+        first, last, datetime.now(IST).date(), get_pyjob_settings().EVENT_USAGE_ROLLUP,
     )
     lookups = await load_lookups()
     logger.info(

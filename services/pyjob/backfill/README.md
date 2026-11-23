@@ -13,7 +13,7 @@ scheduled job.
    oldest day every day, so run this sooner rather than later). A day whose start Prometheus no
    longer has would count every counter's lifetime total as that day's usage.
 3. No day in `BACKFILL_FROM`..`BACKFILL_TO` has recorded rows in `daily_usage` (`source = 'rollup'`),
-   and none is within the nightly rollup's reach: yesterday and `USAGE_ROLLUP_LOOKBACK_DAYS` (2)
+   and none is within the nightly rollup's reach: yesterday and `EVENT_USAGE_ROLLUP` (2)
    before it. The job refuses otherwise. A day with `usage_events` but no rollup rows, like the day
    recording started (its events cover only part of it), can be backfilled: past days are read
    from `daily_usage`, so its events no longer show once it's backfilled.
@@ -35,7 +35,7 @@ database variable**: one left out (or commented out) can still be taken from
 | `PROMETHEUS_URL` | Prometheus to read from. Required. |
 | `BACKFILL_FROM` | First IST day to backfill (`YYYY-MM-DD`), inclusive. Required. |
 | `BACKFILL_TO` | Last IST day to backfill (`YYYY-MM-DD`), inclusive. Required; before the rollup's reach, with no rollup rows in the range. |
-| `USAGE_ROLLUP_LOOKBACK_DAYS` | The nightly rollup's lookback (default 2); same value as the `daily_usage_consolidation` job. |
+| `EVENT_USAGE_ROLLUP` | The nightly rollup's lookback (default 2); same value as the `daily_usage_consolidation` job. |
 | `PROMETHEUS_API_PATH_LABEL` | Label carrying the request path: `exported_endpoint` on k8s (default), `endpoint` on local docker-compose. |
 | `PROMETHEUS_TIMEOUT_SECONDS` | Per-query timeout (default 60). |
 

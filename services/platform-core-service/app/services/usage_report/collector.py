@@ -451,7 +451,7 @@ class UsageReportCollector:
         health.tracked_requests, health.fallbacks = tracked.requests, tracked.fallback
         # Average, not P95: a percentile can't be built from daily_usage, so
         # once usage_events keeps only its last few days (pyjob's
-        # USAGE_EVENTS_RETENTION_DAYS) a weekly or monthly P95 would cover
+        # USAGE_EVENTS_RETENTION) a weekly or monthly P95 would cover
         # just those days. Failed requests are included, as in the rollup.
         health.avg_latency_ms = tracked.avg_response_time_ms
         return health
