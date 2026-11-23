@@ -19,7 +19,7 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
-from app.repositories.pay_per_use.metering_usage import MeteringUsageRepository
+from app.repositories.pay_per_use.metering_usage import MeteringUsageRepository, UsageAgg
 from app.services.metering_service_usage_events import UsageEventsMeteringService
 from app.utils.metering_promql_builder import AbsoluteRange
 from app.utils.usage_period import IST, resolve_period
@@ -337,6 +337,36 @@ class TestPlatformHealthReads:
         first = await repo.response_times_from(day[1])
         assert first is not None and first <= day[0] + timedelta(hours=1, minutes=10)   # mue-1
         assert await repo.response_times_from(datetime(2000, 1, 1, tzinfo=timezone.utc)) is None
+
+    @staticmethod
+    async def _response_times(session, rng) -> tuple[int, int]:
+        agg = (await MeteringUsageRepository(session).aggregate(*rng)).get((), UsageAgg())
+        return agg.response_time_ms, agg.response_time_count
+
+    async def test_average_latency_sums_timed_request_rows(self, session):
+        """usage_events: every request row with a response time, failed ones
+        included; rows without one are not in the divisor."""
+        day = (_mid(_D3), _mid(_D3 + timedelta(days=1)))
+        before = await self._response_times(session, day)
+        await _seed(session)
+        for corr, ms in (("mue-1", 100), ("mue-2", 4000)):   # mue-2 is the 502
+            await _timed(session, corr, ms)
+        after = await self._response_times(session, day)
+        assert (after[0] - before[0], after[1] - before[1]) == (4100, 2)   # mue-3 has none
+
+    async def test_average_latency_reads_a_dropped_day_from_the_rollup(self, session):
+        """A whole day only in daily_usage: total_response_time_ms /
+        response_time_count, so a month's average outlives usage_events."""
+        day = (_mid(_D3), _mid(_D3 + timedelta(days=1)))
+        before = await self._response_times(session, day)
+        llm = await _seed(session)
+        await _daily(session, _D3, llm, requests=3, failed=1, units=Decimal("400"), timed=2)
+        await session.execute(text(
+            "UPDATE daily_usage SET total_response_time_ms = 240 WHERE usage_date = :d AND tenant_id = :t"
+        ), {"d": _D3, "t": _TENANT})
+        await _drop(session, _D3)
+        after = await self._response_times(session, day)
+        assert (after[0] - before[0], after[1] - before[1]) == (240, 2)
 
     async def test_response_times_begin_on_an_earlier_rolled_up_day(self, session):
         """Retention dropped the day's rows: its rollup rows (with response
