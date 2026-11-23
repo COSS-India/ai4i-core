@@ -398,6 +398,11 @@ export interface ServiceResponse {
   isTryItDefault?: boolean;
   publishedAt?: string | null;
   unpublishedAt?: string | null;
+  /**
+   * Live up/down from Prometheus. GET /services sets it only when the
+   * `availability` column is requested; null when it cannot be determined.
+   */
+  availability?: boolean | null;
   createdBy?: string | null;
   updatedBy?: string | null;
   publishedOn?: number;

@@ -27,6 +27,7 @@ import {
 } from "./serviceListColumns";
 import {
   renderEmptyServiceCell,
+  renderServiceAvailabilityCell,
   renderServiceCachedInputPriceCell,
   renderServiceCreatedAtCell,
   renderServiceIdCell,
@@ -534,6 +535,13 @@ const ServicesManagement: React.FC = () => {
         sortable: true,
         minWidth: "9rem",
         cell: renderServicePublishedOnCell,
+      },
+      {
+        id: "availability",
+        header: "Availability",
+        hint: FIELD_HINTS.service.col.availability,
+        sortable: false,
+        cell: renderServiceAvailabilityCell,
       },
     ];
     if (!actionsContext.isRegistryReadOnly) {
