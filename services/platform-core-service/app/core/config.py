@@ -220,6 +220,14 @@ class CoreSettings(BaseSettings):
     # 2h …) — test environments only, so a config slip can't email officials
     # every half hour.
     usage_report_allow_subdaily: bool = False
+    # Platform Health availability: the share of the period in
+    # which every one of these Deployments had at least one Ready pod, from
+    # kube-state-metrics' kube_pod_status_ready. Comma-separated Deployment
+    # names, in USAGE_REPORT_AVAILABILITY_NAMESPACE (required: environments
+    # can share a cluster). Only the inference service for now; vLLM and the
+    # API gateway can be added here.
+    usage_report_availability_deployments: str = "inference-service"
+    usage_report_availability_namespace: Optional[str] = None
     # Next release (retry + send log): sends tried per recipient per period
     # (one per daily run) before giving up.
     # usage_report_max_attempts: int = Field(default=3, ge=1)
