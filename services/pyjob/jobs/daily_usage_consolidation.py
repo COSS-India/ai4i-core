@@ -29,7 +29,7 @@ boundaries are IST midnight.
    conversion rewrites every row once; later runs only create empty
    partitions, which is quick.
 
-2. Rollup of yesterday and the USAGE_ROLLUP_LOOKBACK_DAYS before it into
+2. Rollup of yesterday and the EVENT_USAGE_ROLLUP before it into
    daily_usage, one transaction per day, so events that arrive late are
    picked up. Each day is aggregated per dimension key and upserted; rows of
    that day the run did not write (a combination that no longer exists) are
@@ -53,7 +53,8 @@ boundaries are IST midnight.
    response_time_ms have none.
 
 3. Retention: every usage_events day before the last
-   USAGE_EVENTS_RETENTION_DAYS closed days is dropped, oldest first, one
+   USAGE_EVENTS_RETENTION closed days (unset: EVENT_USAGE_ROLLUP + 1,
+   yesterday and the lookback, the days step 2 re-reads) is dropped, oldest first, one
    transaction per day with the day's partition (or DEFAULT, for a day with
    no partition) locked EXCLUSIVE, so no row can land in the day between
    its last rollup and the drop, while other days' writes and all reads go
@@ -151,9 +152,9 @@ def _in_days(days: Iterable[date]) -> str:
 
 
 def _retention_cutoff(today: date) -> date:
-    """The first day kept: today and the USAGE_EVENTS_RETENTION_DAYS closed
+    """The first day kept: today and the usage_events_retention_days closed
     days before it are; every earlier day is dropped."""
-    return today - timedelta(days=get_settings().USAGE_EVENTS_RETENTION_DAYS)
+    return today - timedelta(days=get_settings().usage_events_retention_days)
 
 
 async def _lock(session: AsyncSession, step: str) -> bool:
@@ -589,7 +590,7 @@ async def consolidate(today: date) -> None:
         failed.append("partitions")
 
     yesterday = today - timedelta(days=1)
-    for back in range(get_settings().USAGE_ROLLUP_LOOKBACK_DAYS, -1, -1):
+    for back in range(get_settings().EVENT_USAGE_ROLLUP, -1, -1):
         day = yesterday - timedelta(days=back)
         try:
             await _rollup_day(day)

@@ -1,5 +1,6 @@
 """daily_usage_consolidation's retention (step 3): usage_events days past
-USAGE_EVENTS_RETENTION_DAYS are rolled up a last time and dropped.
+the retention (USAGE_EVENTS_RETENTION; unset here: EVENT_USAGE_ROLLUP + 1
+closed days) are rolled up a last time and dropped.
 
 Live-DB, and unlike test_rollup_request_counts this one commits: the job
 runs as it does in production (its own sessions, partition DDL). Opt in with
