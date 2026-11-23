@@ -54,6 +54,7 @@ def upgrade() -> None:
                 (data #> '{0,columns}') || CAST(:col AS jsonb)
             )
             WHERE type = :t
+              AND jsonb_typeof(data #> '{0,columns}') = 'array'
               AND NOT EXISTS (
                   SELECT 1 FROM jsonb_array_elements(data #> '{0,columns}') elem
                   WHERE elem->>'id' = 'availability'
@@ -74,12 +75,13 @@ def downgrade() -> None:
                 data,
                 '{0,columns}',
                 (
-                    SELECT COALESCE(jsonb_agg(elem), '[]'::jsonb)
-                    FROM jsonb_array_elements(data #> '{0,columns}') elem
+                    SELECT COALESCE(jsonb_agg(elem ORDER BY ord), '[]'::jsonb)
+                    FROM jsonb_array_elements(data #> '{0,columns}') WITH ORDINALITY AS t(elem, ord)
                     WHERE elem->>'id' != 'availability'
                 )
             )
             WHERE type = :t
+              AND jsonb_typeof(data #> '{0,columns}') = 'array'
             """
         ),
         {"t": _SERVICE_COLUMN_TYPE},
