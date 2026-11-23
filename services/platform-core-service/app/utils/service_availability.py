@@ -45,7 +45,7 @@ async def get_ip_availability(
     except Exception as exc:
         logger.warning("Service availability query failed: %s", type(exc).__name__)
         return {}
-    status = {ip: False for ip in unique_ips}
+    status = dict.fromkeys(unique_ips, False)
     for series in result:
         instance = series.get("metric", {}).get("instance", "")
         ip = instance.split(":", 1)[0]
