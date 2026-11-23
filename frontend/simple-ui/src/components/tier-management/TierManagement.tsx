@@ -181,13 +181,13 @@ const TIER_TASK_TYPES_COLUMN: DataTableColumn<Tier> = {
   ),
 };
 
+/** Right-aligned counts end under the header text, not its sort control. */
+const TIER_COUNT_VALUE_INSET = `${sortHeaderTrailingWidthPx(false)}px`;
+
 /**
  * Header text + sort control + cell padding, on one line. Institutions is sized
  * for "INSTITUTIONS"; re-check if the INSTITUTIONS label gets longer.
  */
-/** Right-aligned counts end under the header text, not its sort control. */
-const TIER_COUNT_VALUE_INSET = `${sortHeaderTrailingWidthPx(false)}px`;
-
 const TIER_COUNT_COLUMN_WIDTHS = {
   services: "8.5rem",
   institutions: "10.5rem",
