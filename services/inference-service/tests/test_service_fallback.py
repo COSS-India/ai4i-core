@@ -66,7 +66,7 @@ def _task_service(result=None, exc=None, completed_groups=0) -> MagicMock:
 
 
 def _wire(orch: Orchestrator, services: dict, infos: dict | None = None) -> None:
-    async def resolve(payload):
+    async def resolve(payload, *, is_fallback: bool = False):
         sid = payload["config"]["serviceId"]
         if sid not in services:
             raise LookupError(f"Service {sid} not found")
@@ -313,7 +313,7 @@ def _proxy(upstreams: dict):
             raise LLMProxyError(404, {"detail": f"Service '{sid}' not found"}, service_id=sid)
         return f"http://{sid}/v1", sid, f"{sid}-model", {**payload, "model": f"{sid}-model"}, {"id": sid}
 
-    async def forward(path, url, service_id, model_name, payload, service_info):
+    async def forward(path, url, service_id, model_name, payload, service_info, *, is_fallback: bool = False):
         return upstreams[service_id]
 
     async def stream(path, payload, service_info):
