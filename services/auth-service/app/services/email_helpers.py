@@ -8,7 +8,8 @@ from ai4i_core.email import EmailClient, EmailMessage
 from fastapi import BackgroundTasks
 
 from app.core.config import settings
-from app.core.exceptions import ValidationError
+from app.core.constants import TokenType
+from app.core.exceptions import TokenExpiredError, TokenInvalidError, ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -165,14 +166,35 @@ async def reissue_verify_token(
     return verify_token
 
 
+def _existing_refresh_token_is_valid(tokens_svc, token: str) -> bool:
+    """A reusable refresh token must still be unexpired and of type REFRESH."""
+    try:
+        payload = tokens_svc.validate_token(token)
+    except (TokenExpiredError, TokenInvalidError):
+        return False
+    return payload.token_type == TokenType.REFRESH
+
+
 async def issue_session(
     user,
     roles_svc,
     tokens_svc,
     refresh_tokens_repo,
     users_repo,
+    force_new_refresh_token: bool = False,
 ) -> "LoginResponse":
-    """Issue JWT pair and persist refresh token. Used by both /auth/login and OAuth callback.
+    """Issue JWT pair and persist refresh token. Used by /auth/login, OAuth
+    callback, and change_password.
+
+    Reuses an existing, still-valid refresh token for this user instead of
+    overwriting it on every login — otherwise logging in from a second
+    device invalidates every other device's refresh token (and they get
+    logged out well before their token actually expired).
+
+    ``force_new_refresh_token`` skips reuse and always mints + stores a new
+    one — required by change_password, which must rotate the refresh token
+    to actually revoke it (reuse would hand back the same token an attacker
+    with the old credentials could still be using).
 
     Returns LoginResponse object (caller wraps with .model_dump() if needed).
     """
@@ -186,12 +208,17 @@ async def issue_session(
         tenant_id=tenant_id,
         permission_ids=permission_ids,
     )
-    refresh_token = tokens_svc.create_refresh_token(
-        user_id=str(user.id),
-        tenant_id=tenant_id,
-    )
 
-    await refresh_tokens_repo.upsert(user.id, refresh_token)
+    existing = None if force_new_refresh_token else await refresh_tokens_repo.get_by_user_id(user.id)
+    if existing and _existing_refresh_token_is_valid(tokens_svc, existing.refresh_token):
+        refresh_token = existing.refresh_token
+    else:
+        refresh_token = tokens_svc.create_refresh_token(
+            user_id=str(user.id),
+            tenant_id=tenant_id,
+        )
+        await refresh_tokens_repo.upsert(user.id, refresh_token)
+
     user.last_login = datetime.now(timezone.utc)
     await users_repo.commit()
 
