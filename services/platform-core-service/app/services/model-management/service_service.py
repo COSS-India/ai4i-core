@@ -601,7 +601,6 @@ class ServiceService:
         try:
             await self._services.apply_updates(instance, update_data)
             await self._services.commit()
-            await self._services.refresh(instance)
         except DBAPIError as exc:
             await self._services.rollback()
             if getattr(exc.orig, "sqlstate", None) == "22003":
@@ -701,8 +700,6 @@ class ServiceService:
                     update_data["updated_by"] = updated_by
                 await self._services.apply_updates(instance, update_data)
             await self._services.commit()
-            for instance in instances:
-                await self._services.refresh(instance)
         except Exception:
             await self._services.rollback()
             logger.exception("DB error bulk-updating service endpoints")
