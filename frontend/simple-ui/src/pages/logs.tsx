@@ -423,7 +423,7 @@ const TRACE_CELL_BY_KEY: Record<
   error: (row) => renderErrorCell(row),
   model: (row) => plainTraceCell(row.model),
   latency: (row) => plainTraceCell(row.latency ?? "—"),
-  application: (row) => plainTraceCell(row.application),
+  application: (row) => plainTraceCell(row.application_name ?? row.application),
   api_key: (row) => plainTraceCell(row.api_key, { mono: true }),
   end_user: (row) => plainTraceCell(row.end_user),
   metadata: (row) => renderMetadataCell(row),

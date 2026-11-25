@@ -866,6 +866,9 @@ async def search_traces(
     page = pagination.page
     page_size = pagination.page_size
 
+    if application_ids is not None and not application_ids:
+        return empty_search_result()
+
     base_filter_clauses = _build_base_filter_clauses(tenant_filter, start_date, end_date)
 
     keyword_trace_ids = _run_keyword_prequery(opensearch_client, q, base_filter_clauses)

@@ -92,6 +92,7 @@ export const telemetryTraceRecordSchema = z
     model: z.string().nullable().optional(),
     latency: z.number().nullable().optional(),
     application: z.string().nullable().optional(),
+    application_name: z.string().nullable().optional(),
     api_key: z.string().nullable().optional(),
     end_user: z.string().nullable().optional(),
     metadata: z.union([z.array(z.string()), z.string()]).nullable().optional(),
