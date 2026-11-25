@@ -130,7 +130,7 @@ No APISIX in this path — UI and curls hit uvicorn directly.
 
 **Required locally:** Postgres, Redis.  
 **Optional:** Kafka (tracing), `--profile monitoring`, `--profile logging`.  
-**Not local:** etcd + APISIX (production gateway).
+**Not in this pack:** etcd + APISIX (cluster/production gateway only).
 
 ### 2.3 Startup order
 
@@ -225,7 +225,7 @@ sudo sysctl -w vm.max_map_count=262144
 docker compose up -d kafka kafka-init
 docker compose up -d opensearch opensearch-dashboards fluent-bit
 # Do not use bare: docker compose --profile logging up -d
-# (older packs also started default etcd/apisix; those are now --profile gateway)
+# (older packs also started default etcd/apisix; this pack does not include them)
 ```
 
 ---

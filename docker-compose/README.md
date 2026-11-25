@@ -1,6 +1,6 @@
 # Docker Compose — AI4I local platform infra
 
-Local **platform infrastructure** for ai4i-core (Postgres, Redis, optional Kafka for tracing/logging, plus optional monitoring and logging). Application services (auth, platform-core, inference, Simple UI) run **natively on the host** and talk to each other directly — **no APISIX/etcd in the local path** (those are for production).
+Local **platform infrastructure** for ai4i-core (Postgres, Redis, optional Kafka for tracing/logging, plus optional monitoring and logging). Application services (auth, platform-core, inference, Simple UI) run **natively on the host** and talk to each other directly — **no APISIX/etcd in this pack** (cluster/production gateway is separate).
 
 | Doc | Use when |
 |-----|----------|
@@ -31,7 +31,6 @@ git clone -b feat/nmt-local-setup git@github.com:COSS-India/model-hosting.git
 |------|---------|----------|
 | **App-minimal** | `postgres redis` | DBs for host apps (local required) |
 | **+ Kafka** | `kafka` (+ `kafka-init`) | Optional tracing / logging bus only |
-| **Gateway (production only)** | `--profile gateway` | `etcd`, `apisix` — not used for local uvicorn/UI |
 | **Monitoring (optional)** | `--profile monitoring` | `prometheus`, `alertmanager`, `grafana`, `node-exporter`, `kafka-exporter` |
 | **Logging (optional)** | `--profile logging` | `opensearch`, `opensearch-dashboards`, `fluent-bit` |
 
@@ -44,8 +43,6 @@ git clone -b feat/nmt-local-setup git@github.com:COSS-India/model-hosting.git
 | PostgreSQL | `postgres:18.6-alpine` |
 | Redis | `redis:8.10.3` |
 | Kafka (KRaft) | `apache/kafka:4.3.1` |
-| etcd | `quay.io/coreos/etcd:v3.5.9` |
-| APISIX | `apache/apisix:3.7.0-debian` |
 | Prometheus | `quay.io/prometheus/prometheus:v3.2.1` |
 | Alertmanager | `quay.io/prometheus/alertmanager:v0.28.1` |
 | Grafana | `grafana/grafana:11.6.0` |
@@ -68,7 +65,6 @@ cp .env.example .env
 docker compose up -d postgres redis
 # 2) Optional tracing — see MINIMAL-INFRA-REQUIREMENTS §2.3
 # docker compose up -d kafka kafka-init
-# Do NOT start etcd/apisix for local setup (production gateway only)
 
 docker compose ps
 
@@ -126,11 +122,6 @@ Host apps use:
 | PostgreSQL | 5432 | |
 | Redis | 6379 | |
 | Kafka | 9092 | Host → EXTERNAL listener; containers use `kafka:9092` |
-| etcd | 2379 | |
-| APISIX HTTP | 9080 | |
-| APISIX HTTPS | 9443 | |
-| APISIX Admin | 9180 | key in `.env` / `config/apisix/config.yaml` |
-| APISIX metrics | 9091 | |
 | Prometheus | 9090 | profile `monitoring` |
 | Alertmanager | 9095 | profile `monitoring` |
 | Grafana | 3001 | avoids clash with Simple UI `:3000` |

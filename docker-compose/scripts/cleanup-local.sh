@@ -63,7 +63,7 @@ docker rm -f indictrans 2>/dev/null && echo "  removed indictrans" || echo "  in
 ########################################
 echo "=== 3) Docker Compose down -v (containers + volumes) ==="
 cd "${COMPOSE}"
-docker compose --profile monitoring --profile logging --profile gateway down -v
+docker compose --profile monitoring --profile logging down -v
 echo "  compose project removed (data volumes wiped)."
 
 ########################################

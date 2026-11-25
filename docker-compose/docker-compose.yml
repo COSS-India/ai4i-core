@@ -15,9 +15,9 @@
 #   docker compose up -d postgres redis          # app-minimal (host apps)
 #   docker compose up -d kafka kafka-init        # optional tracing / logging bus
 #   docker compose up -d opensearch ...          # --profile logging services
-#   # etcd + apisix: profiles: [gateway] — production only, not local setup
 #
 # Host apps need Postgres + Redis. Kafka is for optional tracing/logging.
+# No APISIX/etcd in this pack (deployed environments use the cluster gateway).
 # Generate per-service .env files: ./scripts/setup-env.sh
 # Full walkthrough: SETUP-GUIDE.md
 
@@ -156,88 +156,6 @@ services:
     networks:
       - ai4i-network
     restart: "no"
-
-  # Production gateway only — not started by local setup (profile: gateway)
-  etcd:
-    profiles: ["gateway"]
-    image: quay.io/coreos/etcd:v3.5.9
-    container_name: ai4i-etcd
-    environment:
-      ETCD_NAME: etcd0
-      ETCD_DATA_DIR: /etcd-data
-      ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
-      ETCD_ADVERTISE_CLIENT_URLS: http://etcd:2379
-      ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
-      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://etcd:2380
-      ETCD_INITIAL_CLUSTER: etcd0=http://etcd:2380
-      ETCD_INITIAL_CLUSTER_TOKEN: ai4i-etcd-token
-      ETCD_INITIAL_CLUSTER_STATE: new
-      ETCD_ENABLE_V2: "true"
-    ports:
-      - "${ETCD_PORT:-2379}:2379"
-    volumes:
-      - etcd-data:/etcd-data
-    networks:
-      - ai4i-network
-    healthcheck:
-      test: ["CMD", "etcdctl", "--endpoints=http://127.0.0.1:2379", "endpoint", "health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: "0.40"
-          memory: 512M
-        reservations:
-          cpus: "0.10"
-          memory: 256M
-
-  apisix:
-    profiles: ["gateway"]
-    image: apache/apisix:3.7.0-debian
-    container_name: ai4i-apisix
-    depends_on:
-      etcd:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    environment:
-      DRL_REDIS_HOST: redis
-      DRL_REDIS_PORT: "6379"
-      DRL_REDIS_PASSWORD: ${REDIS_PASSWORD:-changeme}
-      DRL_TIME_WINDOW: "60"
-      DRL_DEFAULT_LIMIT: "10"
-      DRL_FAIL_OPEN: "true"
-      DRL_LIMIT_HEADER: X-Rate-Limit
-    volumes:
-      - ./config/apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
-    ports:
-      - "${APISIX_HTTP_PORT:-9080}:9080"
-      - "${APISIX_HTTPS_PORT:-9443}:9443"
-      - "${APISIX_ADMIN_PORT:-9180}:9180"
-      - "${APISIX_PROMETHEUS_PORT:-9091}:9091"
-    networks:
-      - ai4i-network
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/9080'"]
-      interval: 15s
-      timeout: 10s
-      retries: 6
-      start_period: 40s
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: "0.40"
-          memory: 512M
-        reservations:
-          cpus: "0.10"
-          memory: 256M
-
-  # ── Optional: monitoring ────────────────────────────────────────────────────
 
   prometheus:
     profiles: ["monitoring"]
@@ -497,7 +415,6 @@ volumes:
   postgres-data:
   redis-data:
   kafka-data:
-  etcd-data:
   prometheus-data:
   alertmanager-data:
   grafana-data:

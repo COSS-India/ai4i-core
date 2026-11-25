@@ -72,13 +72,11 @@ Permission enforcement is centralized: auth-service loads `api_permissions.json`
 Downstream services do **not** re-check permissions in-process
 (`services/auth-service/app/routes/__init__.py`).
 
-> The gateway is **APISIX** in deployed environments. In local Compose it is
-> optional (`--profile gateway` — not used by the default setup guide).
-> `/auth/validate` is invoked as a forward-auth subrequest (`GET`), and
-> auth-service returns `X-User-ID` / `X-Tenant-ID` headers that the gateway
-> injects into the upstream request
-> (`services/auth-service/app/routes/validation.py`). Local UI work uses
-> Simple UI’s Next.js proxy for the same forward-auth pattern without APISIX.
+> The gateway is **APISIX** in deployed environments. Local Compose does **not**
+> include APISIX/etcd; `/auth/validate` is still the forward-auth contract
+> (`GET`), and auth-service returns `X-User-ID` / `X-Tenant-ID` headers that a
+> gateway would inject (`services/auth-service/app/routes/validation.py`).
+> Local UI work uses Simple UI’s Next.js proxy for that same pattern.
 
 ## Infrastructure inventory
 
@@ -92,8 +90,6 @@ the host (not as Compose app containers). See
 | PostgreSQL 18 | `ai4i-postgres` | 5432 | Primary relational store (SCRAM-SHA-256) | core |
 | Redis 8 | `ai4i-redis` | 6379 | Cache, rate-limit state, OAuth state, resolution cache | core |
 | Kafka (KRaft) | `ai4i-kafka` | 9092 | OTEL span transport; apps use `KAFKA_SERVER=localhost:9092` | optional tracing / logging |
-| etcd | `ai4i-etcd` | 2379 | APISIX config store | `gateway` (production; not local default) |
-| APISIX | `ai4i-apisix` | 9080 / 9180 | Gateway + admin | `gateway` (production; not local default) |
 | Prometheus | `ai4i-prometheus` | 9090 | Metrics scrape + time-series store | `monitoring` |
 | Grafana | `ai4i-grafana` | 3001 | Dashboards | `monitoring` |
 | Alertmanager | `ai4i-alertmanager` | 9095 | Alert routing / notifications | `monitoring` |

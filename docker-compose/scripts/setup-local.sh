@@ -670,7 +670,7 @@ if [ "${ENABLE_LOGGING}" = 1 ]; then
     fi
     # Fluent Bit depends on Kafka — start broker first (also covers optional tracing bus).
     # Do NOT use bare --profile logging up -d alone against older packs that started
-    # default etcd/apisix; those are now profile "gateway" (production only).
+    # older packs also started etcd/apisix; this pack does not include them.
     if [ "${ENABLE_TRACING}" != 1 ]; then
       echo "Note: Fluent Bit needs Kafka — starting kafka + kafka-init for the log pipeline."
     fi
