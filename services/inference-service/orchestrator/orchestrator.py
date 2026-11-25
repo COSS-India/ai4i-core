@@ -409,13 +409,13 @@ class Orchestrator:
             attrs["model_version"] = (
                 service_info.get("model_version") or adapter_cfg.get("model_version", "unknown")
             )
-            # resolve_service()'s returned dict never carries the id it was
-            # resolved from — stash it here so run_inference can copy it onto
-            # the ai-inference span (the PPU Kafka consumer bills on service_id
-            # read from that span only, mirroring the LLM proxy's approach).
-            service_info["serviceId"] = serviceId
-            # Same reasoning as serviceId above: run_inference only sees this
-            # dict, so is_fallback must ride along on it to reach the
-            # ai-inference span too.
-            service_info["is_fallback"] = is_fallback
-            return service_info
+            # resolve_service() returns the cached dict by reference (shared
+            # across every caller resolving this service_id), so mutating it
+            # in place would leak is_fallback between a primary request and a
+            # concurrent fallback request that resolve the same service.
+            # Returning a new dict instead stashes serviceId (never carried by
+            # resolve_service()'s return value, so run_inference can copy it
+            # onto the ai-inference span the PPU Kafka consumer bills on) and
+            # is_fallback (same reasoning — run_inference only sees this dict)
+            # without touching the shared cache entry.
+            return {**service_info, "serviceId": serviceId, "is_fallback": is_fallback}

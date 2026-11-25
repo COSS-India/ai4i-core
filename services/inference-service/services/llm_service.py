@@ -1113,7 +1113,7 @@ class OpenAIProxyService:
             mark_sent_to_fallback(request, service_id)
             with traced_span("model") as fb_model_attrs:
                 self._seed_model_attrs(fb_model_attrs, fb_id, fb_model, is_fallback=True)
-            status_code, body = await self._post_multipart(path, fb_url, files, fb_data, fb_info)
+                status_code, body = await self._post_multipart(path, fb_url, files, fb_data, fb_info)
             if status_code < 500:
                 mark_served_by_fallback(request, service_id, fb_id)
                 break
