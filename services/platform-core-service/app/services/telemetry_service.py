@@ -825,6 +825,11 @@ class PaginationParams:
     sort_order: Optional[str] = None
 
 
+def empty_search_result() -> dict:
+    """The search_traces result for a search that cannot match any trace."""
+    return {"data": [], "total": 0, "agg_total": 0, "by_level": {}, "by_task": {}, "is_partial": False}
+
+
 async def search_traces(
     opensearch_client: OpenSearchTraceClient,
     *,
@@ -861,14 +866,11 @@ async def search_traces(
     page = pagination.page
     page_size = pagination.page_size
 
-    if application_ids is not None and not application_ids:
-        return {"data": [], "total": 0, "agg_total": 0, "by_level": {}, "by_task": {}, "is_partial": False}
-
     base_filter_clauses = _build_base_filter_clauses(tenant_filter, start_date, end_date)
 
     keyword_trace_ids = _run_keyword_prequery(opensearch_client, q, base_filter_clauses)
     if keyword_trace_ids is not None and not keyword_trace_ids:
-        return {"data": [], "total": 0, "agg_total": 0, "by_level": {}, "by_task": {}, "is_partial": False}
+        return empty_search_result()
 
     needs_request_anchor = bool(
         (status_code_list or sort_by in set(SORT_FIELD_MAP) - {"timestamp"} or error) and not model
@@ -888,7 +890,7 @@ async def search_traces(
         # Cross-span conflict: resolve each span group via pre-query and intersect.
         cross_span_trace_ids = _resolve_cross_span_filters(opensearch_client, base_filter_clauses, span_groups)
         if cross_span_trace_ids is not None and not cross_span_trace_ids:
-            return {"data": [], "total": 0, "agg_total": 0, "by_level": {}, "by_task": {}, "is_partial": False}
+            return empty_search_result()
         gating_trace_ids = _intersect_trace_id_gates(keyword_trace_ids, cross_span_trace_ids)
         needs_request_anchor = bool(status_code_list or sort_by in set(SORT_FIELD_MAP) - {"timestamp"} or error)
         filter_clauses, _ = _build_search_filter_clauses(
