@@ -21,6 +21,7 @@ from app.utils.telemetry_params import (
 )
 from app.services.telemetry_service import (
     get_trace_spans,
+    empty_search_result,
     search_traces,
     TraceFilterParams,
     PaginationParams,
@@ -260,36 +261,40 @@ async def search_traces_opensearch(
 
         application_ids = await _resolve_application_filter(auth_db, span.application, tenant_filter)
 
-        result = await search_traces(
-            opensearch_client,
-            selected_columns=selected_columns,
-            tenant_filter=tenant_filter,
-            is_admin=is_admin_user,
-            filters=TraceFilterParams(
-                effective_status=effective_status,
-                task_types=base.task_types,
-                user=span.user,
-                metadata_key=span.metadata_key,
-                metadata_value=span.metadata_value,
-                service_id=base.service_id,
-                status_code_list=status_code_list,
-                start_date=base.start_date,
-                end_date=base.end_date,
-                q=base.q,
-                method=span.method,
-                model=span.model,
-                error=span.error,
-                service=span.service,
-                url=span.url,
-                application_ids=application_ids,
-            ),
-            pagination=PaginationParams(
-                page=paging.page,
-                page_size=paging.page_size,
-                sort_by=paging.sort_by,
-                sort_order=paging.sort_order,
-            ),
-        )
+        if application_ids == []:
+            # No application has that name, so no trace can match.
+            result = empty_search_result()
+        else:
+            result = await search_traces(
+                opensearch_client,
+                selected_columns=selected_columns,
+                tenant_filter=tenant_filter,
+                is_admin=is_admin_user,
+                filters=TraceFilterParams(
+                    effective_status=effective_status,
+                    task_types=base.task_types,
+                    user=span.user,
+                    metadata_key=span.metadata_key,
+                    metadata_value=span.metadata_value,
+                    service_id=base.service_id,
+                    status_code_list=status_code_list,
+                    start_date=base.start_date,
+                    end_date=base.end_date,
+                    q=base.q,
+                    method=span.method,
+                    model=span.model,
+                    error=span.error,
+                    service=span.service,
+                    url=span.url,
+                    application_ids=application_ids,
+                ),
+                pagination=PaginationParams(
+                    page=paging.page,
+                    page_size=paging.page_size,
+                    sort_by=paging.sort_by,
+                    sort_order=paging.sort_order,
+                ),
+            )
 
         if "application" in selected_columns:
             await _apply_application_names(auth_db, result["data"])

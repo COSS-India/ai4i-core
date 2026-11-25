@@ -89,22 +89,6 @@ def test_application_ids_filter_is_exact_terms_on_app_id():
     assert {"terms": {"attributes.app_id.keyword": ["6", "8"]}} in clauses
 
 
-def test_no_matching_application_returns_empty_without_querying_opensearch():
-    client = MagicMock()
-
-    result = asyncio.run(_svc.search_traces(
-        client,
-        selected_columns=frozenset({"application"}),
-        tenant_filter="7",
-        is_admin=False,
-        filters=_svc.TraceFilterParams(application_ids=[]),
-        pagination=_svc.PaginationParams(),
-    ))
-
-    assert result["data"] == [] and result["total"] == 0
-    client.search_traces.assert_not_called()
-
-
 # ── route ────────────────────────────────────────────────────────────────────
 
 def _call_route(
@@ -146,6 +130,13 @@ def test_route_resolves_name_filter_within_caller_tenant(monkeypatch):
 
     find_ids.assert_awaited_once_with(auth_db, "bot", "7")
     assert search.call_args.kwargs["filters"].application_ids == ["3"]
+
+
+def test_route_name_matching_no_application_skips_search(monkeypatch):
+    response, search, _ = _call_route(monkeypatch, application="zzz", find_ids=AsyncMock(return_value=[]))
+
+    search.assert_not_awaited()
+    assert response.data == [] and response.total == 0
 
 
 def test_route_returns_names_and_keeps_unknown_ids(monkeypatch):
