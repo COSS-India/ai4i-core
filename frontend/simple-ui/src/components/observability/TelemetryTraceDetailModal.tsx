@@ -5,6 +5,7 @@ import {
   Badge,
   Box,
   Code,
+  HStack,
   SimpleGrid,
   Text,
   VStack,
@@ -15,7 +16,7 @@ import StandardModal from "../common/StandardModal";
 import DataTable, { type DataTableColumn } from "../common/table";
 import { getTelemetryTraceById } from "../../services/observabilityService";
 import { INSTITUTION } from "../../config/constants";
-import { toDisplayAttributes } from "../../utils/spanAttributes";
+import { isFallbackSpan, toDisplayAttributes } from "../../utils/spanAttributes";
 import type { TelemetrySpan } from "../../types/observability";
 
 export type TelemetryTraceDetailModalProps = {
@@ -37,6 +38,16 @@ function spanStatusColor(span: TelemetrySpan): string {
   if (status === "success" || status === "ok") return "green";
   if (status === "fail" || status === "error" || status === "failure") return "red";
   return "gray";
+}
+
+const FALLBACK_ROW_BG = "orange.50";
+
+function FallbackBadge() {
+  return (
+    <Badge colorScheme="orange" variant="solid" fontSize="2xs">
+      Fallback
+    </Badge>
+  );
 }
 
 function formatAttributes(attrs: Record<string, unknown>): string {
@@ -73,9 +84,12 @@ const TelemetryTraceDetailModal: React.FC<TelemetryTraceDetailModalProps> = ({
         sortAccessor: (span) => span.name ?? "",
         cell: (span) => (
           <>
-            <Text fontWeight="medium" fontSize="sm">
-              {span.name}
-            </Text>
+            <HStack spacing={2}>
+              <Text fontWeight="medium" fontSize="sm">
+                {span.name}
+              </Text>
+              {isFallbackSpan(span.attributes) ? <FallbackBadge /> : null}
+            </HStack>
             {span.context?.span_id ? (
               <Text fontSize="xs" color="gray.500" fontFamily="mono">
                 {span.context.span_id}
@@ -150,7 +164,8 @@ const TelemetryTraceDetailModal: React.FC<TelemetryTraceDetailModalProps> = ({
             {(error as Error).message || "Failed to load trace"}
           </AlertDescription>
         </Alert>
-      ) : data || isLoading ? (
+      ) : null}
+      {!error && (data || isLoading) ? (
         <VStack align="stretch" spacing={5}>
           {!isLoading && data ? (
             <>
@@ -184,6 +199,9 @@ const TelemetryTraceDetailModal: React.FC<TelemetryTraceDetailModalProps> = ({
             columns={columns}
             rows={data?.spans ?? []}
             rowKey={(span) => span.context?.span_id ?? span.name}
+            rowBg={(span) =>
+              isFallbackSpan(span.attributes) ? FALLBACK_ROW_BG : undefined
+            }
             defaultSortKey="timestamp"
             defaultSortDirection="asc"
             isLoading={isLoading}
@@ -201,23 +219,31 @@ const TelemetryTraceDetailModal: React.FC<TelemetryTraceDetailModalProps> = ({
               <Text fontSize="sm" fontWeight="semibold" color="gray.700">
                 Span attributes
               </Text>
-              {data.spans.map((span, index) => (
-                <Box key={`attrs-${span.context?.span_id ?? index}`}>
-                  <Text fontSize="xs" fontWeight="medium" color="gray.600" mb={1}>
-                    {span.name}
-                  </Text>
-                  <Code
-                    display="block"
-                    whiteSpace="pre-wrap"
-                    fontSize="xs"
-                    p={3}
-                    borderRadius="md"
-                    bg="gray.50"
-                  >
-                    {formatAttributes(span.attributes ?? {})}
-                  </Code>
-                </Box>
-              ))}
+              {data.spans.map((span, index) => {
+                const fallback = isFallbackSpan(span.attributes);
+                return (
+                  <Box key={`attrs-${span.context?.span_id ?? index}`}>
+                    <HStack spacing={2} mb={1}>
+                      <Text fontSize="xs" fontWeight="medium" color="gray.600">
+                        {span.name}
+                      </Text>
+                      {fallback ? <FallbackBadge /> : null}
+                    </HStack>
+                    <Code
+                      display="block"
+                      whiteSpace="pre-wrap"
+                      fontSize="xs"
+                      p={3}
+                      borderRadius="md"
+                      bg={fallback ? FALLBACK_ROW_BG : "gray.50"}
+                      borderLeftWidth={fallback ? "4px" : undefined}
+                      borderLeftColor={fallback ? "orange.400" : undefined}
+                    >
+                      {formatAttributes(span.attributes ?? {})}
+                    </Code>
+                  </Box>
+                );
+              })}
             </VStack>
           ) : null}
         </VStack>

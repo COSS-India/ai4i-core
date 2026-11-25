@@ -13,7 +13,7 @@ sub-category or policy is in effect only when it and every ancestor are
 enabled, so re-enabling a parent restores each child's own state.
 """
 
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -318,7 +318,11 @@ async def list_policy_types(
     session: AsyncSession = Depends(get_db),
     entity: Optional[str] = Query(None, description="Case-insensitive partial match on entity name (e.g. aadhaar, phone_number)."),
 ) -> ListPolicyTypeResponse:
-    """List policy types. Optionally filter by entity name. Adopter Admin only."""
+    """List policy types. A policy type classifies what a policy governs
+    (e.g. 'PII'), and its `policy_fields` lists the entities that policies of
+    that type detect and mask — new labels can be added without a schema
+    change, though policy_fields validation is the same for every type today.
+    Optionally filter by entity name. Adopter Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     items = await policy_type_service.list_policy_types(session, entity=entity)
@@ -327,6 +331,7 @@ async def list_policy_types(
 
 @router.post(
     "/policy-types",
+    summary="Create Policy Type — define a new policy classification (e.g. PII)",
     response_model=CreatePolicyTypeResponse,
     status_code=status.HTTP_201_CREATED,
     responses=error_responses(403),
@@ -336,7 +341,11 @@ async def create_policy_type(
     request: Request,
     session: AsyncSession = Depends(get_db),
 ) -> CreatePolicyTypeResponse:
-    """Create a policy type. Adopter Admin only."""
+    """Create a policy type — a new classification label for what a policy
+    governs (e.g. 'PII'). New labels don't require a schema change, but
+    `policy_fields` must still follow the same entity-masking shape
+    (custom_field/model_supported_field) used by every type today. Adopter
+    Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
@@ -378,7 +387,8 @@ async def update_policy_type(
     redis: aioredis.Redis = Depends(get_redis),
 ) -> UpdatePolicyTypeResponse:
     """Update name and/or policy_fields of a policy type. policy_type_id is
-    required in the request body. 404 if it does not exist. Adopter Admin only."""
+    required in the request body. 404 if it does not exist. Adopter Admin
+    only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
@@ -424,14 +434,17 @@ async def list_policies(
     request: Request,
     response: Response,
     name: Optional[str] = Query(None, description="Case-insensitive partial match on policy name."),
-    sub_category_id: Optional[int] = Query(None, gt=0, le=2_147_483_647, description="Filter policies by sub-category ID. 404 if it does not exist."),
+    sub_category_id: Annotated[Optional[int], Query(gt=0, le=2_147_483_647, description="Filter policies by sub-category ID. 404 if it does not exist.")] = None,
     offset: int = Query(0, ge=0, le=2_147_483_647, description="Number of items to skip (for pagination)."),
     limit: int = Query(100, ge=1, le=1000, description="Maximum number of items to return. Defaults to 100."),
     session: AsyncSession = Depends(get_db),
 ) -> ListPolicyResponse:
-    """List policies, optionally filtered by name (partial match) and/or
-    sub-category. 404 if the given sub-category does not exist.
-    ADMIN and TENANT ADMIN only."""
+    """List policies. A policy sits under a sub-category and is linked to a
+    policy type (e.g. 'PII') via `policy_type_id` — new policy-type labels
+    can be added without a schema change, though all types share the same
+    `policy_fields` entity shape today. Optionally filtered by name (partial
+    match) and/or sub-category — 404 if the given sub-category does not
+    exist. ADMIN and TENANT ADMIN only."""
     if not permission_ids(request) & {ROLE_ADMIN, ROLE_TENANT_ADMIN}:
         raise InsufficientPermissionsError()
     items, total = await policy_service.list_policies(session, name=name, sub_category_id=sub_category_id, offset=offset, limit=limit)
@@ -445,6 +458,7 @@ async def list_policies(
 
 @router.post(
     "",
+    summary="Create Policy — define a rule under a policy type (e.g. a PII redaction policy)",
     response_model=CreatePolicyResponse,
     status_code=status.HTTP_201_CREATED,
     responses=error_responses(403, 409),

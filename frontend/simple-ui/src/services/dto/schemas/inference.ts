@@ -5,7 +5,7 @@ import { z } from 'zod';
  * Detailed fields are typed in `src/types/inference.ts` without runtime strictness.
  */
 
-const looseRecord = z.record(z.unknown());
+const looseRecord = z.record(z.string(), z.unknown());
 
 /** `output` array present (most inference tasks). */
 export const inferenceOutputResponseSchema = z
@@ -150,4 +150,4 @@ export const llmHealthResponseSchema = z
   .passthrough();
 
 /** Generic JSON config blob from inference services. */
-export const inferenceConfigJsonSchema = z.record(z.unknown());
+export const inferenceConfigJsonSchema = z.record(z.string(), z.unknown());

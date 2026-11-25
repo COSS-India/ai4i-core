@@ -998,6 +998,9 @@ class ServiceListItem(ServiceResponse):
     languages: List[LanguagePairLenient] = Field(default_factory=list)
     versionStatus: Optional[str] = None
     modelName: Optional[str] = None
+    # Not persisted — filled in by routes/service.py only when the "availability"
+    # column is requested (live Prometheus lookup). None = not requested/unknown.
+    availability: Optional[bool] = None
 
 
 class ServiceListResponse(BaseSchema):
@@ -1104,36 +1107,3 @@ class DeleteServiceResponse(SuccessResponseWithMeta):
 
     data: DeleteServiceData
     meta: MessageMeta
-
-
-class ServiceColumnFilterOption(BaseSchema):
-    value: str
-    label: str
-
-
-class ServiceColumnFilter(BaseSchema):
-    """Filter metadata for a column. ``options`` is null for text/date_range."""
-
-    type: str
-    params: List[str]
-    options: Optional[List[ServiceColumnFilterOption]] = None
-
-
-class ServiceColumnDefinition(BaseSchema):
-    id: str
-    label: str
-    mandatory: bool
-    defaultVisible: bool
-    sortable: bool
-    filterable: bool
-    filter: Optional[ServiceColumnFilter] = None
-
-
-class ServiceColumnsData(BaseSchema):
-    columns: List[ServiceColumnDefinition]
-
-
-class ServiceColumnsResponse(SuccessResponse):
-    """GET /services/columns"""
-
-    data: ServiceColumnsData

@@ -1,4 +1,4 @@
-import { Box, Text } from "@chakra-ui/react";
+import { Box, HStack, Text } from "@chakra-ui/react";
 import React, { useMemo } from "react";
 import { Bar, BarChart, CartesianGrid, Tooltip, XAxis, YAxis } from "recharts";
 import { METERING } from "../../config/meteringConstants";
@@ -6,7 +6,6 @@ import { useMeteringChartColors } from "../../hooks/useMeteringChartColors";
 import type { MeteringGraph, MeteringScope } from "../../types/metering";
 import {
   buildRequestVolumeChartData,
-  formatCompactNumber,
   formatMeteringTooltipLabel,
   formatMeteringYTick,
   resolveMeteringChartScale,
@@ -26,12 +25,22 @@ const RequestVolumeTooltip: React.FC<{
 }> = ({ active, payload, scale }) => {
   if (!active || !payload?.length) return null;
   const p = payload[0].payload;
+  const section = METERING.SECTIONS.REQUEST_VOLUME;
+  // Exact counts (not 1.2K) so Total visibly equals Successful + Failed.
+  const rows = [
+    { label: section.TOTAL, value: p.requests, color: "gray.800" },
+    { label: section.SUCCESSFUL, value: p.successful, color: "green.500" },
+    { label: section.FAILED, value: p.failed, color: "red.500" },
+  ];
   return (
-    <Box bg="white" border="1px solid" borderColor="gray.200" borderRadius="lg" px={3} py={2.5} shadow="md" fontSize="sm" minW="140px">
+    <Box bg="white" border="1px solid" borderColor="gray.200" borderRadius="lg" px={3} py={2.5} shadow="md" fontSize="sm" minW="180px">
       <Text fontWeight="semibold" color="gray.800" mb={1.5}>{formatMeteringTooltipLabel(p.ts, scale)}</Text>
-      <Text color="green.500" fontWeight="medium">{formatCompactNumber(p.successful)} successful</Text>
-      <Text color="red.500" fontWeight="medium">{formatCompactNumber(p.failed)} failed</Text>
-      <Text color="gray.600" mt={1}>{formatCompactNumber(p.requests)} total</Text>
+      {rows.map((row) => (
+        <HStack key={row.label} justify="space-between" spacing={4} color={row.color} fontWeight="medium">
+          <Text>{row.label}</Text>
+          <Text>{row.value.toLocaleString("en-IN")}</Text>
+        </HStack>
+      ))}
     </Box>
   );
 };

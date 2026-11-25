@@ -42,7 +42,13 @@ async def list_configs(
     ] = None,
     session: Annotated[AsyncSession, Depends(get_db)] = None,
 ) -> ListConfigResponse:
-    """List all config entries, optionally filtered by type. All authenticated roles."""
+    """List all config entries, optionally filtered by type.
+
+    A config entry is a generic admin-configurable list/dropdown — e.g. domain
+    options, column catalogs, suspend/deactivate reasons. `type` identifies
+    which list it is; `data` is a free-form payload whose shape is owned by
+    that `type`, not by this API. All authenticated roles.
+    """
     if sort_order is not None and sort_order not in {"asc", "desc"}:
         raise ValidationError(message="sort_order must be 'asc' or 'desc'", code="INVALID_SORT_ORDER")
     items = await config_service.list_configs(session, type_filter=type, sort_order=sort_order)
@@ -51,6 +57,7 @@ async def list_configs(
 
 @router.post(
     "",
+    summary="Create Config — define a new admin-configurable list/dropdown (e.g. domain, column catalog)",
     status_code=status.HTTP_201_CREATED,
     responses=error_responses(403, 409),
 )
@@ -59,7 +66,9 @@ async def create_config(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_db)] = None,
 ) -> CreateConfigResponse:
-    """Create a new config entry. Admin only."""
+    """Create a new config entry — a new admin-configurable list/dropdown,
+    identified by a unique `type`. No backend schema change is needed to add
+    a new `type`; the API does not interpret `data`. Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
@@ -80,7 +89,8 @@ async def get_config(
     config_id: Annotated[int, Path(gt=0, description=_CONFIG_ID_DESC)],
     session: Annotated[AsyncSession, Depends(get_db)] = None,
 ) -> GetConfigResponse:
-    """Fetch a single config entry by ID. 404 if it does not exist. Admin only."""
+    """Fetch a single config entry (one admin-configurable list) by ID.
+    404 if it does not exist. Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     item = await config_service.get_config(session, config_id)
@@ -97,8 +107,9 @@ async def update_config(
     config_id: Annotated[int, Path(gt=0, description=_CONFIG_ID_DESC)],
     session: Annotated[AsyncSession, Depends(get_db)] = None,
 ) -> UpdateConfigResponse:
-    """Update a config entry. Only the fields sent are changed.
-    404 if it does not exist. Admin only."""
+    """Update a config entry's `type` and/or `data`. Only the fields sent are
+    changed. 404 if it does not exist, 409 if the new `type` is already
+    taken. Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     user_id = request.headers.get("X-User-Id")
@@ -112,14 +123,16 @@ async def update_config(
 
 @router.delete(
     "/{config_id}",
-    responses=error_responses(403, 404),
+    responses=error_responses(403, 404, 409),
 )
 async def delete_config(
     request: Request,
     config_id: Annotated[int, Path(gt=0, description=_CONFIG_ID_DESC)],
     session: Annotated[AsyncSession, Depends(get_db)] = None,
 ) -> DeleteConfigResponse:
-    """Delete a config entry by ID. 404 if it does not exist. Admin only."""
+    """Delete a config entry (one admin-configurable list) by ID. 404 if it
+    does not exist, 409 if it is a protected default config
+    (`is_default=true`). Admin only."""
     if not is_admin(request):
         raise InsufficientPermissionsError()
     deleted_id = await config_service.delete_config(session, config_id)

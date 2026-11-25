@@ -208,15 +208,6 @@ function ApiKeyStatusCell({
   );
 }
 
-function renderApiKeyCreatedCell(key: ApiKeyTableRow): React.ReactNode {
-  const value = key.subRow === "current" ? key.rotated_at ?? key.created_at : key.created_at;
-  return (
-    <Text fontSize="sm" color="ink.600">
-      {formatApiKeyTableDate(value)}
-    </Text>
-  );
-}
-
 function renderApiKeyExpiryCell(key: ApiKeyTableRow): React.ReactNode {
   if (key.subRow === "previous") {
     return (
@@ -450,10 +441,13 @@ function buildApiKeyColumns(
     ],
   };
 
+  // Every column takes an equal share of spare table width (see
+  // DataTableColumn.grow), so it no longer piles up in Key and Application.
   return [
     {
       id: "key_name",
       header: "Key",
+      grow: 1,
       sortable: true,
       sortAccessor: (key) => key.key_name ?? "",
       cell: (key) => renderApiKeyNameCell(key, ctx),
@@ -463,6 +457,7 @@ function buildApiKeyColumns(
       header: "Application",
       thProps: { maxW: "200px" },
       tdProps: { maxW: "200px" },
+      grow: 1,
       sortable: true,
       sortAccessor: (key) => key.application_name ?? key.application_id ?? "",
       cell: renderApiKeyApplicationCell,
@@ -471,6 +466,7 @@ function buildApiKeyColumns(
       id: "permissions",
       header: "Permissions",
       hint: FIELD_HINTS.apiKey.col.permissions,
+      grow: 1,
       thProps: { display: { base: "none", xl: "table-cell" } },
       tdProps: { display: { base: "none", xl: "table-cell" } },
       cell: (key) => renderApiKeyPermissionsColumnCell(key, ctx),
@@ -479,6 +475,7 @@ function buildApiKeyColumns(
       id: "budget",
       header: "Allocation",
       hint: FIELD_HINTS.apiKey.col.allocation,
+      grow: 1,
       sortable: true,
       sortAccessor: (key) =>
         key.allocated_percentage ?? key.allocated_budget ?? -1,
@@ -488,23 +485,14 @@ function buildApiKeyColumns(
       id: "status",
       header: "Status",
       hint: FIELD_HINTS.apiKey.col.status,
+      grow: 1,
       cell: (key) => renderApiKeyStatusColumnCell(key, ctx),
-    },
-    {
-      id: "created",
-      header: "Created Date",
-      sortable: true,
-      sortAccessor: (key) => {
-        const value =
-          key.subRow === "current" ? key.rotated_at ?? key.created_at : key.created_at;
-        return value ? new Date(value).getTime() : 0;
-      },
-      cell: renderApiKeyCreatedCell,
     },
     {
       id: "expires",
       header: "Expiry Date",
       hint: FIELD_HINTS.apiKey.col.expiry,
+      grow: 1,
       sortable: true,
       sortAccessor: (key) => {
         const value =
@@ -513,13 +501,16 @@ function buildApiKeyColumns(
       },
       cell: renderApiKeyExpiryCell,
     },
-    createActionsColumn<ApiKeyTableRow>({
-      actionCount: SHOW_API_KEY_ROTATION_ACTIONS ? 4 : 3,
-      getActions: (key) =>
-        key.subRow
-          ? subRowActions[key.subRow](key)
-          : buildApiKeyParentActions(key, ctx),
-    }),
+    {
+      ...createActionsColumn<ApiKeyTableRow>({
+        actionCount: SHOW_API_KEY_ROTATION_ACTIONS ? 4 : 3,
+        getActions: (key) =>
+          key.subRow
+            ? subRowActions[key.subRow](key)
+            : buildApiKeyParentActions(key, ctx),
+      }),
+      grow: 1,
+    },
   ];
 }
 
@@ -652,8 +643,6 @@ export default function ApiKeyManagementTab({
         a.application_name ?? a.application_id ?? "",
       budget: (a: ApiKeyTableRow) =>
         a.allocated_percentage ?? a.allocated_budget ?? -1,
-      created: (a: ApiKeyTableRow) =>
-        a.created_at ? new Date(a.created_at).getTime() : 0,
       expires: (a: ApiKeyTableRow) =>
         a.expires_at ? new Date(a.expires_at).getTime() : Number.POSITIVE_INFINITY,
     }),

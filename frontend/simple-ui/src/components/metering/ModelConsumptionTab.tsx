@@ -1,20 +1,10 @@
 import {
-  Box,
-  Button,
-  Checkbox,
   HStack,
   IconButton,
-  Menu,
-  MenuButton,
-  MenuItem,
-  MenuList,
-  Portal,
-  SimpleGrid,
   Text,
-  Tooltip,
   VStack,
 } from "@chakra-ui/react";
-import { ChevronDownIcon, ChevronRightIcon } from "@chakra-ui/icons";
+import { ChevronRightIcon } from "@chakra-ui/icons";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { formatModelTaskTypeLabel } from "../../config/constants";
 import { METERING } from "../../config/meteringConstants";
@@ -29,26 +19,171 @@ import {
   buildTopModelsChart,
   deriveModelInsights,
   formatCompactNumber,
-  formatNativeConsumption,
+  formatModelNativeUnits,
+  formatPercent,
   getScopePeriodLabel,
   modelConsumptionTaskTypeColor,
 } from "../../utils/meteringFormatters";
 import { normalizeModelTaskType } from "../../utils/meteringTaskType";
 import DataTable, { type DataTableColumn } from "../common/table";
+import { sortHeaderTrailingWidthPx } from "../common/TableControls";
 import MeteringAsyncState from "./MeteringAsyncState";
-import MeteringDonutChart, { DonutRankedLayout } from "./MeteringDonutChart";
-import MeteringSectionCard, { KpiCard } from "./MeteringSectionCard";
+import { MeteringEmptyState } from "./MeteringChartPanel";
+import {
+  ModelConsumptionCard,
+  ModelInsightCards,
+  TaskTypeFilterMenu,
+} from "./ModelConsumptionSections";
+import MeteringSectionCard from "./MeteringSectionCard";
 import { ModelTokenBreakdownRows } from "./ModelTokenBreakdownRows";
-import RankedShareList from "./RankedShareList";
-import SegmentedTabBar from "./SegmentedTabBar";
 import { TaskTypeLabel } from "./UsageSpendCells";
 
 const breakdownRowKey = (row: ModelConsumptionRow) =>
   `${row.service_id}-${row.model_name ?? row.name}`;
 
+/**
+ * Fixed table layout gives every column without a width an equal share, so
+ * "LLM" would get as much room as a long service name. Task Type and the
+ * numeric columns get fixed widths; Model Name and Service Name share the rest.
+ *
+ * The numeric widths fit the whole header on one line (text + info and sort
+ * icons + cell padding; a wrapped header next to one-line ones looks broken)
+ * and its widest value ("1,23,45,678 tokens", "100.0%") plus the icon inset
+ * its cells use (see NUMERIC_TEXT_PROPS). Re-check these if a header is renamed.
+ *
+ * Total Requests, Successful and Failed share one width so their values sit at
+ * even intervals. 190px is the floor: "TOTAL REQUESTS" + icons + padding
+ * measures ~180px, and anything narrower wraps it onto two lines.
+ */
+const NUMERIC_COLUMN_PX = 190;
+const TASK_TYPE_COLUMN_PX = 160;
+// "TOTAL NATIVE UNITS" + icons + padding measures ~196px, wider than any value
+// ("1,23,45,678" + inset; values carry no unit suffix).
+const NATIVE_UNITS_COLUMN_PX = 210;
+/** Narrowest Model Name / Service Name may get before the table scrolls instead. */
+const NAME_COLUMN_MIN_PX = 150;
+
+const COLUMN_WIDTHS = {
+  task_type: `${TASK_TYPE_COLUMN_PX}px`,
+  model_name: undefined,
+  name: undefined,
+  requests: `${NUMERIC_COLUMN_PX}px`,
+  success_pct: `${NUMERIC_COLUMN_PX}px`,
+  failure_rate_pct: `${NUMERIC_COLUMN_PX}px`,
+  native_units: `${NATIVE_UNITS_COLUMN_PX}px`,
+} as const;
+
+/**
+ * Below this width (1240px) the table scrolls sideways rather than squeezing
+ * the name columns to an ellipsis, or clipping Total Native Units off the card:
+ * all fixed columns plus both name columns at their minimum.
+ */
+const TABLE_MIN_WIDTH = `${
+  TASK_TYPE_COLUMN_PX + 3 * NUMERIC_COLUMN_PX + NATIVE_UNITS_COLUMN_PX + 2 * NAME_COLUMN_MIN_PX
+}px`;
+
+/**
+ * Numeric cells: right-aligned (set per column) with equal-width digits, so
+ * units, tenths and decimal points line up down the column.
+ */
+const NUMERIC_TEXT_PROPS = {
+  fontSize: "sm",
+  // Values end under the header text, not under its info + sort icons.
+  pr: `${sortHeaderTrailingWidthPx(true)}px`,
+  whiteSpace: "nowrap",
+  // Not a Chakra style prop, so it goes through sx.
+  sx: { fontVariantNumeric: "tabular-nums" },
+} as const;
+
 /** LLM rows carry a token breakdown and can be expanded to show it. */
 const hasTokenBreakdown = (row: ModelConsumptionRow) =>
   (row.native_breakdown?.length ?? 0) > 0;
+
+/*
+ * Cell renderers live at module level (not inline in the column definitions)
+ * so they are not re-created on every render of the tab.
+ */
+
+/** Expand toggle (LLM rows only) + task type label. */
+function renderTaskTypeCell(
+  row: ModelConsumptionRow,
+  index: number,
+  isOpen: boolean,
+  onToggle: (key: string) => void,
+): React.ReactNode {
+  const key = breakdownRowKey(row);
+  return (
+    <HStack spacing={1}>
+      <IconButton
+        aria-label={`${METERING.SECTIONS.MODEL.TOGGLE_TOKEN_BREAKDOWN} ${row.name}`}
+        aria-expanded={isOpen}
+        icon={<ChevronRightIcon />}
+        size="xs"
+        variant="ghost"
+        visibility={hasTokenBreakdown(row) ? "visible" : "hidden"}
+        transform={isOpen ? "rotate(90deg)" : undefined}
+        transition="transform 0.15s ease"
+        onClick={(event) => {
+          event.stopPropagation();
+          onToggle(key);
+        }}
+      />
+      {row.task_type ? (
+        <TaskTypeLabel
+          taskType={row.task_type}
+          color={modelConsumptionTaskTypeColor(row.task_type, index)}
+        />
+      ) : (
+        <Text fontSize="sm">{METERING.GRAPH.EMPTY_VALUE}</Text>
+      )}
+    </HStack>
+  );
+}
+
+function renderModelNameCell(row: ModelConsumptionRow): React.ReactNode {
+  return (
+    <Text fontSize="sm" color="gray.800" fontWeight="medium">
+      {row.model_name?.trim() || METERING.GRAPH.EMPTY_VALUE}
+    </Text>
+  );
+}
+
+function renderServiceNameCell(row: ModelConsumptionRow): React.ReactNode {
+  return (
+    <Text fontWeight="medium" fontSize="sm">
+      {row.name}
+    </Text>
+  );
+}
+
+function renderRequestsCell(row: ModelConsumptionRow): React.ReactNode {
+  return <Text {...NUMERIC_TEXT_PROPS}>{formatCompactNumber(row.requests, "indian")}</Text>;
+}
+
+function renderSuccessCell(row: ModelConsumptionRow): React.ReactNode {
+  return (
+    <Text {...NUMERIC_TEXT_PROPS} color="green.600" fontWeight="medium">
+      {formatPercent(row.success_pct)}
+    </Text>
+  );
+}
+
+function renderFailureCell(row: ModelConsumptionRow): React.ReactNode {
+  return (
+    <Text {...NUMERIC_TEXT_PROPS} color="red.500" fontWeight="medium">
+      {formatPercent(row.failure_rate_pct)}
+    </Text>
+  );
+}
+
+/** The bare number for every task type: "267", "19", not "267 tokens", "19 chars". */
+function renderNativeUnitsCell(row: ModelConsumptionRow): React.ReactNode {
+  return (
+    <Text {...NUMERIC_TEXT_PROPS} color="gray.600">
+      {formatModelNativeUnits(row.native_units)}
+    </Text>
+  );
+}
 
 interface ModelConsumptionTabProps {
   data?: ModelConsumptionResponse;
@@ -160,88 +295,43 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
         id: "task_type",
         header: section.TABLE_TASK_TYPE,
         hint: section.TOOLTIPS.TASK_TYPE,
-        cell: (row, i) => {
-          const key = breakdownRowKey(row);
-          const isOpen = expandedRows.has(key);
-          return (
-            <HStack spacing={1}>
-              <IconButton
-                aria-label={`${section.TOGGLE_TOKEN_BREAKDOWN} ${row.name}`}
-                aria-expanded={isOpen}
-                icon={<ChevronRightIcon />}
-                size="xs"
-                variant="ghost"
-                visibility={hasTokenBreakdown(row) ? "visible" : "hidden"}
-                transform={isOpen ? "rotate(90deg)" : undefined}
-                transition="transform 0.15s ease"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  toggleRow(key);
-                }}
-              />
-              {row.task_type ? (
-                <TaskTypeLabel
-                  taskType={row.task_type}
-                  color={modelConsumptionTaskTypeColor(row.task_type, i)}
-                />
-              ) : (
-                <Text fontSize="sm">{METERING.GRAPH.EMPTY_VALUE}</Text>
-              )}
-            </HStack>
-          );
-        },
+        wrapHeader: true,
+        width: COLUMN_WIDTHS.task_type,
+        cell: (row, i) =>
+          renderTaskTypeCell(row, i, expandedRows.has(breakdownRowKey(row)), toggleRow),
       },
       {
         id: "model_name",
         header: section.TABLE_MODEL,
+        hint: section.TOOLTIPS.MODEL_NAME,
+        wrapHeader: true,
+        width: COLUMN_WIDTHS.model_name,
         sortable: true,
         sortAccessor: sortAccessors.model_name,
-        cell: (row) => (
-          <Text fontSize="sm" color="gray.800" fontWeight="medium">
-            {row.model_name?.trim() || METERING.GRAPH.EMPTY_VALUE}
-          </Text>
-        ),
+        cell: renderModelNameCell,
       },
       {
         id: "name",
         header: section.TABLE_SERVICE,
+        hint: section.TOOLTIPS.SERVICE_NAME,
+        wrapHeader: true,
+        width: COLUMN_WIDTHS.name,
         sortable: true,
         sortAccessor: sortAccessors.name,
-        cell: (row, i) => {
-          const rowColor = modelConsumptionTaskTypeColor(row.task_type, i);
-          return (
-            <HStack spacing={2}>
-              <Box w={1} h={5} borderRadius="sm" bg={rowColor} />
-              <Text fontWeight="medium" fontSize="sm">
-                {row.name}
-              </Text>
-            </HStack>
-          );
-        },
+        cell: renderServiceNameCell,
       },
+      // Request counts and their success / failure split sit together; native
+      // units come last. ModelTokenBreakdownRows mirrors this order.
       {
         id: "requests",
         header: section.TABLE_TOTAL_REQUESTS,
         sortable: true,
         sortAccessor: sortAccessors.requests,
         hint: section.TOOLTIPS.TOTAL_REQUESTS,
-        isNumeric: true,
-        cell: (row) => (
-          <Text fontSize="sm">{formatCompactNumber(row.requests, "indian")}</Text>
-        ),
-      },
-      {
-        id: "native_units",
-        header: section.TABLE_NATIVE,
-        sortable: true,
-        sortAccessor: sortAccessors.native_units,
-        hint: section.TOOLTIPS.TOKEN_CONSUMPTION,
-        isNumeric: true,
-        cell: (row) => (
-          <Text fontSize="sm" color="gray.600">
-            {formatNativeConsumption(row.native_units, row.native_unit_suffix)}
-          </Text>
-        ),
+        wrapHeader: true,
+        width: COLUMN_WIDTHS.requests,
+        align: "right",
+        cell: renderRequestsCell,
       },
       {
         id: "success_pct",
@@ -249,12 +339,10 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
         sortable: true,
         sortAccessor: sortAccessors.success_pct,
         hint: section.TOOLTIPS.SUCCESS_RATE,
-        isNumeric: true,
-        cell: (row) => (
-          <Text fontSize="sm" color="green.600" fontWeight="medium">
-            {row.success_pct.toFixed(2)}
-          </Text>
-        ),
+        wrapHeader: true,
+        width: COLUMN_WIDTHS.success_pct,
+        align: "right",
+        cell: renderSuccessCell,
       },
       {
         id: "failure_rate_pct",
@@ -262,15 +350,32 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
         sortable: true,
         sortAccessor: sortAccessors.failure_rate_pct,
         hint: section.TOOLTIPS.FAILURE_RATE,
-        isNumeric: true,
-        cell: (row) => (
-          <Text fontSize="sm" color="red.500" fontWeight="medium">
-            {row.failure_rate_pct.toFixed(2)}
-          </Text>
-        ),
+        wrapHeader: true,
+        width: COLUMN_WIDTHS.failure_rate_pct,
+        align: "right",
+        cell: renderFailureCell,
+      },
+      {
+        id: "native_units",
+        header: section.TABLE_NATIVE,
+        sortable: true,
+        sortAccessor: sortAccessors.native_units,
+        hint: section.TOOLTIPS.TOKEN_CONSUMPTION,
+        wrapHeader: true,
+        width: COLUMN_WIDTHS.native_units,
+        align: "right",
+        cell: renderNativeUnitsCell,
       },
     ],
     [section, sortAccessors, expandedRows, toggleRow],
+  );
+
+  const renderTokenBreakdown = useCallback(
+    (row: BreakdownRow) =>
+      hasTokenBreakdown(row) && expandedRows.has(breakdownRowKey(row)) ? (
+        <ModelTokenBreakdownRows row={row} />
+      ) : null,
+    [expandedRows],
   );
 
   const toggleTaskType = (taskType: string) => {
@@ -283,18 +388,18 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
     });
   };
 
-  const mostUsedHelper =
-    insights && insights.mostUsedRequests > 0
-      ? `${formatCompactNumber(insights.mostUsedRequests, "indian")} ${
-          isPlatformWide
-            ? section.REQUESTS_ACROSS_INSTITUTIONS
-            : section.REQUESTS_ACROSS_INSTITUTION
-        }`
-      : undefined;
+  const selectAllTaskTypes = useCallback(() => {
+    setSelectedTaskTypes(new Set(taskTypeNames.map(normalizeModelTaskType)));
+  }, [taskTypeNames]);
 
-  const hasMostUsed = Boolean(
-    insights && insights.mostUsedName !== METERING.GRAPH.EMPTY_VALUE,
-  );
+  const clearAllTaskTypes = useCallback(() => {
+    setSelectedTaskTypes(new Set());
+  }, []);
+
+  // No usage at all in the window, vs usage that the Task Type filter hides.
+  const hasNoUsage = breakdown.length === 0 && topModels.length === 0;
+  const tableEmptyMessage =
+    breakdown.length > 0 ? METERING.EMPTY.FILTERED : METERING.EMPTY.PERIOD;
 
   return (
     <MeteringAsyncState
@@ -306,121 +411,21 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
       {data ? (
         <VStack align="stretch" spacing={6}>
           {insights ? (
-            <SimpleGrid
-              columns={{ base: 1, sm: 2, lg: showModelCountKpis ? 4 : 2 }}
-              spacing={4}
-            >
-              {showModelCountKpis ? (
-                <>
-                  <KpiCard
-                    label={section.TOTAL_MODELS}
-                    value={insights.totalModels ?? METERING.GRAPH.EMPTY_VALUE}
-                    tooltip={section.TOOLTIPS.TOTAL_MODELS}
-                    valueColor="gray.800"
-                  />
-                  <KpiCard
-                    label={section.ACTIVE_MODELS}
-                    value={insights.activeModels ?? METERING.GRAPH.EMPTY_VALUE}
-                    tooltip={section.TOOLTIPS.ACTIVE_MODELS}
-                    valueColor="gray.800"
-                  />
-                </>
-              ) : null}
-              <KpiCard
-                label={section.OVERALL_SUCCESS}
-                value={
-                  insights.overallSuccessRate != null
-                    ? insights.overallSuccessRate.toFixed(2)
-                    : METERING.GRAPH.EMPTY_VALUE
-                }
-                helper={section.SUCCESS_RATE_SUFFIX}
-                tooltip={section.TOOLTIPS.OVERALL_SUCCESS}
-                valueColor="green.600"
-              />
-              <KpiCard
-                label={section.MOST_USED}
-                valueFontSize="xl"
-                value={
-                  hasMostUsed ? (
-                    <HStack spacing={2} minW={0} w="full">
-                      <Box w={2} h={2} borderRadius="full" bg="green.400" flexShrink={0} />
-                      <Tooltip
-                        label={insights.mostUsedName}
-                        hasArrow
-                        placement="top"
-                        openDelay={200}
-                      >
-                        <Text noOfLines={1}>{insights.mostUsedName}</Text>
-                      </Tooltip>
-                    </HStack>
-                  ) : (
-                    METERING.GRAPH.EMPTY_VALUE
-                  )
-                }
-                helper={mostUsedHelper}
-                tooltip={section.TOOLTIPS.MOST_USED}
-                valueColor="gray.800"
-              />
-            </SimpleGrid>
+            <ModelInsightCards
+              insights={insights}
+              isPlatformWide={isPlatformWide}
+              showModelCountKpis={showModelCountKpis}
+            />
           ) : null}
 
-          <MeteringSectionCard
-            title={section.TITLE}
-            subtitle={section.SUBTITLE}
-            sectionLabel
-            action={
-              <SegmentedTabBar
-                options={[...METERING.MODEL_TOP_N_SEGMENT_OPTIONS]}
-                activeId={String(topN)}
-                onChange={(id) => setTopN(Number(id) as ModelTopN)}
-                justify="flex-end"
-              />
-            }
-          >
-            <DonutRankedLayout
-              chart={
-                <MeteringDonutChart
-                  data={slices.map(({ name, value, color }) => ({ name, value, color }))}
-                  height={260}
-                  innerRadius={65}
-                  outerRadius={100}
-                  showTooltip
-                  centerPrimary={section.DONUT_PRIMARY}
-                  centerSecondary={section.DONUT_SECONDARY}
-                  total={
-                    visibleTopModels.length
-                      ? data.top_models_total_requests
-                      : undefined
-                  }
-                />
-              }
-              list={
-                <RankedShareList
-                  rows={visibleTopModels.map((row, i) => ({
-                    rank: row.rank,
-                    label: row.model_name,
-                    taskType: row.task_type ?? undefined,
-                    subtitle: row.task_type
-                      ? formatModelTaskTypeLabel(row.task_type)
-                      : undefined,
-                    formattedValue:
-                      row.formatted_requests ||
-                      formatCompactNumber(row.requests, "indian"),
-                    percentage: row.consumption_pct,
-                    color: modelConsumptionTaskTypeColor(row.task_type, i),
-                  }))}
-                  variant="modelWithTaskType"
-                  headerLeft={section.TABLE_MODEL}
-                  headerTaskType={section.TABLE_TASK_TYPE}
-                  headerTotal={METERING.SECTIONS.RANKED_SHARE.HEADER_TOTAL_REQUESTS}
-                  headerRight={METERING.SECTIONS.RANKED_SHARE.HEADER_RIGHT}
-                  tipTotal={METERING.SECTIONS.RANKED_SHARE.TOOLTIPS.TOTAL_REQUESTS}
-                  tipTaskType={section.TOOLTIPS.TASK_TYPE}
-                  tipRight={section.TOOLTIPS.CONSUMPTION_PCT}
-                />
-              }
-            />
-          </MeteringSectionCard>
+          <ModelConsumptionCard
+            slices={slices}
+            topModels={visibleTopModels}
+            topModelsTotalRequests={data.top_models_total_requests}
+            topN={topN}
+            onTopNChange={setTopN}
+            emptyMessage={hasNoUsage ? METERING.EMPTY.PERIOD : METERING.EMPTY.FILTERED}
+          />
 
           <MeteringSectionCard
             title={section.BREAKDOWN_TITLE}
@@ -428,74 +433,35 @@ const ModelConsumptionTab: React.FC<ModelConsumptionTabProps> = ({
             sectionLabel
             bare
           >
-            {taskTypeNames.length > 0 ? (
-              <Box mb={4} maxW={{ base: "full", sm: "320px" }}>
-                <Text fontSize="xs" fontWeight="semibold" color="gray.600" mb={2}>
-                  {section.FILTER_TASK_TYPES}
-                </Text>
-                <Menu closeOnSelect={false} matchWidth>
-                  <MenuButton
-                    as={Button}
-                    rightIcon={<ChevronDownIcon />}
-                    w="full"
-                    textAlign="left"
-                    fontWeight="normal"
-                    variant="outline"
-                    colorScheme="gray"
-                    color="gray.800"
-                    bg="white"
-                    size="sm"
-                    justifyContent="space-between"
-                  >
-                    <Text as="span" isTruncated display="block" minW={0}>
-                      {taskTypeFilterLabel}
-                    </Text>
-                  </MenuButton>
-                  <Portal>
-                    <MenuList maxH="320px" overflowY="auto" zIndex={10}>
-                      {taskTypeNames.map((taskType) => {
-                        const key = normalizeModelTaskType(taskType);
-                        const checked = selectedTaskTypes.has(key);
-                        return (
-                          <MenuItem
-                            key={taskType}
-                            onClick={() => toggleTaskType(taskType)}
-                            closeOnSelect={false}
-                          >
-                            <Checkbox
-                              isChecked={checked}
-                              onChange={() => toggleTaskType(taskType)}
-                              onClick={(e) => e.stopPropagation()}
-                              mr={2}
-                            />
-                            {formatModelTaskTypeLabel(taskType)}
-                          </MenuItem>
-                        );
-                      })}
-                    </MenuList>
-                  </Portal>
-                </Menu>
-              </Box>
-            ) : null}
-
-            <DataTable
-              columns={breakdownColumns}
-              rows={filteredBreakdown}
-              rowKey={breakdownRowKey}
-              defaultSortKey="requests"
-              defaultSortDirection="desc"
-              theadBg="gray.50"
-              containerMt={0}
-              isEmpty={filteredBreakdown.length === 0}
-              emptyMessage={
-                breakdown.length > 0 ? METERING.EMPTY.FILTERED : METERING.EMPTY.PERIOD
-              }
-              renderAfterRow={(row) =>
-                hasTokenBreakdown(row) && expandedRows.has(breakdownRowKey(row)) ? (
-                  <ModelTokenBreakdownRows row={row} />
-                ) : null
-              }
-            />
+            {/* Nothing to filter or list: one empty state instead of the filter and an empty table. */}
+            {hasNoUsage ? (
+              <MeteringEmptyState height={260} />
+            ) : (
+              <>
+                <TaskTypeFilterMenu
+                  taskTypeNames={taskTypeNames}
+                  selectedTaskTypes={selectedTaskTypes}
+                  label={taskTypeFilterLabel}
+                  onToggle={toggleTaskType}
+                  onSelectAll={selectAllTaskTypes}
+                  onClearAll={clearAllTaskTypes}
+                />
+                <DataTable
+                  columns={breakdownColumns}
+                  rows={filteredBreakdown}
+                  rowKey={breakdownRowKey}
+                  defaultSortKey="requests"
+                  defaultSortDirection="desc"
+                  theadBg="gray.50"
+                  containerMt={0}
+                  tableMinWidth={TABLE_MIN_WIDTH}
+                  scrollX
+                  isEmpty={filteredBreakdown.length === 0}
+                  emptyMessage={tableEmptyMessage}
+                  renderAfterRow={renderTokenBreakdown}
+                />
+              </>
+            )}
           </MeteringSectionCard>
         </VStack>
       ) : null}

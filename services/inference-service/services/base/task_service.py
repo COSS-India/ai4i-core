@@ -286,6 +286,7 @@ class BaseTaskService:
         triton_endpoint = serviceInfo.get('endpoint', '')
         api_key = serviceInfo.get('api_key')
         service_id = serviceInfo.get('serviceId', '')
+        is_fallback = serviceInfo.get('is_fallback', False)
         self._adapter_config = serviceInfo.get('adapter_config')
         if not model_name or not triton_endpoint:
             raise RuntimeError(
@@ -352,6 +353,10 @@ class BaseTaskService:
                 # The PPU Kafka consumer reads only the ai-inference span for
                 # billing, so it must always be present there (mirrors llm_service.py).
                 span_ctx["service_id"] = service_id
+                # Carried over from the "model" span's service_info so this
+                # span can be told apart from the originally requested one
+                # when a fallback served the request.
+                span_ctx["is_fallback"] = is_fallback
                 # input_type/output_type (payload-shape guessing) are seeded by
                 # traced_inference for the LLM path only — Triton uses unit_type instead.
                 span_ctx.pop("input_type", None)

@@ -4,7 +4,7 @@
 # (linux/amd64), and add every package `pip freeze` lists that is missing here.
 
 # ── Shared platform library (consolidated) ──
-ai4i-core==1.0.57
+ai4i-core==1.0.58
 
 # Pinned: the consumer design depends on version-specific behaviour —
 # cooperative-sticky, the batch API, store_offsets, incremental_assign and

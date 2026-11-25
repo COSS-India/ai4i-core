@@ -293,6 +293,7 @@ class OpenAIProxyService:
         model_name: Optional[str] = None,
         *,
         failure_status_code: Optional[int] = None,
+        is_fallback: bool = False,
     ) -> None:
         """
         Stamp the attrs every "model" span carries, regardless of outcome.
@@ -311,12 +312,18 @@ class OpenAIProxyService:
         upload. Success spans (the default, param omitted) are unaffected —
         the model span has never carried a status attribute on that path,
         and this doesn't change that.
+
+        ``is_fallback`` tells apart the "model" span of a fallback attempt
+        from the one for the originally requested service — both carry the
+        same span name, so without this a trace with more than one "model"
+        span (because a fallback ran) is ambiguous in the Logs Dashboard.
         """
         model_attrs["task_type"] = _TASK_TYPE_LLM
         model_attrs["model_name"] = model_name or "unknown"
         model_attrs["model_version"] = "unknown"
         model_attrs.update(get_context_attributes())
         model_attrs["service_id"] = service_id
+        model_attrs["is_fallback"] = is_fallback
         if failure_status_code is not None:
             model_attrs["status"] = "failure"
             model_attrs["status_code"] = failure_status_code
@@ -417,7 +424,9 @@ class OpenAIProxyService:
             log_failover(service_id, fb_id, reason)
             tried.append(fb_id)
             mark_sent_to_fallback(request, service_id)
-            status_code, body = await self._forward_traced(path, fb_url, fb_id, fb_model, fb_payload, fb_info)
+            status_code, body = await self._forward_traced(
+                path, fb_url, fb_id, fb_model, fb_payload, fb_info, is_fallback=True
+            )
             if status_code < 500:
                 mark_served_by_fallback(request, service_id, fb_id)
                 break
@@ -477,12 +486,15 @@ class OpenAIProxyService:
         model_name: str,
         payload: Any,
         service_info: Dict[str, Any],
+        *,
+        is_fallback: bool = False,
     ) -> Tuple[int, Any]:
         """One upstream call inside its own model + ai-inference spans, so a
         fallback attempt is traced (and billed) exactly like the requested
-        service."""
+        service. ``is_fallback`` marks both spans so the fallback attempt can
+        be told apart from the originally requested one in a trace."""
         with traced_span("model") as model_attrs:
-            self._seed_model_attrs(model_attrs, service_id, model_name)
+            self._seed_model_attrs(model_attrs, service_id, model_name, is_fallback=is_fallback)
 
             async with traced_inference(payload, _TASK_TYPE_LLM, logger) as infer_attrs:
                 # service_id, tenantId and model_name must be set explicitly:
@@ -490,6 +502,7 @@ class OpenAIProxyService:
                 infer_attrs["service_id"] = service_id
                 infer_attrs["tenantId"] = model_attrs.get("tenantId", "")
                 infer_attrs["model_name"] = model_attrs["model_name"]
+                infer_attrs["is_fallback"] = is_fallback
 
                 logger.info("LLM proxy -> %s (service_id=%s)", url, service_id)
                 try:
@@ -747,7 +760,7 @@ class OpenAIProxyService:
         # has started (inside the generators below), so they measure from
         # here, or they would leave out the wait for the first token.
         started_at = time.time()
-        kind, status_code, result, service_id, model_name, payload, service_info = (
+        kind, status_code, result, service_id, model_name, payload, service_info, is_fallback = (
             await self._proxy_stream_with_fallbacks(
                 path, url, payload, service_id, model_name, request, service_info
             )
@@ -769,7 +782,7 @@ class OpenAIProxyService:
         # 4th element on success: when the stream was requested, for the
         # route's "request" span (opened once the client starts reading).
         return "stream", 200, self._traced_stream_gen(
-            result, service_id, model_name, payload, guardrail_ctx, app_id, started_at
+            result, service_id, model_name, payload, guardrail_ctx, app_id, started_at, is_fallback
         ), {"started_at": started_at}
 
     async def _prepare_stream_guardrail(
@@ -823,16 +836,18 @@ class OpenAIProxyService:
         model_name: str,
         request: Optional[Any],
         service_info: Dict[str, Any],
-    ) -> Tuple[str, int, Any, str, str, Any, Dict[str, Any]]:
-        """Run proxy_stream with automatic failover; return the winning (kind, status, result, ids)."""
+    ) -> Tuple[str, int, Any, str, str, Any, Dict[str, Any], bool]:
+        """Run proxy_stream with automatic failover; return the winning (kind,
+        status, result, ids, is_fallback)."""
         kind, status_code, result = await self.proxy_stream(path=url, payload=payload, service_info=service_info)
         if kind != "error" or status_code < 500:
-            return kind, status_code, result, service_id, model_name, payload, service_info
+            return kind, status_code, result, service_id, model_name, payload, service_info, False
 
         # Nothing has reached the client yet, so the stream can still move
         # to a fallback; once a stream has started it is never switched.
         fallbacks = await get_fallbacks(service_id)
         reason, tried = self._failure_reason or "upstream_5xx", [service_id]
+        is_fallback = False
         async for fb_id, fb_url, fb_model, fb_payload, fb_info in self._fallbacks_for(
             path, payload, service_id, request, fallbacks
         ):
@@ -843,6 +858,7 @@ class OpenAIProxyService:
             if kind == "stream" or status_code < 500:
                 mark_served_by_fallback(request, service_id, fb_id)
                 service_id, model_name, payload, service_info = fb_id, fb_model, fb_payload, fb_info
+                is_fallback = True
                 break
             reason = self._failure_reason or "upstream_5xx"
 
@@ -851,7 +867,7 @@ class OpenAIProxyService:
             set_llm_usage_model_id(service_info.get("model_id") or "")
             status_code, result = 503, _all_unavailable(service_id)
 
-        return kind, status_code, result, service_id, model_name, payload, service_info
+        return kind, status_code, result, service_id, model_name, payload, service_info, is_fallback
 
     async def _traced_stream_gen(
         self,
@@ -862,10 +878,11 @@ class OpenAIProxyService:
         guardrail_ctx: "GuardrailContext",
         app_id: str,
         started_at: float,
+        is_fallback: bool = False,
     ) -> AsyncIterator[str]:
         """Async generator that wraps the upstream SSE stream in OTel spans."""
         with traced_span("model", start_time=started_at) as model_attrs:
-            self._seed_model_attrs(model_attrs, service_id, model_name)
+            self._seed_model_attrs(model_attrs, service_id, model_name, is_fallback=is_fallback)
             set_llm_usage_model_name(model_attrs["model_name"])
 
             async with traced_inference(payload, _TASK_TYPE_LLM, logger, start_time=started_at) as infer_attrs:
@@ -874,6 +891,7 @@ class OpenAIProxyService:
                 infer_attrs["service_id"] = service_id
                 infer_attrs["tenantId"] = model_attrs.get("tenantId", "")
                 infer_attrs["model_name"] = model_attrs["model_name"]
+                infer_attrs["is_fallback"] = is_fallback
                 infer_attrs["output_type"] = "text"
 
                 if not guardrail_ctx.active:
@@ -1094,8 +1112,8 @@ class OpenAIProxyService:
             tried.append(fb_id)
             mark_sent_to_fallback(request, service_id)
             with traced_span("model") as fb_model_attrs:
-                self._seed_model_attrs(fb_model_attrs, fb_id, fb_model)
-            status_code, body = await self._post_multipart(path, fb_url, files, fb_data, fb_info)
+                self._seed_model_attrs(fb_model_attrs, fb_id, fb_model, is_fallback=True)
+                status_code, body = await self._post_multipart(path, fb_url, files, fb_data, fb_info)
             if status_code < 500:
                 mark_served_by_fallback(request, service_id, fb_id)
                 break

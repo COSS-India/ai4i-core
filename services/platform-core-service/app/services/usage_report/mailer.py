@@ -44,7 +44,7 @@ def portal_link() -> Optional[str]:
 
 def summary_lines(data: ReportData) -> list[str]:
     """Only figures the platform tracks. Providers, financial-year totals and
-    the budget line are left out until they are, and so is availability."""
+    the budget line are left out until they are."""
     live_change = (
         f" ({fmt.signed_int(data.active_institutions_change)} {data.period.vs_phrase})"
         if data.active_institutions_change is not None else ""
@@ -67,9 +67,15 @@ def summary_lines(data: ReportData) -> list[str]:
         if data.total_requests is not None else f"Requests served: {fmt.NA}."
     )
     h = fmt.platform_health(data.platform_health)
-    # Latency P95 is commented out pending a decision (see collector._platform_health):
-    # f"response time (P95) {h['latency_p95']}, "
-    health = f"error rate {h['error_rate']}, fallback rate {h['fallback_rate']}."
+    availability_change = (
+        f" ({fmt.signed_points(data.availability_change)} {data.period.vs_phrase})"
+        if data.availability_change is not None else ""
+    )
+    health = (
+        f"availability {fmt.availability(data.availability_pct)}{availability_change}, "
+        f"average latency {h['avg_latency']}, "
+        f"error rate {h['error_rate']}, fallback rate {h['fallback_rate']}."
+    )
     return [f"Platform health: {health}", f"Model portfolio: {models}", f"Adoption: {live} {served}"]
 
 

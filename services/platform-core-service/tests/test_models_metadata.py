@@ -51,3 +51,24 @@ class TestDroppedTableNotInModelMetadata:
 
         assert "TenantTierAssignment" not in models.__all__
         assert not hasattr(models, "TenantTierAssignment")
+
+
+class TestServiceMapperEagerDefaults:
+    """Regression guard: Service must keep eager_defaults=True (AI4IDS-3796).
+
+    updated_at has onupdate=func.now(); without eager_defaults, a flush
+    leaves it expired on the instance and the first later plain attribute
+    read (e.g. in service_detail_dict, called right after commit in
+    update_service) triggers an implicit reload. Under AsyncSession that
+    reload needs a greenlet context that a bare sync attribute access
+    doesn't have, raising MissingGreenlet — the exact bug this mapper arg
+    fixes by loading updated_at via UPDATE ... RETURNING during the flush
+    itself, so no attribute is ever left expired to reload later.
+    """
+
+    def test_eager_defaults_is_enabled(self) -> None:
+        from sqlalchemy import inspect
+
+        from app.models.model_management.service import Service
+
+        assert inspect(Service).eager_defaults is True

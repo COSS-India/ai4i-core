@@ -51,6 +51,12 @@ logger = logging.getLogger(__name__)
 
 _METRIC = "telemetry_obsv_requests_total"
 
+# availability_pct: how often readiness is sampled across the range, and
+# what follows the Deployment name in its pods' names (ReplicaSet hash and pod
+# suffix: inference-service-74c9ffdcd-cqbqc).
+_AVAILABILITY_STEP_S = 60
+_POD_SUFFIX = "-[a-z0-9]+-[a-z0-9]+"
+
 # request_volume_chart's bucket-width bookkeeping — moved here (from
 # routes/metering.py) alongside the method itself so an OpenSearch-backed
 # MeteringService implementation can override just the method and reuse
@@ -1955,6 +1961,52 @@ class MeteringService:
             f"{sum_over_window_by(f'{_METRIC}{sel}', 'application_id', time_range)} > 0"
         )
         return sum(1 for r in rows if round(float(r["value"][1])) >= 1)
+
+    async def availability_pct(
+        self, time_range: AbsoluteRange, deployments: list[str], namespace: str
+    ) -> Optional[float]:
+        """% of the range in which every one of ``deployments`` (in
+        ``namespace``) could serve requests: at least one of its pods was
+        Ready (kube-state-metrics' kube_pod_status_ready{condition="true"};
+        Kubernetes only routes traffic to Ready pods). Sampled every
+        _AVAILABILITY_STEP_S over the range, evaluated at its end.
+
+        A minute counts as down when any deployment had no Ready pod, or no
+        pod at all while kube-state-metrics was still reporting the
+        namespace (every pod gone). A minute with no kube-state-metrics data
+        at all (Prometheus or kube-state-metrics not running, or before
+        Prometheus' data begins) is left out: there is nothing to say the
+        service was down then.
+
+        None when there is no kube_pod_status_ready sample for these pods
+        anywhere in the range (not deployed or scraped then, or a wrong
+        name/namespace), so that isn't reported as 0% available."""
+        if not deployments:
+            raise ValueError("no deployments to measure availability for")
+        ns = escape_label_value(namespace)
+        names = "|".join(re.escape(d) for d in deployments)
+        pods = escape_label_value(f"({names}){_POD_SUFFIX}")
+        ready = f'kube_pod_status_ready{{namespace="{ns}", condition="true", pod=~"{pods}"}}'
+        duration = f"{time_range.duration_seconds}s"
+        at = time_range.end.timestamp()
+        if not await self._client.query(f"count(count_over_time({ready}[{duration}]))", time=at):
+            return None
+        # One series per deployment: 1 while any of its pods is Ready.
+        per_deployment = (
+            f'max by (deployment) (label_replace({ready}, "deployment", "$1", "pod", '
+            f'"{escape_label_value("(.+)" + _POD_SUFFIX)}"))'
+        )
+        reporting = f'count(kube_pod_status_ready{{namespace="{ns}"}})'
+        serving = (
+            f"((min({per_deployment}) and on() (count({per_deployment}) == {len(deployments)}))"
+            f" or on() (0 * {reporting}))"
+        )
+        rows = await self._client.query(
+            f"avg_over_time({serving}[{duration}:{_AVAILABILITY_STEP_S}s])", time=at
+        )
+        if not rows:
+            return None
+        return max(0.0, min(100.0, float(rows[0]["value"][1]) * 100))
 
     async def tenant_task_usage(self, time_range: TimeRange) -> dict:
         """Requests per tenant per task type in the range, ranked by total.

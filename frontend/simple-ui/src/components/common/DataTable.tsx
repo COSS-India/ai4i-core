@@ -127,6 +127,11 @@ export interface DataTableColumn<T> {
   /** Optional circled-i tooltip on the header (preferred name). */
   hint?: string;
   /**
+   * Card layout: wrap a long header onto more lines instead of truncating it
+   * with an ellipsis. Default false.
+   */
+  wrapHeader?: boolean;
+  /**
    * When true, DataTable renders sort UI.
    * - Card: click-to-toggle header (client sort unless `onSortChange` is set)
    * - Admin: asc/desc buttons driven by `sort` / `onSortChange`
@@ -158,6 +163,12 @@ export interface DataTableColumn<T> {
   tdProps?: TableCellProps;
   width?: string;
   minWidth?: string;
+  /**
+   * Admin layout: relative share of spare width when the table is wider than
+   * its content. Once any column sets it, only columns with `grow` take spare
+   * width (by weight); otherwise text columns absorb it all.
+   */
+  grow?: number;
   isNumeric?: boolean;
   /** Text alignment for header/cells. */
   align?: "left" | "center" | "right";
@@ -208,12 +219,19 @@ export interface DataTableCardProps<T> extends DataTableSharedProps<T> {
   rowAriaLabel?: (row: T) => string;
   showRowChevron?: boolean;
   renderAfterRow?: (row: T) => React.ReactNode | null;
+  /** Background for a row, e.g. to highlight it. Return undefined for the default. */
+  rowBg?: (row: T) => string | undefined;
   showFooter?: boolean;
   variant?: "default" | "compact";
   borderRadius?: string;
   theadBg?: string;
   cellPy?: number | string;
   tableMinWidth?: string;
+  /**
+   * Scroll horizontally when the table is wider than its card (e.g. with
+   * `tableMinWidth`) instead of clipping the overflow. Default false.
+   */
+  scrollX?: boolean;
   containerMt?: number | string;
   tableProps?: Omit<TableProps, "size" | "variant">;
 }
@@ -1157,6 +1175,8 @@ function AdminSortableHeader<T>({
         direction={direction}
         active={isActive}
         hint={hint}
+        wrap={col.wrapHeader}
+        align={col.align}
         onAsc={() => onSortChange({ key, direction: "asc" })}
         onDesc={() => onSortChange({ key, direction: "desc" })}
         ascAriaLabel={`Sort ${labelText} ascending`}
@@ -1180,7 +1200,7 @@ function columnHeaderSx<T>(col: DataTableColumn<T>) {
   return {
     ...DATA_TABLE_HEADER_SX,
     overflow: "hidden",
-    textOverflow: "ellipsis",
+    ...(col.wrapHeader ? {} : { textOverflow: "ellipsis" }),
     ...(col.isNumeric || col.align === "right"
       ? { textAlign: "right" as const }
       : {}),
@@ -1239,6 +1259,7 @@ function CardLayoutDataRow<T>({
   rowAriaLabel,
   showRowChevron,
   renderAfterRow,
+  rowBg,
 }: Readonly<{
   row: T;
   index: number;
@@ -1249,6 +1270,7 @@ function CardLayoutDataRow<T>({
   rowAriaLabel?: (row: T) => string;
   showRowChevron: boolean;
   renderAfterRow?: (row: T) => React.ReactNode;
+  rowBg?: (row: T) => string | undefined;
 }>) {
   const rowProps = clickable
     ? {
@@ -1274,7 +1296,7 @@ function CardLayoutDataRow<T>({
 
   return (
     <>
-      <Tr {...rowProps}>
+      <Tr bg={rowBg?.(row)} {...rowProps}>
         {columns.map((col) => (
           <Td
             key={col.id}
@@ -1327,12 +1349,14 @@ function CardLayoutDataTable<T>({
   rowAriaLabel,
   showRowChevron = false,
   renderAfterRow,
+  rowBg,
   showFooter = false,
   variant = "default",
   borderRadius,
   theadBg = "ink.50",
   cellPy,
   tableMinWidth,
+  scrollX = false,
   containerMt,
   tableProps,
 }: Readonly<DataTableCardProps<T>>) {
@@ -1385,7 +1409,7 @@ function CardLayoutDataTable<T>({
 
   const table = (
     <Box
-      overflowX="hidden"
+      overflowX={scrollX ? "auto" : "hidden"}
       mt={resolvedContainerMt}
       borderWidth="1px"
       borderColor="ink.200"
@@ -1445,6 +1469,7 @@ function CardLayoutDataTable<T>({
               rowAriaLabel={rowAriaLabel}
               showRowChevron={showRowChevron}
               renderAfterRow={renderAfterRow}
+              rowBg={rowBg}
             />
           ))}
           {hasFooter ? (

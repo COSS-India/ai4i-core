@@ -14,4 +14,4 @@ export const pipelineInferenceResponseSchema = z.object({
   ),
 });
 
-export const pipelineInfoOrHealthSchema = z.record(z.unknown());
+export const pipelineInfoOrHealthSchema = z.record(z.string(), z.unknown());

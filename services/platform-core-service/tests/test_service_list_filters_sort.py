@@ -95,11 +95,11 @@ class TestFilters:
 
 class TestSort:
     EXPECTED = {
-        "name": "mm_services.name",
-        "service_id": "mm_services.service_id",
-        "model_name": "mm_models.name",
+        "name": "lower(mm_services.name)",
+        "service_id": "lower(mm_services.service_id)",
+        "model_name": "lower(mm_models.name)",
         "task_type": "lower(mm_models.task ->> 'type')",
-        "tier": "min(tiers.name)",
+        "tier": "min(lower(tiers.name))",
         "status": "mm_services.is_published",
         "created_at": "mm_services.created_at",
         "published_at": "mm_services.published_at",

@@ -187,6 +187,68 @@ class TestTenantTaskUsage:
         assert out["grand_total"] == 180
 
 
+class TestAvailabilityPct:
+    @pytest.mark.asyncio
+    async def test_share_of_the_period_a_ready_pod_of_every_deployment_served(self):
+        svc, client = _metering()
+        client.query = AsyncMock(side_effect=[[_prom(4)], [_prom("0.99951")]])
+        assert await svc.availability_pct(_rng(), ["inference-service"], "dev") == pytest.approx(99.951)
+        samples, avg = (c.args[0] for c in client.query.call_args_list)
+        ready = ('kube_pod_status_ready{namespace="dev", condition="true", '
+                 'pod=~"(inference\\\\-service)-[a-z0-9]+-[a-z0-9]+"}')
+        dur = _rng().duration_seconds
+        assert samples == f"count(count_over_time({ready}[{dur}s]))"
+        per_dep = (f'max by (deployment) (label_replace({ready}, "deployment", "$1", "pod", '
+                   '"(.+)-[a-z0-9]+-[a-z0-9]+"))')
+        assert avg == (
+            f"avg_over_time(((min({per_dep}) and on() (count({per_dep}) == 1))"
+            f' or on() (0 * count(kube_pod_status_ready{{namespace="dev"}})))[{dur}s:60s])'
+        )
+        # Both evaluated at the period's end, so the window is the period itself.
+        assert {c.kwargs["time"] for c in client.query.call_args_list} == {SEP_END.timestamp()}
+
+    @pytest.mark.asyncio
+    async def test_every_deployment_must_be_serving(self):
+        svc, client = _metering()
+        client.query = AsyncMock(side_effect=[[_prom(1)], [_prom(1)]])
+        assert await svc.availability_pct(_rng(), ["inference-service", "api-gateway"], "dev") == 100.0
+        promql = client.query.call_args.args[0]
+        assert 'pod=~"(inference\\\\-service|api\\\\-gateway)-[a-z0-9]+-[a-z0-9]+"' in promql
+        assert "== 2))" in promql
+
+    @pytest.mark.asyncio
+    async def test_namespace_is_escaped(self):
+        svc, client = _metering()
+        client.query = AsyncMock(side_effect=[[_prom(1)], [_prom(1)]])
+        await svc.availability_pct(_rng(), ["inference-service"], 'dev"} or vector(1) or x{a="')
+        assert 'namespace="dev\\"} or vector(1) or x{a=\\""' in client.query.call_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_no_readiness_samples_is_none_not_zero(self):
+        svc, client = _metering(query=[])
+        assert await svc.availability_pct(_rng(), ["inference-service"], "dev") is None
+        assert client.query.await_count == 1   # no availability query without samples
+
+    @pytest.mark.asyncio
+    async def test_no_deployments_is_an_error(self):
+        svc, client = _metering()
+        with pytest.raises(ValueError, match="no deployments"):
+            await svc.availability_pct(_rng(), [], "dev")
+        client.query.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_prometheus_failure_raises(self):
+        svc, client = _metering()
+        client.query.side_effect = RuntimeError("prometheus 502")
+        with pytest.raises(RuntimeError):
+            await svc.availability_pct(_rng(), ["inference-service"], "dev")
+
+
+@pytest.fixture(autouse=True)
+def availability_namespace(monkeypatch):
+    monkeypatch.setattr("app.core.config.settings.usage_report_availability_namespace", "dev")
+
+
 # ── collector ────────────────────────────────────────────────────────────────
 
 
@@ -230,6 +292,9 @@ def _fake_metering(**overrides):
     m = MagicMock(spec=MeteringService)
     m.refresh_retention = AsyncMock()
     m.inference_request_total = AsyncMock(side_effect=lambda rng: 1000 if rng.start == SEP_START else 800)
+    m.availability_pct = AsyncMock(
+        side_effect=lambda rng, deployments, namespace: 99.951 if rng.start == SEP_START else 99.9
+    )
     m.registry_model_count = AsyncMock(return_value=10)
     m.registry_model_counts_by_task = AsyncMock(return_value={"nmt": 6, "asr": 3, "language_detection": 1})
     m.model_breakdown = AsyncMock(return_value={
@@ -283,9 +348,9 @@ def repo_state():
         # times recorded long before September; totals by aggregate() start.
         request_rows_from=SEP_START,
         response_times_from=SEP_START - (SEP_END - SEP_START),
-        totals={SEP_START: (1000, 21)},   # start -> (requests, fallbacks)
+        # start -> (requests, fallbacks, total response time ms, requests with one)
+        totals={SEP_START: (1000, 21, 639_600, 1000)},
         server_errors=(1000, 4),          # (requests, server errors) in the period
-        p95=639.6,
     )
 
 
@@ -298,7 +363,6 @@ def repo(monkeypatch, repo_state):
     _stub_repo(monkeypatch, "get_period_usage", lambda self, p, *a, **k: state.period_rows)
     _stub_usage(monkeypatch, "request_rows_from", lambda self, start, end: state.request_rows_from)
     _stub_usage(monkeypatch, "response_times_from", lambda self, end: state.response_times_from)
-    _stub_usage(monkeypatch, "response_time_p95", lambda self, start, end: state.p95)
     _stub_usage(monkeypatch, "aggregate", lambda self, start, end, group_by=(), **k: _agg(state.totals[start]))
     _stub_usage(monkeypatch, "server_errors", lambda self, start, end: state.server_errors)
     return state
@@ -314,8 +378,9 @@ def _stub_usage(monkeypatch, name, side_effect):
 def _agg(totals) -> dict:
     from app.repositories.pay_per_use.metering_usage import UsageAgg
 
-    requests, fallback = totals
-    return {(): UsageAgg(requests=requests, fallback=fallback)}
+    requests, fallback, response_time_ms, response_time_count = totals
+    return {(): UsageAgg(requests=requests, fallback=fallback, response_time_ms=response_time_ms,
+                         response_time_count=response_time_count)}
 
 
 class TestCollector:
@@ -341,7 +406,8 @@ class TestCollector:
         h = d.platform_health
         assert (h.requests, h.server_errors, h.tracked_from, h.fallbacks) == (1000, 4, SEP_START, 21)
         assert (h.error_rate_pct, h.fallback_rate_pct) == (pytest.approx(0.4), pytest.approx(2.1))
-        assert h.latency_p95_ms is None                      # commented out pending a decision
+        assert h.avg_latency_ms == pytest.approx(639.6)
+        assert (d.availability_pct, d.prev_availability_pct, d.availability_change) == (99.951, 99.9, 0.05)
         assert (d.total_requests, d.prev_total_requests) == (1000, 800)
         assert d.requests_change_pct == pytest.approx(25.0)
         assert (d.total_models, d.active_models, d.inactive_models) == (10, 2, 8)
@@ -426,10 +492,12 @@ class TestCollector:
             for part in mime.walk():
                 if part.get_content_type() in ("text/plain", "text/html"):
                     body = part.get_content()
-                    assert "Platform health: error rate 0.4%, fallback rate 2.1%." in body
+                    assert ("Platform health: availability 99.95% (+0.05 pp vs August), "
+                            "average latency 640 ms, error rate 0.4%, fallback rate 2.1%.") in body
                     assert "P95" not in body
                     assert body.index("Platform health:") < body.index("Model portfolio:")
         assert "Platform Health" in attached[0] and "Error rate" in attached[0]
+        assert "Availability" in attached[0] and "99.95%" in attached[0]
 
     @pytest.mark.asyncio
     async def test_registry_returning_none_is_a_failure_not_na(self, retention_90d, repo):
@@ -624,6 +692,7 @@ class TestUsageViewerEmails:
 def _full_data() -> ReportData:
     d = ReportData(period=SEP, generated_at=AFTER_SEP)
     d.platform_health = PlatformHealth(18_400_000, 73_600, SEP_START, 18_400_000, 386_400, 639.6)
+    d.availability_pct, d.prev_availability_pct = 99.953, 99.98
     d.total_requests, d.prev_total_requests = 18_400_000, 15_600_000
     d.total_models, d.active_models = 42, 31
     d.models_by_task = {"NMT": 12, "ASR": 9}
@@ -716,7 +785,8 @@ class TestRenderEmail:
         assert msg.subject == "AI Switch – Monthly programme report – September 2026"
         lines = mailer.summary_lines(_full_data())
         assert lines == [
-            "Platform health: error rate 0.4%, fallback rate 2.1%.",
+            "Platform health: availability 99.95% (-0.03 pp vs August), average latency 640 ms, "
+            "error rate 0.4%, fallback rate 2.1%.",
             "Model portfolio: 42 Models; 31 were used in September.",
             "Adoption: 26 of 36 Institutions were live (+3 vs August). 18.40M requests were served (+17.9%).",
         ]
@@ -727,19 +797,22 @@ class TestRenderEmail:
         assert "Portal</a> for more details." in msg.html_body
 
     def test_no_untracked_or_dummy_figures_in_the_email(self, portal):
-        # Availability, providers, financial-year totals and the budget line are
-        # not tracked, so they must not appear with made-up values (the sample
-        # report's 99.6% availability among them).
+        # Providers, financial-year totals and the budget line are not tracked,
+        # so they must not appear with made-up values (the sample report's
+        # 99.6% availability among them: availability is the real 99.95%).
         msg = mailer.render_email(_full_data(), "viewer@x.gov.in")
         for body in (msg.html_body, msg.text_body):
             for dummy in ("providers", "financial year", "Budget:",
                           "99.6%", "62.4M", "43%", "₹21.5 Cr", "₹50 Cr"):
                 assert dummy not in body, dummy
-            assert "availability" not in body.lower()
+            assert "availability 99.95%" in body
 
     def test_failed_figures_show_na_and_drop_the_comparison(self, portal):
         lines = mailer.summary_lines(ReportData(period=SEP, generated_at=AFTER_SEP))
-        assert lines[0] == "Platform health: error rate Not available, fallback rate Not available."
+        assert lines[0] == (
+            "Platform health: availability Not available, average latency Not available, "
+            "error rate Not available, fallback rate Not available."
+        )
         assert lines[1] == "Model portfolio: Not available."
         assert lines[2] == "Adoption: Live Institutions: Not available. Requests served: Not available."
         assert " vs " not in lines[2]
@@ -862,8 +935,12 @@ class TestReportHtml:
             "Platform Health", "Model Portfolio", "Adoption Ratio", "Budget Utilisation",
         ]
         cards = report_context(_full_data())["health"]["cards"]
-        assert [(c["label"], c["value"]) for c in cards] == [("Error rate", "0.4%"), ("Fallback rate", "2.1%")]
-        assert "Latency P95" not in html     # commented out pending a decision
+        assert [(c["label"], c["value"], c["change"]) for c in cards] == [
+            ("Availability", "99.95%", "-0.03 pp"), ("Avg latency", "640 ms", None),
+            ("Error rate", "0.4%", None), ("Fallback rate", "2.1%", None),
+        ]
+        assert '-0.03 pp</span> vs August' in html
+        assert "P95" not in html
         assert "recorded from" not in html   # recorded for the whole period
 
     def test_legends_give_every_count(self):
@@ -1230,18 +1307,94 @@ class TestPlatformHealth:
 
     def test_figures_are_one_decimal_and_whole_ms(self):
         v = fmt.platform_health(PlatformHealth(3, 1, SEP_START, 3, 2, 4055.4))
-        assert v == {"latency_p95": "4,055 ms", "error_rate": "33.3%", "fallback_rate": "66.7%"}
+        assert v == {"avg_latency": "4,055 ms", "error_rate": "33.3%", "fallback_rate": "66.7%"}
 
     def test_no_requests_is_a_dash(self):
         v = fmt.platform_health(PlatformHealth(0, 0, SEP_START, 0, 0, None))
-        assert v == {"latency_p95": "—", "error_rate": "—", "fallback_rate": "—"}
+        assert v == {"avg_latency": "—", "error_rate": "—", "fallback_rate": "—"}
 
     def test_response_times_not_recorded_are_not_available(self):
         v = fmt.platform_health(PlatformHealth(1000, 4))
-        assert (v["latency_p95"], v["fallback_rate"], v["error_rate"]) == ("Not available", "Not available", "0.4%")
+        assert (v["avg_latency"], v["fallback_rate"], v["error_rate"]) == ("Not available", "Not available", "0.4%")
 
     def test_unloaded_health_is_not_available(self):
         assert set(fmt.platform_health(None).values()) == {"Not available"}
+
+    @pytest.mark.parametrize("value,shown", [
+        (99.951, "99.95%"), (99.959, "99.95%"), (99.996, "99.99%"),  # rounded down: never a false 100%
+        (100.0, "100.00%"), (0.0, "0.00%"), (99.5, "99.50%"), (None, "Not available"),
+    ])
+    def test_availability_is_two_decimals_rounded_down(self, value, shown):
+        assert fmt.availability(value) == shown
+
+    @pytest.mark.parametrize("value,shown", [
+        (0.05, "+0.05 pp"), (-1.2, "-1.20 pp"), (0.0, "0.00 pp"), (None, "—"),
+    ])
+    def test_availability_change_is_in_percentage_points(self, value, shown):
+        assert fmt.signed_points(value) == shown
+
+    def test_change_is_between_the_figures_as_shown(self):
+        d = ReportData(period=SEP, generated_at=AFTER_SEP)
+        d.availability_pct, d.prev_availability_pct = 99.959, 99.901   # shown 99.95% and 99.90%
+        assert d.availability_change == 0.05
+        d.prev_availability_pct = None
+        assert d.availability_change is None
+
+    @pytest.mark.asyncio
+    async def test_availability_reads_the_configured_deployments(self, retention_90d, repo, monkeypatch):
+        monkeypatch.setattr("app.core.config.settings.usage_report_availability_deployments",
+                            " inference-service , api-gateway ,")
+        monkeypatch.setattr("app.core.config.settings.usage_report_availability_namespace", " staging ")
+        metering = _fake_metering()
+        await UsageReportCollector(metering, _FakeAuthDB(tenants=TestCollector.TENANTS), AsyncMock()).collect(
+            SEP, now=AFTER_SEP
+        )
+        rng, deployments, namespace = metering.availability_pct.call_args_list[0].args
+        assert (rng.start, rng.end, deployments, namespace) == (
+            SEP_START, SEP_END, ["inference-service", "api-gateway"], "staging"
+        )
+
+    @pytest.mark.asyncio
+    async def test_no_namespace_configured_fails_the_figure(self, retention_90d, repo, monkeypatch):
+        monkeypatch.setattr("app.core.config.settings.usage_report_availability_namespace", None)
+        metering = _fake_metering()
+        d = await UsageReportCollector(metering, _FakeAuthDB(tenants=TestCollector.TENANTS), AsyncMock()).collect(
+            SEP, now=AFTER_SEP
+        )
+        assert "availability" in d.failed and d.availability_pct is None
+        metering.availability_pct.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_readiness_samples_in_the_period_fails_the_figure(self, retention_90d, repo):
+        # A wrong service name must be flagged, not mailed as "Not available".
+        metering = _fake_metering(availability_pct=AsyncMock(return_value=None))
+        d = await UsageReportCollector(metering, _FakeAuthDB(tenants=TestCollector.TENANTS), AsyncMock()).collect(
+            SEP, now=AFTER_SEP
+        )
+        assert "availability" in d.failed and d.availability_pct is None
+        assert metering.availability_pct.await_count == 1   # no comparison without a figure
+
+    @pytest.mark.asyncio
+    async def test_previous_period_not_scraped_just_drops_the_comparison(self, retention_90d, repo):
+        metering = _fake_metering(availability_pct=AsyncMock(
+            side_effect=lambda rng, deployments, namespace: 99.9 if rng.start == SEP_START else None
+        ))
+        d = await UsageReportCollector(metering, _FakeAuthDB(tenants=TestCollector.TENANTS), AsyncMock()).collect(
+            SEP, now=AFTER_SEP
+        )
+        assert (d.availability_pct, d.prev_availability_pct, d.availability_change) == (99.9, None, None)
+        assert not {"availability", "availability_vs_previous"} & set(d.failed)
+        assert "pp" not in mailer.summary_lines(d)[0]
+
+    @pytest.mark.asyncio
+    async def test_previous_period_past_retention_is_not_queried(self, monkeypatch, repo):
+        monkeypatch.setattr("app.utils.metering_promql_builder.retention_days", lambda: 60)
+        metering = _fake_metering()
+        d = await UsageReportCollector(metering, _FakeAuthDB(tenants=TestCollector.TENANTS), AsyncMock()).collect(
+            SEP, now=AFTER_SEP
+        )
+        assert d.availability_pct == 99.951 and d.prev_availability_pct is None
+        assert all(c.args[0].start == SEP_START for c in metering.availability_pct.call_args_list)
 
     @pytest.mark.asyncio
     async def test_requests_not_recorded_by_the_period_end_is_none_not_failed(self, retention_90d, repo):
@@ -1253,29 +1406,31 @@ class TestPlatformHealth:
     async def test_response_times_not_recorded_leave_latency_and_fallback_untracked(self, retention_90d, repo):
         repo.response_times_from = None
         h = (await self._collector().collect(SEP, now=AFTER_SEP)).platform_health
-        assert (h.requests, h.server_errors, h.tracked_from, h.latency_p95_ms) == (1000, 4, None, None)
+        assert (h.requests, h.server_errors, h.tracked_from, h.avg_latency_ms) == (1000, 4, None, None)
 
     @pytest.mark.asyncio
     async def test_recording_that_began_mid_period_covers_only_those_days(self, retention_90d, repo):
         since = datetime(2026, 9, 20, 6, 0, tzinfo=UTC)
         repo.response_times_from = since
-        repo.totals[since] = (400, 20)   # requests from the 20th on
+        repo.totals[since] = (400, 20, 120_000, 400)   # requests from the 20th on
         h = (await self._collector().collect(SEP, now=AFTER_SEP)).platform_health
         assert (h.tracked_from, h.tracked_requests, h.fallbacks) == (since, 400, 20)
+        assert h.avg_latency_ms == pytest.approx(300.0)        # of the 400 since the 20th
         assert h.fallback_rate_pct == pytest.approx(5.0)       # of the 400, not the month's 1000
         assert h.error_rate_pct == pytest.approx(0.4)          # still the whole month
         d = _full_data()
         d.platform_health = h
-        assert report_context(d)["health"]["since"] == "Fallback rate is recorded from 20 Sep 2026."
+        assert report_context(d)["health"]["since"] == (
+            "Average latency and fallback rate are recorded from 20 Sep 2026."
+        )
         assert "recorded from 20 Sep 2026" in render_report_html(d)
 
     @pytest.mark.asyncio
-    async def test_latency_p95_is_not_queried_while_commented_out(self, retention_90d, repo):
-        from app.repositories.pay_per_use.metering_usage import MeteringUsageRepository
-
+    async def test_no_response_times_in_the_tracked_days_is_a_dash(self, retention_90d, repo):
+        repo.totals[SEP_START] = (1000, 21, 0, 0)
         d = await self._collector().collect(SEP, now=AFTER_SEP)
-        MeteringUsageRepository.response_time_p95.assert_not_called()
-        assert d.platform_health.latency_p95_ms is None
+        assert d.platform_health.avg_latency_ms is None
+        assert fmt.platform_health(d.platform_health)["avg_latency"] == "—"
 
     @pytest.mark.asyncio
     async def test_a_failed_query_marks_health_failed_and_the_rest_still_load(self, retention_90d, repo):

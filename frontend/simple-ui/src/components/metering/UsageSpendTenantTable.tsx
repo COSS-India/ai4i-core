@@ -1,6 +1,7 @@
 import { ChevronRightIcon } from "@chakra-ui/icons";
 import { HStack, IconButton, Text } from "@chakra-ui/react";
 import React, { useMemo } from "react";
+import { INSTITUTION } from "../../config/constants";
 import { METERING } from "../../config/meteringConstants";
 import {
   USAGE_SPEND_ACCENT,
@@ -46,7 +47,7 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
     () => [
       {
         id: "tenantName",
-        header: "Institution",
+        header: INSTITUTION,
         sortable: true,
         sortAccessor: (row) => row.tenantName,
         width: COLUMN_WIDTHS.institution,
@@ -89,7 +90,7 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
       },
       {
         id: "tier",
-        header: "Tier",
+        header: METERING.USAGE_SPEND.TABLE_TIER,
         sortable: true,
         sortAccessor: (row) => row.tier,
         width: COLUMN_WIDTHS.tier,
@@ -110,7 +111,7 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
       },
       {
         id: "budgetLimit",
-        header: "Allocated Budget (INR)",
+        header: METERING.USAGE_SPEND.TABLE_ALLOCATED_BUDGET,
         sortable: true,
         sortAccessor: (row) => row.budget?.limit ?? 0,
         hint: tips.ALLOCATED_BUDGET,
@@ -123,7 +124,7 @@ const UsageSpendTenantTable: React.FC<UsageSpendTenantTableProps> = ({
       },
       {
         id: "budgetSpent",
-        header: "Budget",
+        header: METERING.USAGE_SPEND.TABLE_BUDGET,
         sortable: true,
         sortAccessor: (row) => row.budget?.spent ?? 0,
         hint: tips.BUDGET,

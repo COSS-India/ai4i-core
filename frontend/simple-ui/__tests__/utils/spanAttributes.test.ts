@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 
-import { toDisplayAttributes } from "../../src/utils/spanAttributes";
+import { isFallbackSpan, toDisplayAttributes } from "../../src/utils/spanAttributes";
 
 describe("toDisplayAttributes", () => {
   it("shows metadata_kv as the metadata object the caller sent", () => {
@@ -33,5 +33,18 @@ describe("toDisplayAttributes", () => {
     expect(toDisplayAttributes(malformed)).toBe(malformed);
     const clash = { metadata: "x", metadata_kv: ["a=b"] };
     expect(toDisplayAttributes(clash)).toBe(clash);
+  });
+});
+
+describe("isFallbackSpan", () => {
+  it("is true when is_fallback is true or \"true\"", () => {
+    expect(isFallbackSpan({ is_fallback: true })).toBe(true);
+    expect(isFallbackSpan({ is_fallback: "true" })).toBe(true);
+  });
+
+  it("is false when is_fallback is false or missing", () => {
+    expect(isFallbackSpan({ is_fallback: false })).toBe(false);
+    expect(isFallbackSpan({ sent_to_fallback: true })).toBe(false);
+    expect(isFallbackSpan(undefined)).toBe(false);
   });
 });

@@ -25,3 +25,13 @@ export function toDisplayAttributes(
   }
   return out;
 }
+
+/**
+ * True when the span ran on the fallback model. The inference service sets
+ * `is_fallback` on its `model` and `ai-inference` spans; accept the string
+ * form too in case the attribute was stored as text.
+ */
+export function isFallbackSpan(attrs: Record<string, unknown> | undefined): boolean {
+  const flag = attrs?.is_fallback;
+  return flag === true || String(flag).toLowerCase() === "true";
+}

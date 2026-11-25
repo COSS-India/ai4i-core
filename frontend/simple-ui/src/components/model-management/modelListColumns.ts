@@ -6,6 +6,12 @@
  * Column visibility is browser-local for 2.11 (server prefs follow-up).
  */
 
+import {
+  canToggleOffColumn,
+  resolveColumnSelection,
+  toggleColumnSelection,
+} from "../common/adminListColumnSelection";
+
 export type ModelListColumnId =
   | "name"
   | "version"
@@ -25,15 +31,30 @@ export type ModelListColumnDef = {
 };
 
 /**
+ * Default columns (AI4IDS-3778): always visible and locked in the picker, so an
+ * Adopter Admin can identify a model and act on it without changing columns.
+ * Locked even when the `model-column` config does not mark them `required`.
+ */
+export const MODEL_LIST_DEFAULT_COLUMN_IDS: readonly ModelListColumnId[] = [
+  "name",
+  "version",
+  "taskType",
+  "providerName",
+  "actions",
+];
+
+const MODEL_LIST_DEFAULT_COLUMNS: ReadonlySet<string> = new Set(MODEL_LIST_DEFAULT_COLUMN_IDS);
+
+/**
  * Fallback when the `model-column` config is missing or fails to load.
- * Display order. Mandatory columns match the config's `required` flags.
+ * Display order. Mandatory columns are the default columns above.
  * `defaultVisible` is the first-visit and "Reset to default" set.
  */
 export const MODEL_LIST_COLUMNS: readonly ModelListColumnDef[] = [
-  { id: "name", label: "Name", mandatory: true, defaultVisible: true },
-  { id: "version", label: "Version", mandatory: false, defaultVisible: true },
-  { id: "taskType", label: "Task Type", mandatory: false, defaultVisible: true },
-  { id: "providerName", label: "Provider Name", mandatory: false, defaultVisible: true },
+  { id: "name", label: "Model Name", mandatory: true, defaultVisible: true },
+  { id: "version", label: "Version", mandatory: true, defaultVisible: true },
+  { id: "taskType", label: "Task Type", mandatory: true, defaultVisible: true },
+  { id: "providerName", label: "Provider Name", mandatory: true, defaultVisible: true },
   { id: "status", label: "Status", mandatory: false, defaultVisible: false },
   { id: "createdAt", label: "Created At", mandatory: false, defaultVisible: false },
   {
@@ -75,7 +96,8 @@ const ACTIONS_COLUMN = MODEL_LIST_COLUMNS.find((column) => column.id === "action
 /**
  * Catalogue from `model-column` config entries. Keys the table cannot render are
  * dropped; an empty result falls back to MODEL_LIST_COLUMNS. The config sets
- * order, labels and which columns are mandatory (`required`). A column is
+ * order, labels and which columns are mandatory (`required`); the default
+ * columns (MODEL_LIST_DEFAULT_COLUMN_IDS) are mandatory either way. A column is
  * visible by default when it is mandatory or the entry's `defaultVisible` says
  * so; without that flag the built-in default applies. Actions (the Deprecate /
  * Activate switches) is appended, as mandatory, if left out.
@@ -94,7 +116,7 @@ export function modelListColumnsFromConfig(
     catalogue.push({
       id: entry.key,
       label: entry.label,
-      mandatory: entry.required,
+      mandatory: entry.required || MODEL_LIST_DEFAULT_COLUMNS.has(entry.key),
       defaultVisible: entry.defaultVisible ?? builtIn.defaultVisible,
     });
   }
@@ -113,46 +135,27 @@ export function defaultModelListColumnIds(
     .map((column) => column.id);
 }
 
-/**
- * Keep mandatory columns and drop unknown ids. Optional columns may all be
- * hidden; defaults apply only when nothing usable is stored (first visit, or
- * every stored id is gone from the catalogue). Result is catalogue order.
- */
 export function resolveModelListColumns(
   selected: readonly string[] | null | undefined,
   catalogue: readonly ModelListColumnDef[] = MODEL_LIST_COLUMNS,
 ): string[] {
-  const known = new Set(catalogue.map((column) => column.id));
-  const picked = new Set((selected ?? []).filter((id) => known.has(id)));
-  if (picked.size === 0) return defaultModelListColumnIds(catalogue);
-  return catalogue
-    .filter((column) => column.mandatory || picked.has(column.id))
-    .map((column) => column.id);
+  return resolveColumnSelection(selected, catalogue, defaultModelListColumnIds);
 }
 
-/** Only mandatory columns are locked; every optional column can be turned off. */
 export function canToggleOffModelListColumn(
   _current: readonly string[],
   id: string,
   catalogue: readonly ModelListColumnDef[] = MODEL_LIST_COLUMNS,
 ): boolean {
-  const column = catalogue.find((entry) => entry.id === id);
-  return column != null && !column.mandatory;
+  return canToggleOffColumn(id, catalogue);
 }
 
-/** Turn an optional column on or off. Mandatory columns stay. */
 export function toggleModelListColumn(
   current: readonly string[],
   id: string,
   catalogue: readonly ModelListColumnDef[] = MODEL_LIST_COLUMNS,
 ): string[] {
-  if (!canToggleOffModelListColumn(current, id, catalogue)) {
-    return resolveModelListColumns(current, catalogue);
-  }
-  const next = current.includes(id)
-    ? current.filter((columnId) => columnId !== id)
-    : [...current, id];
-  return resolveModelListColumns(next, catalogue);
+  return toggleColumnSelection(current, id, catalogue, defaultModelListColumnIds);
 }
 
 export type ModelListColumnPreferenceStore = {

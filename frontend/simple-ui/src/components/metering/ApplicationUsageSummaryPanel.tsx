@@ -42,7 +42,6 @@ function SummaryCard({
         <Text
           fontSize="12.5px"
           fontWeight="bold"
-          letterSpacing="0.05em"
           color={USAGE_SPEND_ACCENT}
         >
           {label}

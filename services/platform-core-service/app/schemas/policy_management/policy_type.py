@@ -120,9 +120,26 @@ class PolicyTypeItem(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
-    policy_type: str
-    policy_fields: Dict[str, Any]
+    id: int = Field(..., description="Auto-incremented integer primary key.")
+    policy_type: str = Field(
+        ...,
+        description=(
+            "Classifier for what kind of policy this is (e.g. 'PII'). Free-form "
+            "— new labels don't require a schema change — though policy_fields "
+            "validation is currently the same for every type."
+        ),
+    )
+    policy_fields: Dict[str, Any] = Field(
+        ...,
+        description=(
+            "The entities that inference-service's guardrail detects and masks "
+            "for policies of this type — `custom_field` entries (entity_name, "
+            "examples, regex) and/or `model_supported_field` entries (built-in "
+            "entities grouped by language). Stored as free-form JSON so future "
+            "policy types can reuse this structure; today the same shape is "
+            "enforced regardless of policy_type."
+        ),
+    )
 
 
 class PolicyTypeListData(BaseModel):
@@ -171,8 +188,26 @@ class PolicyTypeCreate(BaseModel):
         }
     )
 
-    policy_type: str = Field(..., max_length=NAME_MAX_LEN)
-    policy_fields: Dict[str, Any] = Field(default_factory=dict)
+    policy_type: str = Field(
+        ...,
+        max_length=NAME_MAX_LEN,
+        description=(
+            "Classifier for what kind of policy this is (e.g. 'PII'). Free-form "
+            "— new labels don't require a schema change — though policy_fields "
+            "validation is currently the same for every type."
+        ),
+    )
+    policy_fields: Dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "The entities that inference-service's guardrail detects and masks "
+            "for policies of this type — `custom_field` entries (entity_name, "
+            "examples, regex) and/or `model_supported_field` entries (built-in "
+            "entities grouped by language). Stored as free-form JSON so future "
+            "policy types can reuse this structure; today the same shape is "
+            "enforced regardless of policy_type."
+        ),
+    )
 
     @field_validator("policy_type", mode="before")
     @classmethod

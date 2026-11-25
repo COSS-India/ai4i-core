@@ -7,7 +7,7 @@ export const notificationAlertSuccessEnvelopeSchema = <T extends z.ZodTypeAny>(
   z.object({
     success: z.boolean(),
     data: dataSchema,
-    meta: z.record(z.unknown()).optional(),
+    meta: z.record(z.string(), z.unknown()).optional(),
   });
 
 /** Mirrors platform-core `ThresholdBand` — no id/name, percentage identifies the band. */
@@ -25,7 +25,7 @@ export const catalogItemSchema = z
     type: z.enum(["NOTIFICATION", "ALERT"]),
     module: z.enum(["TIER", "BUDGET", "QUOTA", "API_KEY"]),
     channels: z.array(z.string()).min(1),
-    recipient_roles: z.record(z.boolean()),
+    recipient_roles: z.record(z.string(), z.boolean()),
     scope: z.enum(["GLOBAL", "INSTITUTION"]),
     /** ALERT rows only — null/omitted on NOTIFICATION rows. */
     thresholds: z.array(thresholdBandSchema).optional().nullable(),
@@ -61,7 +61,7 @@ export const monitoringCatalogItemSchema = z
     description: z.string(),
     type: z.literal("MONITORING"),
     channels: z.array(z.string()).min(1),
-    recipient_roles: z.record(z.boolean()),
+    recipient_roles: z.record(z.string(), z.boolean()),
     monitoring_thresholds: z.array(monitoringThresholdBandSchema).optional().nullable(),
   })
   .passthrough();

@@ -222,8 +222,8 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
         </HStack>
 
         <Box>
-          <Text fontSize="11.5px" letterSpacing="0.05em" color="gray.500" fontWeight="bold" mb="10px">
-            BUDGET
+          <Text fontSize="13px" color="gray.500" fontWeight="bold" mb="10px">
+            {METERING.USAGE_SPEND.BUDGET}
           </Text>
           <Box
             bg={CARD_BG}
@@ -251,7 +251,7 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
 
         <Box>
           <HStack justify="space-between" align="baseline" mb="10px">
-            <Text fontSize="11.5px" letterSpacing="0.05em" color="gray.500" fontWeight="bold">
+            <Text fontSize="13px" color="gray.500" fontWeight="bold">
               {copy.DRAWER_PERIOD_SPEND}
             </Text>
             <Text fontSize="12px" color="gray.500">
@@ -282,7 +282,7 @@ const ApplicationUsageDrawer: React.FC<ApplicationUsageDrawerProps> = ({
               <Spinner size="sm" />
             </Center>
           ) : null}
-          <Text fontSize="11.5px" letterSpacing="0.05em" color="gray.500" fontWeight="bold" mb="10px">
+          <Text fontSize="13px" color="gray.500" fontWeight="bold" mb="10px">
             {copy.DRAWER_SPEND_BY_API_KEY}
           </Text>
           {detail.apiKeys.length === 0 ? (

@@ -4,7 +4,7 @@
 # (linux/amd64), and add every package `pip freeze` lists that is missing here.
 
 # ── Shared platform library (consolidated) ──
-ai4i-core==1.0.57
+ai4i-core==1.0.58
 
 # ── Core framework ──
 fastapi==0.162.2

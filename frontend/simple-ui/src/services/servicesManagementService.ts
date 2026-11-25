@@ -7,14 +7,6 @@ import {
   serviceSingleSchema,
   servicesListSchema,
 } from "./dto/schemas/platform";
-import {
-  parseServiceListColumnsPayload,
-  parseServiceColumnPreferencePayload,
-  type ServiceColumnPreference,
-  SERVICE_LIST_COLUMNS,
-  SERVICE_LIST_PREFERENCE_VIEW,
-  type ServiceListColumnDef,
-} from "../components/services-management/serviceListColumns";
 import type {
   DeleteServiceResponse,
   PaginatedServices,
@@ -279,83 +271,6 @@ export const listServicesPaginated = async (
     };
   } catch (error: any) {
     console.error("List services (paginated) error:", error);
-    throw error;
-  }
-};
-
-const httpStatus = (error: unknown): number | undefined =>
-  (error as { response?: { status?: number } } | null)?.response?.status;
-
-export type ServiceListColumnsResult = {
-  columns: ServiceListColumnDef[];
-  /** `api` when GET /services/columns answered; otherwise the offline catalogue. */
-  source: "api" | "fallback";
-};
-
-/**
- * Column catalogue for the service registry picker.
- * Falls back to the offline catalogue only when the endpoint is absent (404/405).
- * Other failures propagate so the hook can treat them as a load error.
- */
-export const getServiceListColumns = async (): Promise<ServiceListColumnsResult> => {
-  try {
-    const response = await apiService.get(apiEndpoints.platform.services.columns, {
-      suppressErrorAlert: true,
-    });
-    const columns = parseServiceListColumnsPayload(response.data);
-    if (columns) return { columns, source: "api" };
-    console.warn(
-      "GET /services/columns returned an unexpected body; using the offline catalogue.",
-    );
-    return { columns: [...SERVICE_LIST_COLUMNS], source: "fallback" };
-  } catch (error) {
-    const status = httpStatus(error);
-    if (status === 404 || status === 405) {
-      return { columns: [...SERVICE_LIST_COLUMNS], source: "fallback" };
-    }
-    throw error;
-  }
-};
-
-/**
- * Column preference for the service list.
- * GET always returns 200 with role defaults when nothing is saved (`isDefault: true`).
- */
-export const getServiceColumnPreference = async (): Promise<ServiceColumnPreference | null> => {
-  try {
-    const response = await apiService.get(
-      apiEndpoints.platform.columnPreferences(SERVICE_LIST_PREFERENCE_VIEW),
-      { suppressErrorAlert: true },
-    );
-    return parseServiceColumnPreferencePayload(response.data);
-  } catch (error) {
-    // Legacy: older builds returned 404 when nothing was saved.
-    if (httpStatus(error) === 404) return null;
-    throw error;
-  }
-};
-
-export const saveServiceColumnPreference = async (
-  visibleColumns: readonly string[],
-): Promise<ServiceColumnPreference | null> => {
-  const response = await apiService.put(
-    apiEndpoints.platform.columnPreferences(SERVICE_LIST_PREFERENCE_VIEW),
-    { visibleColumns: [...visibleColumns] },
-    { suppressErrorAlert: true },
-  );
-  return parseServiceColumnPreferencePayload(response.data);
-};
-
-/** DELETE resets to role defaults and returns them with `isDefault: true`. */
-export const resetServiceColumnPreference = async (): Promise<ServiceColumnPreference | null> => {
-  try {
-    const response = await apiService.delete(
-      apiEndpoints.platform.columnPreferences(SERVICE_LIST_PREFERENCE_VIEW),
-      { suppressErrorAlert: true },
-    );
-    return parseServiceColumnPreferencePayload(response.data);
-  } catch (error) {
-    if (httpStatus(error) === 404) return null;
     throw error;
   }
 };

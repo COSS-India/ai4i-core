@@ -1,6 +1,7 @@
 import { Box, Center, Flex, HStack, Text, Tooltip } from "@chakra-ui/react";
 import React from "react";
 import { formatModelTaskTypeLabel } from "../../config/constants";
+import { formatPercent } from "../../utils/meteringFormatters";
 import {
   USAGE_SPEND_ACCENT,
   USAGE_SPEND_DANGER,
@@ -271,7 +272,14 @@ export function TenantAvatar({
 }
 
 /** Share of a token total or of usage cost, as on the parent drill-down mocks. */
-export function TokenShareBar({ pct }: { pct: number }) {
+export function TokenShareBar({
+  pct,
+  decimals,
+}: Readonly<{
+  pct: number;
+  /** Rounded decimals for the label (Model tab: 1). Unset keeps the 2-decimal Usage & Spend format. */
+  decimals?: number;
+}>) {
   const fill = Math.min(Math.max(pct, 0), 100);
   const visualFill = fill > 0 && fill < 2 ? 2 : fill;
   return (
@@ -280,7 +288,7 @@ export function TokenShareBar({ pct }: { pct: number }) {
         <Box h="100%" w={`${visualFill}%`} bg={USAGE_SPEND_ACCENT} borderRadius="full" />
       </Box>
       <Text fontSize="sm" color="gray.600" minW="58px" textAlign="right">
-        {pct.toFixed(2)}%
+        {decimals == null ? `${pct.toFixed(2)}%` : formatPercent(pct, decimals)}
       </Text>
     </HStack>
   );

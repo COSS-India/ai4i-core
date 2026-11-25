@@ -10,7 +10,7 @@ export const alertSuccessEnvelopeSchema = <T extends z.ZodTypeAny>(dataSchema: T
   z.object({
     success: z.boolean(),
     data: dataSchema,
-    meta: z.record(z.unknown()).optional(),
+    meta: z.record(z.string(), z.unknown()).optional(),
   });
 
 export const alertDefinitionSchema = z
@@ -94,8 +94,8 @@ export const alertHistoryItemSchema = z
     receiver: z.string(),
     notified_display: z.string().nullable().optional(),
     tenant: z.string().nullable().optional(),
-    labels: z.record(z.unknown()).nullable().optional(),
-    annotations: z.record(z.unknown()).nullable().optional(),
+    labels: z.record(z.string(), z.unknown()).nullable().optional(),
+    annotations: z.record(z.string(), z.unknown()).nullable().optional(),
     fingerprint: z.string().nullable().optional(),
     created_at: z.string(),
   })

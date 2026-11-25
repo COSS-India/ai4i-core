@@ -9,6 +9,7 @@ Empty values follow one rule everywhere:
 """
 from __future__ import annotations
 
+import math
 from decimal import Decimal
 from typing import TYPE_CHECKING, Optional, Union
 
@@ -95,18 +96,39 @@ def latency_ms(value: Optional[float]) -> str:
     return NO_RATE if value is None else f"{round(value):,} ms"
 
 
+def shown_availability(value: float) -> float:
+    """Availability as shown, to two decimals, rounded down so that any
+    downtime at all never reads as 100.00% (99.996 -> 99.99)."""
+    return math.floor(round(value * 100, 6)) / 100
+
+
+def availability(value: Optional[float]) -> str:
+    """99.951 -> "99.95%", 100 -> "100.00%"; None (failed, or not scraped
+    in the period) -> "Not available"."""
+    return NA if value is None else f"{shown_availability(value):.2f}%"
+
+
+def signed_points(value: Optional[float]) -> str:
+    """A change in percentage points, two decimals: "+0.03 pp", "-1.20 pp",
+    "0.00 pp" (no change)."""
+    if value is None:
+        return NO_RATE
+    return f"{value:+.2f} pp" if value else "0.00 pp"
+
+
 def platform_health(health: Optional["PlatformHealth"]) -> dict[str, str]:
-    """The Platform Health figures; availability is not captured, so it is
-    left out. With no requests in the period they are "—"; latency P95 and
-    fallback rate are "Not available" when the period has none recorded (see
-    PlatformHealth.tracked_from); everything is when health failed to load."""
-    values = {"latency_p95": NA, "error_rate": NA, "fallback_rate": NA}
+    """The request-row Platform Health figures (availability is formatted
+    on its own, see availability()). With no requests in the period they are
+    "—"; average latency and fallback rate are "Not available" when the
+    period has none recorded (see PlatformHealth.tracked_from); everything
+    is when health failed to load."""
+    values = {"avg_latency": NA, "error_rate": NA, "fallback_rate": NA}
     if health is None:
         return values
     if not health.requests:
-        return {**values, "latency_p95": NO_RATE, "error_rate": NO_RATE, "fallback_rate": NO_RATE}
+        return {**values, "avg_latency": NO_RATE, "error_rate": NO_RATE, "fallback_rate": NO_RATE}
     values["error_rate"] = pct(health.error_rate_pct)
     if health.tracked_from is not None:
-        values["latency_p95"] = latency_ms(health.latency_p95_ms)
+        values["avg_latency"] = latency_ms(health.avg_latency_ms)
         values["fallback_rate"] = pct(health.fallback_rate_pct)
     return values

@@ -255,6 +255,8 @@ export const FIELD_HINTS = {
       outputPrice: "Charge per unit for output.",
       cachedInputPrice: "Charge per unit for cached input (LLM).",
       publishedOn: "When this service was last published.",
+      availability:
+        "Live status from monitoring. Shows — when the status cannot be determined (service not monitored, or monitoring unavailable).",
     },
   },
   logs: {

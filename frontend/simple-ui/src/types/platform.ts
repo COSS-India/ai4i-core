@@ -398,6 +398,11 @@ export interface ServiceResponse {
   isTryItDefault?: boolean;
   publishedAt?: string | null;
   unpublishedAt?: string | null;
+  /**
+   * Live up/down from Prometheus. GET /services sets it only when the
+   * `availability` column is requested; null when it cannot be determined.
+   */
+  availability?: boolean | null;
   createdBy?: string | null;
   updatedBy?: string | null;
   publishedOn?: number;
@@ -441,12 +446,12 @@ export interface ServiceListParams {
    */
   tierIds?: string;
   /**
-   * Comma-separated column ids from `GET /services/columns` → `columns=`.
+   * Comma-separated Service List column ids (SERVICE_LIST_COLUMNS) → `columns=`.
    * Each row then carries only the fields those columns need; omit for full rows.
    */
   columns?: string;
   /**
-   * Extra query params from `GET /services/columns` filter.params.
+   * Extra query params from the Service List columns' filter.params.
    * Applied after the structured fields above; a key already set is left as-is.
    */
   query?: Record<string, string>;

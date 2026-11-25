@@ -1,7 +1,5 @@
-"""Service List column catalogue — single source of truth for the column
-picker (GET /services/columns), the list endpoint's sort/filter whitelist and
-``columns`` projection (GET /services) and per-user column preference
-validation.
+"""Service List column catalogue — single source of truth for the list
+endpoint's sort/filter whitelist and ``columns`` projection (GET /services).
 
 Column ids are stable API identifiers; labels are display-only. List order
 is the display order.
@@ -21,7 +19,6 @@ class ServiceListColumn:
     id: str
     label: str
     mandatory: bool = False
-    default_visible: bool = False
     sortable: bool = True
     # None → not filterable. Otherwise one of the FILTER_* constants.
     filter_type: Optional[str] = None
@@ -40,20 +37,20 @@ class ServiceListColumn:
 
 
 SERVICE_LIST_COLUMNS: List[ServiceListColumn] = [
-    ServiceListColumn("name", "Name", mandatory=True, default_visible=True,
+    ServiceListColumn("name", "Name", mandatory=True,
                       filter_type=FILTER_TEXT, filter_params=("name",), fields=("name",)),
-    ServiceListColumn("actions", "Actions", mandatory=True, default_visible=True, sortable=False,
+    ServiceListColumn("actions", "Actions", mandatory=True, sortable=False,
                       fields=("serviceId", "name", "isPublished", "versionStatus")),
-    ServiceListColumn("task_type", "Model Task Type", default_visible=True,
+    ServiceListColumn("task_type", "Model Task Type",
                       filter_type=FILTER_MULTI_SELECT, filter_params=("task_types",),
                       fields=("taskType", "task")),
-    ServiceListColumn("tier", "Tier", default_visible=True,
+    ServiceListColumn("tier", "Tier",
                       filter_type=FILTER_MULTI_SELECT, filter_params=("tier_ids",), admin_only=True,
                       fields=("tierNames",)),
-    ServiceListColumn("status", "Status", default_visible=True,
+    ServiceListColumn("status", "Status",
                       filter_type=FILTER_SINGLE_SELECT, filter_params=("is_published",),
                       fields=("isPublished",)),
-    ServiceListColumn("created_at", "Created At", default_visible=True,
+    ServiceListColumn("created_at", "Created At",
                       filter_type=FILTER_DATE_RANGE, filter_params=("created_from", "created_to"),
                       admin_only=True, fields=("createdAt",)),
     ServiceListColumn("model_name", "Model Name",
@@ -67,12 +64,14 @@ SERVICE_LIST_COLUMNS: List[ServiceListColumn] = [
     ServiceListColumn("published_at", "Published On",
                       filter_type=FILTER_DATE_RANGE, filter_params=("published_from", "published_to"),
                       admin_only=True, fields=("publishedAt",)),
+    # Not stored — computed live from Prometheus (app/utils/service_availability.py)
+    # when selected. Non-sortable: there's nothing persisted to ORDER BY on.
+    ServiceListColumn("availability", "Availability", sortable=False, fields=("availability",)),
 ]
 
 COLUMNS_BY_ID = {col.id: col for col in SERVICE_LIST_COLUMNS}
 VALID_COLUMN_KEYS: FrozenSet[str] = frozenset(COLUMNS_BY_ID)
 MANDATORY_KEYS: FrozenSet[str] = frozenset(c.id for c in SERVICE_LIST_COLUMNS if c.mandatory)
-DEFAULT_VISIBLE_KEYS: FrozenSet[str] = frozenset(c.id for c in SERVICE_LIST_COLUMNS if c.default_visible)
 SORTABLE_KEYS: FrozenSet[str] = frozenset(c.id for c in SERVICE_LIST_COLUMNS if c.sortable)
 ADMIN_ONLY_KEYS: FrozenSet[str] = frozenset(c.id for c in SERVICE_LIST_COLUMNS if c.admin_only)
 # Filters of admin-only columns that every caller may still use: tier_ids backs
@@ -98,10 +97,3 @@ def response_fields_for(selected: FrozenSet[str], is_admin: bool) -> FrozenSet[s
     for col_id in selected:
         fields.update(COLUMNS_BY_ID[col_id].fields)
     return frozenset(fields)
-
-
-def columns_for_caller(is_admin: bool) -> List[ServiceListColumn]:
-    """Columns the caller may see, in display order."""
-    if is_admin:
-        return list(SERVICE_LIST_COLUMNS)
-    return [c for c in SERVICE_LIST_COLUMNS if not c.admin_only]

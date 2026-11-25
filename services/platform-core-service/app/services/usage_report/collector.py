@@ -1,15 +1,21 @@
 """Collects the Usage Viewer report's figures for one period (AI4IDS-3278).
 
-Only figures the platform tracks are collected. Availability, provider
-count and financial-year totals are not tracked, so they are left out.
+Only figures the platform tracks are collected. Provider count and
+financial-year totals are not tracked, so they are left out.
 
-Platform health (error rate, fallback rate; latency P95 is commented out
-pending a decision, see _platform_health) comes from request rows through
-MeteringUsageRepository. The error rate counts server errors and
+Availability comes from Prometheus (kube-state-metrics): the
+share of the period in which the inference service had at least one Ready
+pod (see MeteringService.availability_pct and
+USAGE_REPORT_AVAILABILITY_DEPLOYMENTS / _NAMESPACE).
+
+Platform health (average latency, error rate, fallback rate) comes from
+request rows through MeteringUsageRepository. The error rate counts server errors and
 timeouts (status 500 or above; an empty response returns 200 and isn't
 counted), read with its requests from usage_events, which has every day's
-status codes; the fallback rate reads usage_events / daily_usage, the
-dashboard's period source.
+status codes; average latency and the fallback rate read usage_events /
+daily_usage, the dashboard's period source (the average is additive across
+days, total_response_time_ms / response_time_count, so a long period is
+still covered once usage_events keeps only its last few days).
 
 Every figure comes from one collect() run, so the email summary and the
 attached PDF always agree (a single ReportData feeds both).
@@ -32,9 +38,11 @@ from typing import Awaitable, Optional, TypeVar
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.repositories.pay_per_use.metering_usage import MeteringUsageRepository, UsageAgg
 from app.repositories.pay_per_use.usage_repository import UsageRepository
 from app.services.metering_service import MeteringService
+from app.services.usage_report import formatting as fmt
 from app.services.usage_report.period import ReportPeriod
 from app.utils.metering_promql_builder import (
     SERVICE_BREAKDOWN_CONFIG,
@@ -55,6 +63,10 @@ EXHAUSTED_PCT = 100.0
 def task_display_name(task: Optional[str]) -> str:
     cfg = SERVICE_BREAKDOWN_CONFIG.get(task or "")
     return cfg["display_name"] if cfg else (task or "Unknown").upper()
+
+
+def availability_deployments() -> list[str]:
+    return [s.strip() for s in settings.usage_report_availability_deployments.split(",") if s.strip()]
 
 
 def _decimal(value) -> Decimal:
@@ -120,8 +132,8 @@ class PeriodSpend:
 class PlatformHealth:
     """Platform health in the period, from request rows. The error rate covers
     the whole period. Response time and the fallback flag were recorded from a
-    later date (migration ea3961c258e4), so latency P95 and the fallback rate
-    cover only tracked_from to the period's end: tracked_from is None when
+    later date (migration ea3961c258e4), so average latency and the fallback
+    rate cover only tracked_from to the period's end: tracked_from is None when
     neither was recorded by the end of the period, and later than the period
     start when recording began inside it."""
     requests: int
@@ -129,7 +141,7 @@ class PlatformHealth:
     tracked_from: Optional[datetime] = None
     tracked_requests: int = 0
     fallbacks: int = 0
-    latency_p95_ms: Optional[float] = None
+    avg_latency_ms: Optional[float] = None
 
     @property
     def error_rate_pct(self) -> Optional[float]:
@@ -146,6 +158,9 @@ class ReportData:
     generated_at: datetime
     # Platform health (None: request rows not recorded by the period's end, or failed)
     platform_health: Optional[PlatformHealth] = None
+    # Availability, % of the period (None: failed / not scraped then, or not retained)
+    availability_pct: Optional[float] = None
+    prev_availability_pct: Optional[float] = None
     # Requests
     total_requests: Optional[int] = None
     prev_total_requests: Optional[int] = None
@@ -181,6 +196,15 @@ class ReportData:
         if self.total_requests is None or not self.prev_total_requests:
             return None
         return (self.total_requests - self.prev_total_requests) / self.prev_total_requests * 100
+
+    @property
+    def availability_change(self) -> Optional[float]:
+        """Change from the previous period in percentage points, between the
+        two figures as shown (two decimals, see formatting.availability), so
+        the change always matches the values a reader can compare."""
+        if self.availability_pct is None or self.prev_availability_pct is None:
+            return None
+        return round(fmt.shown_availability(self.availability_pct) - fmt.shown_availability(self.prev_availability_pct), 2)
 
     @property
     def active_institutions_change(self) -> Optional[int]:
@@ -232,6 +256,12 @@ class UsageReportCollector:
         rng = _range(period)
 
         data.platform_health = await self._try(data, "platform_health", self._platform_health(period))
+        data.availability_pct = await self._try(data, "availability", self._availability(rng))
+        if prev_retained and data.availability_pct is not None:
+            # None here just means no comparison (e.g. not yet scraped then).
+            data.prev_availability_pct = await self._try(
+                data, "availability_vs_previous", self._availability(_range(prev), required=False)
+            )
         data.total_requests = await self._try(data, "total_requests", self._metering.inference_request_total(rng))
         if prev_retained:
             data.prev_total_requests = await self._try(
@@ -419,16 +449,28 @@ class UsageReportCollector:
         health.tracked_from = max(period.start, since)
         tracked = (await usage.aggregate(health.tracked_from, period.end)).get((), UsageAgg())
         health.tracked_requests, health.fallbacks = tracked.requests, tracked.fallback
-        # Latency P95 is commented out (here, in pdf._health and in
-        # mailer.summary_lines) until it is decided how to compute it once
-        # usage_events keeps only the last few days (pyjob's
-        # USAGE_EVENTS_RETENTION_DAYS): a percentile can't be built from
-        # daily_usage, so a weekly or monthly P95 would cover just those days.
-        # Also open: whether P95 is needed at all, or the average response
-        # time (daily_usage.total_response_time_ms / response_time_count) is
-        # enough. Uncomment the three once that is decided.
-        # health.latency_p95_ms = await usage.response_time_p95(health.tracked_from, period.end)
+        # Average, not P95: a percentile can't be built from daily_usage, so
+        # once usage_events keeps only its last few days (pyjob's
+        # USAGE_EVENTS_RETENTION) a weekly or monthly P95 would cover
+        # just those days. Failed requests are included, as in the rollup.
+        health.avg_latency_ms = tracked.avg_response_time_ms
         return health
+
+    async def _availability(self, rng: AbsoluteRange, required: bool = True) -> Optional[float]:
+        """Raises without a namespace configured, or when Prometheus has no
+        readiness sample for the deployments in the period and ``required``:
+        a wrong name or namespace must fail the figure, not mail
+        "Not available" unflagged."""
+        namespace = (settings.usage_report_availability_namespace or "").strip()
+        if not namespace:
+            raise RuntimeError("USAGE_REPORT_AVAILABILITY_NAMESPACE is not set")
+        pct = await self._metering.availability_pct(rng, availability_deployments(), namespace)
+        if pct is None and required:
+            raise RuntimeError(
+                f"no kube_pod_status_ready samples for {settings.usage_report_availability_deployments!r} "
+                f"in namespace {namespace!r} in the period"
+            )
+        return pct
 
     async def _period_spend(self, period: UsagePeriod, subdaily: bool = False) -> Optional[PeriodSpend]:
         """None when usage recording had not started by the end of the period."""

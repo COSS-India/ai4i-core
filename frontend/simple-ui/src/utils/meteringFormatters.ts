@@ -187,6 +187,33 @@ export function formatNativeConsumption(
   return unit ? `${nativeUnits.toLocaleString()} ${unit}` : nativeUnits.toLocaleString();
 }
 
+/**
+ * Native units on the Model tab (parent and drill-down rows): the bare number,
+ * with no unit suffix of any kind ("22,625", "280", "0" rather than
+ * "22,625 tokens", "280 chars", "0 images").
+ */
+export function formatModelNativeUnits(nativeUnits?: number | null): string {
+  return formatNativeConsumption(nativeUnits, "");
+}
+
+/**
+ * Percentage with a fixed number of decimals and a "%" sign, rounded half up:
+ * 65.35 → "65.4%", 25 → "25.0%".
+ *
+ * Plain `toFixed` gives "65.3%": 65.35 is stored as 65.3499…, and toFixed
+ * rounds that stored value. Scaling first (65.35 × 10 = 653.5) usually lands
+ * on the half, but not always (1.005 × 100 = 100.49999…), so the scaled value
+ * is cut back to 15 significant digits, the most a double holds exactly, before
+ * Math.round. That drops the float noise and keeps the real half.
+ */
+export function formatPercent(value?: number | null, decimals = 1): string {
+  if (value == null || !Number.isFinite(value)) return METERING.GRAPH.EMPTY_VALUE;
+  const factor = 10 ** decimals;
+  const scaled = Number((value * factor).toPrecision(15));
+  const rounded = Math.round(scaled) / factor;
+  return `${rounded.toFixed(decimals)}%`;
+}
+
 export function formatMeteringRefreshTime(iso?: string, nowMs = Date.now()): string {
   if (!iso) return METERING.REFRESH.JUST_NOW;
   const diff = Math.max(0, nowMs - new Date(iso).getTime());

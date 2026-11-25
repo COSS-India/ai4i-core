@@ -1,5 +1,6 @@
-import { HStack, Text } from "@chakra-ui/react";
+import { HStack, Icon, Text } from "@chakra-ui/react";
 import React from "react";
+import { FiCheckCircle, FiXCircle } from "react-icons/fi";
 import { getTaskColorScheme } from "../../config/constants";
 import type { Service } from "../../services/servicesManagementService";
 import { TruncatingBadge } from "../common/dataTableUtils";
@@ -101,6 +102,40 @@ export function renderServiceStatusCell(service: Service): React.ReactNode {
       Unpublished
     </TruncatingBadge>
   );
+}
+
+function AvailabilityPill({
+  online,
+}: Readonly<{ online: boolean }>): React.ReactElement {
+  const scheme = online ? "green" : "red";
+  const label = online ? "Online" : "Offline";
+  return (
+    <HStack
+      as="span"
+      display="inline-flex"
+      spacing={1.5}
+      px={2.5}
+      py={1}
+      borderRadius="md"
+      bg={`${scheme}.50`}
+      color={`${scheme}.600`}
+      fontSize="sm"
+      fontWeight="medium"
+      whiteSpace="nowrap"
+      title={label}
+      _dark={{ bg: `${scheme}.900`, color: `${scheme}.200` }}
+    >
+      <Icon as={online ? FiCheckCircle : FiXCircle} boxSize={4} aria-hidden />
+      <Text as="span">{label}</Text>
+    </HStack>
+  );
+}
+
+/** Online / Offline pill from the live `availability` flag; "—" when unknown (null). */
+export function renderServiceAvailabilityCell(service: Service): React.ReactNode {
+  if (service.availability === true) return <AvailabilityPill online />;
+  if (service.availability === false) return <AvailabilityPill online={false} />;
+  return renderEmptyServiceCell();
 }
 
 export function renderServiceCreatedAtCell(service: Service): React.ReactNode {

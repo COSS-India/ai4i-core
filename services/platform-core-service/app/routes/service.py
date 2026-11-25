@@ -10,11 +10,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import importlib as _importlib
 
+from app.core.config import settings
 from app.core.database import get_db
 from app.utils.route_helpers import DATE_PARAM_HELP, DateOrDatetime, split_csv
 from app.core.exceptions import AppError, ValidationError
 from app.core.permissions import is_platform_admin
-from app.dependencies.services import ServiceService, get_service_service
+from app.dependencies.services import ServiceService, get_prometheus_client, get_service_service
+from app.utils.service_availability import extract_ip, get_ip_availability
 from app.repositories.model_management.service_repository import (
     ServiceListFilters,
     range_end_exclusive,
@@ -103,6 +105,10 @@ _NON_ADMIN_SERVICE_FIELDS = {
     "versionStatus",
     "model",
     "tierIds",  # required by inference-service tier enforcement
+    # Computed (_annotate_availability), not read from the stored row — the
+    # live up/down boolean isn't sensitive, only the raw endpoint used to
+    # derive it, which isn't in this allow-list and never reaches the response.
+    "availability",
     # NOTE: the new nested `inferenceEndPoint` object is deliberately NOT
     # in this allow-list. It bundles `infraDescription`
     # (== the existing `hardwareDescription`, already admin-only) together
@@ -123,6 +129,32 @@ def _filter_service_fields(item: Dict[str, Any]) -> Dict[str, Any]:
 def _select_fields(item: Dict[str, Any], fields: FrozenSet[str]) -> Dict[str, Any]:
     """Keep only the response fields the selected columns need."""
     return {k: v for k, v in item.items() if k in fields}
+
+
+async def _annotate_availability(request: Request, items: List[Dict[str, Any]]) -> None:
+    """Sets item["availability"] on every item, always — True/False from
+    Prometheus's `up` when known, None when it can't be determined
+    (Prometheus/the job name isn't configured, the endpoint can't be parsed
+    to an IP, PROMETHEUS_VLLM_JOB_NAME never scrapes that IP at all — e.g. a
+    Triton ASR/NMT/TTS service — or the query itself fails; see
+    get_ip_availability). A caller that asks for the column always gets an
+    explicit value per row, never a missing key."""
+    if not settings.prometheus_url or not settings.prometheus_vllm_job_name:
+        for item in items:
+            item["availability"] = None
+        return
+    ip_by_service = {
+        item["serviceId"]: extract_ip(
+            item.get("endpoint") or (item.get("inferenceEndPoint") or {}).get("callbackUrl")
+        )
+        for item in items
+    }
+    status_by_ip = await get_ip_availability(
+        get_prometheus_client(request), settings.prometheus_vllm_job_name, ip_by_service.values()
+    )
+    for item in items:
+        ip = ip_by_service.get(item["serviceId"])
+        item["availability"] = status_by_ip.get(ip) if ip is not None else None
 
 
 _TRY_IT_SUPPORTED_TASK_TYPES = {TaskTypeEnum.nmt.value, TaskTypeEnum.llm.value}
@@ -453,6 +485,11 @@ async def list_services(
         sort_order=paging.sort_order,
         include_tier_names=selected is None or "tier" in selected,
     )
+    # Before the role filter below strips `endpoint`/`inferenceEndPoint` for
+    # non-admins: the boolean result itself isn't sensitive, only the raw
+    # endpoint used to compute it, which never reaches the response either way.
+    if selected is not None and "availability" in selected:
+        await _annotate_availability(request, items)
     # Non-admin already loses api_key/inferenceEndPoint entirely below, so
     # masking them first would be wasted work — only admins need it.
     if is_admin:

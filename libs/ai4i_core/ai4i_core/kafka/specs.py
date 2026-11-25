@@ -39,6 +39,13 @@ _QUOTA_SUBJECT = (SubjectKey.BILLING_MONTH, SubjectKey.MODEL_TASK_TYPE)
 # renewal within the same window can never re-arm an already-triggered band.
 _BUDGET_SUBJECT = (SubjectKey.BUDGET_CEILING, SubjectKey.BUDGET_WINDOW)
 _MONITORING_SUBJECT = (SubjectKey.SERVICE_ID,)
+# One ledger row per (key, rotation, level) for the grace reminders: rotated_at
+# changes on each new rotation but not when its grace period is extended, so
+# an extension never re-sends a level already sent for that rotation.
+_GRACE_PERIOD_SUBJECT = (SubjectKey.API_KEY_ID, SubjectKey.ROTATED_AT, SubjectKey.DAYS_BEFORE)
+# One ledger row per (key, expiry, level) for a key's own expiry: a moved
+# expiry is a new subject, so its reminders start again.
+_KEY_EXPIRY_SUBJECT = (SubjectKey.API_KEY_ID, SubjectKey.EXPIRES_AT, SubjectKey.DAYS_BEFORE)
 
 
 def _state(name: NotificationName, subject_keys=_NO_SUBJECT) -> NotificationSpec:
@@ -74,6 +81,8 @@ SPECS: Dict[NotificationName, NotificationSpec] = {
         _monitoring(NotificationName.LATENCY_P95),
         _monitoring(NotificationName.LATENCY_P99),
         _state(NotificationName.KEY_ROTATED),
+        _state(NotificationName.GRACE_PERIOD_EXPIRING, _GRACE_PERIOD_SUBJECT),
+        _state(NotificationName.API_KEY_EXPIRING, _KEY_EXPIRY_SUBJECT),
     )
 }
 
