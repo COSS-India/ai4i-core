@@ -21,7 +21,6 @@ from app.utils.telemetry_params import (
 )
 from app.services.telemetry_service import (
     get_trace_spans,
-    empty_search_result,
     search_traces,
     TraceFilterParams,
     PaginationParams,
@@ -145,7 +144,7 @@ class _TraceSpanFilters:
         error: Annotated[Optional[str], Query(max_length=512, description="Phrase match on error/status description")] = None,
         service: Annotated[Optional[str], Query(max_length=256, description="Phrase match on service name")] = None,
         url: Annotated[Optional[str], Query(max_length=512, description="Contains match on request URL")] = None,
-        application: Annotated[Optional[str], Query(max_length=256, description="Contains match on application name")] = None,
+        application: Annotated[Optional[str], Query(max_length=256, description="Contains match on application name, or exact application ID")] = None,
     ):
         self.user = user
         self.metadata_key = metadata_key
@@ -181,33 +180,39 @@ _APPLICATION_LOOKUP_UNAVAILABLE = "Application lookup unavailable"
 async def _resolve_application_filter(
     auth_db: Optional[AsyncSession], name: Optional[str], tenant_filter: Optional[str]
 ) -> Optional[list[str]]:
-    """app_id values matching the application-name filter; None when no filter is set.
-    The filter can't be applied without auth_db, so its absence or failure is a 503."""
+    """app_id values matching the application filter: ids of applications whose
+    name contains it, plus the value itself when it is a numeric id. None when no
+    filter is set. Names can't be matched without auth_db, so its absence or
+    failure is a 503."""
     if not name:
         return None
     if auth_db is None:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_APPLICATION_LOOKUP_UNAVAILABLE)
     try:
-        return await find_application_ids_by_name(auth_db, name, tenant_filter)
+        ids = await find_application_ids_by_name(auth_db, name, tenant_filter)
     except Exception as exc:
         logger.error("Application filter lookup failed", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=_APPLICATION_LOOKUP_UNAVAILABLE
         ) from exc
+    if name.isdecimal() and str(int(name)) not in ids:
+        ids.append(str(int(name)))
+    return ids
 
 
 async def _apply_application_names(auth_db: Optional[AsyncSession], rows: list[dict]) -> None:
-    """Replace each row's application id with its name. Names are display-only,
-    so the id is kept when the name is unknown or auth_db is unavailable."""
-    if auth_db is None:
-        return
-    try:
-        names = await application_names_by_id(auth_db, {row["application"] for row in rows if row.get("application")})
-    except Exception:
-        logger.warning("Application name lookup failed, returning application ids", exc_info=True)
-        return
+    """Set each row's application_name from its application id; None when the
+    name is unknown or auth_db is unavailable (names are display-only)."""
+    names: dict[str, str] = {}
+    if auth_db is not None:
+        try:
+            names = await application_names_by_id(
+                auth_db, {row["application"] for row in rows if row.get("application")}
+            )
+        except Exception:
+            logger.warning("Application name lookup failed, returning application ids only", exc_info=True)
     for row in rows:
-        row["application"] = names.get(row.get("application"), row.get("application"))
+        row["application_name"] = names.get(row.get("application"))
 
 
 @router.get("/traces/search", response_model=SearchTracesResponse)
@@ -261,40 +266,36 @@ async def search_traces_opensearch(
 
         application_ids = await _resolve_application_filter(auth_db, span.application, tenant_filter)
 
-        if application_ids == []:
-            # No application has that name, so no trace can match.
-            result = empty_search_result()
-        else:
-            result = await search_traces(
-                opensearch_client,
-                selected_columns=selected_columns,
-                tenant_filter=tenant_filter,
-                is_admin=is_admin_user,
-                filters=TraceFilterParams(
-                    effective_status=effective_status,
-                    task_types=base.task_types,
-                    user=span.user,
-                    metadata_key=span.metadata_key,
-                    metadata_value=span.metadata_value,
-                    service_id=base.service_id,
-                    status_code_list=status_code_list,
-                    start_date=base.start_date,
-                    end_date=base.end_date,
-                    q=base.q,
-                    method=span.method,
-                    model=span.model,
-                    error=span.error,
-                    service=span.service,
-                    url=span.url,
-                    application_ids=application_ids,
-                ),
-                pagination=PaginationParams(
-                    page=paging.page,
-                    page_size=paging.page_size,
-                    sort_by=paging.sort_by,
-                    sort_order=paging.sort_order,
-                ),
-            )
+        result = await search_traces(
+            opensearch_client,
+            selected_columns=selected_columns,
+            tenant_filter=tenant_filter,
+            is_admin=is_admin_user,
+            filters=TraceFilterParams(
+                effective_status=effective_status,
+                task_types=base.task_types,
+                user=span.user,
+                metadata_key=span.metadata_key,
+                metadata_value=span.metadata_value,
+                service_id=base.service_id,
+                status_code_list=status_code_list,
+                start_date=base.start_date,
+                end_date=base.end_date,
+                q=base.q,
+                method=span.method,
+                model=span.model,
+                error=span.error,
+                service=span.service,
+                url=span.url,
+                application_ids=application_ids,
+            ),
+            pagination=PaginationParams(
+                page=paging.page,
+                page_size=paging.page_size,
+                sort_by=paging.sort_by,
+                sort_order=paging.sort_order,
+            ),
+        )
 
         if "application" in selected_columns:
             await _apply_application_names(auth_db, result["data"])
