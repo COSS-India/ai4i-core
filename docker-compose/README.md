@@ -15,8 +15,8 @@ Path in the repo: **`ai4i-core/docker-compose/`**.
 
 NMT is **not** part of this Compose file. For the simple local translation E2E, clone
 [`COSS-India/model-hosting`](https://github.com/COSS-India/model-hosting) (`feat/nmt-local-setup`)
-next to `ai4i-core` and use **`nmt-triton/`** — see [SETUP-GUIDE Part A](SETUP-GUIDE.md#part-a--local-nmt-triton)
-and [Part H](SETUP-GUIDE.md#part-h--verify-nmt-via-inference).
+next to `ai4i-core` and use **`nmt-triton/`** — see [SETUP-GUIDE Step 9](SETUP-GUIDE.md#step-9--nmt-triton-optional)
+and [Step 10](SETUP-GUIDE.md#step-10--verify-nmt).
 
 ```bash
 # sibling of ai4i-core
@@ -98,7 +98,7 @@ cd docker-compose          # from the ai4i-core repo root
 3. Sync Postgres/Redis/Kafka/branding from **docker-compose/.env** into the root `.env`  
 4. Fill every `env.template` → service `.env` files (auth, platform-core, inference, Simple UI, Alembic, …)
 
-For NMT E2E, set **`TRITON_ENDPOINT_NMT=http://127.0.0.1:8000`** in the **ai4i-core repo-root** `.env` **before** migrate (not in this Compose `.env`). Do not PATCH `/api/v1/services` (SSRF) — see [SETUP-GUIDE § C1b](SETUP-GUIDE.md#c1b-set-nmt-triton-endpoint-before-migrations-required-for-nmt-e2e).
+For NMT E2E, set **`TRITON_ENDPOINT_NMT=http://127.0.0.1:8000`** in the **ai4i-core repo-root** `.env` **before** migrate (not in this Compose `.env`). Do not PATCH `/api/v1/services` (SSRF) — see [SETUP-GUIDE Step 5](SETUP-GUIDE.md#step-5--env--migrations).
 
 Then from the **ai4i-core repo root** (core has dual Alembic heads — use `heads`, not `all upgrade`):
 

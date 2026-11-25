@@ -37,7 +37,7 @@ The script prompts for mode (app-minimal / +monitoring / +logging / both), confi
 - **When:** After Compose `.env` exists and core infra is up (or before migrations).
 - **Where:** `cd ai4i-core/docker-compose && ./scripts/setup-env.sh`
 - **Also:** Repo root `./scripts/setup-env.sh` is a thin wrapper to this script.
-- Set `TRITON_ENDPOINT_NMT` yourself in **repo-root** `.env` **before** migrations if you need NMT E2E (see SETUP-GUIDE § C1b). `setup-local.sh` sets a default for you.
+- Set `TRITON_ENDPOINT_NMT` yourself in **repo-root** `.env` **before** migrations if you need NMT E2E (see SETUP-GUIDE Step 5). `setup-local.sh` sets a default for you.
 - Manual migrate (same as the guide / `setup-local.sh`):  
   `ai4iplatform_auth upgrade` → `ai4i_platform_db upgrade` → `ai4iplatform_core upgrade heads`.
 

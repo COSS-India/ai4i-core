@@ -87,9 +87,9 @@ lane** (dotted) so they never touch the business-data path.
 - ✅ **Code-anchored documentation** — every non-obvious claim links to a source path
 
 > **Note on gateways:** production / staging use **APISIX** for path routing and
-> forward-auth. The local Compose pack also includes APISIX (`:9080`). For day-to-day
-> local UI work, Simple UI’s Next.js catch-all
-> (`frontend/simple-ui/src/pages/api/v1/[...proxy].ts`) can still proxy `/api/v1/*`
+> forward-auth. Locally, APISIX/etcd are **not** started (Compose `--profile gateway`
+> only). Day-to-day UI work uses Simple UI’s Next.js catch-all
+> (`frontend/simple-ui/src/pages/api/v1/[...proxy].ts`) to proxy `/api/v1/*`
 > with the same forward-auth pattern. Full walkthrough:
 > [`docker-compose/SETUP-GUIDE.md`](./docker-compose/SETUP-GUIDE.md).
 
@@ -191,7 +191,7 @@ Start core infra, then generate per-service `.env` files from the Compose pack
 ```bash
 cd docker-compose
 cp -n .env.example .env   # edit secrets if needed
-docker compose up -d      # postgres, redis, kafka, etcd, apisix
+docker compose up -d postgres redis   # app-minimal; Kafka/logging/monitoring optional — see SETUP-GUIDE
 ./scripts/setup-env.sh    # or from repo root: ./scripts/setup-env.sh
 cd ..
 ```
@@ -219,8 +219,8 @@ cd frontend/simple-ui && npm install && npm run dev      # :3000
 
 For a local **NMT** model (simple E2E inference test), clone
 [`model-hosting`](https://github.com/COSS-India/model-hosting) (`nmt-triton/`) beside
-`ai4i-core`, then follow [SETUP-GUIDE Part A](./docker-compose/SETUP-GUIDE.md#part-a--local-nmt-triton)
-and [Part H](./docker-compose/SETUP-GUIDE.md#part-h--wire-nmt-to-the-platform).
+`ai4i-core`, then follow [SETUP-GUIDE Step 9](./docker-compose/SETUP-GUIDE.md#step-9--nmt-triton-optional)
+and [Step 10](./docker-compose/SETUP-GUIDE.md#step-10--verify-nmt).
 
 ### Service URLs (local)
 | URL | What |
@@ -229,7 +229,6 @@ and [Part H](./docker-compose/SETUP-GUIDE.md#part-h--wire-nmt-to-the-platform).
 | http://localhost:8081 | auth-service |
 | http://localhost:8095 | platform-core-service |
 | http://localhost:8090 | inference-service |
-| http://localhost:9080 | APISIX gateway |
 | http://localhost:3001 | Grafana (`--profile monitoring`) |
 | http://localhost:9090 | Prometheus (`--profile monitoring`) |
 | http://localhost:5601 | OpenSearch Dashboards (`--profile logging`) |
@@ -243,7 +242,7 @@ Common local-setup issues. Full table: [SETUP-GUIDE Troubleshooting](./docker-co
 | Service connection refused on startup | Service `.env` must use `localhost`, not Docker hostnames `postgres`/`redis`/`kafka` |
 | `migrate.sh` DB connection error | `cd docker-compose && docker compose up -d postgres`; `POSTGRES_HOST=localhost` |
 | Kafka `ECONNREFUSED` on `:9093` | This pack maps Kafka to **9092**. Set `KAFKA_SERVER=localhost:9092` (or re-run `setup-env.sh`) |
-| Inference error for a seeded service | Seeded `endpoint` may be blank — `PATCH` a reachable Triton/LLM URL (SETUP-GUIDE Part A + H for NMT via `model-hosting`) |
+| Inference error for a seeded service | Seeded `endpoint` may be blank — set `TRITON_ENDPOINT_NMT` before migrate (SETUP-GUIDE Step 5 / 9–10 for NMT via `model-hosting`) |
 
 Other support: [GitHub Issues](https://github.com/COSS-India/ai4i-core/issues)
 

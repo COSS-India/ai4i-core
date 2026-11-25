@@ -51,7 +51,7 @@ Credentials and overrides are in `docker-compose/.env` (`GRAFANA_*`, etc.). See 
 
 ## Application services
 
-Keep running **auth** (`:8081`), **platform-core** (`:8095`), and **inference** (`:8090`) as in the [setup guide Part C](../docker-compose/SETUP-GUIDE.md#part-c--application-services-one-by-one).
+Keep running **auth** (`:8081`), **platform-core** (`:8095`), and **inference** (`:8090`) as in [SETUP-GUIDE Step 6](../docker-compose/SETUP-GUIDE.md#step-6--host-apps).
 
 ### Turn on trace export (required)
 

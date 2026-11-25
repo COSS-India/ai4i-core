@@ -162,7 +162,7 @@ Also on the host (inference service, not Triton): first `pip install` may pull s
 
 **Example:** §2.1 app-minimal (~4–8 GB) + this section → plan ~12–20 GB system RAM if NMT shares the host. §2.4 (~16–24 GB Docker) + NMT → prefer a larger machine or run Triton on a separate host.
 
-Build/run steps: SETUP-GUIDE Part A.
+Build/run steps: [SETUP-GUIDE Step 9](SETUP-GUIDE.md#step-9--nmt-triton-optional).
 
 ---
 
@@ -175,7 +175,7 @@ Build/run steps: SETUP-GUIDE Part A.
 | Git | any recent | Clone `ai4i-core` + `model-hosting` |
 | Python | **3.11+** (`python3.11` / `python3.12` / `python3`) | Host apps + migrations; PyPI `ai4i-core` requires `>=3.11` |
 | Node.js | 18+ | Optional Simple UI |
-| HuggingFace **Read** token | for Part A NMT | Gated IndicTrans2 weights (`HF_TOKEN`) |
+| HuggingFace **Read** token | for Step 9 NMT | Gated IndicTrans2 weights (`HF_TOKEN`) |
 | `curl` / `psql` | optional | Health checks |
 
 Verify:
@@ -233,7 +233,7 @@ Do not run another compose stack (or a previous local run) that publishes the sa
 | Grafana | `admin` / `admin` |
 | Seeded admin (after migrate) | `admin@ai4inclusion.org` / `ADMIN_PASSWORD` |
 
-Change values in this pack’s `.env`; run `scripts/setup-env.sh` so ai4i-core service `.env` files stay in sync. For NMT E2E, set `TRITON_ENDPOINT_NMT` in the **repo-root** `.env` **before** migrations (see SETUP-GUIDE § C1b).
+Change values in this pack’s `.env`; run `scripts/setup-env.sh` so ai4i-core service `.env` files stay in sync. For NMT E2E, set `TRITON_ENDPOINT_NMT` in the **repo-root** `.env` **before** migrations (see SETUP-GUIDE Step 5).
 
 ---
 

@@ -17,11 +17,11 @@ ai4i-core/
 ├── services/               ← three FastAPI microservices
 ├── frontend/               ← Next.js web portal
 ├── libs/                   ← shared Python library used by all services
-├── infrastructure/         ← database migrations and observability configs
+├── infrastructure/         ← database migrations (Alembic)
 ├── tests/                  ← cross-service integration and E2E tests
 ├── scripts/                ← migration helpers (+ setup-env wrapper)
 ├── docs/                   ← architecture docs, companions, this file
-└── docker-compose/         ← local platform infra + SETUP-GUIDE
+└── docker-compose/         ← local platform infra, observability configs, SETUP-GUIDE
 ```
 
 The full system architecture and request-flow diagrams live in
@@ -41,11 +41,11 @@ those if you want the big picture before diving into code.
 | `frontend/simple-ui/` | Next.js 14 web portal (TypeScript, React) |
 | `libs/ai4i_core/` | Shared utilities: logging, observability, email, telemetry |
 | `infrastructure/databases/` | Alembic migrations for all PostgreSQL schemas |
-| `infrastructure/prometheus/` | Prometheus config and alert rules |
-| `infrastructure/grafana/` | Grafana dashboard JSON and datasource provisioning |
-| `infrastructure/opensearch/` | OpenSearch config and index templates |
-| `infrastructure/fluent-bit/` | Fluent Bit log-shipping config |
-| `infrastructure/alertmanager/` | Alertmanager notification routing |
+| `docker-compose/config/prometheus/` | Local Prometheus scrape config + alert rules |
+| `docker-compose/config/grafana/` | Grafana dashboard JSON and datasource provisioning |
+| `docker-compose/config/alertmanager/` | Alertmanager notification routing |
+| `docker-compose/config/opensearch/` | Local OpenSearch config |
+| `docker-compose/config/fluent-bit/` | Local Fluent Bit log-shipping config |
 | `tests/` | Cross-service integration tests and E2E browser tests |
 | `scripts/` | `setup-env.sh`, `migrate.sh`, `validate-migrations.py` |
 | `docs/` | Architecture docs, feature companions, images |
@@ -279,11 +279,11 @@ databases/
 
 | Component | Config location | Role |
 |-----------|----------------|------|
-| Prometheus | `infrastructure/prometheus/` | Metrics scrape + time-series |
-| Grafana | `infrastructure/grafana/` | Dashboards (4 JSON dashboards provided) |
-| Alertmanager | `infrastructure/alertmanager/` | Alert routing and notification |
-| OpenSearch | `infrastructure/opensearch/` | Trace spans + container logs |
-| Fluent Bit | `infrastructure/fluent-bit/` | Ships logs and spans to OpenSearch |
+| Prometheus | `docker-compose/config/prometheus/` | Metrics scrape + time-series |
+| Grafana | `docker-compose/config/grafana/` | Dashboards (4 JSON dashboards provided) |
+| Alertmanager | `docker-compose/config/alertmanager/` | Alert routing and notification |
+| OpenSearch | `docker-compose/config/opensearch/` | Trace spans + container logs |
+| Fluent Bit | `docker-compose/config/fluent-bit/` | Ships logs and spans to OpenSearch |
 
 Full observability architecture diagram: [`docs/images/observability.mmd`](images/observability.mmd).
 

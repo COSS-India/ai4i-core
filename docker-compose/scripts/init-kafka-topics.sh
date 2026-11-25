@@ -27,7 +27,7 @@ create_topic() {
     --config cleanup.policy=delete || true
 }
 
-create_topic "notification_alerts.events" 3
+create_topic "notification.events" 3
 create_topic "kafka-topic-otel-trace" 3
 
 "${BIN}/kafka-topics.sh" --bootstrap-server "${BOOTSTRAP}" --list

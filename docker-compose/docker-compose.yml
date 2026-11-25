@@ -247,6 +247,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./config/prometheus/rules:/etc/prometheus/rules:ro
       - prometheus-data:/prometheus
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -278,7 +279,8 @@ services:
     ports:
       - "${ALERTMANAGER_PORT:-9095}:9093"
     volumes:
-      - ./config/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      # Host-writable: platform-core alert sync overwrites this file from the host
+      - ./config/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
       - alertmanager-data:/alertmanager
     command:
       - --config.file=/etc/alertmanager/alertmanager.yml

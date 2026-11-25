@@ -708,6 +708,21 @@ if [ "${ENABLE_MONITORING}" = 1 ]; then
   echo
   echo "=== 4) Monitoring profile ==="
   if confirm "Start monitoring stack (Prometheus / Grafana / Alertmanager / exporters)?" y; then
+    # alertmanager.yml is gitignored (sync may write SMTP secrets). Seed from default.
+    am_cfg="${COMPOSE}/config/alertmanager/alertmanager.yml"
+    am_default="${COMPOSE}/config/alertmanager/alertmanager.default.yml"
+    if [ ! -f "${am_cfg}" ] && [ -f "${am_default}" ]; then
+      cp "${am_default}" "${am_cfg}"
+      echo "Seeded config/alertmanager/alertmanager.yml from alertmanager.default.yml"
+    fi
+    # platform-core sync creates these; empty stubs keep Prometheus rule_files happy.
+    rules_dir="${COMPOSE}/config/prometheus/rules"
+    mkdir -p "${rules_dir}"
+    for f in application-alerts.yml infrastructure-alerts.yml; do
+      if [ ! -f "${rules_dir}/${f}" ]; then
+        printf 'groups: []\n' > "${rules_dir}/${f}"
+      fi
+    done
     sync_prometheus_host_targets
     docker compose up -d prometheus alertmanager grafana node-exporter kafka-exporter
     docker compose ps

@@ -249,6 +249,14 @@ done
 Modes 2 and 4.
 
 ```bash
+# alertmanager.yml + synced rule files are gitignored — seed once if missing:
+test -f config/alertmanager/alertmanager.yml \
+  || cp config/alertmanager/alertmanager.default.yml config/alertmanager/alertmanager.yml
+mkdir -p config/prometheus/rules
+for f in application-alerts.yml infrastructure-alerts.yml; do
+  test -f "config/prometheus/rules/$f" || printf 'groups: []\n' > "config/prometheus/rules/$f"
+done
+
 docker compose up -d prometheus alertmanager grafana node-exporter kafka-exporter
 # If a host port is busy, change the matching *_PORT in docker-compose/.env and re-run
 # (AUTH_SERVICE_PORT, PLATFORM_CORE_PORT, INFERENCE_SERVICE_PORT, NODE_EXPORTER_PORT, …).

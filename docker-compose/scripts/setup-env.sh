@@ -254,8 +254,7 @@ while IFS= read -r -d '' template; do
 
     sed "${SED_ARGS[@]}" "${template}" > "${target}"
 
-    # Service env.templates hardcode KAFKA_SERVER=localhost:9093 (old local compose).
-    # This pack publishes Kafka on KAFKA_EXTERNAL_PORT (default 9092) — overwrite literals.
+    # Align KAFKA_SERVER with this pack's host publish port (KAFKA_EXTERNAL_PORT, default 9092).
     kafka_server="$(read_env_file_var "${ROOT_ENV}" "KAFKA_SERVER")"
     if [ -z "${kafka_server}" ]; then
         kafka_port="$(read_env_file_var "${COMPOSE_ENV}" "KAFKA_EXTERNAL_PORT")"
@@ -292,9 +291,9 @@ echo "Kafka broker for host apps: ${kafka_server:-localhost:9092}"
 # skip the standalone "next steps" footer to avoid looking mid-flight.
 if [ "${SETUP_ENV_FROM_LOCAL:-0}" != 1 ]; then
   echo "Next (from ai4i-core repo root), if not already done:"
-  echo "  # Set TRITON_ENDPOINT_NMT in repo-root .env before migrate for NMT E2E (SETUP-GUIDE § C1b)"
+  echo "  # Set TRITON_ENDPOINT_NMT in repo-root .env before migrate for NMT E2E (SETUP-GUIDE Step 5)"
   echo "  ./scripts/migrate.sh ai4iplatform_auth upgrade"
   echo "  ./scripts/migrate.sh ai4i_platform_db upgrade"
   echo "  ./scripts/migrate.sh ai4iplatform_core upgrade heads"
-  echo "  # then start auth → platform-core → inference (SETUP-GUIDE Part D)"
+  echo "  # then start auth → platform-core → inference (SETUP-GUIDE Step 6)"
 fi
