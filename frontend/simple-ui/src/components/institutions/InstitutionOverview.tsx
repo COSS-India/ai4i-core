@@ -135,6 +135,18 @@ export default function InstitutionOverview({
       <SimpleGrid columns={{ base: 1, lg: 2 }} spacing={6} w="full" alignItems="stretch">
         <OverviewCard title={`${INSTITUTION} details`} icon={FiUser}>
           <VStack align="stretch" spacing={0} divider={rowDivider}>
+            <StackedField label={`${INSTITUTION} ID`}>{String(t.tenant_id)}</StackedField>
+            <StackedField label="Status">
+              <Badge
+                colorScheme={getTenantStatusColorScheme(t.status)}
+                borderRadius="full"
+                px={2.5}
+                py={0.5}
+                textTransform="none"
+              >
+                {formatTenantStatusLabel(t.status)}
+              </Badge>
+            </StackedField>
             <StackedField label="Contact name">
               {t.contact_name?.trim() ? t.contact_name : <NotProvided />}
             </StackedField>
@@ -149,18 +161,6 @@ export default function InstitutionOverview({
 
         <OverviewCard title="Tier & budget" icon={FiLayers}>
           <VStack align="stretch" spacing={0} divider={rowDivider}>
-            <InlineField label={`${INSTITUTION} ID`}>{String(t.tenant_id)}</InlineField>
-            <InlineField label="Status">
-              <Badge
-                colorScheme={getTenantStatusColorScheme(t.status)}
-                borderRadius="full"
-                px={2.5}
-                py={0.5}
-                textTransform="none"
-              >
-                {formatTenantStatusLabel(t.status)}
-              </Badge>
-            </InlineField>
             <InlineField label="Tier">{tierLabel}</InlineField>
             <InlineField label="Created on">{fmtDate(t.created_at)}</InlineField>
             <InlineField label="Allocated budget">{budgetLabel}</InlineField>
