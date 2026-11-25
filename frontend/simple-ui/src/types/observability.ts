@@ -101,6 +101,8 @@ export interface TelemetryTraceRecord {
   model?: string | null;
   latency?: number | null;
   application?: string | null;
+  /** Name for `application` (the id); null when it can't be resolved. */
+  application_name?: string | null;
   api_key?: string | null;
   end_user?: string | null;
   metadata?: string[] | string | null;

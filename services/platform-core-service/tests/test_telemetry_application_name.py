@@ -89,6 +89,20 @@ def test_application_ids_filter_is_exact_terms_on_app_id():
     assert {"terms": {"attributes.app_id.keyword": ["6", "8"]}} in clauses
 
 
+def test_search_traces_empty_application_ids_matches_nothing_without_querying():
+    """[] means no application matched, not "no filter" — every caller gets that."""
+    client = MagicMock()
+
+    result = asyncio.run(_svc.search_traces(
+        client, selected_columns=frozenset({"application"}), tenant_filter="7", is_admin=False,
+        filters=_svc.TraceFilterParams(application_ids=[]),
+        pagination=_svc.PaginationParams(page=1, page_size=15),
+    ))
+
+    assert result == _svc.empty_search_result()
+    client.search_traces.assert_not_called()
+
+
 # ── route ────────────────────────────────────────────────────────────────────
 
 def _call_route(
@@ -132,14 +146,20 @@ def test_route_resolves_name_filter_within_caller_tenant(monkeypatch):
     assert search.call_args.kwargs["filters"].application_ids == ["3"]
 
 
-def test_route_name_matching_no_application_skips_search(monkeypatch):
-    response, search, _ = _call_route(monkeypatch, application="zzz", find_ids=AsyncMock(return_value=[]))
+def test_route_name_matching_no_application_passes_empty_ids(monkeypatch):
+    _, search, _ = _call_route(monkeypatch, application="zzz", find_ids=AsyncMock(return_value=[]))
 
-    search.assert_not_awaited()
-    assert response.data == [] and response.total == 0
+    assert search.call_args.kwargs["filters"].application_ids == []
 
 
-def test_route_returns_names_and_keeps_unknown_ids(monkeypatch):
+@pytest.mark.parametrize(("value", "expected"), [("9078", ["3", "9078"]), ("007", ["3", "7"]), ("3", ["3"])])
+def test_route_numeric_filter_also_matches_the_exact_id(monkeypatch, value, expected):
+    _, search, _ = _call_route(monkeypatch, application=value)
+
+    assert search.call_args.kwargs["filters"].application_ids == expected
+
+
+def test_route_adds_names_and_keeps_application_ids(monkeypatch):
     rows = [
         {"trace_id": "t1", "application": "6"},
         {"trace_id": "t2", "application": "99"},
@@ -148,7 +168,8 @@ def test_route_returns_names_and_keeps_unknown_ids(monkeypatch):
 
     response, _, _ = _call_route(monkeypatch, rows=rows)
 
-    assert [r["application"] for r in response.data] == ["Chat Bot", "99", None]
+    assert [r["application"] for r in response.data] == ["6", "99", None]
+    assert [r["application_name"] for r in response.data] == ["Chat Bot", None, None]
 
 
 def test_route_name_filter_without_auth_db_is_503(monkeypatch):
@@ -186,9 +207,11 @@ def test_route_name_lookup_db_error_keeps_ids(monkeypatch, error):
     )
 
     assert response.data[0]["application"] == "6"
+    assert response.data[0]["application_name"] is None
 
 
 def test_route_without_auth_db_keeps_ids(monkeypatch):
     response, _, _ = _call_route(monkeypatch, rows=[{"trace_id": "t1", "application": "6"}], auth_db=None)
 
     assert response.data[0]["application"] == "6"
+    assert response.data[0]["application_name"] is None
