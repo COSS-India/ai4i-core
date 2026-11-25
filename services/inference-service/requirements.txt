@@ -12,12 +12,12 @@
 ai4i-core==1.0.58
 
 # FastAPI and ASGI server
-fastapi==0.162.2
+fastapi==0.165.0
 uvicorn[standard]==0.54.0
 
 # Data validation
-pydantic==2.14.3
-pydantic-settings==2.16.2
+pydantic==2.14.4
+pydantic-settings==2.16.3
 
 # HTTP client
 httpx==0.28.1
@@ -32,7 +32,7 @@ soundfile==0.14.0
 
 # JSON Mapping and Conversion
 
-python-multipart==0.0.33
+python-multipart==0.0.34
 kafka-python==2.3.3
 pydub==0.25.1
 
@@ -53,9 +53,9 @@ presidio-analyzer==2.2.364
 presidio-anonymizer==2.2.364
 langdetect==1.0.9
 # imported by spacy/thinc
-packaging==26.3
+packaging==26.4
 # imported directly by services/pii/simulation.py (regex timeouts); also a Presidio dependency
-regex==2026.11.8
+regex==2026.11.24
 spacy==3.7.5
 en-core-web-lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.7.1/en_core_web_lg-3.7.1-py3-none-any.whl
 xx-ent-wiki-sm @ https://github.com/explosion/spacy-models/releases/download/xx_ent_wiki_sm-3.7.0/xx_ent_wiki_sm-3.7.0-py3-none-any.whl
@@ -70,58 +70,58 @@ aiohttp==3.14.5  # via tritonclient
 aiokafka==0.15.0  # via ai4i-core
 aiosignal==1.4.0  # via aiohttp
 aiosmtplib==3.0.2  # via ai4i-core
-annotated-doc==0.0.5  # via fastapi, typer
+annotated-doc==0.0.7  # via fastapi, typer
 annotated-types==0.8.0  # via pydantic
-anyio==4.16.0  # via httpx, starlette, watchfiles
+anyio==4.16.0  # via fastapi, httpx, starlette, watchfiles
 asgiref==3.13.0  # via opentelemetry-instrumentation-asgi
 attrs==26.1.0  # via aiohttp
 blis==0.7.11  # via thinc
 brotli==1.2.1  # via geventhttpclient
-cachetools==8.0.0  # via ai4i-core
+cachetools==8.0.2  # via ai4i-core
 catalogue==2.0.10  # via spacy, srsly, thinc
-certifi==2026.10.23  # via geventhttpclient, httpcore, httpx, requests
+certifi==2026.11.20  # via geventhttpclient, httpcore, httpx, requests
 cffi==2.1.1  # via cryptography, soundfile
-charset-normalizer==3.5.2  # via requests
+charset-normalizer==3.5.3  # via requests
 click==8.5.1  # via presidio-analyzer, uvicorn
 cloudpathlib==0.26.0  # via weasel
 confection==0.1.5  # via thinc, weasel
 cryptography==48.0.1  # via presidio-anonymizer
 cymem==2.0.16  # via preshed, spacy, thinc
 deprecated==1.3.1  # via limits
-filelock==4.2.9  # via tldextract
+filelock==4.3.1  # via tldextract
 frozenlist==1.8.0  # via aiohttp, aiosignal
 gevent==26.9.0  # via geventhttpclient
-geventhttpclient==2.6.1  # via tritonclient
+geventhttpclient==2.6.2  # via tritonclient
 googleapis-common-protos==1.76.0  # via opentelemetry-exporter-otlp-proto-grpc
-greenlet==3.3.2  # via gevent, sqlalchemy, tritonclient
-grpcio==1.85.1  # via opentelemetry-exporter-otlp-proto-grpc
+greenlet==3.3.2  # via gevent
+grpcio==1.85.4  # via opentelemetry-exporter-otlp-proto-grpc
 h11==0.16.0  # via httpcore, uvicorn
 httpcore==1.0.9  # via httpx
 httptools==0.9.0  # via uvicorn
 jinja2==3.1.6  # via ai4i-core, spacy
 langcodes==3.5.1  # via spacy
 limits==5.8.0  # via slowapi
-markdown-it-py==4.2.0  # via rich
+markdown-it-py==4.3.0  # via rich
 markupsafe==3.0.4  # via jinja2
 mdurl==0.1.2  # via markdown-it-py
 ml-dtypes==0.5.4  # via tritonclient
 multidict==7.2.1  # via aiohttp, yarl
 murmurhash==1.0.16  # via preshed, spacy, thinc
 opentelemetry-exporter-otlp-common==0.66b2  # via opentelemetry-exporter-otlp-proto-grpc
-phonenumbers==9.0.43  # via presidio-analyzer
+phonenumbers==9.0.44  # via presidio-analyzer
 preshed==3.0.15  # via spacy, thinc
 prometheus-client==0.26.0  # via ai4i-core
 propcache==0.5.4  # via aiohttp, yarl
 protobuf==6.33.6  # via googleapis-common-protos, opentelemetry-proto
 psutil==7.2.2  # via ai4i-core
 pycparser==3.12  # via cffi
-pydantic-core==2.50.4  # via pydantic
+pydantic-core==2.50.5  # via pydantic
 pygments==2.21.0  # via rich
 pyjwt==2.15.1  # via ai4i-core
 python-json-logger==4.2.0  # via ai4i-core
 python-rapidjson==1.26  # via tritonclient
-pyyaml==6.0.3  # via ai4i-core, presidio-analyzer, uvicorn
-redis==8.1.0  # via ai4i-core
+pyyaml==6.0.4  # via ai4i-core, presidio-analyzer, uvicorn
+redis==8.2.0  # via ai4i-core
 requests==2.34.2  # via requests-file, spacy, tldextract, weasel
 requests-file==3.0.1  # via tldextract
 rich==15.0.0  # via typer
@@ -131,13 +131,13 @@ slowapi==0.1.10  # via ai4i-core
 smart-open==6.4.0  # via weasel
 spacy-legacy==3.0.12  # via spacy
 spacy-loggers==1.0.5  # via spacy
-sqlalchemy==2.1.8  # via ai4i-core
+sqlalchemy==2.1.9  # via ai4i-core
 srsly==2.5.6  # via confection, spacy, thinc, weasel
 thinc==8.2.5  # via spacy
 tldextract==5.4.0  # via presidio-analyzer
 tqdm==4.70.1  # via spacy
-tritonclient==2.74.0  # via ai4i-core
-typer==0.28.0  # via spacy, typer-slim
+tritonclient==2.75.0  # via ai4i-core
+typer==0.29.2  # via spacy, typer-slim
 typer-slim==0.24.0  # via weasel
 typing-extensions==4.16.0  # via aiohttp, aiokafka, aiosignal, anyio, fastapi, grpcio, limits, opentelemetry-api, opentelemetry-exporter-otlp-proto-grpc, opentelemetry-sdk, opentelemetry-semantic-conventions, pydantic, pydantic-core, pydantic-settings, soundfile, sqlalchemy, starlette, typing-inspection
 typing-inspection==0.4.5  # via fastapi, pydantic, pydantic-settings

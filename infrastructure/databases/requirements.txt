@@ -7,12 +7,12 @@
 # Install with: pip install -r requirements.txt
 
 # PostgreSQL
-sqlalchemy==2.1.8
+sqlalchemy==2.1.9
 asyncpg==0.32.0
 psycopg2-binary==2.9.13
 
 # Redis
-redis==8.1.0
+redis==8.2.0
 
 # Elasticsearch
 elasticsearch==9.5.1
@@ -24,8 +24,8 @@ kafka-python==3.0.13
 python-dotenv==1.2.4
 
 # Pydantic (needed for loading service models during migrations)
-pydantic[email]==2.14.3
-pydantic-settings==2.16.2
+pydantic[email]==2.14.4
+pydantic-settings==2.16.3
 
 # Alembic for database migrations
 alembic==1.20.1
@@ -47,15 +47,15 @@ starlette==1.10.0
 # --- Transitive dependencies (required by the packages above) ---
 annotated-types==0.8.0  # via pydantic
 anyio==4.16.0  # via elasticsearch, starlette
-argon2-cffi-bindings==26.1.0  # via argon2-cffi
-certifi==2026.10.23  # via elastic-transport
+argon2-cffi-bindings==26.2.0  # via argon2-cffi
+certifi==2026.11.20  # via elastic-transport
 cffi==2.1.1  # via argon2-cffi-bindings, cryptography
 dnspython==2.9.2  # via email-validator
-elastic-transport==9.4.2  # via elasticsearch
-email-validator==2.3.0  # via pydantic
+elastic-transport==9.4.3  # via elasticsearch
+email-validator==2.4.0  # via pydantic
 markupsafe==3.0.4  # via mako
 pycparser==3.12  # via cffi
-pydantic-core==2.50.4  # via pydantic
+pydantic-core==2.50.5  # via pydantic
 python-dateutil==4.0.0  # via elasticsearch
 sniffio==1.3.1  # via elastic-transport, elasticsearch
 typing-extensions==4.16.0  # via alembic, anyio, elasticsearch, pydantic, pydantic-core, pydantic-settings, sqlalchemy, starlette, typing-inspection
