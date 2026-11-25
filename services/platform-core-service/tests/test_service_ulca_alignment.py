@@ -507,7 +507,6 @@ class TestNewFieldsPersistence:
         service_repo.get_by_service_id = AsyncMock(return_value=instance_mock)
         service_repo.apply_updates = AsyncMock()
         service_repo.commit = AsyncMock()
-        service_repo.refresh = AsyncMock()
         service_repo.get_tier_names_by_ids = AsyncMock(return_value={"tier-1": "Tier 1"})
 
         model_repo = MagicMock()

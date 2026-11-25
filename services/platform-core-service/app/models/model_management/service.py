@@ -47,6 +47,11 @@ class Service(Base):
         Index("ix_mm_services_deleted_at", "deleted_at"),
         Index("ix_mm_services_is_try_it_default", "is_try_it_default"),
     )
+    # RETURNING on INSERT/UPDATE loads server-computed columns (updated_at's
+    # onupdate=func.now()) within the same flush, so they're never left
+    # expired on the instance — a later plain attribute read can't trigger
+    # an implicit reload outside an awaited context (MissingGreenlet).
+    __mapper_args__ = {"eager_defaults": True}
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     service_id = Column(String(255), nullable=False, index=True)
