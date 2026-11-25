@@ -1,6 +1,8 @@
 # Docker Compose — AI4I local platform infra
 
-Local **platform infrastructure** for ai4i-core (Postgres, Redis, optional Kafka for tracing/logging, plus optional monitoring and logging). Application services (auth, platform-core, inference, Simple UI) run **natively on the host** and talk to each other directly — **no APISIX/etcd in this pack** (cluster/production gateway is separate).
+Local **platform infrastructure** for ai4i-core (Postgres, Redis, optional Kafka for tracing/logging, plus optional monitoring and logging). Application services (auth, platform-core, inference, Simple UI) run **natively on the host** and talk to each other directly.
+
+> **APISIX / gateway:** this local Compose pack does **not** include APISIX, etcd, or a `gateway` profile. In **production** (and other deployed environments) traffic goes through the **APISIX gateway**; local setup skips that resource so UI and curls hit uvicorn on `:8081` / `:8095` / `:8090`.
 
 | Doc | Use when |
 |-----|----------|
@@ -150,7 +152,7 @@ docker-compose/
 ├── README.md
 ├── SETUP-GUIDE.md                 # complete setup + architecture flow
 ├── MINIMAL-INFRA-REQUIREMENTS.md
-├── config/                        # redis, apisix, prometheus, opensearch, …
+├── config/                        # redis, postgres, prometheus, alertmanager, grafana, opensearch, fluent-bit
 └── scripts/
     ├── setup-env.sh               # generate ai4i-core per-service .env files
     ├── cleanup-local.sh           # tear down apps + Compose volumes + NMT

@@ -15,13 +15,13 @@ Full walkthrough (order, migrate, NMT, UI): [SETUP-GUIDE.md](SETUP-GUIDE.md).
 | **+ Logging / optional tracing (last)** | `--profile logging` (+ Kafka if tracing) | See [§2.3](#23-full-compose-core--logging-optional-tracing-enabled) |
 | **Interactive `setup-local.sh`** | choose mode 1–4 | Same options as §2.1–§2.4; confirms each step; optional NMT after apps |
 
-**Local path:** uvicorn apps + Simple UI talk **directly** to `:8081` / `:8095` / `:8090`. **APISIX/etcd are not part of this Compose pack** (deployed environments use the cluster gateway).
+**Local path:** uvicorn apps + Simple UI talk **directly** to `:8081` / `:8095` / `:8090`. This Compose pack does **not** include APISIX, etcd, or a `gateway` profile. In **production**, traffic uses the **APISIX gateway**; that resource is not part of this local Docker setup.
 
 | Component | Needed locally? |
 |-----------|-----------------|
 | **Postgres, Redis** | **Yes** — app-minimal |
 | **Kafka** | **No** for basic APIs / NMT — optional for tracing / logging profile |
-| **APISIX / etcd** | **No** — not in this local Compose pack |
+| **APISIX / etcd (gateway)** | **No** — local pack omits them; **production** uses APISIX as the gateway |
 
 NMT (`indictrans` on `:8000`) is **not** a Compose service — build/run separately (SETUP-GUIDE Step 9).
 

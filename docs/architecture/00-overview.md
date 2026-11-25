@@ -72,11 +72,13 @@ Permission enforcement is centralized: auth-service loads `api_permissions.json`
 Downstream services do **not** re-check permissions in-process
 (`services/auth-service/app/routes/__init__.py`).
 
-> The gateway is **APISIX** in deployed environments. Local Compose does **not**
-> include APISIX/etcd; `/auth/validate` is still the forward-auth contract
-> (`GET`), and auth-service returns `X-User-ID` / `X-Tenant-ID` headers that a
-> gateway would inject (`services/auth-service/app/routes/validation.py`).
-> Local UI work uses Simple UI’s Next.js proxy for that same pattern.
+> The gateway is **APISIX** in **production** / deployed environments. Local
+> Docker Compose does **not** include APISIX, etcd, or a `gateway` profile —
+> that resource is production-only. `/auth/validate` is still the forward-auth
+> contract (`GET`), and auth-service returns `X-User-ID` / `X-Tenant-ID`
+> headers that a gateway would inject
+> (`services/auth-service/app/routes/validation.py`). Local UI work uses
+> Simple UI’s Next.js proxy for that same pattern.
 
 ## Infrastructure inventory
 

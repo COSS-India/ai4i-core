@@ -86,9 +86,10 @@ lane** (dotted) so they never touch the business-data path.
   email, exceptions, request-scoped context
 - ✅ **Code-anchored documentation** — every non-obvious claim links to a source path
 
-> **Note on gateways:** production / staging use **APISIX** for path routing and
-> forward-auth. Locally, APISIX/etcd are **not** started (Compose `--profile gateway`
-> only). Day-to-day UI work uses Simple UI’s Next.js catch-all
+> **Note on gateways:** **production** / staging use **APISIX** as the API gateway
+> (path routing + forward-auth). The local Docker Compose pack does **not** include
+> APISIX, etcd, or a `gateway` profile — that resource is for deployed environments
+> only. Day-to-day UI work uses Simple UI’s Next.js catch-all
 > (`frontend/simple-ui/src/pages/api/v1/[...proxy].ts`) to proxy `/api/v1/*`
 > with the same forward-auth pattern. Full walkthrough:
 > [`docker-compose/SETUP-GUIDE.md`](./docker-compose/SETUP-GUIDE.md).
@@ -157,8 +158,8 @@ PII inference requests fail loudly instead of falling through.
 - **Next.js 14** · **React 18** · **TypeScript** · **zod**
 
 ### Gateway & Infrastructure
-- **APISIX** — API gateway (included in local Compose; also used in shared cluster envs)
-- **Docker Compose** — local platform infra under [`docker-compose/`](./docker-compose/)
+- **APISIX** — API gateway in **production** / deployed environments (not part of local Compose)
+- **Docker Compose** — local platform infra under [`docker-compose/`](./docker-compose/) (Postgres, Redis, optional Kafka / monitoring / logging; **no** APISIX/etcd/gateway)
 - **Kafka (KRaft)** — OpenTelemetry span transport (telemetry lane); host port **9092**
 - **Prometheus · Grafana · Alertmanager · Node Exporter** — metrics & alerting (`--profile monitoring`)
 - **OpenSearch + Dashboards · Fluent Bit** — logs & trace (`traces-*`) storage (`--profile logging`)
@@ -174,7 +175,7 @@ sizing: **[docker-compose/MINIMAL-INFRA-REQUIREMENTS.md](./docker-compose/MINIMA
 
 ### Prerequisites
 Docker runs the **infrastructure only**; application services run **natively** on the host.
-- **Docker Engine 24+ / Compose v2.20+** — platform infra (Postgres, Redis, Kafka, APISIX, …)
+- **Docker Engine 24+ / Compose v2.20+** — platform infra (Postgres, Redis, optional Kafka / monitoring / logging; no APISIX locally)
 - **Python 3.11+** (`python3.11`) + pip — app services (**required**; PyPI `ai4i-core` needs ≥3.11)
 - **Node 18+** — Simple UI frontend
 - ~8–16 GB RAM depending on mode; **Linux** (Ubuntu tested). See the setup guide sizing section.

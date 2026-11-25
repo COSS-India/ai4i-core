@@ -205,7 +205,7 @@ not from the directory step 1 left you in:
 
 ```bash
 cd ../../docker-compose
-docker compose up -d postgres redis kafka kafka-init   # app-minimal + Kafka; no etcd/apisix locally
+docker compose up -d postgres redis kafka kafka-init   # app-minimal + Kafka; no APISIX/etcd (production uses APISIX gateway; local pack does not)
 ```
 
 The broker is reachable at **`localhost:9092`**. Topics are created by

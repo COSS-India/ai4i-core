@@ -17,7 +17,9 @@
 #   docker compose up -d opensearch ...          # --profile logging services
 #
 # Host apps need Postgres + Redis. Kafka is for optional tracing/logging.
-# No APISIX/etcd in this pack (deployed environments use the cluster gateway).
+# No APISIX/etcd and no gateway profile in this pack — local setup talks to
+# uvicorn directly. Production uses the APISIX gateway; that resource is not
+# started here.
 # Generate per-service .env files: ./scripts/setup-env.sh
 # Full walkthrough: SETUP-GUIDE.md
 

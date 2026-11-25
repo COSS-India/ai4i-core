@@ -32,7 +32,7 @@ Manual step-by-step setup on Linux. Same sequence as interactive [`scripts/setup
 15. [Ports / stop / troubleshoot](#ports--stop--troubleshoot)
 16. [Scripts](#scripts)
 
-> **Local vs production:** APISIX/etcd are **not** part of local setup. Host uvicorn apps and Simple UI talk to each other directly (`:8081` / `:8095` / `:8090`). The gateway is for deployed environments only.
+> **Local vs production:** this Docker local setup does **not** run APISIX, etcd, or a gateway profile. Host uvicorn apps and Simple UI talk to each other directly (`:8081` / `:8095` / `:8090`). In **production**, requests go through the **APISIX gateway** (cluster gateway); that resource is out of scope for this Compose pack.
 
 ---
 
@@ -107,7 +107,7 @@ Apps are **not** started by Docker Compose. Infra is Compose; backends/UI run on
 └───────────────────────────────┘
 ```
 
-No APISIX in this path — UI and curls hit uvicorn directly.
+No APISIX/gateway in this local path — UI and curls hit uvicorn directly. Production uses APISIX as the gateway.
 
 ### 2.2 Compose infra layers
 
@@ -130,7 +130,7 @@ No APISIX in this path — UI and curls hit uvicorn directly.
 
 **Required locally:** Postgres, Redis.  
 **Optional:** Kafka (tracing), `--profile monitoring`, `--profile logging`.  
-**Not in this pack:** etcd + APISIX (cluster/production gateway only).
+**Not in this pack:** APISIX + etcd (no `gateway` profile). **Production** uses the APISIX gateway; local Docker setup does not include that resource.
 
 ### 2.3 Startup order
 
@@ -225,7 +225,7 @@ sudo sysctl -w vm.max_map_count=262144
 docker compose up -d kafka kafka-init
 docker compose up -d opensearch opensearch-dashboards fluent-bit
 # Do not use bare: docker compose --profile logging up -d
-# (older packs also started default etcd/apisix; this pack does not include them)
+# (this pack has no APISIX/etcd/gateway — production uses APISIX; local setup does not)
 ```
 
 ---

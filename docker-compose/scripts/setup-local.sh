@@ -362,7 +362,7 @@ EOF
 
   echo
   echo "Selected: $(mode_label "${MODE}")"
-  echo "(Local setup does not start APISIX/etcd — UI and curls talk to uvicorn directly.)"
+  echo "(Local Docker setup does not start APISIX/etcd/gateway — production uses APISIX; UI and curls talk to uvicorn directly.)"
   if [ "${ENABLE_LOGGING}" = 1 ]; then
     if confirm "Enable optional tracing (start Kafka + kafka-init)?" n; then
       ENABLE_TRACING=1
@@ -669,8 +669,8 @@ if [ "${ENABLE_LOGGING}" = 1 ]; then
       fi
     fi
     # Fluent Bit depends on Kafka — start broker first (also covers optional tracing bus).
-    # Do NOT use bare --profile logging up -d alone against older packs that started
-    # older packs also started etcd/apisix; this pack does not include them.
+    # Do NOT use bare --profile logging up -d alone. This pack has no APISIX/etcd/gateway
+    # (production uses APISIX; local Docker setup does not include that resource).
     if [ "${ENABLE_TRACING}" != 1 ]; then
       echo "Note: Fluent Bit needs Kafka — starting kafka + kafka-init for the log pipeline."
     fi
@@ -822,7 +822,7 @@ print_base_verify
 # 7) Optional Simple UI
 ########################################
 echo "=== 7) Simple UI (optional) ==="
-echo "UI proxies to auth/platform-core/inference (no APISIX)."
+echo "UI proxies to auth/platform-core/inference (no APISIX locally; production uses the APISIX gateway)."
 echo "Simple UI is fixed on :3000 (free the port if busy — not configurable via .env)."
 if confirm "Start Simple UI (Next.js on :3000) now?" n; then
   require_ports_free "3000|simple-ui (Next.js)|fixed :3000"
