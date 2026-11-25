@@ -170,7 +170,9 @@ upsert_file_env() {
   if grep -qE "^${key}=" "${file}" 2>/dev/null; then
     local escaped
     escaped="$(printf '%s' "${value}" | sed -e 's/[|&\\]/\\&/g')"
-    sed -i -e "s|^${key}=.*|${key}=${escaped}|" "${file}"
+    # Portable in-place edit (GNU + BSD/macOS sed)
+    sed -i.bak -e "s|^${key}=.*|${key}=${escaped}|" "${file}"
+    rm -f "${file}.bak"
   else
     printf '\n%s=%s\n' "${key}" "${value}" >> "${file}"
   fi
@@ -744,7 +746,8 @@ cd "${COMPOSE}"
 echo "Generating per-service .env files..."
 SETUP_ENV_FROM_LOCAL=1 ./scripts/setup-env.sh
 if grep -q '^TRITON_ENDPOINT_NMT=' "${CORE}/.env" 2>/dev/null; then
-  sed -i "s|^TRITON_ENDPOINT_NMT=.*|TRITON_ENDPOINT_NMT=${NMT_ENDPOINT}|" "${CORE}/.env"
+  sed -i.bak "s|^TRITON_ENDPOINT_NMT=.*|TRITON_ENDPOINT_NMT=${NMT_ENDPOINT}|" "${CORE}/.env"
+  rm -f "${CORE}/.env.bak"
 else
   echo "TRITON_ENDPOINT_NMT=${NMT_ENDPOINT}" >> "${CORE}/.env"
 fi
@@ -847,7 +850,8 @@ if confirm "Start Simple UI (Next.js on :3000) now?" n; then
 
   # Ensure NMT card is enabled for local E2E (setup-env copies env.template).
   if grep -q '^ENABLED_TASK_TYPES=' "${UI_DIR}/.env" 2>/dev/null; then
-    sed -i 's|^ENABLED_TASK_TYPES=.*|ENABLED_TASK_TYPES=llm,nmt|' "${UI_DIR}/.env"
+    sed -i.bak 's|^ENABLED_TASK_TYPES=.*|ENABLED_TASK_TYPES=llm,nmt|' "${UI_DIR}/.env"
+    rm -f "${UI_DIR}/.env.bak"
   else
     echo 'ENABLED_TASK_TYPES=llm,nmt' >> "${UI_DIR}/.env"
   fi

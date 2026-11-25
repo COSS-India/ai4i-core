@@ -196,3 +196,7 @@ scripts/llm-load-test-results.csv
 scripts/~$llm-load-test-runs.xlsx
 scripts/llm-load-test-runs.xlsx
 services/kafka-consumers/scripts/publish_test_notifications.py
+
+# BSD sed mishap leftovers (should not be created; ignore if they appear)
+.env-e
+**/.env-e

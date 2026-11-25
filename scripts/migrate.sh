@@ -71,7 +71,7 @@ Usage:
 
 Prerequisite:
   Postgres must be running and reachable (e.g. cd docker-compose && docker compose up -d postgres).
-  For host/WSL runs, set POSTGRES_HOST=localhost and POSTGRES_PORT=5434 in
+  For host/WSL runs, set POSTGRES_HOST=localhost and POSTGRES_PORT=5432 in
   infrastructure/databases/migrations/postgres/alembic/.env .
 
 Examples:

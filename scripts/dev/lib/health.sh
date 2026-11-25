@@ -28,8 +28,18 @@ wait_for_kafka() {
 
     log "Waiting for kafka..."
 
-    wait_for_port localhost 9093 180 \
-        || die "Kafka failed to become healthy"
+    # Host publish port from docker-compose/.env (default 9092). 9093 is the
+    # in-container KRaft controller listener and is not published.
+    local kafka_port="${KAFKA_EXTERNAL_PORT:-9092}"
+    local compose_env="${COMPOSE_DIR:-${ROOT_DIR}/docker-compose}/.env"
+    if [[ -f "${compose_env}" ]]; then
+        local from_env
+        from_env="$(grep -m1 '^KAFKA_EXTERNAL_PORT=' "${compose_env}" 2>/dev/null | cut -d= -f2- || true)"
+        [[ -n "${from_env}" ]] && kafka_port="${from_env}"
+    fi
+
+    wait_for_port localhost "${kafka_port}" 180 \
+        || die "Kafka failed to become healthy (localhost:${kafka_port})"
 
     ok "Kafka healthy"
 }

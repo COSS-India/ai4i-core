@@ -258,7 +258,7 @@ class CoreSettings(BaseSettings):
 
     # ── OpenSearch (traces) ──
     opensearch_url: Optional[str] = Field(
-        default=None, description="OpenSearch URL (e.g., http://localhost:9204)"
+        default=None, description="OpenSearch URL (e.g., http://localhost:9200)"
     )
     opensearch_username: Optional[str] = Field(
         default=None, description="OpenSearch username"

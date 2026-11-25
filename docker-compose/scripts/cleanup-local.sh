@@ -45,10 +45,8 @@ if [ -d "${LOG_DIR}" ]; then
     rm -f "${pidf}"
   done
 fi
+# Only stop uvicorn started from this repo's service venvs (PID files above are primary).
 pkill -f "${CORE}/services/.*/.venv/bin/uvicorn" 2>/dev/null || true
-pkill -f 'uvicorn app.main:app' 2>/dev/null || true
-pkill -f 'uvicorn main:app' 2>/dev/null || true
-pkill -f 'python -m uvicorn' 2>/dev/null || true
 # Next.js only if run from this repo's simple-ui
 pkill -f "${CORE}/frontend/simple-ui" 2>/dev/null || true
 sleep 1

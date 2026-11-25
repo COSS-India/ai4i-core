@@ -34,6 +34,8 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-ai4i_platform_db}
+      AUTH_DB_NAME: ${AUTH_DB_NAME:-ai4iplatform_auth}
+      MODEL_MANAGEMENT_DB_NAME: ${MODEL_MANAGEMENT_DB_NAME:-ai4iplatform_core}
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
@@ -278,13 +280,20 @@ services:
     container_name: ai4i-alertmanager
     ports:
       - "${ALERTMANAGER_PORT:-9095}:9093"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
-      # Host-writable: platform-core alert sync overwrites this file from the host
-      - ./config/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      # Mount the directory (not a single file) so a missing gitignored
+      # alertmanager.yml is seeded from alertmanager.default.yml on start.
+      - ./config/alertmanager:/etc/alertmanager
       - alertmanager-data:/alertmanager
+    entrypoint: ["sh", "-c"]
     command:
-      - --config.file=/etc/alertmanager/alertmanager.yml
-      - --storage.path=/alertmanager
+      - |
+        if [ ! -f /etc/alertmanager/alertmanager.yml ]; then
+          cp /etc/alertmanager/alertmanager.default.yml /etc/alertmanager/alertmanager.yml
+        fi
+        exec /bin/alertmanager --config.file=/etc/alertmanager/alertmanager.yml --storage.path=/alertmanager
     networks:
       - ai4i-network
     healthcheck:

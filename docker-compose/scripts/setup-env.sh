@@ -75,7 +75,9 @@ upsert_env_var() {
     if grep -q "^${key}=" "${file}" 2>/dev/null; then
         local escaped
         escaped=$(printf '%s' "${value}" | sed -e 's/[|&\\]/\\&/g')
-        sed -i -e "s|^${key}=.*|${key}=${escaped}|" "${file}"
+        # Portable in-place edit (GNU + BSD/macOS sed)
+        sed -i.bak -e "s|^${key}=.*|${key}=${escaped}|" "${file}"
+        rm -f "${file}.bak"
     else
         printf '\n%s=%s\n' "${key}" "${value}" >> "${file}"
     fi
@@ -262,6 +264,21 @@ while IFS= read -r -d '' template; do
     fi
     if grep -q "^KAFKA_SERVER=" "${target}" 2>/dev/null; then
         upsert_env_var "${target}" "KAFKA_SERVER" "${kafka_server}"
+    fi
+
+    # OpenSearch host URL must match the published OPENSEARCH_PORT (default 9200).
+    if grep -q "^OPENSEARCH_URL=" "${target}" 2>/dev/null; then
+        os_port="$(read_env_file_var "${COMPOSE_ENV}" "OPENSEARCH_PORT")"
+        : "${os_port:=9200}"
+        upsert_env_var "${target}" "OPENSEARCH_URL" "http://localhost:${os_port}"
+    fi
+
+    # Alertmanager (in Docker) callbacks use host.docker.internal → host platform-core.
+    if grep -q "^ALERT_HISTORY_WEBHOOK_URL=" "${target}" 2>/dev/null; then
+        core_port="$(read_env_file_var "${COMPOSE_ENV}" "PLATFORM_CORE_PORT")"
+        : "${core_port:=8095}"
+        upsert_env_var "${target}" "ALERT_HISTORY_WEBHOOK_URL" \
+          "http://host.docker.internal:${core_port}/api/v1/alerts/history/webhook"
     fi
 
     # Simple UI: align proxy targets with docker-compose/.env uvicorn ports (UI stays :3000).

@@ -1,7 +1,11 @@
 #!/bin/bash
 # Create ai4i-core application databases (auth + core).
+# Names come from AUTH_DB_NAME / MODEL_MANAGEMENT_DB_NAME (see docker-compose/.env).
 # ai4i_platform_db is already created via POSTGRES_DB.
 set -euo pipefail
+
+AUTH_DB_NAME="${AUTH_DB_NAME:-ai4iplatform_auth}"
+MODEL_MANAGEMENT_DB_NAME="${MODEL_MANAGEMENT_DB_NAME:-ai4iplatform_core}"
 
 create_db_if_missing() {
   local db="$1"
@@ -17,5 +21,5 @@ create_db_if_missing() {
   fi
 }
 
-create_db_if_missing ai4iplatform_auth
-create_db_if_missing ai4iplatform_core
+create_db_if_missing "${AUTH_DB_NAME}"
+create_db_if_missing "${MODEL_MANAGEMENT_DB_NAME}"
