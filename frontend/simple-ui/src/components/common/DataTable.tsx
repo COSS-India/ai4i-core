@@ -219,6 +219,8 @@ export interface DataTableCardProps<T> extends DataTableSharedProps<T> {
   rowAriaLabel?: (row: T) => string;
   showRowChevron?: boolean;
   renderAfterRow?: (row: T) => React.ReactNode | null;
+  /** Background for a row, e.g. to highlight it. Return undefined for the default. */
+  rowBg?: (row: T) => string | undefined;
   showFooter?: boolean;
   variant?: "default" | "compact";
   borderRadius?: string;
@@ -1257,6 +1259,7 @@ function CardLayoutDataRow<T>({
   rowAriaLabel,
   showRowChevron,
   renderAfterRow,
+  rowBg,
 }: Readonly<{
   row: T;
   index: number;
@@ -1267,6 +1270,7 @@ function CardLayoutDataRow<T>({
   rowAriaLabel?: (row: T) => string;
   showRowChevron: boolean;
   renderAfterRow?: (row: T) => React.ReactNode;
+  rowBg?: (row: T) => string | undefined;
 }>) {
   const rowProps = clickable
     ? {
@@ -1292,7 +1296,7 @@ function CardLayoutDataRow<T>({
 
   return (
     <>
-      <Tr {...rowProps}>
+      <Tr bg={rowBg?.(row)} {...rowProps}>
         {columns.map((col) => (
           <Td
             key={col.id}
@@ -1345,6 +1349,7 @@ function CardLayoutDataTable<T>({
   rowAriaLabel,
   showRowChevron = false,
   renderAfterRow,
+  rowBg,
   showFooter = false,
   variant = "default",
   borderRadius,
@@ -1464,6 +1469,7 @@ function CardLayoutDataTable<T>({
               rowAriaLabel={rowAriaLabel}
               showRowChevron={showRowChevron}
               renderAfterRow={renderAfterRow}
+              rowBg={rowBg}
             />
           ))}
           {hasFooter ? (
