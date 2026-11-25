@@ -1,0 +1,24 @@
+# Build context for images built from the repository root
+# (services/*/Dockerfile, quickstart/migrate/Dockerfile).
+#
+# Keeps local-only files out of the context: virtualenvs and node_modules make
+# the context gigabytes on a developer machine, and .env files hold that
+# developer's secrets, which must never be copied into an image.
+
+.git
+**/.env
+**/.env.*
+!**/.env.example
+**/.venv
+**/venv
+**/node_modules
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.mypy_cache
+**/.next
+logs
+arch-docs
+dev.secrets
+# Locally generated JWT signing keys. auth-service creates its own at startup.
+**/*.pem
