@@ -413,3 +413,11 @@ class ServiceRepository:
 
     async def rollback(self) -> None:
         await self._db.rollback()
+
+    async def refresh(self, instance: Service) -> None:
+        """Reload server-computed columns (e.g. ``updated_at``) that flush
+        leaves expired. Must run before any plain attribute access on
+        ``instance`` post-commit — an expired async-ORM attribute can only
+        be reloaded from inside an awaited call; touching it from plain
+        sync code (e.g. a serializer) raises MissingGreenlet."""
+        await self._db.refresh(instance)

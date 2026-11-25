@@ -66,6 +66,7 @@ def _make_svc(instances_by_id: dict) -> ServiceService:
     service_repo.apply_updates = AsyncMock()
     service_repo.commit = AsyncMock()
     service_repo.rollback = AsyncMock()
+    service_repo.refresh = AsyncMock()
     service_repo.get_tier_names_by_ids = AsyncMock(return_value={})
 
     model_repo = MagicMock()
