@@ -85,6 +85,7 @@ def _make_svc(service_id: str = "svc-abc") -> ServiceService:
     service_repo.apply_updates = AsyncMock()
     service_repo.commit = AsyncMock()
     service_repo.rollback = AsyncMock()
+    service_repo.refresh = AsyncMock()
     service_repo.get_tier_names_by_ids = AsyncMock(return_value={"tier-1": "Tier 1"})
     service_repo.get_active_tier_ids = AsyncMock(return_value={"tier-1"})
 
