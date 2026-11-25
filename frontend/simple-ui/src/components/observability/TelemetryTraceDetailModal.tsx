@@ -164,7 +164,8 @@ const TelemetryTraceDetailModal: React.FC<TelemetryTraceDetailModalProps> = ({
             {(error as Error).message || "Failed to load trace"}
           </AlertDescription>
         </Alert>
-      ) : data || isLoading ? (
+      ) : null}
+      {!error && (data || isLoading) ? (
         <VStack align="stretch" spacing={5}>
           {!isLoading && data ? (
             <>
