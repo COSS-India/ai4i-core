@@ -643,7 +643,8 @@ def _build_search_filter_clauses(
         _categorize_filter("model_name", sf.model, filter_clauses, span_groups)
     if sf.url:
         _categorize_filter("url", sf.url, filter_clauses, span_groups)
-    if sf.application_ids:
+    if sf.application_ids is not None:
+        # An empty terms list matches no documents.
         filter_clauses.append({"terms": {"attributes.app_id.keyword": sf.application_ids}})
     if sf.error:
         filter_clauses.append(_contains_field_match("status.description", sf.error))
@@ -865,9 +866,6 @@ async def search_traces(
     sort_order = pagination.sort_order
     page = pagination.page
     page_size = pagination.page_size
-
-    if application_ids is not None and not application_ids:
-        return empty_search_result()
 
     base_filter_clauses = _build_base_filter_clauses(tenant_filter, start_date, end_date)
 

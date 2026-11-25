@@ -89,18 +89,23 @@ def test_application_ids_filter_is_exact_terms_on_app_id():
     assert {"terms": {"attributes.app_id.keyword": ["6", "8"]}} in clauses
 
 
-def test_search_traces_empty_application_ids_matches_nothing_without_querying():
-    """[] means no application matched, not "no filter" — every caller gets that."""
-    client = MagicMock()
+def test_empty_application_ids_filter_matches_nothing():
+    """[] means no application matched, not "no filter": an empty terms clause
+    matches no documents, for every caller of the clause builder."""
+    clauses, _ = _svc._build_search_filter_clauses(
+        [], None, None, None, None, None, None, [], False, None,
+        _svc._SpanFilterParams(application_ids=[]),
+    )
 
-    result = asyncio.run(_svc.search_traces(
-        client, selected_columns=frozenset({"application"}), tenant_filter="7", is_admin=False,
-        filters=_svc.TraceFilterParams(application_ids=[]),
-        pagination=_svc.PaginationParams(page=1, page_size=15),
-    ))
+    assert {"terms": {"attributes.app_id.keyword": []}} in clauses
 
-    assert result == _svc.empty_search_result()
-    client.search_traces.assert_not_called()
+
+def test_no_application_filter_adds_no_app_id_clause():
+    clauses, _ = _svc._build_search_filter_clauses(
+        [], None, None, None, None, None, None, [], False, None, _svc._SpanFilterParams(),
+    )
+
+    assert not any("attributes.app_id.keyword" in str(c) for c in clauses)
 
 
 # ── route ────────────────────────────────────────────────────────────────────
