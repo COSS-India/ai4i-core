@@ -16,7 +16,7 @@ from app.utils.route_helpers import DATE_PARAM_HELP, DateOrDatetime, split_csv
 from app.core.exceptions import AppError, ValidationError
 from app.core.permissions import is_platform_admin
 from app.dependencies.services import ServiceService, get_prometheus_client, get_service_service
-from app.utils.service_availability import extract_ip, get_ip_availability
+from app.utils.service_availability import extract_instance, get_instance_availability
 from app.repositories.model_management.service_repository import (
     ServiceListFilters,
     range_end_exclusive,
@@ -135,26 +135,28 @@ async def _annotate_availability(request: Request, items: List[Dict[str, Any]]) 
     """Sets item["availability"] on every item, always — True/False from
     Prometheus's `up` when known, None when it can't be determined
     (Prometheus/the job name isn't configured, the endpoint can't be parsed
-    to an IP, PROMETHEUS_VLLM_JOB_NAME never scrapes that IP at all — e.g. a
-    Triton ASR/NMT/TTS service — or the query itself fails; see
-    get_ip_availability). A caller that asks for the column always gets an
-    explicit value per row, never a missing key."""
+    to a host:port, PROMETHEUS_VLLM_JOB_NAME never scrapes that instance at
+    all — e.g. a Triton ASR/NMT/TTS service — or the query itself fails; see
+    get_instance_availability). A caller that asks for the column always
+    gets an explicit value per row, never a missing key."""
     if not settings.prometheus_url or not settings.prometheus_vllm_job_name:
         for item in items:
             item["availability"] = None
         return
-    ip_by_service = {
-        item["serviceId"]: extract_ip(
+    instance_by_service = {
+        item["serviceId"]: extract_instance(
             item.get("endpoint") or (item.get("inferenceEndPoint") or {}).get("callbackUrl")
         )
         for item in items
     }
-    status_by_ip = await get_ip_availability(
-        get_prometheus_client(request), settings.prometheus_vllm_job_name, ip_by_service.values()
+    status_by_instance = await get_instance_availability(
+        get_prometheus_client(request),
+        settings.prometheus_vllm_job_name,
+        instance_by_service.values(),
     )
     for item in items:
-        ip = ip_by_service.get(item["serviceId"])
-        item["availability"] = status_by_ip.get(ip) if ip is not None else None
+        instance = instance_by_service.get(item["serviceId"])
+        item["availability"] = status_by_instance.get(instance) if instance is not None else None
 
 
 _TRY_IT_SUPPORTED_TASK_TYPES = {TaskTypeEnum.nmt.value, TaskTypeEnum.llm.value}
