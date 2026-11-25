@@ -265,7 +265,7 @@ class Orchestrator:
         error it raises with FALLBACK_SENT_ATTR."""
         fb_payload = {**payload, "config": {**(payload.get("config") or {}), "serviceId": fallback_id}}
         try:
-            fb_info = await self._resolve_service_and_model(fb_payload)
+            fb_info = await self._resolve_service_and_model(fb_payload, is_fallback=True)
             self._enforce_tier_gate(fb_info, request)
         except Exception as exc:
             log_fallback_skipped(requested_id, fallback_id, type(exc).__name__)
@@ -335,7 +335,9 @@ class Orchestrator:
         )
         return service_class(service_info=service_info)  # type: ignore
 
-    async def _resolve_service_and_model(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def _resolve_service_and_model(
+        self, payload: Dict[str, Any], *, is_fallback: bool = False
+    ) -> Dict[str, Any]:
         """
         Resolve the model service details from the raw request payload.
         Extracted here so the Orchestrator can route to the correct model-specific
@@ -345,6 +347,11 @@ class Orchestrator:
         Args:
             payload: Raw request payload dictionary (must contain config.serviceId
                      or a top-level serviceId field)
+            is_fallback: True when this resolution is for a fallback attempt
+                (_try_fallback), not the originally requested service — stamped
+                onto this "model" span (and carried through to the paired
+                "ai-inference" span) so two spans of the same name for one
+                request can be told apart in the Logs Dashboard.
 
         Returns:
             Dict with keys: serviceId, name, endpoint, api_key, adapter_config, ...
@@ -355,6 +362,7 @@ class Orchestrator:
         with traced_span("model") as attrs:
             attrs["task_type"] = payload.get("task_type", "").upper()
             attrs.update(get_context_attributes())
+            attrs["is_fallback"] = is_fallback
 
             # Extract serviceId: check config block first, then top-level
             config_block = payload.get("config") or {}
@@ -401,9 +409,13 @@ class Orchestrator:
             attrs["model_version"] = (
                 service_info.get("model_version") or adapter_cfg.get("model_version", "unknown")
             )
-            # resolve_service()'s returned dict never carries the id it was
-            # resolved from — stash it here so run_inference can copy it onto
-            # the ai-inference span (the PPU Kafka consumer bills on service_id
-            # read from that span only, mirroring the LLM proxy's approach).
-            service_info["serviceId"] = serviceId
-            return service_info
+            # resolve_service() returns the cached dict by reference (shared
+            # across every caller resolving this service_id), so mutating it
+            # in place would leak is_fallback between a primary request and a
+            # concurrent fallback request that resolve the same service.
+            # Returning a new dict instead stashes serviceId (never carried by
+            # resolve_service()'s return value, so run_inference can copy it
+            # onto the ai-inference span the PPU Kafka consumer bills on) and
+            # is_fallback (same reasoning — run_inference only sees this dict)
+            # without touching the shared cache entry.
+            return {**service_info, "serviceId": serviceId, "is_fallback": is_fallback}

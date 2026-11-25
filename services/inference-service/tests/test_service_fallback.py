@@ -66,7 +66,7 @@ def _task_service(result=None, exc=None, completed_groups=0) -> MagicMock:
 
 
 def _wire(orch: Orchestrator, services: dict, infos: dict | None = None) -> None:
-    async def resolve(payload):
+    async def resolve(payload, *, is_fallback: bool = False):
         sid = payload["config"]["serviceId"]
         if sid not in services:
             raise LookupError(f"Service {sid} not found")
@@ -241,6 +241,99 @@ def test_triton_fallbacks_only_skipped_were_never_sent_the_request():
     assert "sent_to_fallback" not in attrs
 
 
+# ── is_fallback (AI4IDS-3769): told apart on the model/ai-inference spans ──────
+
+def _resolve_model_span(orch, payload, *, is_fallback=False):
+    """Call the real (unstubbed) _resolve_service_and_model and capture the
+    'model' span attrs it writes, same technique as _route() above."""
+    from contextlib import contextmanager
+
+    attrs = {}
+
+    @contextmanager
+    def span(*args, **kwargs):
+        yield attrs
+
+    with patch("orchestrator.orchestrator.traced_span", span), \
+            patch("orchestrator.orchestrator.get_context_attributes", return_value={}):
+        info = _run(orch._resolve_service_and_model(payload, is_fallback=is_fallback))
+    return attrs, info
+
+
+def test_triton_model_span_is_fallback_false_for_the_primary_resolve():
+    orch = _orchestrator()
+    orch.inference_server_resolver.resolve_service = AsyncMock(
+        return_value={"name": "m", "is_published": True, "tier_ids": []}
+    )
+    attrs, info = _resolve_model_span(orch, PAYLOAD)
+    assert attrs["is_fallback"] is False and info["is_fallback"] is False
+
+
+def test_triton_model_span_is_fallback_true_for_a_fallback_resolve():
+    orch = _orchestrator()
+    orch.inference_server_resolver.resolve_service = AsyncMock(
+        return_value={"name": "m", "is_published": True, "tier_ids": []}
+    )
+    attrs, info = _resolve_model_span(orch, PAYLOAD, is_fallback=True)
+    assert attrs["is_fallback"] is True and info["is_fallback"] is True
+
+
+def test_triton_ai_inference_span_carries_is_fallback_from_service_info():
+    # run_inference (task_service.py) reads serviceInfo["is_fallback"] and
+    # copies it onto the ai-inference span the PPU consumer bills on — the
+    # "model" span tests above don't exercise that second copy.
+    from contextlib import asynccontextmanager
+
+    from services.base.task_service import BaseTaskService
+
+    def run_inference_span(service_info):
+        svc = BaseTaskService.__new__(BaseTaskService)
+        svc.service_info = service_info
+        svc.task_name = "NMT"
+        svc.logger = MagicMock()
+        svc.payload_key = "input"
+        svc.TRITON_CALL_MODE = "batch"
+        svc.convert_payload_to_triton_format = AsyncMock(return_value=([], ["OUTPUT_TEXT"]))
+        svc._call_triton_inference = AsyncMock(return_value={})
+        svc.convert_triton_output_to_task_format = AsyncMock(return_value=[{"target": "hi"}])
+        captured = {}
+
+        @asynccontextmanager
+        async def fake_traced_inference(payload, task_name, logger):
+            ctx = {}
+            yield ctx
+            captured.update(ctx)
+
+        payload = {"task_type": "nmt", "input": [{"source": "hi"}], "config": {}}
+        with patch("trace.request_span.traced_inference", fake_traced_inference):
+            _run(svc.run_inference(payload, service_info))
+        return captured
+
+    primary = run_inference_span({"name": "nmt-a", "endpoint": "http://triton/infer", "serviceId": "nmt-a", "is_fallback": False})
+    fallback = run_inference_span({"name": "nmt-b", "endpoint": "http://triton/infer", "serviceId": "nmt-b", "is_fallback": True})
+    assert primary["is_fallback"] is False
+    assert fallback["is_fallback"] is True
+
+
+def test_resolved_service_info_is_a_distinct_object_per_call():
+    # Pins the fix in orchestrator.py: resolve_service() returns the same
+    # cached dict by reference on a cache hit (InferenceServerResolver's
+    # _memory_cache), so the orchestrator must build a new dict instead of
+    # mutating it — otherwise one caller's is_fallback/serviceId leaks onto
+    # every other caller resolving the same service_id, including a primary
+    # and a concurrent fallback request sharing one cached object.
+    orch = _orchestrator()
+    shared_cached_dict = {"name": "m", "is_published": True, "tier_ids": []}
+    orch.inference_server_resolver.resolve_service = AsyncMock(return_value=shared_cached_dict)
+
+    _, first = _resolve_model_span(orch, PAYLOAD)
+    _, second = _resolve_model_span(orch, PAYLOAD, is_fallback=True)
+
+    assert first is not second
+    first["is_fallback"] = "mutated"
+    assert second["is_fallback"] is True
+
+
 def test_mark_served_by_fallback_keeps_the_requested_service():
     from types import SimpleNamespace
 
@@ -313,7 +406,7 @@ def _proxy(upstreams: dict):
             raise LLMProxyError(404, {"detail": f"Service '{sid}' not found"}, service_id=sid)
         return f"http://{sid}/v1", sid, f"{sid}-model", {**payload, "model": f"{sid}-model"}, {"id": sid}
 
-    async def forward(path, url, service_id, model_name, payload, service_info):
+    async def forward(path, url, service_id, model_name, payload, service_info, *, is_fallback: bool = False):
         return upstreams[service_id]
 
     async def stream(path, payload, service_info):
@@ -349,6 +442,15 @@ def test_llm_buffered_moves_to_fallback_on_5xx():
     assert (request.state.service_id, request.state.requested_service_id) == ("llm-b", "llm-a")
     assert [c.args[2] for c in proxy._forward_traced.call_args_list] == ["llm-a", "llm-b"]
     assert proxy._forward_traced.call_args_list[1].args[4]["model"] == "llm-b-model"
+
+
+def test_llm_buffered_is_fallback_true_only_on_the_fallback_call():
+    proxy, patches = _proxy({"llm-a": (502, {"detail": "down"}), "llm-b": (200, {"choices": []})})
+    request = MagicMock()
+    _with(patches, ["llm-b"], proxy.proxy_traced(PATH, {"model": "llm-a", "messages": []}, request))
+    calls = proxy._forward_traced.call_args_list
+    assert calls[0].kwargs.get("is_fallback", False) is False
+    assert calls[1].kwargs.get("is_fallback") is True
 
 
 def test_llm_buffered_fallback_4xx_counts_as_sent_to_fallback():
@@ -416,6 +518,70 @@ def test_llm_stream_moves_to_fallback_before_first_byte():
     assert (request.state.service_id, request.state.requested_service_id) == ("llm-b", "llm-a")
     assert ctx["started_at"] <= time.time()  # the route's request span measures from before the first attempt
     assert proxy.proxy_stream.call_args_list[1].kwargs["payload"]["model"] == "llm-b-model"
+
+
+def _agen(lines):
+    async def gen():
+        for line in lines:
+            yield line
+    return gen()
+
+
+async def _drain(gen):
+    async for _ in gen:
+        pass
+
+
+def _capture_spans_and_run_stream(upstreams, fallbacks, request):
+    """Patch services.llm_service's traced_span/traced_inference to capture
+    every span's attrs (in call order), run proxy_traced_stream, then drain
+    the returned generator so its model/ai-inference spans actually open."""
+    from contextlib import asynccontextmanager, contextmanager
+
+    proxy, patches = _proxy(upstreams)
+    captured = []
+
+    @contextmanager
+    def span(*args, **kwargs):
+        attrs = {}
+        captured.append(attrs)
+        yield attrs
+
+    @asynccontextmanager
+    async def fake_traced_inference(payload, task_name, logger, start_time=None):
+        ctx = {}
+        yield ctx
+        captured.append(ctx)
+
+    with patch("services.llm_service.get_fallbacks", AsyncMock(return_value=fallbacks)):
+        for p in patches:
+            p.start()
+        try:
+            with patch("services.llm_service.traced_span", span), \
+                    patch("services.llm_service.traced_inference", fake_traced_inference):
+                kind, status, result, ctx = _run(
+                    proxy.proxy_traced_stream(PATH, {"model": "llm-a", "messages": [], "stream": True}, request)
+                )
+                if kind == "stream":
+                    _run(_drain(result))
+        finally:
+            for p in patches:
+                p.stop()
+    return kind, status, captured
+
+
+def test_llm_stream_primary_success_is_fallback_false():
+    _, _, captured = _capture_spans_and_run_stream(
+        {"llm-a": (200, _agen(["data: [DONE]\n\n"]))}, [], MagicMock()
+    )
+    assert captured[-1]["is_fallback"] is False
+
+
+def test_llm_stream_fallback_marks_is_fallback_true():
+    _, _, captured = _capture_spans_and_run_stream(
+        {"llm-a": (502, {"error": "down"}), "llm-b": (200, _agen(["data: [DONE]\n\n"]))}, ["llm-b"], MagicMock()
+    )
+    assert captured[-1]["is_fallback"] is True
 
 
 def test_llm_stream_all_failing_is_503():
@@ -550,6 +716,29 @@ def test_multipart_moves_to_fallback_on_5xx_with_the_same_file():
     assert [c.args[3]["model"] for c in calls] == ["llm-a-model", "llm-b-model"]
     assert all(c.args[2] is FILES for c in calls)
     assert request.state.service_id == "llm-b"
+
+
+def test_multipart_fallback_model_span_marks_is_fallback_true():
+    from contextlib import contextmanager
+
+    proxy = _multipart_proxy({"llm-a": (502, {"error": "down"}), "llm-b": (200, {"text": "hi"})})
+    request = MagicMock(headers={})
+    captured = []
+
+    @contextmanager
+    def span(*args, **kwargs):
+        attrs = {}
+        captured.append(attrs)
+        yield attrs
+
+    with patch("services.llm_service.traced_span", span), \
+            patch("services.llm_service.get_fallbacks", AsyncMock(return_value=["llm-b"])):
+        _run(proxy.proxy_multipart("/v1/audio/transcriptions", files=FILES, data={"model": "llm-a"}, request=request))
+
+    # captured[0]: primary's "model" span (proxy_multipart, no is_fallback kwarg)
+    # captured[-1]: the fallback's "model" span (_multipart_with_fallbacks)
+    assert captured[0]["is_fallback"] is False
+    assert captured[-1]["is_fallback"] is True
 
 
 def test_multipart_4xx_never_reads_the_fallback_map_and_all_failing_is_503():
