@@ -1,5 +1,4 @@
 """Unit tests: login reuses an existing, still-valid refresh token instead of
-overwriting it (AI4IDS-3793).
 
 Previously every login unconditionally minted a new refresh token and
 upserted it, which overwrote the single DB row for that user. A user logged
