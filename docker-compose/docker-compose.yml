@@ -203,15 +203,21 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
-      # Mount the directory (not a single file) so a missing gitignored
-      # alertmanager.yml is seeded from alertmanager.default.yml on start.
+      # Mount the directory (not a single file). alertmanager.yml is gitignored —
+      # seed it on the host before up (setup-local.sh / SETUP-GUIDE Step 4).
+      # Do not cp inside the container: the image runs as nobody and bind-mount
+      # writes fail on Linux/WSL2 (restart loop); macOS Docker Desktop masks that.
       - ./config/alertmanager:/etc/alertmanager
       - alertmanager-data:/alertmanager
     entrypoint: ["sh", "-c"]
     command:
       - |
         if [ ! -f /etc/alertmanager/alertmanager.yml ]; then
-          cp /etc/alertmanager/alertmanager.default.yml /etc/alertmanager/alertmanager.yml
+          echo "ERROR: /etc/alertmanager/alertmanager.yml is missing."
+          echo "Seed it on the host (from docker-compose/), then re-run up:"
+          echo "  cp config/alertmanager/alertmanager.default.yml config/alertmanager/alertmanager.yml"
+          echo "(or use ./scripts/setup-local.sh / SETUP-GUIDE Step 4)"
+          exit 1
         fi
         exec /bin/alertmanager --config.file=/etc/alertmanager/alertmanager.yml --storage.path=/alertmanager
     networks:

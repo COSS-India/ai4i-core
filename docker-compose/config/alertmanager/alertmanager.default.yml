@@ -1,6 +1,7 @@
 # Bootstrap config for fresh clone. No secrets — alert-config-sync-service overwrites
-# with full config from DB. If alertmanager.yml is missing, Docker creates a directory
-# and alertmanager fails; copy this file to alertmanager.yml via entrypoint.
+# with full config from DB. alertmanager.yml is gitignored — seed on the host before
+# starting Alertmanager (do not rely on an in-container copy; image runs as nobody):
+#   cp config/alertmanager/alertmanager.default.yml config/alertmanager/alertmanager.yml
 global:
   resolve_timeout: 5m
 route:

@@ -350,7 +350,7 @@ def _ensure_database(target_database: str, logical_name: str) -> None:
             "\n\nPostgres is not reachable. Ensure it is running (e.g. from repo root:\n"
             "  cd docker-compose && docker compose up -d postgres\n"
             "Then ensure infrastructure/databases/migrations/postgres/alembic/.env has\n"
-            "POSTGRES_HOST and POSTGRES_PORT for your setup (e.g. localhost and 5434 for host access)."
+            "POSTGRES_HOST and POSTGRES_PORT for your setup (e.g. localhost and 5432 for host access)."
         )
     raise RuntimeError(f"Unable to ensure database '{target_database}' exists: {last_error}{hint}")
 
