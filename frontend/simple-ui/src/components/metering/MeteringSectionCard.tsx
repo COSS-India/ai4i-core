@@ -9,7 +9,17 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import React from "react";
+import { METERING } from "../../config/meteringConstants";
 import InfoTip from "../common/InfoTip";
+
+/** "↑ 12.5% vs previous", or "—" when the comparison is unavailable. */
+function formatTrend(pctChange: number | null): string {
+  if (pctChange === null) return METERING.GRAPH.EMPTY_VALUE;
+  let arrow = "→";
+  if (pctChange > 0) arrow = "↑";
+  else if (pctChange < 0) arrow = "↓";
+  return `${arrow} ${Math.abs(pctChange).toFixed(1)}% vs previous`;
+}
 
 interface MeteringSectionCardProps {
   title: string;
@@ -74,6 +84,7 @@ export default MeteringSectionCard;
 interface KpiCardProps {
   label: string;
   value: React.ReactNode;
+  /** Change vs the previous period. Omit for a card with no comparison; null shows "—" (comparison unavailable). */
   pctChange?: number | null;
   /** Sub-text under the value; a node when part of it needs its own hover tip. */
   helper?: React.ReactNode;
@@ -122,10 +133,9 @@ export const KpiCard: React.FC<KpiCardProps> = ({
           >
             {value ?? "—"}
           </Text>
-          {pctChange == null ? null : (
+          {pctChange === undefined ? null : (
             <Text fontSize="sm" fontWeight="medium" color={trendColor}>
-              {pctChange === 0 ? "→" : pctChange > 0 ? "↑" : "↓"}{" "}
-              {Math.abs(pctChange).toFixed(1)}% vs previous
+              {formatTrend(pctChange)}
             </Text>
           )}
           {helper ? (

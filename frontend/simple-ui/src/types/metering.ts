@@ -30,6 +30,10 @@ export interface MeteringPeriodEcho {
   end: string;
   /** Always "Asia/Kolkata". */
   timezone: string;
+  /** When the source's data begins in the period (IST); null when it holds no data for the period. */
+  dataFrom?: string | null;
+  /** True when data covers only part of the period (or none of it). */
+  partial?: boolean;
 }
 export type MeteringTopN = 10 | 25;
 export type MeteringDataState = "ok" | "error" | "empty" | "no_history";

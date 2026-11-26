@@ -57,6 +57,12 @@ const FALLBACK_KPI_KEYS: readonly string[] = [
 // Cards whose helper is a rate of Total Requests; a rate of nothing shows an em dash.
 const RATE_OF_TOTAL_KPIS = new Set<string>([KPI_KEYS.SUCCESSFUL, KPI_KEYS.FAILED]);
 
+// Shown in place of the API's KPIs when it sends none (its request count
+// query failed), so the cards read "—" instead of disappearing.
+const UNAVAILABLE_KPIS: MeteringCell[] = (
+  [KPI_KEYS.TOTAL_REQUESTS, KPI_KEYS.SUCCESSFUL, KPI_KEYS.FAILED, KPI_KEYS.AVG_RPS] as const
+).map((key) => ({ key, label: METERING.KPI.LABELS[key], value: null, pct_change: null }));
+
 /** Drop the fallback KPIs, or reposition them so they sit right after Failed. */
 function orderOverviewKpis(kpis: MeteringCell[], showFallbackRequests: boolean): MeteringCell[] {
   const rest = kpis.filter((kpi) => !FALLBACK_KPI_KEYS.includes(kpi.key));
@@ -74,15 +80,20 @@ export const OverviewKpiCards: React.FC<OverviewKpiCardsProps> = ({
   isPlatformWide = true,
   showFallbackRequests = false,
 }) => {
+  const noKpis = data.kpis.length === 0;
   const kpis = useMemo(
-    () => orderOverviewKpis(data.kpis, showFallbackRequests),
-    [data.kpis, showFallbackRequests],
+    () => orderOverviewKpis(noKpis ? UNAVAILABLE_KPIS : data.kpis, showFallbackRequests),
+    [noKpis, data.kpis, showFallbackRequests],
   );
   // The API's "0.00% success rate" means nothing when there were no requests.
   const noRequests = useMemo(() => {
     const total = data.kpis.find((kpi) => kpi.key === KPI_KEYS.TOTAL_REQUESTS);
     return total?.value != null && parseCompactTotal(total.value) === 0;
   }, [data.kpis]);
+  // No figures for the current period: the source holds no data for it
+  // (dataFrom null; the API's zeros aren't real figures) or the API sent no
+  // KPIs. The cards then read "—".
+  const noData = data.scope.period.dataFrom === null || noKpis;
 
   return (
     <SimpleGrid columns={{ base: 1, sm: 2, lg: Math.max(kpis.length, 4) }} spacing={4}>
@@ -91,17 +102,16 @@ export const OverviewKpiCards: React.FC<OverviewKpiCardsProps> = ({
           kpi.key === KPI_KEYS.TOTAL_REQUESTS && !isPlatformWide
             ? undefined
             : METERING.KPI.HELPERS[kpi.key as keyof typeof METERING.KPI.HELPERS];
-        const helper =
-          noRequests && RATE_OF_TOTAL_KPIS.has(kpi.key)
-            ? METERING.GRAPH.EMPTY_VALUE
-            : (kpi.helper ?? fallbackHelper);
+        const emptyRateHelper =
+          ((noRequests || noData) && RATE_OF_TOTAL_KPIS.has(kpi.key)) || (noData && kpi.helper != null);
+        const helper = emptyRateHelper ? METERING.GRAPH.EMPTY_VALUE : (kpi.helper ?? fallbackHelper);
         return (
           <KpiCard
             key={kpi.key}
             label={METERING.KPI.LABELS[kpi.key as keyof typeof METERING.KPI.LABELS] ?? kpi.label}
-            value={formatMeteringKpiValue(kpi.key, kpi.value)}
-            pctChange={kpi.pct_change}
-            valueColor={KPI_VALUE_COLORS[kpi.key] ?? "gray.800"}
+            value={formatMeteringKpiValue(kpi.key, noData ? null : kpi.value)}
+            pctChange={noData ? null : (kpi.pct_change ?? null)}
+            valueColor={noData ? "gray.800" : (KPI_VALUE_COLORS[kpi.key] ?? "gray.800")}
             invertTrend={INVERTED_TREND_KPIS.has(kpi.key)}
             helper={helper}
             tooltip={METERING.KPI.TOOLTIPS[kpi.key as keyof typeof METERING.KPI.TOOLTIPS]}
