@@ -1,9 +1,9 @@
 # Notifications & Alerts — Local Setup
 
-Companion to [`SETUP_GUIDE.md`](SETUP_GUIDE.md). Use this to get notification **emails** working locally.
+Companion to [`docker-compose/SETUP-GUIDE.md`](../docker-compose/SETUP-GUIDE.md). Use this to get notification **emails** working locally.
 
 **Before you start:**
-- Core setup done with the **full stack** (`SETUP_GUIDE.md` Step 4, Option B).
+- Core setup done via [`docker-compose/SETUP-GUIDE.md`](../docker-compose/SETUP-GUIDE.md) (Steps 1–8); enable **Kafka / tracing** (Step 3) for notification event flow.
 - auth-service, platform-core-service, inference-service and the Simple UI (`:3000`) running.
 - SMTP credentials available (e.g. Amazon SES SMTP).
 - For PPU notifications (budget/quota threshold and exhausted), also complete [`PPU-LOCAL-SETUP.md`](PPU-LOCAL-SETUP.md).
@@ -97,7 +97,7 @@ cd ../..
 Run this once, from the repo root, so the consumer begins at the latest message instead of exiting on start (`KAFKA_AUTO_OFFSET_RESET=error`). The consumer must not be running yet:
 
 ```bash
-docker exec ai4v-kafka kafka-consumer-groups --bootstrap-server kafka:29092 \
+docker exec ai4i-kafka kafka-consumer-groups --bootstrap-server kafka:9092 \
   --group notification-service --topic notification.events \
   --reset-offsets --to-latest --execute
 ```
@@ -135,7 +135,7 @@ Institution-scoped items (`TIER_ASSIGNED`, `BUDGET_ASSIGNED`) can also be switch
 **Something sent but no email?** Check the `notifications_consumer` log, then the failure log:
 
 ```bash
-docker exec ai4v-postgres psql -U postgres -d ai4iplatform_core -c \
+docker exec ai4i-postgres psql -U postgres -d ai4iplatform_core -c \
   "select created_at, notification_name, stage, error_code, error_message from notification_alert_failure_log order by created_at desc limit 5;"
 ```
 

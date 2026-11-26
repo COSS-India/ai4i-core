@@ -34,23 +34,21 @@ Shows structure, components, and relationships with visual diagrams and descript
 
 ### 3. Technology Stack
 Lists technologies and dependencies, with versions and compatibility.
-- [README — Technology Stack](https://github.com/COSS-India/ai4i-core/blob/release-2.3/README.md#-technology-stack) (FastAPI, Python 3.11, PostgreSQL 15, Redis 7, Next.js 14, and more, with versions)
+- [README — Technology Stack](https://github.com/COSS-India/ai4i-core/blob/release-2.3/README.md#-technology-stack) (FastAPI, Python 3.11+, PostgreSQL 18, Redis 8, Next.js 14, and more, with versions)
 - [Third-party licenses](https://github.com/COSS-India/ai4i-core/blob/release-2.3/docs/THIRD_PARTY_LICENSES.md) — every dependency, its version, and its license
 
 ### 4. Installation Guide
 Explains how to install and run the software in different environments (local and production).
 - [README — Deploy Your Own Instance](https://github.com/COSS-India/ai4i-core/blob/release-2.3/README.md#-deploy-your-own-instance) (Install → Configure → Run → Troubleshoot)
-- [Setup guide (comprehensive local, Windows/WSL)](https://github.com/COSS-India/ai4i-core/blob/release-2.3/docs/SETUP_GUIDE.md)
-- [End-to-end setup guide](https://github.com/COSS-India/ai4i-core/blob/release-2.3/docs/END-TO-END-SETUP-GUIDE.md)
-- [Single-command setup](https://github.com/COSS-India/ai4i-core/blob/release-2.3/docs/SINGLE_COMMAND_SETUP.md)
-- [Docker Compose local reference](https://github.com/COSS-India/ai4i-core/blob/release-2.3/docs/DOCKER-COMPOSE-LOCAL-REFERENCE.md)
-- [Production deployment guide](https://github.com/COSS-India/ai4i-core/blob/release-2.3/docs/DEPLOYMENT.md) — gateway/forward-auth, `infrastructure/` configs, production env and secrets, fork-and-patch
+- [Local setup guide (Docker Compose + native apps)](https://github.com/COSS-India/ai4i-core/blob/release-2.3/docker-compose/SETUP-GUIDE.md)
+- [Docker Compose pack README](https://github.com/COSS-India/ai4i-core/blob/release-2.3/docker-compose/README.md) — tiers, images, ports
+- [Minimal infra requirements](https://github.com/COSS-India/ai4i-core/blob/release-2.3/docker-compose/MINIMAL-INFRA-REQUIREMENTS.md)
 
 ### 5. User Guide
 Teaches end-users how to use the software, and may include an FAQ.
-- [User guide](https://github.com/COSS-India/ai4i-core/blob/release-2.3/docs/USER_GUIDE.md) — authentication, making inference calls, using the Simple UI, and an FAQ
 - Live API documentation per service: Swagger UI at `/docs`, ReDoc at `/redoc`, raw spec at `/openapi.json`
 - [Simple UI README](https://github.com/COSS-India/ai4i-core/blob/release-2.3/frontend/simple-ui/README.md) — the web interface for exercising the APIs
+- [Tracing / observability local setup](https://github.com/COSS-India/ai4i-core/blob/release-2.3/docs/TRACING-OBSERVABILITY-LOCAL-SETUP.md)
 
 ### 6. Release Notes
 Follows semantic versioning and documents changes per version.

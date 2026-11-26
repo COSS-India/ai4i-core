@@ -769,7 +769,7 @@ class OpenSearchMeteringService(MeteringService):
         (rolling windows, not calendar month vs calendar month), exact
         counts instead of increase() extrapolation, and no
         PROMETHEUS_RETENTION_DAYS-style guard needed: the ISM policy
-        (infrastructure/opensearch/ism-policy-logs.json, 90-day floor) is
+        (OpenSearch ISM / retention policy, 90-day floor) is
         logs-*'s retention control and already covers this 60-day lookback.
         """
         now = datetime.now(timezone.utc)

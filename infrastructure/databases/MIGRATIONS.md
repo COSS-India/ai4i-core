@@ -319,7 +319,7 @@ For local dev with Docker containers:
 
 ```bash
 # Start postgres + redis
-docker-compose -f docker-compose-local.yml up postgres redis -d
+cd docker-compose && docker compose up -d postgres redis && cd ..
 
 # Create and test migration
 python infrastructure/databases/cli.py make:migration my_change --postgres-db ai4iplatform_auth

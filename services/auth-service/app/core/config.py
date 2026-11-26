@@ -70,7 +70,7 @@ class AuthSettings(BaseSettings):
 
     # ── Kafka (notification producer) ──
     kafka_enabled: bool = False
-    kafka_server: str = "localhost:9093"
+    kafka_server: str = "localhost:9092"
     topic_notification: str = "notification.events"
     # IANA zone for dates and times shown in notification emails (e.g. Asia/Kolkata).
     # Required, no in-code default, same as PLATFORM_NAME.

@@ -17,16 +17,16 @@ ai4i-core/
 ├── services/               ← three FastAPI microservices
 ├── frontend/               ← Next.js web portal
 ├── libs/                   ← shared Python library used by all services
-├── infrastructure/         ← database migrations and observability configs
+├── infrastructure/         ← database migrations (Alembic)
 ├── tests/                  ← cross-service integration and E2E tests
-├── scripts/                ← setup and migration helper scripts
-├── docs/                   ← architecture docs, setup guide, this file
-└── docker-compose-local.yml← one-command local stack
+├── scripts/                ← migration helpers (+ setup-env wrapper)
+├── docs/                   ← architecture docs, companions, this file
+└── docker-compose/         ← local platform infra, observability configs, SETUP-GUIDE
 ```
 
 The full system architecture and request-flow diagrams live in
 [`docs/architecture/00-overview.md`](architecture/00-overview.md). The step-by-step
-local environment setup lives in [`docs/SETUP_GUIDE.md`](SETUP_GUIDE.md). Start with
+local environment setup lives in [`docker-compose/SETUP-GUIDE.md`](../docker-compose/SETUP-GUIDE.md). Start with
 those if you want the big picture before diving into code.
 
 ---
@@ -41,14 +41,15 @@ those if you want the big picture before diving into code.
 | `frontend/simple-ui/` | Next.js 14 web portal (TypeScript, React) |
 | `libs/ai4i_core/` | Shared utilities: logging, observability, email, telemetry |
 | `infrastructure/databases/` | Alembic migrations for all PostgreSQL schemas |
-| `infrastructure/prometheus/` | Prometheus config and alert rules |
-| `infrastructure/grafana/` | Grafana dashboard JSON and datasource provisioning |
-| `infrastructure/opensearch/` | OpenSearch config and index templates |
-| `infrastructure/fluent-bit/` | Fluent Bit log-shipping config |
-| `infrastructure/alertmanager/` | Alertmanager notification routing |
+| `docker-compose/config/prometheus/` | Local Prometheus scrape config + alert rules |
+| `docker-compose/config/grafana/` | Grafana dashboard JSON and datasource provisioning |
+| `docker-compose/config/alertmanager/` | Alertmanager notification routing |
+| `docker-compose/config/opensearch/` | Local OpenSearch config |
+| `docker-compose/config/fluent-bit/` | Local Fluent Bit log-shipping config |
 | `tests/` | Cross-service integration tests and E2E browser tests |
 | `scripts/` | `setup-env.sh`, `migrate.sh`, `validate-migrations.py` |
-| `docs/` | Architecture docs, setup guide, images |
+| `docs/` | Architecture docs, feature companions, images |
+| `docker-compose/` | Local platform infra + SETUP-GUIDE |
 
 ---
 
@@ -278,11 +279,11 @@ databases/
 
 | Component | Config location | Role |
 |-----------|----------------|------|
-| Prometheus | `infrastructure/prometheus/` | Metrics scrape + time-series |
-| Grafana | `infrastructure/grafana/` | Dashboards (4 JSON dashboards provided) |
-| Alertmanager | `infrastructure/alertmanager/` | Alert routing and notification |
-| OpenSearch | `infrastructure/opensearch/` | Trace spans + container logs |
-| Fluent Bit | `infrastructure/fluent-bit/` | Ships logs and spans to OpenSearch |
+| Prometheus | `docker-compose/config/prometheus/` | Metrics scrape + time-series |
+| Grafana | `docker-compose/config/grafana/` | Dashboards (4 JSON dashboards provided) |
+| Alertmanager | `docker-compose/config/alertmanager/` | Alert routing and notification |
+| OpenSearch | `docker-compose/config/opensearch/` | Trace spans + container logs |
+| Fluent Bit | `docker-compose/config/fluent-bit/` | Ships logs and spans to OpenSearch |
 
 Full observability architecture diagram: [`docs/images/observability.mmd`](images/observability.mmd).
 
@@ -317,7 +318,7 @@ Each service also has its own unit and integration test suite:
 
 | Script | Purpose |
 |--------|---------|
-| `setup-env.sh` | Copies `env.template` to `.env` and prompts for values |
+| `setup-env.sh` | Wrapper → `docker-compose/scripts/setup-env.sh` (sync Compose creds → service `.env`) |
 | `migrate.sh` | Runs Alembic migrations against all target databases |
 | `run-migration-cli.sh` | Thin wrapper around the migration CLI |
 | `validate-migrations.py` | Checks migration files for consistency (used as a pre-commit hook) |
@@ -328,7 +329,7 @@ Each service also has its own unit and integration test suite:
 
 1. **Understand the system** — read [`docs/architecture/00-overview.md`](architecture/00-overview.md) for the overall architecture and request flow.
 
-2. **Set up your local environment** — follow [`docs/SETUP_GUIDE.md`](SETUP_GUIDE.md) to bring up the full stack with `docker-compose-local.yml`.
+2. **Set up your local environment** — follow [`docker-compose/SETUP-GUIDE.md`](../docker-compose/SETUP-GUIDE.md) to bring up Compose infra and native app services.
 
 3. **Pick the service you are working on** and read its `README.md`:
    - `services/auth-service/README.md`
@@ -363,5 +364,5 @@ Each service also has its own unit and integration test suite:
 | [`docs/architecture/01-auth-service.md`](architecture/01-auth-service.md) | Auth service deep-dive: JWT, RBAC, multi-tenancy, data privacy |
 | [`docs/architecture/02-platform-core-service.md`](architecture/02-platform-core-service.md) | Model registry, alerting, PII, billing |
 | [`docs/architecture/03-inference-service.md`](architecture/03-inference-service.md) | Inference orchestration, task services, OpenTelemetry tracing |
-| [`docs/SETUP_GUIDE.md`](SETUP_GUIDE.md) | Step-by-step local development setup |
+| [`docker-compose/SETUP-GUIDE.md`](../docker-compose/SETUP-GUIDE.md) | Step-by-step local development setup |
 | [`CONTRIBUTING.md`](../CONTRIBUTING.md) | Contribution workflow, branching strategy, PR checklist |

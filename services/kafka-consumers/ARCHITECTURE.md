@@ -1560,15 +1560,15 @@ the old consumer stopped.
 
 ```bash
 # Read the old group's current offsets
-docker exec ai4v-kafka kafka-consumer-groups --bootstrap-server localhost:9093 \
+docker exec ai4i-kafka kafka-consumer-groups --bootstrap-server kafka:9092 \
     --group aio-python-consumers --describe
 
 # Seed the new group to the same position
-docker exec ai4v-kafka kafka-consumer-groups --bootstrap-server localhost:9093 \
+docker exec ai4i-kafka kafka-consumer-groups --bootstrap-server kafka:9092 \
     --group <new-group-id> --topic <topic> --reset-offsets --to-current --execute
 
 # Verify BEFORE starting the consumer
-docker exec ai4v-kafka kafka-consumer-groups --bootstrap-server localhost:9093 \
+docker exec ai4i-kafka kafka-consumer-groups --bootstrap-server kafka:9092 \
     --group <new-group-id> --describe
 ```
 

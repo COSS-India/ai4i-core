@@ -2,7 +2,7 @@
 .env
 .env.local
 *.env.bak
-# Local developer secrets sourced by scripts/dev/up (NEVER commit; example is dev.secrets.example)
+# Legacy local secrets file (old single-command setup); never commit if present
 dev.secrets
 env-local-setup/
 .env.development.local
@@ -25,7 +25,6 @@ eggs/
 .eggs/
 lib/
 lib64/
-!scripts/dev/lib
 parts/
 sdist/
 var/
@@ -61,7 +60,7 @@ Thumbs.db
 *.log
 logs/
 
-# Dev runner PID files (scripts/dev/* writes .run/<service>.pid)
+# Local run PID dirs / files (e.g. docker-compose/.local-run-logs/*.pid)
 .run/
 *.pid
 
@@ -129,9 +128,9 @@ dmypy.json
 
 
 # Auto-generated / sensitive alert configuration (sync service writes from env; may contain SMTP secrets)
-infrastructure/alertmanager/alertmanager.yml
-infrastructure/prometheus/rules/infrastructure-alerts.yml
-infrastructure/prometheus/rules/application-alerts.yml
+docker-compose/config/alertmanager/alertmanager.yml
+docker-compose/config/prometheus/rules/infrastructure-alerts.yml
+docker-compose/config/prometheus/rules/application-alerts.yml
 
 # Local / generated
 init_alerting_db_commands.sql
@@ -196,3 +195,7 @@ scripts/llm-load-test-results.csv
 scripts/~$llm-load-test-runs.xlsx
 scripts/llm-load-test-runs.xlsx
 services/kafka-consumers/scripts/publish_test_notifications.py
+
+# BSD sed mishap leftovers (should not be created; ignore if they appear)
+.env-e
+**/.env-e

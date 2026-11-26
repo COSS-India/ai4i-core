@@ -22,8 +22,8 @@ Full design, diagrams, and code-anchored detail live in the architecture docs:
 ## Run
 
 Infrastructure (PostgreSQL, Redis, …) runs in Docker via
-[`docker-compose-local.yml`](../../docker-compose-local.yml) at the repo root; application
-services run natively in development.
+[`docker-compose/`](../../docker-compose/); application services run natively in
+development. See [`docker-compose/SETUP-GUIDE.md`](../../docker-compose/SETUP-GUIDE.md).
 
 ```bash
 pip install -r requirements.txt

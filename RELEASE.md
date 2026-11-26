@@ -144,7 +144,7 @@ git push origin dev
 
 ### 4. Run tests before promoting
 
-Refer to [docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md) for environment setup. Ensure all
+Refer to [docker-compose/SETUP-GUIDE.md](./docker-compose/SETUP-GUIDE.md) for environment setup. Ensure all
 services are running and verify there are no failures before promoting to staging:
 
 - **auth-service** — authentication, users, tenants, RBAC

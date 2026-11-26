@@ -1,10 +1,10 @@
 # Pay-Per-Use (PPU) — Local Setup
 
-Companion to [`SETUP_GUIDE.md`](SETUP_GUIDE.md). The core setup **does not** bill anything: inference works, but no budget is deducted and no quota is counted. Use this document when you want Pay-Per-Use (tiers, budgets, quotas and per-request billing) working locally.
+Companion to [`docker-compose/SETUP-GUIDE.md`](../docker-compose/SETUP-GUIDE.md). The core setup **does not** bill anything: inference works, but no budget is deducted and no quota is counted. Use this document when you want Pay-Per-Use (tiers, budgets, quotas and per-request billing) working locally.
 
-**Before you start:** complete `SETUP_GUIDE.md` Steps 1–9 with the **full stack (Step 4, Option B)**. Kafka is required. auth-service (`:8081`), platform-core-service (`:8095`), inference-service (`:8090`) and the Simple UI (`:3000`) must all be running, and at least one model service must have a working endpoint (Step 10).
+**Before you start:** complete the [setup guide](../docker-compose/SETUP-GUIDE.md) through host apps + UI (Steps 1–8), with **Kafka / tracing enabled** (Step 3 — required for PPU spans). auth-service (`:8081`), platform-core-service (`:8095`), inference-service (`:8090`) and the Simple UI (`:3000`) must all be running, and at least one model service must have a working endpoint ([Step 9–10](../docker-compose/SETUP-GUIDE.md#step-9--nmt-triton-optional) for local NMT).
 
-**OS:** Linux / WSL2 only (same as the main guide).
+**OS:** Linux only (same as the setup guide).
 
 ## How billing works
 
@@ -41,7 +41,7 @@ All three services and the consumer must use the **same Redis host and `REDIS_DB
 
 ## Step 2: Run the PPU consumer
 
-`services/kafka-consumers` is a separate service that `SETUP_GUIDE.md` does not start. Without it, inference works but nothing is ever billed.
+`services/kafka-consumers` is a separate service that the setup guide does not start. Without it, inference works but nothing is ever billed.
 
 ### Step 2.1: Install
 
@@ -79,7 +79,7 @@ grep -E '^(KAFKA_SERVER|TOPIC_PAY_PER_USE|AUTH_SERVICE_URL|POSTGRES_USER|POSTGRE
 
 | Variable | Expected |
 |---|---|
-| `KAFKA_SERVER` | `localhost:9093` |
+| `KAFKA_SERVER` | `localhost:9092` |
 | `TOPIC_PAY_PER_USE` | `kafka-topic-otel-trace` |
 | `AUTH_SERVICE_URL` | `http://localhost:8081` |
 | `POSTGRES_USER` / `POSTGRES_HOST` | Same as the root `.env` / `localhost` |
@@ -93,7 +93,7 @@ The consumer uses group `aio-python-consumers` with `KAFKA_AUTO_OFFSET_RESET=err
 Start the group at the **end** of the topic, so only new requests are billed. The consumer must not be running yet:
 
 ```bash
-docker exec ai4v-kafka kafka-consumer-groups --bootstrap-server kafka:29092 \
+docker exec ai4i-kafka kafka-consumer-groups --bootstrap-server kafka:9092 \
   --group aio-python-consumers --topic kafka-topic-otel-trace \
   --reset-offsets --to-latest --execute
 ```
@@ -102,14 +102,14 @@ If this fails with `UnknownTopicOrPartitionException: This server does not host 
 
 ```bash
 # 1. check: the topic should be missing from this list
-docker exec ai4v-kafka kafka-topics --bootstrap-server kafka:29092 --list
+docker exec ai4i-kafka kafka-topics --bootstrap-server kafka:9092 --list
 
 # 2. create it
-docker exec ai4v-kafka kafka-topics --bootstrap-server kafka:29092 \
+docker exec ai4i-kafka kafka-topics --bootstrap-server kafka:9092 \
   --create --if-not-exists --topic kafka-topic-otel-trace --partitions 1 --replication-factor 1
 
 # 3. now the reset works; it commits an offset for the group
-docker exec ai4v-kafka kafka-consumer-groups --bootstrap-server kafka:29092 \
+docker exec ai4i-kafka kafka-consumer-groups --bootstrap-server kafka:9092 \
   --group aio-python-consumers --topic kafka-topic-otel-trace \
   --reset-offsets --to-latest --execute
 ```
@@ -159,16 +159,16 @@ To test billing locally, call inference-service **directly** and set those heade
 
 ```bash
 # API key id, application id and tenant id (auth DB)
-docker exec ai4v-postgres psql -U postgres -d ai4iplatform_auth -c \
+docker exec ai4i-postgres psql -U postgres -d ai4iplatform_auth -c \
   "select k.id as api_key_id, k.key_name, k.application_id, a.tenant_id, k.allocated_budget
      from api_key k join applications a on a.id = k.application_id order by k.id desc limit 5;"
 
 # Tenant's tier (auth DB)
-docker exec ai4v-postgres psql -U postgres -d ai4iplatform_auth -c \
+docker exec ai4i-postgres psql -U postgres -d ai4iplatform_auth -c \
   "select id as tenant_id, tier_id, allocated_budget from tenants;"
 
 # A priced service that allows that tier (core DB)
-docker exec ai4v-postgres psql -U postgres -d ai4iplatform_core -c \
+docker exec ai4i-postgres psql -U postgres -d ai4iplatform_core -c \
   "select service_id, task_type, cost_per_unit, unit_size, tier_ids from mm_services where tier_ids is not null;"
 ```
 
@@ -194,14 +194,14 @@ The call must **succeed**. A request that fails at the model endpoint is not bil
 **Budget used per API key** (core DB). A row is created when the key is created; `api_key_budget_used` should go up after each call:
 
 ```bash
-docker exec ai4v-postgres psql -U postgres -d ai4iplatform_core -c \
+docker exec ai4i-postgres psql -U postgres -d ai4iplatform_core -c \
   "select api_key_id, api_key_budget_snap, api_key_budget_used, updated_at from budget_usage;"
 ```
 
 **Quota used per tenant, task type and month** (core DB):
 
 ```bash
-docker exec ai4v-postgres psql -U postgres -d ai4iplatform_core -c \
+docker exec ai4i-postgres psql -U postgres -d ai4iplatform_core -c \
   "select tenant_id, inference_name, billing_month, monthly_quota_snap, monthly_quota_used from quota_usage;"
 ```
 
@@ -209,8 +209,8 @@ docker exec ai4v-postgres psql -U postgres -d ai4iplatform_core -c \
 
 ```bash
 RP=$(grep -m1 '^REDIS_PASSWORD=' .env | cut -d= -f2-)
-docker exec ai4v-redis redis-cli -a "$RP" --no-auth-warning --scan --pattern 'auth:apikey:*'
-docker exec ai4v-redis redis-cli -a "$RP" --no-auth-warning HGETALL 'auth:apikey:<key from the line above>'
+docker exec ai4i-redis redis-cli -a "$RP" --no-auth-warning --scan --pattern 'auth:apikey:*'
+docker exec ai4i-redis redis-cli -a "$RP" --no-auth-warning HGETALL 'auth:apikey:<key from the line above>'
 # fields: tier_id, budget-exhausted, quota-<service>
 ```
 
@@ -236,7 +236,7 @@ docker exec ai4v-redis redis-cli -a "$RP" --no-auth-warning HGETALL 'auth:apikey
 
 | Document | |
 |---|---|
-| [`SETUP_GUIDE.md`](SETUP_GUIDE.md) | Core local setup |
+| [`docker-compose/SETUP-GUIDE.md`](../docker-compose/SETUP-GUIDE.md) | Core local setup |
 | [`TRACING-OBSERVABILITY-LOCAL-SETUP.md`](TRACING-OBSERVABILITY-LOCAL-SETUP.md) | Kafka, OpenSearch, traces |
 | [`services/kafka-consumers/README.md`](../services/kafka-consumers/README.md) | Consumer internals (parts are out of date: it describes a service-root `env.template` and `config.py` that no longer exist) |
 | [`services/kafka-consumers/ARCHITECTURE.md`](../services/kafka-consumers/ARCHITECTURE.md) | Offset handling and the double-billing guards |

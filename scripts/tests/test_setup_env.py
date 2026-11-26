@@ -1,6 +1,6 @@
-"""Tests for scripts/setup-env.sh.
+"""Tests for docker-compose/scripts/setup-env.sh (via scripts/setup-env.sh wrapper).
 
-Each test copies the script and every real env.template into a temp tree, so
+Each test copies the scripts and every real env.template into a temp tree, so
 the repo's own .env files are never touched.
 
 Run: python3 -m pytest scripts/tests
@@ -28,8 +28,31 @@ def root(tmp_path):
         dest = tmp_path / template.relative_to(REPO_ROOT)
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(template, dest)
+
     (tmp_path / "scripts").mkdir(exist_ok=True)
     shutil.copy(REPO_ROOT / "scripts" / "setup-env.sh", tmp_path / "scripts")
+
+    compose_scripts = tmp_path / "docker-compose" / "scripts"
+    compose_scripts.mkdir(parents=True)
+    shutil.copy(
+        REPO_ROOT / "docker-compose" / "scripts" / "setup-env.sh",
+        compose_scripts / "setup-env.sh",
+    )
+    # Port-only compose .env — credentials stay on root .env so per-test values win.
+    (tmp_path / "docker-compose" / ".env").write_text(
+        "\n".join(
+            [
+                "KAFKA_EXTERNAL_PORT=9092",
+                "OPENSEARCH_PORT=9200",
+                "AUTH_SERVICE_PORT=8081",
+                "PLATFORM_CORE_PORT=8095",
+                "INFERENCE_SERVICE_PORT=8090",
+                "",
+            ]
+        )
+    )
+    # Fake services/ so looks_like_ai4i_core passes (templates already create it).
+    (tmp_path / "services").mkdir(exist_ok=True)
     return tmp_path
 
 
@@ -162,3 +185,39 @@ def test_pii_key_is_reused_from_platform_core_when_auth_env_is_missing(root):
 
     assert read_env(root / "services/auth-service/.env")["PII_ENCRYPTION_KEY"] == key
     assert read_env(root / PLATFORM_CORE)["PII_ENCRYPTION_KEY"] == key
+
+
+def test_no_macos_sed_backup_env_e_files(root):
+    """BSD sed -i -e leaves .env-e; portable sed -i.bak + rm must not."""
+    (root / ".env").write_text("PLATFORM_NAME=AI4I\n")
+    assert run_setup(root).returncode == 0
+
+    leftovers = list(root.rglob(".env-e")) + list(root.rglob("*.env.bak"))
+    assert leftovers == [], f"unexpected sed backups: {leftovers}"
+
+
+def test_kafka_and_opensearch_ports_match_compose_env(root):
+    (root / ".env").write_text("")
+    (root / "docker-compose" / ".env").write_text(
+        "\n".join(
+            [
+                "POSTGRES_USER=postgres",
+                "POSTGRES_PASSWORD=postgres",
+                "REDIS_PASSWORD=changeme",
+                "KAFKA_EXTERNAL_PORT=9092",
+                "OPENSEARCH_PORT=9200",
+                "PLATFORM_CORE_PORT=8095",
+                "",
+            ]
+        )
+    )
+
+    result = run_setup(root)
+    assert result.returncode == 0, result.stderr
+
+    core = read_env(root / PLATFORM_CORE)
+    assert core["KAFKA_SERVER"] == "localhost:9092"
+    assert core["OPENSEARCH_URL"] == "http://localhost:9200"
+    assert core["ALERT_HISTORY_WEBHOOK_URL"] == (
+        "http://host.docker.internal:8095/api/v1/alerts/history/webhook"
+    )

@@ -1,0 +1,41 @@
+# Local scrape config — host apps via host.docker.internal (SETUP-GUIDE ports)
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: ai4i-docker-compose
+    environment: local
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+# Alert rules (platform-core sync writes application/infrastructure; system is static)
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: kafka-exporter
+    static_configs:
+      - targets: ["kafka-exporter:9308"]
+
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  # Native host services (ai4i-core docker-compose SETUP-GUIDE)
+  - job_name: ai4i-host-services
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - host.docker.internal:8081
+          - host.docker.internal:8090
+          - host.docker.internal:8095
+        labels:
+          source: host

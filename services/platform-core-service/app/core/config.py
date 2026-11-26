@@ -69,7 +69,7 @@ class CoreSettings(BaseSettings):
 
     # ── Kafka (notification producer) ──
     kafka_enabled: bool = False
-    kafka_server: str = "localhost:9093"
+    kafka_server: str = "localhost:9092"
     topic_notification: str = "notification.events"
 
     # ── Alert config sync (background reconciliation against Prometheus / Alertmanager) ──
@@ -83,7 +83,7 @@ class CoreSettings(BaseSettings):
     # Scrape job label for the vLLM fleet queried by the Service List's
     # Availability column (routes/service.py list_services,
     # app/utils/service_availability.py). Deployment-specific — not one of the
-    # jobs in infrastructure/prometheus/prometheus.yml's docker-compose stack —
+    # jobs in docker-compose/config/prometheus/prometheus.yml's local stack —
     # so each environment with a vLLM fleet sets this to its own Prometheus
     # job_name. None/unset → Availability always reports unknown (null)
     # rather than guessing a job name that doesn't match anything.
