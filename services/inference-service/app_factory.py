@@ -238,6 +238,9 @@ def create_inference_app() -> FastAPI:
         redoc_url="/redoc" if settings.ENABLE_DOCS else None,
         openapi_url="/openapi.json" if settings.ENABLE_DOCS else None,
         lifespan=_lifespan,
+        # Tracing is set up by setup_tracing() above; turn off FastAPI's built-in
+        # OpenTelemetry (FastAPI >= 0.142) so it adds no spans, metrics or logs.
+        telemetry={"tracing": False, "metrics": False, "logs": False},
     )
 
     _setup_openapi_security(app)

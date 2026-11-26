@@ -4,9 +4,9 @@ set -euo pipefail
 
 source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 
-# Run migrations under the shared root venv (plan § 6 step 7). The existing
-# scripts/migrate.sh honours PYTHON_BIN, so we point it at the shared venv's
-# interpreter rather than maintaining a separate migration venv.
+# Run migrations under the repo-root venv, which holds
+# infrastructure/databases/requirements.txt (the same file the deployed
+# migration job installs). scripts/migrate.sh honours PYTHON_BIN.
 run_migrations() {
 
     log "Running database migrations..."
@@ -14,7 +14,7 @@ run_migrations() {
     local venv="$ROOT_DIR/.venv"
 
     [[ -d "$venv" ]] \
-        || die "Shared venv missing at $venv — run setup_venv first"
+        || die "Migration venv missing at $venv — run setup_venv first"
 
     export PYTHON_BIN="$venv/bin/python"
 
