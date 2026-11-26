@@ -589,6 +589,7 @@ class AuthService:
         # holds only one row per user, so "preserving" one is unreliable.
         login_response = await issue_session(
             user, self._roles, self._tokens, self._refresh_tokens, self._users,
+            force_new_refresh_token=True,
         )
         logger.info("Password changed for user id=%s; all other sessions revoked, fresh token pair issued", user.id)
         enqueue_email(background_tasks, self._email, lambda: render_password_changed(user))
