@@ -4,6 +4,10 @@ Get AI4I-Orchestrate running on a fresh machine with **one command**. It clones 
 repo, installs anything that's missing, and brings up the **core** profile
 (postgres, redis, and the auth / platform-core / inference backend services).
 
+> Only want to explore the platform, not change its code? The
+> [Docker quick start](../quickstart/README.md) runs everything in containers with
+> one `docker compose` command and needs no Python or Node on the host.
+
 > Prefer to do it by hand or want the full manual walkthrough? See
 > [SETUP_GUIDE.md](SETUP_GUIDE.md). For how the automation is designed, see
 > [SETUP_AUTOMATION_PLAN.md](SETUP_AUTOMATION_PLAN.md).

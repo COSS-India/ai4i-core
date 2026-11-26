@@ -170,6 +170,12 @@ PII inference requests fail loudly instead of falling through.
 
 ## 🚀 Deploy Your Own Instance
 
+> **Just want to try it?** Run the whole platform in Docker with one command, register a
+> sample model and send a request, with no GPU or provider key:
+> `docker compose -f quickstart/docker-compose.yml up -d`. See
+> **[quickstart/README.md](./quickstart/README.md)**. The steps below are for developing
+> the services themselves.
+
 Get started by installing the prerequisites, then follow **Install → Configure → Run**. For
 the full walkthrough (per-service `.env` files, seed data, model endpoints), see
 **[docs/SETUP_GUIDE.md](./docs/SETUP_GUIDE.md)**.
